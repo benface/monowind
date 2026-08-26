@@ -1,0 +1,45 @@
+{
+  "name": "monowind",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Character-cell (TUI-style) interfaces on the web, from ordinary HTML and Tailwind utility classes",
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "style": "./src/styles.css",
+  "files": [
+    "dist",
+    "src/styles.css"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "style": "./src/styles.css",
+      "typecheck": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "style": "./src/styles.css",
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./styles.css": "./src/styles.css"
+    }
+  },
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.11.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}

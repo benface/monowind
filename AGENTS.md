@@ -24,3 +24,8 @@ interfaces on the web. Start with
   (e.g. `npm view <pkg> version`) — never trust memory or whatever happens to be
   installed locally.
 - Before starting non-trivial work, check `.agents/` for relevant specs, plans, or architecture notes, and keep them up to date as you go.
+- No diminutives or ad-hoc abbreviations in identifiers (`cumAuto`, `btnLbl`,
+  `usrCfg`, `idx` in non-loop contexts, …). Spell it out
+  (`cumulativeAutoOffset`, `buttonLabel`, `userConfig`, `index`).
+  Standard loop counters (`i`, `j`, `k`) and well-known domain acronyms
+  (`url`, `html`, `id`) are fine.

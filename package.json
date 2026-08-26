@@ -1,8 +1,21 @@
 {
   "name": "monowind-monorepo",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
   "description": "Character-cell (TUI-style) interfaces on the web, from ordinary HTML and Tailwind utility classes",
   "license": "MIT",
+  "scripts": {
+    "dev": "pnpm --filter @monowind/playground dev",
+    "check": "oxlint && oxfmt --check && pnpm -r typecheck && pnpm -r test",
+    "check:fix": "oxlint --fix && oxfmt && pnpm -r typecheck && pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.65.0",
+    "oxlint": "^1.80.0",
+    "playwright": "^1.62.1"
+  },
   "packageManager": "pnpm@11.24.0"
 }

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>monowind playground</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body class="min-h-screen bg-neutral-900 p-8 font-sans text-neutral-100">
+    <div class="mx-auto max-w-3xl space-y-8">
+      <h1 class="text-2xl font-semibold">monowind playground</h1>
+
+      <mono-wind>
+        <div
+          class="flex min-h-6 items-center justify-between border border-red-500 px-2 py-1 text-end"
+        >
+          <div>This will be on the left</div>
+          <button class="cursor-pointer ps-1">This will be on the right</button>
+        </div>
+      </mono-wind>
+
+      <mono-wind>
+        <div class="flex gap-1 border border-double border-cyan-400 px-1">
+          <div class="me-auto self-end">double</div>
+          <div class="flex items-end border border-dashed border-yellow-400 p-1 pb-0">dashed</div>
+          <div class="flex items-end border border-dotted border-blue-400 p-1 pb-0">
+            dotted<br />(best we can do)
+          </div>
+        </div>
+      </mono-wind>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

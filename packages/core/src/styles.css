@@ -1,0 +1,115 @@
+/* monowind companion stylesheet — loaded into the light DOM by the app.
+ * The shadow root has its own baked-in styles; this file targets the light-DOM
+ * subtree the host owns. */
+
+mono-wind {
+  display: block;
+  position: relative;
+  /* New stacking context so ancestor z-index / blend-modes don't bleed in
+   * and our own absolute-positioned decorations don't leak out. */
+  isolation: isolate;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0;
+  /* Default themable focus ring color (see form-controls rule below). */
+  --mw-focus-color: currentColor;
+}
+
+/* Hide the host until the first layout completes to avoid the flash of raw
+ * browser-rendered content (flex without our decorations, elements at their
+ * natural sizes). `visibility: hidden` preserves layout & measurability so
+ * cell metrics can still be probed while invisible. */
+mono-wind:not([data-mw-ready]) {
+  visibility: hidden;
+}
+
+/* Lock typography on descendants so the grid metrics stay consistent —
+ * `!important` because user classes (`.text-2xl` etc.) would otherwise beat
+ * these element-selector rules on specificity. */
+mono-wind * {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
+  vertical-align: baseline !important;
+  /* Match the engine's greedy word-wrap: break at spaces, and break long
+   * words at cell boundaries when they overflow. */
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* Every CSS property the engine has taken over on laid-out elements.
+ * Gated on the `measuring` attribute so the style reader still sees the
+ * authored values during its read pass. All values are `!important` so no
+ * higher-specificity author selector can steal geometry back from the engine.
+ *
+ * Geometry: position/box-sizing/left/top/width/height + min/max — set from
+ * the engine-owned --mw-x/y/w/h custom properties.
+ *
+ * Neutralized: border-width (painted as glyphs by the decoration layer),
+ * margin (position:absolute + margin still nudges the element off-grid).
+ *
+ * Owned via `--mw-p{t,r,b,l}` (padding) and `--mw-b{t,r,b,l}` (border cells):
+ * both must land on whole cells. The browser applies the sum as native
+ * padding since we've zeroed native border-width — this way, content sits
+ * inset by exactly the (border + padding) cells the engine planned for.
+ *
+ * Left alone: flex/grid/gap/justify/align — laid-out children are all
+ * position:absolute (out of flow), so nothing consumes them anyway. */
+mono-wind:not([measuring]) [data-mw-laid-out] {
+  position: absolute !important;
+  box-sizing: border-box !important;
+  left: calc(var(--mw-x, 0) * var(--mw-cw, 1px)) !important;
+  top: calc(var(--mw-y, 0) * var(--mw-ch, 1px)) !important;
+  width: calc(var(--mw-w, 0) * var(--mw-cw, 1px)) !important;
+  height: calc(var(--mw-h, 0) * var(--mw-ch, 1px)) !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-width: 0 !important;
+  padding-top: calc((var(--mw-pt, 0) + var(--mw-bt, 0)) * var(--mw-ch, 1px)) !important;
+  padding-right: calc((var(--mw-pr, 0) + var(--mw-br, 0)) * var(--mw-cw, 1px)) !important;
+  padding-bottom: calc((var(--mw-pb, 0) + var(--mw-bb, 0)) * var(--mw-ch, 1px)) !important;
+  padding-left: calc((var(--mw-pl, 0) + var(--mw-bl, 0)) * var(--mw-cw, 1px)) !important;
+  margin: 0 !important;
+}
+
+/* Author-requested `overflow: hidden` or `overflow: clip` — both keep
+ * content inside the engine-allocated box. Uses `clip` (no scroll
+ * container, cheaper, more precise semantic for what we're doing). */
+mono-wind [data-mw-clip] {
+  overflow: clip !important;
+}
+
+/* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/
+ * `end` all land on whole cells (offset = (W - N) × cell width); `center` and
+ * `justify` produce fractional per-line offsets we can't snap to the grid. */
+mono-wind [data-mw-text-align-blocked] {
+  text-align: start !important;
+}
+
+/* Normalize native form controls so they occupy exactly the geometry we give
+ * them, without borrowing browser chrome that would break the grid. Padding,
+ * margin, border-width, and box-sizing are already handled by the
+ * engine-owned rules above — repeating them here would compete with author
+ * styles at measure time. */
+mono-wind :is(button, input, select, textarea) {
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  appearance: none;
+}
+
+/* Restore a themable focus ring — `appearance: none` above kills the UA
+ * default, and without this keyboard users can lose track of where focus is.
+ * `outline-offset: -1px` keeps the ring inside the element's box so it
+ * doesn't overlap our decoration layer. */
+mono-wind :is(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--mw-focus-color);
+  outline-offset: -1px;
+}

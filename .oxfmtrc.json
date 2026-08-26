@@ -1,0 +1,5 @@
+{
+  "sortTailwindcss": {
+    "stylesheet": "./apps/playground/src/styles.css"
+  }
+}

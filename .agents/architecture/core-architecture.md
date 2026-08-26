@@ -131,6 +131,16 @@ All three share one core. Concretely, the planned packages:
 - Per-framework packages: only if/when a component layer (`<mono-textarea>`,
   `<mono-scroll>`, …) happens.
 
+**Workspace vs. publish resolution.** Each publishable package exposes its own
+source via `exports` (`"default": "./src/index.ts"`) so workspace consumers
+(the playground, other packages, anything using a modern bundler with
+TypeScript) resolve straight to `.ts` files — no build step, HMR just works,
+no dep-optimizer staleness. At publish time, `publishConfig.exports` swaps in
+built JS + declaration files under `dist/`. Both npm and pnpm respect
+`publishConfig` on `npm publish`. This keeps dev ergonomics and publish
+correctness in one place, at the package level — no per-consumer bundler
+config needed.
+
 ## The measure/write cycle
 
 The engine both reads authored styles and writes geometry, and both
@@ -149,8 +159,8 @@ blurs focus and resets internal scroll state, violating focus preservation.
 
 ## Reading authored values: CSS Typed OM
 
-`getComputedStyle` returns *used* values for box properties (always px — `w-full`
-vs `w-20` indistinguishable). `element.computedStyleMap()` returns *computed*
+`getComputedStyle` returns _used_ values for box properties (always px — `w-full`
+vs `w-20` indistinguishable). `element.computedStyleMap()` returns _computed_
 values: percentages stay percentages, `auto` stays `auto`, rem becomes px. The
 engine uses Typed OM to learn intent and resolves percentages itself in integer
 cell space.
@@ -193,7 +203,7 @@ dominant.
   engine itself writes `width`/`height` via its geometry rules, so observing
   those properties would fire transition events on our own writes and relayout
   forever. Either observe only never-written properties (padding, gap, flex-*,
-  display, border-width — missing hover-driven *sizing*), or suppress events
+  display, border-width — missing hover-driven _sizing_), or suppress events
   during/immediately after the write phase. Alternatives if it proves fragile:
   relayout on pointer/focus events, or constrain dynamic states to paint-only
   properties. Needs a decision before the visual-system milestone.

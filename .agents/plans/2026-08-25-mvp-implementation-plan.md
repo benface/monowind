@@ -35,11 +35,13 @@ inputs, focus, selection, events, forms, and accessibility semantics preserved.
 ```html
 <mono-wind>
   #shadow-root
-    <style>…</style>
-    <div id="viewport">
-      <div id="decorations" aria-hidden="true"></div>
-      <slot></slot>
-    </div>
+  <style>
+    …
+  </style>
+  <div id="viewport">
+    <div id="decorations" aria-hidden="true"></div>
+    <slot></slot>
+  </div>
 
   <!-- Application-owned light DOM -->
   <div class="flex border">
@@ -87,7 +89,12 @@ Lengths round to the nearest cell, ties up (`p-px` → 0, `p-0.5` → 1). All
 geometry is integer:
 
 ```ts
-interface Rect { x: number; y: number; width: number; height: number }
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 ```
 
 Fractional flexible space distributes remainder cells deterministically in
@@ -121,8 +128,8 @@ top/right/bottom/left-* border* text-* bg-* overflow-hidden` and friends.
 Explicitly not supported: `space-x/y-*` (superseded by `gap-*`), typography
 utilities on descendants (see cell-model spec).
 
-Every variant (`lg:`, arbitrary variants, `group-*`…) *resolves* for free,
-since the browser applies the cascade before we read. But *changes* in dynamic
+Every variant (`lg:`, arbitrary variants, `group-*`…) _resolves_ for free,
+since the browser applies the cascade before we read. But _changes_ in dynamic
 state (`hover:`, `focus:`, animations) on layout-affecting properties still
 need change detection — see the dynamic-style question in the architecture doc.
 Paint-only dynamic variants (colors) work with no engine involvement.
@@ -133,94 +140,56 @@ Text, `<a>`, `<button>`, single-line `<input>`, nested containers.
 
 ### Deferred
 
-Flex wrapping; scrolling; `position: absolute/fixed/sticky`; parent–child
-margin collapsing; transforms (see architecture open questions); selects and
-textareas; Unicode display-width; bidi/vertical text; background patterns;
-broader Tailwind property coverage; virtualization.
+Scrolling; `position: relative` + insets; `position: absolute/fixed/sticky`;
+parent–child margin collapsing; transforms (see architecture open questions);
+selects and textareas; Unicode display-width; bidi/vertical text; background
+patterns; broader Tailwind property coverage; virtualization.
 
 ### Never planned
 
 `space-x/y-*` (use `gap-*`); descendant typography that changes cell metrics.
 
-## Package structure (monorepo)
+## Package structure (monorepo, current)
 
 ```text
 packages/core/
 ├── src/
-│   ├── element.ts            # custom element host (thin; wires the pieces)
-│   ├── styles.css            # companion stylesheet (normalization, geometry rules)
-│   ├── style/
-│   │   ├── read-styles.ts    # measure-mode computed-style reader (Typed OM + fallback)
-│   │   └── style-model.ts    # CellStyle types + px→cell conversion
-│   ├── layout/
-│   │   ├── build-tree.ts
-│   │   ├── layout.ts
-│   │   ├── flex.ts
-│   │   ├── constraints.ts
-│   │   └── text-measurement.ts
-│   ├── rendering/
-│   │   ├── buffer.ts
-│   │   ├── borders.ts
-│   │   ├── decorations.ts
-│   │   └── position-elements.ts
-│   └── scheduling/
-│       └── scheduler.ts
-├── tests/
-└── examples/                 # vanilla + react
-packages/vite/                # standalone mode (later)
+│   ├── element.ts            # <mono-wind> custom element host
+│   ├── styles.css            # companion stylesheet
+│   ├── types.ts              # CellStyle, LayoutNode, Insets/NullableInsets, defaults
+│   ├── metrics.ts            # cell measurement, px→cells, rounding helpers
+│   ├── style.ts              # computed-style reader (Typed OM + class-scan fallback)
+│   ├── tree.ts               # DOM → LayoutNode tree
+│   ├── layout.ts             # block, flex-row, flex-column; grow/shrink/wrap/margins/gap
+│   ├── wrap.ts               # greedy word-wrap for text leaves
+│   ├── render.ts             # writes geometry vars, paints border decorations
+│   └── index.ts              # public exports
+└── test/                     # vitest unit + integration tests
+packages/vite/                # standalone mode (not scaffolded yet)
 # CDN mode is an extra IIFE build output of packages/core, not a package
 ```
 
-Style reading, layout, and decoration rendering stay independent of the custom
-element so they can be tested without a browser (layout/rendering fully headless;
-style reading behind an interface with a mock).
+Style, layout, wrap, and render stay independent of the custom element so
+they can be tested without a browser (layout/wrap/metrics/render are fully
+headless; style reading needs a DOM and is exercised via browser tests).
 
 ## Internal model
 
-```ts
-interface LayoutNode {
-  source: Element | Text
-  style: CellStyle            // interpreted, cell-unit style (from computed CSS)
-  children: LayoutNode[]
-  intrinsicWidth: number
-  intrinsicHeight: number
-  localRect: Rect             // parent-relative
-  globalRect: Rect            // for border painting, clipping, hit testing, debug
-}
-```
+Current shapes in `packages/core/src/types.ts` — refer to the source for the
+authoritative definitions. Summary:
 
-`WeakMap<Node, LayoutNode>` retains identity for incremental work later.
+- `LayoutNode { source, style, children, text, intrinsicWidth, intrinsicHeight, localRect }`
+  — `text` holds a leaf's textContent (also captures inline-only mixed content
+  like `<div>hello <span>world</span></div>`). `localRect` is parent-relative.
+- `CellStyle` covers: display, flex direction/wrap/grow/shrink, justify/align
+  items/self, width/height (`Size = cells | percent | auto`), min/max, padding
+  (`Insets`), margin (`NullableInsets` — `null` = `auto`), gapX/gapY, border
+  (`Insets`), borderStyle, borderColor, and paint-only color/backgroundColor
+  reserved for the visual-system milestone. `position/insets/overflow/grid`
+  fields aren't in yet — they land at their milestones.
 
-```ts
-interface CellStyle {
-  display: "block" | "flex" | "grid" | "none"   // inline content never becomes a node
-  flexDirection: "row" | "column"
-  flexGrow: number
-  flexShrink: number
-  justifyContent: "start" | "center" | "end" | "space-between"
-  alignItems: "start" | "center" | "end" | "stretch"
-  width?: Size                // cells | percent | auto
-  height?: Size
-  minWidth?: number
-  minHeight?: number
-  maxWidth?: number
-  maxHeight?: number
-  padding: Insets
-  margin: Insets              // may hold "auto" markers; sibling collapsing only
-  gapX: number
-  gapY: number
-  border: Insets              // border cells per edge (0..n)
-  borderStyle: "solid" | "double" | "dashed" | "dotted"
-  position: "static" | "relative"
-  insets: Insets              // cell offsets, applied post-layout
-  overflow: "visible" | "hidden"
-  // grid fields TBD by specs/grid.md (template columns/rows, placement)
-  // paint-only passthrough for the decoration layer:
-  color?: string
-  backgroundColor?: string
-  borderColor?: string
-}
-```
+An intrinsic-width cache (`WeakMap<LayoutNode, number>`) is used within a
+single layout pass; multi-pass identity caching is future work.
 
 ## The measure/write cycle (replaces class parsing)
 
@@ -252,7 +221,7 @@ mono-wind [data-mw-layout] {
 
 Parent-relative coordinates; each element is the containing block for its
 children — matches the DOM hierarchy, no reparenting. Root-level children
-resolve against the nearest *positioned* ancestor, so the host itself must be
+resolve against the nearest _positioned_ ancestor, so the host itself must be
 `position: relative` (set in the shadow/companion styles). The component
 sets/removes only properties it owns, never rewrites `style` wholesale.
 
@@ -261,8 +230,11 @@ sets/removes only properties it owns, never rewrites `style` wholesale.
 Measure the actual rendered font (canvas or probe element), not `1ch` assumptions:
 
 ```ts
-interface CellMetrics { width: number; height: number }
-const columns = Math.floor(hostWidth / cellMetrics.width)
+interface CellMetrics {
+  width: number;
+  height: number;
+}
+const columns = Math.floor(hostWidth / cellMetrics.width);
 ```
 
 For content-driven height: fix width, lay out, size host to resulting rows.
@@ -274,20 +246,19 @@ typography changes.
 
 ## Layout strategy (build order)
 
-1. Text and intrinsic control measurement
-2. Block layout
-3. Horizontal flex
-4. Vertical flex
-5. Padding and gaps
-6. Margins (adjacent-sibling collapsing)
-7. Fixed dimensions
-8. Min/max constraints
-9. Grow/shrink
-10. Alignment and justification
-11. Relative-position cell offsets
-12. Clipping
+Done (working in MVP):
 
-(Grid layout follows as its own milestone, against `specs/grid.md`.)
+1. Text intrinsic measurement (`text.length` cells; single-column glyphs only)
+2. Block layout with adjacent-sibling margin collapsing
+3. Flex row + column (grow, shrink, wrap, gap, fixed and auto margins)
+4. Padding, min-height/min-width, alignment (justify/align-items/self)
+
+Still to do (later milestones):
+
+5. Relative-position cell offsets (`top-1`, `-left-2`, `inset-*`)
+6. Intrinsic size for native controls (input widths, etc.)
+7. Overflow clipping / scrolling
+8. Grid layout (against `specs/grid.md`)
 
 ## Native interactive elements
 
@@ -295,8 +266,17 @@ Original nodes get geometry + normalized visuals — never converted to inert te
 
 ```css
 mono-wind :is(button, input, select, textarea) {
-  box-sizing: border-box; margin: 0; border: 0; border-radius: 0; padding: 0;
-  color: inherit; background: transparent; font: inherit; line-height: inherit;
+  /* Padding, margin, border-width, and box-sizing are owned by the engine's
+   * geometry rules on `[data-mw-laid-out]` — repeating them here would fight
+   * author styles at measure time. We only strip UA chrome that isn't
+   * already covered. */
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  appearance: none;
 }
 ```
 
@@ -315,14 +295,11 @@ pointer targets, selection and caret, clipboard, form submission,
 Paints only: borders/intersections, separators, visible backgrounds, control
 framing, other non-semantic glyphs.
 
-```ts
-interface Cell { glyph: string; foreground?: string; background?: string }
-const enum Edge { Up = 1, Right = 2, Down = 4, Left = 8 }
-```
-
-Edge-bit combinations map to `├ ┤ ┬ ┴ ┼` etc. Render runs of identically styled
-cells as single text spans, not one span per cell. Empty undecorated cells
-produce no DOM.
+Current shape (`packages/core/src/render.ts`): `BorderRun { glyph, x, y, length, color }`
+— each edge of each ring is emitted as one run, painted as a `<span>` with
+`text-content = glyph.repeat(length)`. Multi-cell borders paint as concentric
+rings (`border-2`, `border-3`, …), same style per ring. Border intersections
+(`├ ┤ ┬ ┴ ┼`) and merged nested borders are Milestone 5 work.
 
 ## Observation and scheduling
 
@@ -361,8 +338,8 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
 
 1. **Static proof of concept** — element registered, measured grid, text-only
    blocks, one border style, resize re-render; motivating example with static
-   text. *Includes the load-bearing spike: measure/write cycle + Typed OM reads
-   proven against real Tailwind v4 output.*
+   text. _Includes the load-bearing spike: measure/write cycle + Typed OM reads
+   proven against real Tailwind v4 output._
 2. **Flexbox MVP** — row/column, padding/gaps/margins, fixed/min dimensions,
    grow/shrink, justification/alignment, relative insets, deterministic
    rounding, nesting. Write `specs/flex.md` first.
@@ -376,7 +353,16 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    dynamic-style-detection question).
 6. **Production hardening** — wrapping/clipping, Unicode width, nested border
    merging, scrolling, performance, incremental layout where justified, a11y
-   audit, SSR docs.
+   audit.
+7. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
+   doesn't need JS. Requires (a) a bundled reference monospace font with
+   known metrics so cell width is deterministic on the server, (b) a fixed
+   set of breakpoints emitted as `@media` blocks with per-breakpoint
+   `--mw-*` custom-property values, (c) client hydration that re-lays out
+   only when the user's actual metrics or viewport fall outside the assumed
+   set. Trivial SSR (emit DOM, let the client engine lay it out on
+   hydration, keep `visibility: hidden` until then) works today with no
+   engine changes.
 
 ## Key technical risks
 

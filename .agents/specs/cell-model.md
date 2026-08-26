@@ -92,25 +92,43 @@ specs: deterministic, document order.)
 
 ## Inline content
 
-Elements whose computed `display` is `inline` (or `inline-*`) are **not layout
-nodes**: they belong to their parent's text run and are rendered by the
-browser in place. They get no `Rect`, no borders, no sizing; interactive
-inlines (`<a>`) keep native behavior for free. Layout-affecting utilities on
-inline elements are ignored (except rescaled relative-position insets, above).
-CSS inline layout is thus the one layout mode we deliberately do **not**
-re-implement.
+Elements whose computed `display` is `inline`/`inline-*`/`contents` are **not
+layout nodes**: they belong to their parent's text run and are rendered by
+the browser in place. Layout-affecting utilities on inline elements are
+ignored (except rescaled relative-position insets, above).
+
+An element whose direct children are ALL inline (or which has no element
+children) is treated as a **leaf**, with its combined text content as the
+text to wrap. So `<div>hello <span class="text-red-500">world</span></div>`
+lays out as a single "hello world" text run — the inline `<span>` still
+renders red (browser inheritance), but doesn't get its own layout box.
+
+**Inline detection**: because CSS "blockifies" every direct child of a
+`display: flex`/`grid` container (so a `<br>` inside a flex parent computes
+to `display: block`), the engine can't rely on `getComputedStyle` alone to
+decide inline-ness. It uses a hardcoded list of HTML tags whose default
+display is inline (`a`, `br`, `span`, `b`, `i`, `em`, `strong`, `code`, …),
+falling back to computed style for anything else. That list is small and
+the HTML spec rarely adds new inline elements.
+
+**`<br>` support**: a `<br>` inside a leaf becomes a hard line break in the
+wrap calculation. The leaf's intrinsic width is the longest hard-broken
+line, and its intrinsic height is the count of hard-broken lines.
+
+Mixed text nodes and block-level element children in the same container is
+not supported (documented deviation).
 
 ## Borders: glyph mapping
 
 `border-style` selects the glyph set; width selects ring count (above).
 
-| style | H | V | corners | junctions |
-| --- | --- | --- | --- | --- |
-| `solid` (light) | `─` | `│` | `┌ ┐ └ ┘` | `├ ┤ ┬ ┴ ┼` |
-| `double` | `═` | `║` | `╔ ╗ ╚ ╝` | `╠ ╣ ╦ ╩ ╬` |
-| `dashed` | `┄` | `┆` | light corners | light junctions |
-| `dotted` | `┈` | `┊` | light corners | light junctions |
-| heavy (reserved) | `━` | `┃` | `┏ ┓ ┗ ┛` | `┣ ┫ ┳ ┻ ╋` |
+| style            | H   | V   | corners       | junctions       |
+| ---------------- | --- | --- | ------------- | --------------- |
+| `solid` (light)  | `─` | `│` | `┌ ┐ └ ┘`     | `├ ┤ ┬ ┴ ┼`     |
+| `double`         | `═` | `║` | `╔ ╗ ╚ ╝`     | `╠ ╣ ╦ ╩ ╬`     |
+| `dashed`         | `╌` | `╎` | light corners | light junctions |
+| `dotted`         | `┄` | `┊` | light corners | light junctions |
+| heavy (reserved) | `━` | `┃` | `┏ ┓ ┗ ┛`     | `┣ ┫ ┳ ┻ ╋`     |
 
 - Unicode has no dashed/dotted corners or junctions; solid-light stands in
   (standard TUI convention).
@@ -121,11 +139,31 @@ re-implement.
 - Mixed-style junctions (light meets double: `╞ ╤ ╧ ╡` exist; light meets
   heavy: partial coverage) — resolution rules TBD in the decoration renderer.
 
+## Text alignment
+
+`text-align: left | right | start | end` are on-grid: each line's offset is
+`(container_width − line_length) × cell_width`, always a whole number of
+cells since character width equals cell width in monospace.
+
+`text-align: center` and `justify` produce fractional per-line offsets when
+`(container_width − line_length)` is odd (center) or when inter-word spacing
+is redistributed (justify). Both are **forced back to `start`** by the
+companion stylesheet (via the engine-owned `data-mw-text-align-blocked`
+attribute). To center a text leaf as a whole, wrap it in a flex container
+with `justify-center` — that centers at the cell level.
+
 ## Deviations from CSS (running list)
 
-1. No parent–child / empty-box margin collapsing.
+1. No parent–child / empty-box margin collapsing (sibling collapsing works
+   per CSS: `max` for two positives, `min` for two negatives, sum for mixed).
 2. All lengths round to whole cells (rule above).
 3. Typography is root-only; descendant typography that affects metrics is
    neutralized.
 4. Border-width uses the 1px = 1 cell scale, not the spacing scale.
 5. Inline elements ignore layout-affecting properties (borders, sizing).
+6. `text-align: center | justify` on descendants is forced to `start`.
+7. Mixed direct text nodes + block-level element children in one container
+   don't get their text laid out (an all-inline mix does — see Inline content).
+8. Inline-ness of an element is determined by its HTML tag (`br`, `span`,
+   `a`, `b`, `i`, `em`, `strong`, `code`, …), not by its computed display —
+   flex/grid "blockification" of direct children is ignored on purpose.
