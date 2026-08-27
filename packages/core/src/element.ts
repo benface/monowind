@@ -17,7 +17,15 @@ const SHADOW_TEMPLATE = `
 </div>
 `;
 
-export class MonoWindElement extends HTMLElement {
+// Import-safe outside the browser (SSR, Node scripts using renderAscii):
+// `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
+// at IMPORT time. Substitute an inert base — the class is only instantiated
+// by the browser after defineMonoWind(), which no-ops without a DOM.
+const HTMLElementBase = (
+  typeof HTMLElement === "undefined" ? class {} : HTMLElement
+) as typeof HTMLElement;
+
+export class MonoWindElement extends HTMLElementBase {
   #shadow: ShadowRoot;
   #decorations: HTMLElement;
   #resizeObserver: ResizeObserver | null = null;
@@ -193,8 +201,10 @@ export class MonoWindElement extends HTMLElement {
   }
 }
 
-/** Register the <mono-wind> element (idempotent). */
+/** Register the <mono-wind> element (idempotent; no-op without a DOM, so
+ * calling it from code that also runs server-side is safe). */
 export function defineMonoWind(): void {
+  if (typeof customElements === "undefined") return;
   if (customElements.get("mono-wind")) return;
   customElements.define("mono-wind", MonoWindElement);
 }

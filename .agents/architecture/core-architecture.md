@@ -143,7 +143,9 @@ All three share one core. Concretely, the planned packages:
   mode), `example-tailwind` (native mode, custom `@theme`), `example-vite`
   (standalone mode via `@monowind/vite`), `example-react` (React 19 owning
   the light DOM — its smoke test proves state → re-render → relayout), with
-  a docs/landing site (`website`, → monowind.benface.com) to come.
+  a docs/landing site (`website`, → monowind.benface.com) and an
+  in-browser playground (`play`, → play.monowind.benface.com, powered by
+  the CDN bundle) to come.
 - Per-framework packages: only if/when a component layer (`<mono-textarea>`,
   `<mono-scroll>`, …) happens.
 

@@ -1,6 +1,6 @@
 {
   "name": "@monowind/vite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-config Vite plugin for monowind — Tailwind included, no Tailwind setup required",
   "keywords": [
     "monowind",
@@ -24,14 +24,16 @@
     ".": {
       "typecheck": "./dist/index.d.ts",
       "default": "./src/index.ts"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
-      }
+      },
+      "./package.json": "./package.json"
     }
   },
   "scripts": {

@@ -74,6 +74,11 @@ pnpm build
 # interactively update dependencies across the workspace
 pnpm check-updates
 
+# release: bump package versions, commit + push, then create a GitHub
+# release — its tag triggers the Release workflow, which publishes to npm
+# via trusted publishing (no tokens/OTP)
+gh release create v0.1.1 --generate-notes
+
 # Example apps (each demonstrates one way to consume monowind):
 pnpm --filter @monowind/example-html dev       # CDN mode: one script tag
 pnpm --filter @monowind/example-tailwind dev   # your own Tailwind v4 build

@@ -1,6 +1,6 @@
 {
   "name": "monowind",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Text-based user interfaces (TUI) on the web, from ordinary HTML and Tailwind utility classes",
   "keywords": [
     "ascii",
@@ -31,7 +31,8 @@
       "typecheck": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
@@ -40,7 +41,8 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       },
-      "./styles.css": "./src/styles.css"
+      "./styles.css": "./src/styles.css",
+      "./package.json": "./package.json"
     }
   },
   "scripts": {

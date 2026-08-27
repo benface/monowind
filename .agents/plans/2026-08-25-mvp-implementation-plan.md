@@ -387,7 +387,12 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
 6. **Production hardening** — wrapping/clipping, Unicode width, nested border
    merging, scrolling, performance, incremental layout where justified, a11y
    audit.
-7. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
+7. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
+   (`apps/play` → play.monowind.benface.com): live HTML editing rendered
+   through `<mono-wind>`, shareable URLs. The CDN bundle (engine +
+   `@tailwindcss/browser`) is already exactly the required runtime, so this
+   is mostly editor UI.
+8. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
    doesn't need JS. Requires (a) a bundled reference monospace font with
    known metrics so cell width is deterministic on the server, (b) a fixed
    set of breakpoints emitted as `@media` blocks with per-breakpoint

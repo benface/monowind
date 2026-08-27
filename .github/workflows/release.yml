@@ -1,0 +1,37 @@
+name: Release
+
+# Publishes both packages to npm when a version tag (v*) is pushed.
+# Uses npm trusted publishing (OIDC) — no tokens, no OTP; npm links the
+# publish to this repo+workflow and attaches provenance. Each package must
+# list this workflow as a trusted publisher in its npmjs.com settings.
+#
+# Publishing MUST go through pnpm: `publishConfig.exports` (the src → dist
+# swap) is applied by pnpm only.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      # Same gate as CI's check job (visual regression runs on the commit's
+      # regular CI; not repeated here).
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm check
+      # -r publishes workspace packages in dependency order (monowind before
+      # @monowind/vite, so `workspace:^` resolves against the real version).
+      - run: pnpm -r publish --access public --no-git-checks
