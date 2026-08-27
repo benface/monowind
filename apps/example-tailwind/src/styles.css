@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "monowind";
+
+/* Owning the Tailwind build means owning the design system: custom @theme
+ * tokens become first-class utilities (border-phosphor, text-amber, …) that
+ * monowind picks up like any other CSS. */
+@theme {
+  --color-phosphor: #00ff88;
+  --color-amber: #ffb000;
+  --color-crt: #0a1410;
+}

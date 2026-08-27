@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>monowind — CDN example</title>
+    <!-- One script tag, no build step. In a real page this would be:
+         <script src="https://unpkg.com/monowind/dist/cdn.js"></script>
+         (./cdn.js is copied from packages/core/dist by the dev/test scripts) -->
+    <script src="./cdn.js"></script>
+  </head>
+  <body class="min-h-screen bg-neutral-900 p-8 text-neutral-100">
+    <mono-wind>
+      <div class="flex min-h-5 items-center justify-between border border-emerald-400 px-1">
+        <div>monowind via CDN</div>
+        <button class="cursor-pointer">no build step</button>
+      </div>
+    </mono-wind>
+  </body>
+</html>

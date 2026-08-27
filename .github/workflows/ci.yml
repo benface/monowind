@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Lint, typecheck, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Chromium for the Vitest-browser story tests and the example smoke tests.
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm check
+
+  visual:
+    name: Visual regression
+    # Screenshots proved byte-identical between arm64 (local Apple Silicon
+    # Docker) and amd64 (this runner) for our rendering — see the note in
+    # scripts/test-visual.mjs. If that ever changes, pin one architecture on
+    # both sides.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/test-visual.mjs
+      - name: Upload diffs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: apps/storybook/test-results
+          retention-days: 7

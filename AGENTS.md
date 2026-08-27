@@ -1,8 +1,8 @@
 # Agent guidelines
 
 This is `monowind`, a pnpm workspaces monorepo for a library that renders
-ordinary HTML styled with Tailwind utility classes as TUI-style, character-cell
-interfaces on the web. Start with
+ordinary HTML styled with Tailwind utility classes as text-based user
+interfaces (TUIs) on the web. Start with
 `.agents/architecture/core-architecture.md` for the design decisions.
 
 ## Layout
@@ -24,6 +24,12 @@ interfaces on the web. Start with
   (e.g. `npm view <pkg> version`) — never trust memory or whatever happens to be
   installed locally.
 - Before starting non-trivial work, check `.agents/` for relevant specs, plans, or architecture notes, and keep them up to date as you go.
+- When authoring or testing Storybook stories, the running Storybook dev
+  server (`pnpm dev`) exposes an MCP endpoint at `http://localhost:6006/mcp`
+  (`@storybook/addon-mcp`) with story-authoring instructions and story-test
+  tools. Note: its docs/component-inventory tools are React-only for now
+  (manifests aren't generated for web-components setups), so don't rely on
+  those.
 - No diminutives or ad-hoc abbreviations in identifiers (`cumAuto`, `btnLbl`,
   `usrCfg`, `idx` in non-loop contexts, …). Spell it out
   (`cumulativeAutoOffset`, `buttonLabel`, `userConfig`, `index`).

@@ -1,0 +1,55 @@
+{
+  "name": "@monowind/vite",
+  "version": "0.1.0",
+  "description": "Zero-config Vite plugin for monowind — Tailwind included, no Tailwind setup required",
+  "keywords": [
+    "monowind",
+    "tailwind",
+    "tui",
+    "vite-plugin"
+  ],
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/vite"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "typecheck": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "monowind": "workspace:^",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  },
+  "peerDependencies": {
+    "vite": "^7.0.0 || ^8.0.0"
+  }
+}

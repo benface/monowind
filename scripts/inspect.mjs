@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 /**
- * Load the playground in a real Chromium and report:
+ * Load any page containing a <mono-wind> element in a real browser and
+ * report:
  *   - console messages (log/warn/error)
  *   - page errors
  *   - failed network requests
  *   - a text dump of the <mono-wind> subtree with its own attrs + CSS vars
  *
- * Assumes the Vite dev server is already running at http://localhost:5173.
- * Usage: node scripts/inspect-playground.mjs [url]
+ * A debugging/AX tool — point it at a running dev server (Storybook iframe,
+ * an example app, …).
+ * Usage: node scripts/inspect.mjs <url>   (BROWSER=chromium|firefox|webkit)
  */
 import { chromium, firefox, webkit } from "playwright";
 
-const url = process.argv[2] ?? "http://localhost:5173/";
+const url = process.argv[2];
+if (!url) {
+  console.error("Usage: node scripts/inspect.mjs <url>");
+  process.exit(1);
+}
 const browserName = process.env.BROWSER ?? "chromium";
 const browserType = { chromium, firefox, webkit }[browserName];
 if (!browserType) throw new Error(`Unknown BROWSER=${browserName} (chromium|firefox|webkit)`);
@@ -107,5 +113,5 @@ console.log("=== DOM dump ===");
 console.log(JSON.stringify(dump, null, 2));
 
 const { writeFileSync } = await import("node:fs");
-writeFileSync("/tmp/monowind-playground.png", screenshot);
-console.log("\nScreenshot written to /tmp/monowind-playground.png (%d bytes)", screenshot.length);
+writeFileSync("/tmp/monowind-inspect.png", screenshot);
+console.log("\nScreenshot written to /tmp/monowind-inspect.png (%d bytes)", screenshot.length);

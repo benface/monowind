@@ -1,4 +1,10 @@
 node_modules/
 dist/
+storybook-static/
+apps/example-html/cdn.js
+apps/example-html/cdn.js.map
+packages/*/LICENSE
+test-results/
+playwright-report/
 *.tsbuildinfo
 .DS_Store

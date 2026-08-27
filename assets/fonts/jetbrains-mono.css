@@ -1,0 +1,26 @@
+/* Self-hosted full JetBrains Mono (SIL OFL 1.1 — see OFL.txt).
+ *
+ * We deliberately do NOT use Google Fonts for this: its unicode-range
+ * subsets omit the box-drawing block (U+2500–257F), so border glyphs would
+ * silently fall back to an OS font with a different advance width. The full
+ * official woff2 contains every glyph monowind paints, giving identical
+ * rendering across OSes — which the screenshot tests depend on.
+ *
+ * `font-display: block` avoids a fallback-font flash (and a metric swap)
+ * while the font loads. */
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("./JetBrainsMono-Bold.woff2") format("woff2");
+}

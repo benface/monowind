@@ -1,0 +1,6 @@
+/* Optional Tailwind customization — compiled into the standalone build via
+ * the plugin's `css` option. */
+@theme {
+  --color-ice: #7dd3fc;
+  --color-abyss: #020617;
+}

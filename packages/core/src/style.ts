@@ -2,11 +2,12 @@ import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import type {
   AlignItems,
   BorderStyle,
+  CellLength,
   CellStyle,
   Display,
   Insets,
   JustifyContent,
-  NullableInsets,
+  PerSide,
   Size,
 } from "./types.ts";
 
@@ -37,25 +38,36 @@ export function readCellStyle(el: Element, rootFontSizePx: number): CellStyle {
 
   return {
     display,
-    flexDirection: cs.flexDirection === "column" ? "column" : "row",
-    flexWrap: cs.flexWrap === "wrap" ? "wrap" : "nowrap",
+    flexDirection: cs.flexDirection.startsWith("column") ? "column" : "row",
+    flexReverse: cs.flexDirection.endsWith("-reverse"),
+    flexWrap: cs.flexWrap.startsWith("wrap") ? "wrap" : "nowrap",
+    wrapReverse: cs.flexWrap === "wrap-reverse",
     flexGrow: Number(cs.flexGrow) || 0,
     flexShrink: cs.flexShrink === "" ? 1 : Number(cs.flexShrink) || 0,
+    // flex-basis keeps its computed form (percentages stay symbolic), so
+    // plain getComputedStyle is reliable here — `flex-1` reads as "0%".
+    flexBasis: readFlexBasis(cs.flexBasis, rootFontSizePx),
+    order: Number(cs.order) || 0,
     justifyContent: mapJustify(cs.justifyContent),
     alignItems: mapAlign(cs.alignItems),
     alignSelf: mapAlignSelf(cs.alignSelf),
     width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle),
     height: readSize(csm, cs.height, "height", rootFontSizePx, classAttr, inlineStyle),
-    minWidth: readLength(cs.minWidth, rootFontSizePx),
-    minHeight: readLength(cs.minHeight, rootFontSizePx),
-    maxWidth: cs.maxWidth === "none" ? undefined : readLength(cs.maxWidth, rootFontSizePx),
-    maxHeight: cs.maxHeight === "none" ? undefined : readLength(cs.maxHeight, rootFontSizePx),
-    padding: readInsets(cs, "padding", rootFontSizePx),
+    minWidth: readLimit(cs.minWidth, rootFontSizePx) ?? "auto",
+    minHeight: readLimit(cs.minHeight, rootFontSizePx) ?? "auto",
+    maxWidth: readLimit(cs.maxWidth, rootFontSizePx),
+    maxHeight: readLimit(cs.maxHeight, rootFontSizePx),
+    padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(cs, csm, classAttr, rootFontSizePx),
-    gapX: readLength(cs.columnGap === "normal" ? "0px" : cs.columnGap, rootFontSizePx),
-    gapY: readLength(cs.rowGap === "normal" ? "0px" : cs.rowGap, rootFontSizePx),
+    gapX: readSpacing(cs.columnGap === "normal" ? "0px" : cs.columnGap, rootFontSizePx),
+    gapY: readSpacing(cs.rowGap === "normal" ? "0px" : cs.rowGap, rootFontSizePx),
     border: readBorderInsets(cs),
-    borderStyle: mapBorderStyle(cs.borderTopStyle),
+    borderStyle: {
+      top: mapBorderStyle(cs.borderTopStyle),
+      right: mapBorderStyle(cs.borderRightStyle),
+      bottom: mapBorderStyle(cs.borderBottomStyle),
+      left: mapBorderStyle(cs.borderLeftStyle),
+    },
     // Treat `hidden` and `clip` the same — both keep content inside the
     // box. Normalized to `clip` internally since that's the more precise
     // semantic for what we do (no scroll container, cheaper). Longhands
@@ -67,9 +79,20 @@ export function readCellStyle(el: Element, rootFontSizePx: number): CellStyle {
       isClipping(cs.overflow) || isClipping(cs.overflowX) || isClipping(cs.overflowY)
         ? "clip"
         : "visible",
+    // `nowrap` and `pre` disable soft wrapping; `pre`'s whitespace
+    // preservation is NOT honored (documented deviation — the tree builder
+    // collapses whitespace). Readable via getComputedStyle because the
+    // companion stylesheet's white-space lock is gated on `:not([measuring])`.
+    whiteSpace: cs.whiteSpace === "nowrap" || cs.whiteSpace === "pre" ? "nowrap" : "normal",
+    textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     color: cs.color,
     backgroundColor: cs.backgroundColor === "rgba(0, 0, 0, 0)" ? undefined : cs.backgroundColor,
-    borderColor: cs.borderTopColor,
+    borderColor: {
+      top: cs.borderTopColor,
+      right: cs.borderRightColor,
+      bottom: cs.borderBottomColor,
+      left: cs.borderLeftColor,
+    },
     // Detect authored text-align via class + inline style rather than
     // getComputedStyle, since our own override would otherwise be echoed
     // back and cause oscillation. Inheritance is handled by CSS: forcing
@@ -105,6 +128,10 @@ function mapJustify(value: string): JustifyContent {
       return "end";
     case "space-between":
       return "space-between";
+    case "space-around":
+      return "space-around";
+    case "space-evenly":
+      return "space-evenly";
     default:
       return "start";
   }
@@ -150,23 +177,33 @@ function readMargin(
   csm: StylePropertyMapReadOnly | null,
   classAttr: string,
   rootFontSizePx: number,
-): NullableInsets {
-  const readSide = (physical: string, logical: string, autoClassPattern: RegExp): number | null => {
+): PerSide<CellLength | null> {
+  const readSide = (
+    physical: string,
+    logical: string,
+    autoClassPattern: RegExp,
+  ): CellLength | null => {
     if (csm) {
       const physicalValue = csm.get(physical)?.toString().trim();
       if (physicalValue === "auto") return null;
       const logicalValue = csm.get(logical)?.toString().trim();
       if (logicalValue === "auto") return null;
+      // Percent margins must stay symbolic (getComputedStyle would hand
+      // back a used px value resolved against the pre-grid natural layout).
+      if (physicalValue?.endsWith("%")) {
+        const percent = parseFloat(physicalValue);
+        if (Number.isFinite(percent) && percent !== 0) return { percent };
+      }
     } else if (autoClassPattern.test(classAttr)) {
       return null;
     }
     const physicalValue = cs.getPropertyValue(physical);
     if (physicalValue === "auto") return null;
-    const physicalCells = readLength(physicalValue, rootFontSizePx);
+    const physicalCells = readSpacing(physicalValue, rootFontSizePx);
     if (physicalCells !== 0) return physicalCells;
     const logicalValue = cs.getPropertyValue(logical);
     if (logicalValue === "auto") return null;
-    return readLength(logicalValue, rootFontSizePx);
+    return readSpacing(logicalValue, rootFontSizePx);
   };
   return {
     top: readSide("margin-top", "margin-block-start", /(?:^|[\s:.[!])(?:m|my|mt)-auto\b/),
@@ -189,8 +226,32 @@ function mapBorderStyle(value: string): BorderStyle {
   }
 }
 
-function readLength(value: string, rootFontSizePx: number): number {
+/**
+ * Read a min/max constraint. Percentages must be kept symbolic (they resolve
+ * against the parent's content box during layout) — naive px parsing would
+ * read `"100%"` as 100px and produce a nonsense cell count.
+ */
+function readLimit(value: string, rootFontSizePx: number): CellLength | undefined {
+  if (!value || value === "none" || value === "auto") return undefined;
+  if (value.endsWith("%")) {
+    const percent = parseFloat(value);
+    return Number.isFinite(percent) ? { percent } : undefined;
+  }
+  const px = parseFloat(value);
+  return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : undefined;
+}
+
+/**
+ * Read a spacing length. Percentages stay symbolic — they resolve against
+ * the containing block's width during layout (getComputedStyle would give
+ * a used px value based on the pre-grid natural layout, which is wrong).
+ */
+function readSpacing(value: string, rootFontSizePx: number): CellLength {
   if (!value || value === "auto" || value === "none") return 0;
+  if (value.endsWith("%")) {
+    const percent = parseFloat(value);
+    return Number.isFinite(percent) && percent !== 0 ? { percent } : 0;
+  }
   const px = parseFloat(value);
   return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : 0;
 }
@@ -208,6 +269,8 @@ function readSize(
     if (value == null) return undefined;
     const s = value.toString().trim();
     if (s === "auto") return { kind: "auto" };
+    const intrinsic = intrinsicSizeKeyword(s);
+    if (intrinsic) return intrinsic;
     if (s.endsWith("%")) return { kind: "percent", value: parseFloat(s) };
     if (s.endsWith("px")) return { kind: "cells", value: pxToCells(parseFloat(s), rootFontSizePx) };
     if (s.endsWith("rem"))
@@ -221,15 +284,49 @@ function readSize(
   const inline = key === "width" ? inlineStyle.width : inlineStyle.height;
   if (inline) {
     if (inline === "auto") return { kind: "auto" };
+    const intrinsic = intrinsicSizeKeyword(inline);
+    if (intrinsic) return intrinsic;
     if (inline.endsWith("%")) return { kind: "percent", value: parseFloat(inline) };
     const px = parseFloat(inline);
     if (Number.isFinite(px)) return { kind: "cells", value: pxToCells(px, rootFontSizePx) };
   }
-  if (!hasSizingUtility(classAttr, key === "width" ? "w" : "h")) return { kind: "auto" };
+  // Intrinsic-keyword utilities (`w-min`…) must be caught by class scan here:
+  // getComputedStyle would hand back the browser's *used* px width, which is
+  // measured content px — NOT on the spacing scale — and would convert to a
+  // nonsense cell count.
+  const axis = key === "width" ? "w" : "h";
+  if (new RegExp(`(?:^|[\\s:.[!])${axis}-min\\b`).test(classAttr)) return { kind: "min-content" };
+  if (new RegExp(`(?:^|[\\s:.[!])${axis}-max\\b`).test(classAttr)) return { kind: "max-content" };
+  if (new RegExp(`(?:^|[\\s:.[!])${axis}-fit\\b`).test(classAttr)) return { kind: "fit-content" };
+  if (!hasSizingUtility(classAttr, axis)) return { kind: "auto" };
   if (fallback === "auto") return { kind: "auto" };
   if (fallback.endsWith("%")) return { kind: "percent", value: parseFloat(fallback) };
   const px = parseFloat(fallback);
   if (Number.isFinite(px)) return { kind: "cells", value: pxToCells(px, rootFontSizePx) };
+  return undefined;
+}
+
+/**
+ * CSS `flex-basis`. `auto` (and the unsupported `content`) → undefined, so
+ * the layout falls back to the width-or-intrinsic base. `0%` (Tailwind
+ * `flex-1`) must survive as an actual zero base.
+ */
+function readFlexBasis(value: string, rootFontSizePx: number): Size | undefined {
+  if (!value || value === "auto" || value === "content") return undefined;
+  const keyword = intrinsicSizeKeyword(value);
+  if (keyword) return keyword;
+  if (value.endsWith("%")) {
+    const percent = parseFloat(value);
+    return Number.isFinite(percent) ? { kind: "percent", value: percent } : undefined;
+  }
+  const px = parseFloat(value);
+  return Number.isFinite(px) ? { kind: "cells", value: pxToCells(px, rootFontSizePx) } : undefined;
+}
+
+function intrinsicSizeKeyword(value: string): Size | undefined {
+  if (value === "min-content") return { kind: "min-content" };
+  if (value === "max-content") return { kind: "max-content" };
+  if (value === "fit-content") return { kind: "fit-content" };
   return undefined;
 }
 
@@ -244,16 +341,12 @@ function hasSizingUtility(classAttr: string, axis: "w" | "h"): boolean {
   return pattern.test(classAttr);
 }
 
-function readInsets(
-  cs: CSSStyleDeclaration,
-  prefix: "padding" | "margin",
-  rootFontSizePx: number,
-): Insets {
+function readPadding(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<CellLength> {
   return {
-    top: readLength(cs.getPropertyValue(`${prefix}-top`), rootFontSizePx),
-    right: readLength(cs.getPropertyValue(`${prefix}-right`), rootFontSizePx),
-    bottom: readLength(cs.getPropertyValue(`${prefix}-bottom`), rootFontSizePx),
-    left: readLength(cs.getPropertyValue(`${prefix}-left`), rootFontSizePx),
+    top: readSpacing(cs.getPropertyValue("padding-top"), rootFontSizePx),
+    right: readSpacing(cs.getPropertyValue("padding-right"), rootFontSizePx),
+    bottom: readSpacing(cs.getPropertyValue("padding-bottom"), rootFontSizePx),
+    left: readSpacing(cs.getPropertyValue("padding-left"), rootFontSizePx),
   };
 }
 

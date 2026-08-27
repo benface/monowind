@@ -1,10 +1,23 @@
 {
   "name": "monowind",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Character-cell (TUI-style) interfaces on the web, from ordinary HTML and Tailwind utility classes",
+  "version": "0.1.0",
+  "description": "Text-based user interfaces (TUI) on the web, from ordinary HTML and Tailwind utility classes",
+  "keywords": [
+    "ascii",
+    "monospace",
+    "tailwind",
+    "terminal",
+    "text-based",
+    "tui",
+    "web-component"
+  ],
   "license": "MIT",
   "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/core"
+  },
   "style": "./src/styles.css",
   "files": [
     "dist",
@@ -31,12 +44,15 @@
     }
   },
   "scripts": {
-    "build": "vite build && tsc --emitDeclarationOnly",
+    "build": "vite build && vite build -c vite.cdn.config.ts && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
+    "@tailwindcss/browser": "^4.3.3",
     "happy-dom": "^20.11.6",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",

@@ -56,16 +56,18 @@ export class MonoWindElement extends HTMLElement {
       attributeFilter: ["class", "style"],
     });
 
-    if (document.fonts?.ready) {
-      document.fonts.ready
-        .then(() => {
-          this.#cellMetrics = null; // font may have changed dimensions
-          this.#scheduleLayout();
-        })
-        .catch((err: unknown) => {
-          console.warn("[monowind] document.fonts.ready failed:", err);
-        });
-    }
+    // Fonts can finish loading after our first layout (the first layout then
+    // used fallback-font metrics), which would leave decorations positioned
+    // with stale cell metrics. Two signals, both needed:
+    // - `fonts.ready` — resolves when the initial font loads settle. WebKit
+    //   fires this reliably; keep it for the common first-load case.
+    // - `loadingdone` — fires on every later font-load batch (lazily
+    //   triggered @font-face, dynamically added styles).
+    // Re-measuring is cheap and layout runs at most once per frame.
+    document.fonts?.ready.then(this.#onFontsLoaded).catch((err: unknown) => {
+      console.warn("[monowind] document.fonts.ready failed:", err);
+    });
+    document.fonts?.addEventListener("loadingdone", this.#onFontsLoaded);
 
     this.#scheduleLayout();
   }
@@ -75,10 +77,16 @@ export class MonoWindElement extends HTMLElement {
     this.#mutationObserver?.disconnect();
     this.#resizeObserver = null;
     this.#mutationObserver = null;
+    document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
     // Invalidate metrics — if the element is re-connected somewhere else,
     // the surrounding font/size may differ.
     this.#cellMetrics = null;
   }
+
+  #onFontsLoaded = (): void => {
+    this.#cellMetrics = null; // font may have changed dimensions
+    this.#scheduleLayout();
+  };
 
   #isOwnedMutation = (record: MutationRecord): boolean => {
     if (record.type !== "attributes") return false;
@@ -87,6 +95,7 @@ export class MonoWindElement extends HTMLElement {
     if (name === "data-mw-ready") return true;
     if (name === "data-mw-text-align-blocked") return true;
     if (name === "data-mw-clip") return true;
+    if (name === "data-mw-nowrap") return true;
     // Style attribute mutations are hard to filter precisely from the record
     // alone (we can't tell which property was set). Rely on the counter that
     // brackets our write phase — if we're inside it, treat as owned.
@@ -154,6 +163,8 @@ export class MonoWindElement extends HTMLElement {
         intrinsicWidth: 0,
         intrinsicHeight: 0,
         localRect: { x: 0, y: 0, width: 0, height: 0 },
+        unclampedHeight: 0,
+        resolvedPadding: { top: 0, right: 0, bottom: 0, left: 0 },
       };
 
       // (4) Compute integer layout.

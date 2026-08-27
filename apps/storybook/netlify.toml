@@ -1,0 +1,10 @@
+# Netlify site config for the deployed Storybook.
+# In the Netlify UI, create a site from this repo with base directory
+# "apps/storybook" — Netlify then picks up this file automatically.
+
+[build]
+command = "pnpm --filter @monowind/storybook build"
+publish = "storybook-static"
+
+[build.environment]
+NODE_VERSION = "24"

@@ -1,0 +1,14 @@
+{
+  "name": "@monowind/example-html",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -C ../../packages/core build && node copy-cdn.mjs && vite --port 5180",
+    "test": "pnpm -C ../../packages/core build && node copy-cdn.mjs && node smoke.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "vite": "^8.2.2"
+  }
+}

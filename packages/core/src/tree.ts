@@ -1,4 +1,5 @@
 import { readCellStyle } from "./style.ts";
+import { zeroInsets } from "./types.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
@@ -26,7 +27,13 @@ export function buildTree(root: Element, rootFontSizePx: number): LayoutNode | n
   const isInlineOnly = elementChildren.every(hasInlineDisplay);
 
   if (isInlineOnly) {
-    const text = extractLeafText(root).trim();
+    // Per-hard-line trim: whitespace around a `<br>` is source formatting
+    // (the browser collapses and strips it at line edges), not content.
+    const text = extractLeafText(root)
+      .split("\n")
+      .map((line) => line.trim())
+      .join("\n")
+      .trim();
     const intrinsicWidth = longestLine(text);
     const intrinsicHeight = text.length > 0 ? countHardLines(text) : 0;
     return {
@@ -37,6 +44,8 @@ export function buildTree(root: Element, rootFontSizePx: number): LayoutNode | n
       intrinsicWidth,
       intrinsicHeight,
       localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
+      unclampedHeight: 0,
+      resolvedPadding: zeroInsets(),
     };
   }
 
@@ -53,6 +62,8 @@ export function buildTree(root: Element, rootFontSizePx: number): LayoutNode | n
     intrinsicWidth: 0,
     intrinsicHeight: 0,
     localRect: { x: 0, y: 0, width: 0, height: 0 },
+    unclampedHeight: 0,
+    resolvedPadding: zeroInsets(),
   };
 }
 
@@ -102,12 +113,21 @@ function hasInlineDisplay(el: Element): boolean {
  * Walk childNodes and produce the leaf's text — with `<br>` emitted as `\n`
  * so the wrap calculation counts the line break the browser will honor.
  * Recurses into inline elements (`<span>`, `<a>`, `<b>`, …).
+ *
+ * Whitespace inside text nodes (including literal newlines from source
+ * formatting) collapses to single spaces, exactly like the browser under
+ * `white-space: normal` — ONLY `<br>` produces a hard `\n`. Without this,
+ * markup indentation would masquerade as hard line breaks and the engine
+ * would allocate rows the browser never renders.
  */
 function extractLeafText(el: Element): string {
   const parts: string[] = [];
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
-      parts.push(node.textContent ?? "");
+      // CSS collapsible white space only (space/tab/CR/LF/FF) — NOT `\s`,
+      // which would also eat NBSP (U+00A0); the browser preserves NBSP and
+      // never breaks at it.
+      parts.push((node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " "));
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const child = node as Element;
       if (child.tagName === "BR") parts.push("\n");

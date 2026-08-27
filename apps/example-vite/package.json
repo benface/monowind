@@ -1,5 +1,5 @@
 {
-  "name": "@monowind/playground",
+  "name": "@monowind/example-vite",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,14 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "node smoke.test.mjs",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "monowind": "workspace:*"
-  },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "tailwindcss": "^4.3.3",
+    "@monowind/vite": "workspace:*",
+    "playwright": "^1.62.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2"
   }

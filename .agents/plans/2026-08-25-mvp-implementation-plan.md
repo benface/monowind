@@ -8,7 +8,8 @@ first; this one is the build plan.
 ## Goal
 
 A framework-independent Web Component that turns ordinary HTML plus Tailwind
-utility classes into a responsive character-cell interface in the browser:
+utility classes into a responsive text-based user interface (TUI) in the
+browser:
 
 ```html
 <mono-wind>
@@ -109,22 +110,28 @@ The engine reads (via the measure/write cycle) and interprets:
 ```text
 display: block | flex | grid | none      (grid in its own milestone;
                                           inline → text run, not a layout node)
-flex-direction: row | column
-flex-grow, flex-shrink
-justify-content: start | center | end | space-between
+flex-direction: row | column (+ -reverse), flex-wrap (+ wrap-reverse)
+flex-grow, flex-shrink, flex-basis, order
+justify-content: start | center | end | space-between | space-around | space-evenly
 align-items: start | center | end | stretch
-width, height, min/max-width, min/max-height   (px → cells; % and auto via Typed OM)
-padding, margin (per side), gap (row/column)
+width, height (incl. min/max/fit-content), min/max-width, min/max-height
+  (px → cells; %, auto — min-*: auto is the flex automatic minimum)
+padding, margin (per side), gap (row/column)   (percent supported)
+border-*-width (cells per edge) + per-side border-style/color → glyphs + color
+color, background-color                        (paint-only, passed through)
+overflow: hidden | clip                        (normalized to clip)
+white-space: nowrap | pre (no-wrap half), text-overflow: ellipsis (truncate)
+
+# Specified but NOT implemented yet (their milestones):
 position: static | relative + top/right/bottom/left  (cell offsets)
-border-*-width (cells per edge) + border-style/color → glyph set + decoration
 grid-template-columns/rows, placement          (subset TBD by specs/grid.md)
-color, background-color, border-color          (paint-only, passed through)
-overflow: hidden
+aspect-ratio                                   (needs cell-metric ratio; spec TBD)
 ```
 
 Utility classes this covers in practice: `block hidden flex flex-row flex-col
-grid grow shrink justify-* items-* w-* h-* min-* max-* p-* m-* gap-* relative
-top/right/bottom/left-* border* text-* bg-* overflow-hidden` and friends.
+grid grow shrink basis-* order-* justify-* items-* w-* h-* min-* max-* p-* m-*
+gap-* truncate whitespace-nowrap relative top/right/bottom/left-* border*
+text-* bg-* overflow-hidden` and friends.
 Explicitly not supported: `space-x/y-*` (superseded by `gap-*`), typography
 utilities on descendants (see cell-model spec).
 
@@ -140,10 +147,11 @@ Text, `<a>`, `<button>`, single-line `<input>`, nested containers.
 
 ### Deferred
 
-Scrolling; `position: relative` + insets; `position: absolute/fixed/sticky`;
-parent–child margin collapsing; transforms (see architecture open questions);
-selects and textareas; Unicode display-width; bidi/vertical text; background
-patterns; broader Tailwind property coverage; virtualization.
+Scrolling; `position: absolute/fixed/sticky`; parent–child margin
+collapsing; transforms (see architecture open questions); selects and
+textareas; Unicode display-width; bidi/vertical text; background patterns;
+broader Tailwind property coverage; virtualization. (`position: relative` +
+insets is NOT deferred — it's scheduled in Milestone 3.)
 
 ### Never planned
 
@@ -161,12 +169,15 @@ packages/core/
 │   ├── style.ts              # computed-style reader (Typed OM + class-scan fallback)
 │   ├── tree.ts               # DOM → LayoutNode tree
 │   ├── layout.ts             # block, flex-row, flex-column; grow/shrink/wrap/margins/gap
-│   ├── wrap.ts               # greedy word-wrap for text leaves
-│   ├── render.ts             # writes geometry vars, paints border decorations
+│   ├── wrap.ts               # greedy word-wrap for text leaves (lines + count)
+│   ├── borders.ts            # border-run collection + glyph sets (pure, shared)
+│   ├── render.ts             # writes geometry vars, paints border decorations (DOM)
+│   ├── ascii.ts              # renders a laid-out tree as ASCII art (goldens + debug/AX)
+│   ├── cdn.ts                # CDN entry: engine + companion CSS + @tailwindcss/browser
 │   └── index.ts              # public exports
-└── test/                     # vitest unit + integration tests
-packages/vite/                # standalone mode (not scaffolded yet)
-# CDN mode is an extra IIFE build output of packages/core, not a package
+└── test/                     # vitest unit + golden + integration tests
+packages/vite/                # standalone mode: @monowind/vite plugin (implemented)
+# CDN mode is an extra IIFE build output of packages/core (dist/cdn.js)
 ```
 
 Style, layout, wrap, and render stay independent of the custom element so
@@ -184,9 +195,10 @@ authoritative definitions. Summary:
 - `CellStyle` covers: display, flex direction/wrap/grow/shrink, justify/align
   items/self, width/height (`Size = cells | percent | auto`), min/max, padding
   (`Insets`), margin (`NullableInsets` — `null` = `auto`), gapX/gapY, border
-  (`Insets`), borderStyle, borderColor, and paint-only color/backgroundColor
-  reserved for the visual-system milestone. `position/insets/overflow/grid`
-  fields aren't in yet — they land at their milestones.
+  (`Insets`), borderStyle, borderColor, overflow (`visible | clip`), and
+  paint-only color/backgroundColor reserved for the visual-system milestone.
+  `position/insets/grid` fields aren't in yet — they land at their
+  milestones.
 
 An intrinsic-width cache (`WeakMap<LayoutNode, number>`) is used within a
 single layout pass; multi-pass identity caching is future work.
@@ -323,6 +335,22 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
 
 ## Testing strategy
 
+**Status (2026-08-26): all four layers below are implemented.**
+
+- Unit + golden: `packages/core/test/` (Vitest, headless) — layout math,
+  rounding, wrap, and `renderAscii` golden outputs (the ASCII renderer is
+  also exported as a debugging/agent tool).
+- Story tests: every story in `apps/storybook` runs as a Vitest
+  browser-mode test via `@storybook/addon-vitest` (part of `pnpm check`).
+- Visual regression: `pnpm test:visual` — one screenshot per story,
+  auto-discovered, captured inside the official Playwright Docker image
+  (byte-stable across machines; JetBrains Mono self-hosted in
+  `assets/fonts/` so glyph rendering is pinned). CI runs both suites
+  (`.github/workflows/ci.yml`).
+- Example smoke tests: `apps/example-html` (CDN mode) and
+  `apps/example-tailwind` (native mode) each boot and assert layout +
+  Tailwind compilation.
+
 - **Unit**: style interpretation (mocked reader), intrinsic measurement inputs,
   block/flex math, integer rounding + remainder distribution, min/max, border
   edge-bit mapping.
@@ -340,11 +368,16 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    blocks, one border style, resize re-render; motivating example with static
    text. _Includes the load-bearing spike: measure/write cycle + Typed OM reads
    proven against real Tailwind v4 output._
-2. **Flexbox MVP** — row/column, padding/gaps/margins, fixed/min dimensions,
-   grow/shrink, justification/alignment, relative insets, deterministic
-   rounding, nesting. Write `specs/flex.md` first.
-3. **Grid** — cell-based `grid-template-columns/rows`, gap, placement subset.
-   Write `specs/grid.md` first.
+2. **Flexbox MVP** — row/column, padding/gaps/margins, fixed/min/max
+   dimensions, grow/shrink, wrap, justification/alignment, deterministic
+   rounding, nesting. _Implemented; normative spec extracted afterwards into
+   `specs/flex.md` (the spec-first rule slipped here — hold the line for
+   grid: write `specs/grid.md` BEFORE implementing Milestone 3)._
+3. **Grid + relative positioning** — cell-based
+   `grid-template-columns/rows`, gap, placement subset (write
+   `specs/grid.md` first); plus `position: relative` + inset utilities as
+   cell offsets (already specified in `specs/cell-model.md`, carried over
+   from Milestone 2).
 4. **Native interaction** — links, buttons, inputs, focus states,
    keyboard/pointer, forms; React example + integration tests.
 5. **Visual system** — colors, border styles/widths per the cell-model glyph

@@ -45,7 +45,13 @@ describe("distributeInteger", () => {
 });
 
 describe("resolveFlexMainAxis", () => {
-  const item = (intrinsic: number, grow = 0, shrink = 1) => ({ intrinsic, grow, shrink });
+  const item = (intrinsic: number, grow = 0, shrink = 1, min?: number, max?: number) => ({
+    intrinsic,
+    grow,
+    shrink,
+    min,
+    max,
+  });
 
   it("returns intrinsics when total exactly fits", () => {
     expect(resolveFlexMainAxis([item(10), item(15)], 25)).toEqual([10, 15]);
@@ -86,5 +92,45 @@ describe("resolveFlexMainAxis", () => {
     const result = resolveFlexMainAxis([item(5, 0, 1), item(5, 0, 1)], 0);
     expect(result.every((w) => w >= 0)).toBe(true);
     expect(result.reduce((s, w) => s + w, 0)).toBeLessThanOrEqual(5);
+  });
+
+  // §9.7 freeze loop: violators freeze at their clamp and the remainder
+  // redistributes among the rest.
+  it("shrink: a min-violating item freezes and siblings absorb the rest", () => {
+    // 20+20 into 24; equal shrink would give 12+12, min 16 freezes the
+    // first → second re-shrinks to 8.
+    expect(resolveFlexMainAxis([item(20, 0, 1, 16), item(20, 0, 1)], 24)).toEqual([16, 8]);
+  });
+
+  it("grow: a max-violating item freezes and siblings absorb the rest", () => {
+    // 1+1 into 30; equal grow would give 15+15, max 5 caps the first →
+    // second takes 25.
+    expect(resolveFlexMainAxis([item(1, 1, 1, undefined, 5), item(1, 1, 1)], 30)).toEqual([5, 25]);
+  });
+
+  it("grow: a base below its min stays flexible and distribution is unaffected", () => {
+    // Regression: bases must NOT be pre-clamped up to min — flex-1 (base
+    // 0) items with content minimums would otherwise end up unequal.
+    expect(resolveFlexMainAxis([item(0, 1, 1, 9), item(0, 1, 1, 4)], 30)).toEqual([15, 15]);
+  });
+
+  it("grow: the min still applies when the grown size falls short of it", () => {
+    // Bases 0, available 10 → 5+5, but min 8 on the first violates → it
+    // freezes at 8 and the second gets base + remaining 2.
+    expect(resolveFlexMainAxis([item(0, 1, 1, 8), item(0, 1, 1)], 10)).toEqual([8, 2]);
+  });
+
+  it("inflexible items freeze at their clamped (hypothetical) size", () => {
+    // grow 0 with base 10 above max 6 → frozen at 6; flexible sibling
+    // takes the rest of 30.
+    expect(resolveFlexMainAxis([item(10, 0, 0, undefined, 6), item(1, 1, 1)], 30)).toEqual([6, 24]);
+  });
+
+  it("everything frozen by clamps may underfill or overflow the line", () => {
+    // Both capped below the equal-grow target: line underfills (justify
+    // sees the leftover), sizes stay at their maxes.
+    expect(
+      resolveFlexMainAxis([item(1, 1, 1, undefined, 4), item(1, 1, 1, undefined, 4)], 30),
+    ).toEqual([4, 4]);
   });
 });

@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@import "monowind";
+@import "../../../assets/fonts/jetbrains-mono.css";
+
+mono-wind {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-ligatures: none;
+}

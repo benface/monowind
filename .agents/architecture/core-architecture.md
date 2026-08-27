@@ -1,10 +1,10 @@
 # monowind — core architecture
 
-Status: draft, pre-implementation (last updated 2026-08-25)
+Status: living document — Milestones 1+2 implemented (last updated 2026-08-26)
 
 ## What monowind is
 
-A library for building TUI-style, character-cell interfaces on the web.
+A library for building text-based user interfaces (TUIs) on the web.
 Applications author ordinary HTML (plain or via any framework — React, Svelte,
 Solid, Vue…) styled with Tailwind utility classes, and a Web Component renders it as
 a strict character grid: box-drawing borders, integer-cell geometry, monospace
@@ -121,19 +121,35 @@ All three share one core. Concretely, the planned packages:
   companion stylesheet. Zero runtime dependencies. (The monorepo root
   package.json is named `monowind-monorepo` so the workspace never has two
   packages claiming the `monowind` name.)
-- **`@monowind/vite`** (`packages/vite`) — standalone mode: wraps
-  `@tailwindcss/vite` preconfigured. Not scaffolded until core works.
+- **`@monowind/vite`** (`packages/vite`) — standalone mode. _Implemented:_
+  one plugin call wires everything — it embeds `@tailwindcss/vite`,
+  generates the CSS entry (Tailwind + companion + optional user file) with
+  absolute-path imports into `node_modules/.monowind/entry.css` (so
+  resolution works although the user's project has no Tailwind dependency),
+  and injects a virtual module into index.html (order-`pre`, so builds
+  bundle it) that loads the CSS and registers `<mono-wind>`. The `css`
+  option pulls a user file into the Tailwind compilation, so `@theme`
+  customization works exactly as in native mode — "standalone" means zero
+  _required_ Tailwind config, not zero customizability. (CDN mode gets the
+  same via `<style type="text/tailwindcss">`, which `@tailwindcss/browser`
+  supports.) Exercised by `apps/example-vite`.
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
-  via unpkg/jsdelivr. No separate versioning surface.
-- **`apps/playground`** — Vite demo app for development; doubles as the
-  browser-test fixture host. Docs site much later.
+  via unpkg/jsdelivr. No separate versioning surface. _Implemented:_
+  `dist/cdn.js` (~78 KB gzip), built by `vite.cdn.config.ts` from
+  `src/cdn.ts`, exercised by `apps/example-html`.
+- **`apps/`** — `storybook` (the showcase + dev environment; every story is
+  also a browser test and a visual-regression fixture), `example-html` (CDN
+  mode), `example-tailwind` (native mode, custom `@theme`), `example-vite`
+  (standalone mode via `@monowind/vite`), `example-react` (React 19 owning
+  the light DOM — its smoke test proves state → re-render → relayout), with
+  a docs/landing site (`website`, → monowind.benface.com) to come.
 - Per-framework packages: only if/when a component layer (`<mono-textarea>`,
   `<mono-scroll>`, …) happens.
 
 **Workspace vs. publish resolution.** Each publishable package exposes its own
 source via `exports` (`"default": "./src/index.ts"`) so workspace consumers
-(the playground, other packages, anything using a modern bundler with
+(the example apps, other packages, anything using a modern bundler with
 TypeScript) resolve straight to `.ts` files — no build step, HMR just works,
 no dep-optimizer staleness. At publish time, `publishConfig.exports` swaps in
 built JS + declaration files under `dist/`. Both npm and pnpm respect

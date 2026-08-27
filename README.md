@@ -1,6 +1,6 @@
 # monowind
 
-Build TUI-style, character-cell interfaces on the web from ordinary HTML and
+Build text-based user interfaces (TUIs) on the web from ordinary HTML and
 Tailwind utility classes — plain or with any framework (React, Svelte, Solid,
 Vue, …).
 
@@ -26,20 +26,57 @@ forms, and accessibility semantics stay fully intact.
 └──────────────────────────────────────────────────────┘
 ```
 
-> **Status: early design.** Nothing is implemented yet. The current thinking
-> lives in [.agents/architecture](.agents/architecture) and
-> [.agents/plans](.agents/plans).
+> **Status: early development.** Block and flex layout, borders, text wrap,
+> and margins work; grid, native-interaction polish, and the visual system
+> are in progress. Design docs live in
+> [.agents/architecture](.agents/architecture),
+> [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
 ## Structure
 
 This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):
 
-- `apps/` — applications (demos, docs site, …)
+- `apps/` — applications (Storybook, example apps, docs site, …)
 - `packages/` — the library packages (core engine, build integrations)
 - `.agents/` — working documents for AI agents (specs, plans, architecture)
+
+## Showcase & docs
+
+- [Storybook](https://storybook.monowind.benface.com) — live examples of every
+  supported feature, deployed from `apps/storybook`.
 
 ## Development
 
 ```sh
 pnpm install
+
+# Storybook (the main showcase / dev environment), port 6006
+pnpm dev
+
+# lint + format check + typecheck + tests
+pnpm check
+
+# same, but auto-fixes lint/format issues
+pnpm check:fix
+
+# tests only (unit + golden + story tests + example smoke tests)
+pnpm test
+
+# visual regression tests (screenshots via Docker, one per story)
+pnpm test:visual
+
+# regenerate the screenshot baselines
+pnpm test:visual:update
+
+# build all packages
+pnpm build
+
+# interactively update dependencies across the workspace
+pnpm check-updates
+
+# Example apps (each demonstrates one way to consume monowind):
+pnpm --filter @monowind/example-html dev       # CDN mode: one script tag
+pnpm --filter @monowind/example-tailwind dev   # your own Tailwind v4 build
+pnpm --filter @monowind/example-vite dev       # standalone: @monowind/vite, zero Tailwind setup
+pnpm --filter @monowind/example-react dev      # React 19 + @monowind/vite
 ```
