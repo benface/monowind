@@ -8,3 +8,6 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .DS_Store
+
+# Local Netlify folder
+.netlify
