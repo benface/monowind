@@ -127,12 +127,12 @@ export class MonoWindElement extends HTMLElementBase {
 
   #performLayout(): void {
     // The write phase is bracketed by (a) incrementing #suppressMutations
-    // and (b) setting the `measuring` attribute. Anything the engine writes
-    // to the light DOM during this phase — geometry vars, data-mw-*
-    // attributes, decoration DOM — is either filtered by the counter or
-    // drained via takeRecords() at the end. The counter can slightly
-    // over-filter (a third-party script mutating in the same task would
-    // also be swallowed); that's an accepted trade-off for MVP.
+    // and (b) setting the `measuring` attribute. Everything the engine
+    // writes to the light DOM during this phase — geometry vars, data-mw-*
+    // attributes, decoration DOM — happens synchronously, so a synchronous
+    // takeRecords() at the end drains exactly our own records. Observation
+    // resumes the moment #performLayout returns: a user mutation in the
+    // same task (right after a layout) is seen normally.
     this.#suppressMutations++;
     this.setAttribute("measuring", "");
     try {
@@ -204,13 +204,12 @@ export class MonoWindElement extends HTMLElementBase {
       this.setAttribute("data-mw-ready", "");
     } finally {
       this.removeAttribute("measuring");
-      // Flush pending mutation records that our own writes caused before
-      // re-enabling observation. Microtask ordering isn't strictly
-      // guaranteed here (see note at top of #performLayout).
-      queueMicrotask(() => {
-        this.#mutationObserver?.takeRecords();
-        this.#suppressMutations--;
-      });
+      // Drain the records our own writes queued (takeRecords is
+      // synchronous) and resume observation. Deferring this to a microtask
+      // would open a window where a USER mutation gets swallowed as
+      // engine-owned and never triggers a relayout.
+      this.#mutationObserver?.takeRecords();
+      this.#suppressMutations--;
     }
   }
 }
