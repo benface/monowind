@@ -55,12 +55,6 @@ export class MonoWindElement extends HTMLElementBase {
     this.#mutationObserver = new MutationObserver((records) => {
       if (this.#suppressMutations > 0) return;
       if (records.every(this.#isOwnedMutation)) return;
-      // A class or style change on the host itself can shift font metrics
-      // (font-size, font-family, letter-spacing). Invalidate the cache so
-      // the next layout re-measures.
-      if (records.some((r) => r.target === this && r.type === "attributes")) {
-        this.#cellMetrics = null;
-      }
       this.#scheduleLayout();
     });
     this.#mutationObserver.observe(this, {
@@ -93,22 +87,15 @@ export class MonoWindElement extends HTMLElementBase {
     this.#resizeObserver = null;
     this.#mutationObserver = null;
     document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
-    // Invalidate metrics — if the element is re-connected somewhere else,
-    // the surrounding font/size may differ.
-    this.#cellMetrics = null;
   }
 
   #onFontsLoaded = (): void => {
-    // Defer the re-measure by a frame: rAF callbacks run BEFORE the style
-    // recalc that applies a freshly loaded font, so invalidating and
-    // measuring straight away can capture the PRE-swap (fallback) metrics
-    // when the load event and the swap land in the same frame (seen
-    // consistently on slow CI runners). One frame later the swap has
-    // rendered; #scheduleLayout adds its own rAF after that.
-    requestAnimationFrame(() => {
-      this.#cellMetrics = null; // font may have changed dimensions
-      this.#scheduleLayout();
-    });
+    // Defer a frame: rAF callbacks run BEFORE the style recalc that
+    // applies a freshly loaded font, so an immediate layout could measure
+    // the PRE-swap fallback metrics when the event and the swap land in
+    // the same frame (seen consistently on slow CI runners). One frame
+    // later the swap has rendered; #scheduleLayout adds its own rAF.
+    requestAnimationFrame(() => this.#scheduleLayout());
   };
 
   #isOwnedMutation = (record: MutationRecord): boolean => {
@@ -151,15 +138,25 @@ export class MonoWindElement extends HTMLElementBase {
     this.#suppressMutations++;
     this.setAttribute("measuring", "");
     try {
-      // (1) Cell metrics — cached; invalidated on disconnect, on font
-      // loads, and on class/style changes to the host itself.
-      if (!this.#cellMetrics) {
-        this.#cellMetrics = measureCellMetrics(this, this.#probe);
-        this.style.setProperty("--mw-cw", `${this.#cellMetrics.width}px`);
-        this.style.setProperty("--mw-ch", `${this.#cellMetrics.height}px`);
-        this.style.setProperty("--mw-rls", `${this.#cellMetrics.letterSpacing}px`);
+      // (1) Cell metrics — measured EVERY layout from the persistent
+      // probe (one getBoundingClientRect on a hidden node; layout is
+      // already being forced). No cache to go stale: fonts settling out of
+      // order with our rAFs once left a fallback-font measurement cached
+      // with nothing to invalidate it. The vars are only rewritten when
+      // the values change.
+      const metrics = measureCellMetrics(this, this.#probe);
+      const previous = this.#cellMetrics;
+      if (
+        previous === null ||
+        previous.width !== metrics.width ||
+        previous.height !== metrics.height ||
+        previous.letterSpacing !== metrics.letterSpacing
+      ) {
+        this.style.setProperty("--mw-cw", `${metrics.width}px`);
+        this.style.setProperty("--mw-ch", `${metrics.height}px`);
+        this.style.setProperty("--mw-rls", `${metrics.letterSpacing}px`);
       }
-      const metrics = this.#cellMetrics;
+      this.#cellMetrics = metrics;
 
       // (2) Available cells from the host's CONTENT box — authored padding
       // on the host stays outside the grid (the shadow #viewport, which
