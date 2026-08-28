@@ -172,20 +172,35 @@ export const SubpixelHeadroom: StoryObj = {
     // The fixture font loads lazily and the host re-measures its cell once
     // fonts settle — poll until that layout has landed (a fixed frame count
     // races the re-measure on slow runners).
-    await document.fonts.load("14px 'DejaVu Sans Mono Subset'");
+    const faces = await document.fonts.load("14px 'DejaVu Sans Mono Subset'");
     // ±0.005px tolerance: it must exclude fallback monospace fonts whose
     // advance is CLOSE to DejaVu's (macOS Monaco is 8.401px vs 8.429px at
     // 14px) — a looser match can capture the fallback's cell width and
     // desync the whole sweep.
-    await waitFor(
-      () => {
-        expect(parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"))).toBeCloseTo(
-          (1233 / 2048) * 14,
-          2,
-        );
-      },
-      { timeout: 10_000 },
-    );
+    try {
+      await waitFor(
+        () => {
+          expect(parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"))).toBeCloseTo(
+            (1233 / 2048) * 14,
+            2,
+          );
+        },
+        { timeout: 10_000 },
+      );
+    } catch (error) {
+      // Fail-only diagnostics: fonts.load RESOLVES even when the face fails
+      // to load — report what actually happened to the fixture font.
+      throw new Error(
+        `fixture font never applied: ${JSON.stringify({
+          loadedFaces: faces.length,
+          check: document.fonts.check("14px 'DejaVu Sans Mono Subset'"),
+          fontsStatus: document.fonts.status,
+          fontsSize: document.fonts.size,
+          mwCw: getComputedStyle(host).getPropertyValue("--mw-cw"),
+        })}`,
+        { cause: error },
+      );
+    }
     await expectBrowserRowsToMatchEngine(canvasElement);
     const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
     const first = host.firstElementChild as HTMLElement;
