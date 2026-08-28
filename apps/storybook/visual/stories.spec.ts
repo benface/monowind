@@ -3,18 +3,23 @@ import { expect, test } from "@playwright/test";
 
 /**
  * One screenshot test per story, discovered from the built Storybook's
- * index.json — new stories are covered automatically.
+ * index.json — new stories are covered automatically. Test-only stories
+ * (`tags: ["!dev"]`, hidden from the sidebar) are skipped like Storybook
+ * itself skips them.
  */
 interface IndexEntry {
   type: string;
   id: string;
+  tags: string[];
 }
 
 const index = JSON.parse(
   readFileSync(new URL("../storybook-static/index.json", import.meta.url), "utf8"),
 ) as { entries: Record<string, IndexEntry> };
 
-const stories = Object.values(index.entries).filter((entry) => entry.type === "story");
+const stories = Object.values(index.entries).filter(
+  (entry) => entry.type === "story" && entry.tags.includes("dev"),
+);
 
 for (const story of stories) {
   test(story.id, async ({ page }) => {

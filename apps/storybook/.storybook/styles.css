@@ -1,6 +1,36 @@
 @import "tailwindcss";
 @import "monowind";
 @import "../../../assets/fonts/jetbrains-mono.css";
+@import "../../../assets/fonts/dejavu-sans-mono.css";
+
+/* Tie `dark:` to the toolbar's background toggle, not the OS preference —
+ * see the decorator in preview.ts (adds `.dark` to <html>). This overrides
+ * Tailwind v4's default `prefers-color-scheme` variant. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic canvas tokens — the single place the preview theme's colors
+ * are defined; preview.ts and the canvas rules reference these. */
+@theme inline {
+  --color-bg-light: var(--color-neutral-50);
+  --color-bg-dark: var(--color-neutral-900);
+  --color-fg-light: var(--color-neutral-900);
+  --color-fg-dark: var(--color-neutral-50);
+}
+
+/* Own the canvas colors, keyed off `.dark`. The backgrounds addon paints
+ * the same colors, but only after Storybook re-renders the story (~100ms
+ * behind the toolbar) and with a hardcoded 0.3s fade; these rules out-rank
+ * its injected `.sb-show-main` rule (via `body.`) so the switch is
+ * instant, in step with the theme applied in preview.ts. */
+body.sb-show-main,
+.docs-story {
+  background: var(--color-bg-light) !important;
+  transition: none !important;
+}
+html.dark body.sb-show-main,
+html.dark .docs-story {
+  background: var(--color-bg-dark) !important;
+}
 
 mono-wind {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

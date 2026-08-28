@@ -141,6 +141,39 @@ describe("renderAscii golden outputs", () => {
     expect(colorAt("└")).toEqual(["magenta"]);
   });
 
+  it("renders an absolute badge overlapping its relative container's corner", () => {
+    const badge = makeNode({
+      text: "★",
+      style: {
+        position: "absolute",
+        insets: { top: -1, right: -1, bottom: null, left: null },
+      },
+    });
+    const box = makeNode({
+      style: {
+        position: "relative",
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        padding: { top: 0, right: 1, bottom: 0, left: 1 },
+      },
+      text: "",
+      children: [makeNode({ text: "hi" }), badge],
+    });
+    const root = makeNode({ children: [box] });
+
+    // Badge hangs one cell outside the top-right corner; the root grid clips
+    // the part that exceeds it — here it lands exactly on the corner cell.
+    expect(ascii(root, 8)).toBe(["┌──────★", "│ hi   │", "└──────┘"].join("\n"));
+  });
+
+  it("renders tracked text with gap cells and leading with gap rows", () => {
+    const leaf = makeNode({ text: "ab cd", intrinsicWidth: 9, style: { lineGap: 1 } });
+    leaf.advances = [2, 2, 1, 2, 2];
+    const box = makeNode({ style: { maxWidth: 6 }, children: [leaf] });
+    const root = makeNode({ children: [box] });
+
+    expect(ascii(root, 6)).toBe(["a b", "", "c d"].join("\n"));
+  });
+
   it("renders a flex column with gap", () => {
     const container = makeNode({
       style: { display: "flex", flexDirection: "column", gapY: 1 },
@@ -178,6 +211,10 @@ describe("wrapLines", () => {
     expect(wrapLines("2026-08", 6)).toEqual(["2026-0", "8"]);
     // Consecutive hyphens break as one run.
     expect(wrapLines("well--known", 6)).toEqual(["well--", "known"]);
+  });
+
+  it("renders an NBSP-only text as one line (trim() would wrongly eat it)", () => {
+    expect(wrapLines("\u00a0\u00a0", 10)).toEqual(["\u00a0\u00a0"]);
   });
 
   it("treats NBSP as a non-breaking, non-collapsible character", () => {

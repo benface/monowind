@@ -1,5 +1,16 @@
 {
   "sortTailwindcss": {
     "stylesheet": "./apps/example-tailwind/src/styles.css"
-  }
+  },
+  "ignorePatterns": [".claude/"],
+  "overrides": [
+    {
+      "files": ["apps/storybook/**"],
+      "options": {
+        "sortTailwindcss": {
+          "stylesheet": "./apps/storybook/.storybook/styles.css"
+        }
+      }
+    }
+  ]
 }

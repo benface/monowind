@@ -17,8 +17,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Chromium for the Vitest-browser story tests and the example smoke tests.
-      - run: pnpm exec playwright install --with-deps chromium
+      # Story tests run a full engine matrix (Chromium + Firefox + WebKit —
+      # Firefox pre-157 exercises the class-scan fallback instead of Typed
+      # OM); the example smoke tests use Chromium.
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm check
 
   visual:

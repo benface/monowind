@@ -14,7 +14,12 @@ export default defineConfig({
       enabled: true,
       provider: playwright(),
       headless: true,
-      instances: [{ browser: "chromium" }],
+      // Full engine matrix: Chromium + WebKit exercise the Typed OM path,
+      // and (until Firefox's stable channel ships Typed OM, ~157) Firefox
+      // exercises the class-scan fallback against a real engine. The
+      // fallback also has deterministic headless coverage in
+      // packages/core/test/style.test.ts (happy-dom has no Typed OM).
+      instances: [{ browser: "chromium" }, { browser: "firefox" }, { browser: "webkit" }],
     },
   },
 });

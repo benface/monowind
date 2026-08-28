@@ -77,19 +77,10 @@ specs: deterministic, document order.)
 
 ## Positioning and insets
 
-**Status: specified, NOT yet implemented** — scheduled for Milestone 3
-(see the plan); the engine currently ignores `position` and inset
-properties.
-
-- `position: relative` + insets (`top-1`, `-left-2`, `inset-*`) will be
-  supported: a post-layout visual offset in cells that does not affect
-  siblings, per CSS.
-- For elements the engine lays out, the offset is applied through the engine's
-  own geometry. For browser-rendered inline content, raw CSS values (e.g.
-  `top: 0.25rem` = 4px ≠ 1 row) would land off-grid — the engine rewrites the
-  offset via owned custom properties so it resolves to whole cells.
-- `absolute`, `fixed`, `sticky`: deferred (absolute-in-grid is attractive for
-  overlays later; not MVP).
+Normative spec: `positioning.md` (static/relative/absolute per CSS,
+fixed → host-anchored absolute, sticky → relative until scrolling, insets
+on the spacing scale, CSS containing blocks and static positions, inline
+relative rescaling).
 
 ## Overflow
 
@@ -102,23 +93,75 @@ the scrolling milestone.
 ## Typography
 
 - `font-family`, `font-size`, `line-height` (default **1**), and
-  `letter-spacing` are configurable **on the `<mono-wind>` root only**. They
-  define the cell metrics (letter-spacing participates in measured cell width).
-- On inner elements these properties are **locked** (neutralized by the
-  companion stylesheet); font-size/typography utilities on descendants have no
-  effect. Multi-size text is out of scope for the foreseeable future.
+  `letter-spacing` (default **0**) on the **`<mono-wind>` root** define the
+  cell metrics: cell width = one glyph advance **plus the root's
+  letter-spacing**, cell height = the root's line box. Root leading and
+  tracking therefore size the grid itself, decorations included (box-drawing
+  glyphs don't stretch, so a cell taller or wider than the glyph shows gaps
+  in borders). On inner elements `font-family`/`font-size` are **locked**
+  (neutralized by the companion stylesheet); multi-size text is out of
+  scope for the foreseeable future.
+- **Line height on the grid** (`leading-*`, any element the engine lays
+  out): `rows per line = max(1, floor(line-height ÷ cell height))`, and
+  `line gap = rows − 1` empty rows are inserted **between** wrapped lines
+  only — a single line is unaffected, and N lines occupy
+  `N + (N − 1) × gap` rows. Unitless values are ratios of the font size
+  (`leading-loose` = 2 → 1 empty row between lines); length values
+  (`leading-6` = 24px) go through the same floor, so they scale with the
+  root font size like CSS. Preflight's default 1.5 floors to 1 row.
+  `leading-*` on inline elements is ignored (**deviation**). Rendering: the
+  browser paints wrapped lines with `line-height = rows × cell`, and the
+  engine cancels CSS's half-leading (the (rows − 1)/2-row offset CSS puts
+  above the first line) with an engine-owned shift so every glyph stays on
+  its row.
+- **Letter spacing on the grid** (`tracking-*`, every element including
+  inline ones): `extra = max(0, floor(excess ÷ 0.025em))` where `excess` is
+  the element's letter-spacing minus the root's (0.025em is Tailwind's
+  `tracking-wide` step; the root's value is inherited and already part of
+  the cell, so only the excess counts — symmetric with leading), and each
+  character advances `1 + extra` cells — `tracking-wide` renders "hello" as
+  `h e l l o`, `tracking-wider` as `h  e  l  l  o`. (Trailing gaps: see the
+  subsection below.)
+  Tracking gaps are not line-break opportunities; wrapping, min-content,
+  and truncation use per-character advances. Negative tracking clamps to 0
+  (a grid can't squeeze). Rendering: the engine rewrites `letter-spacing`
+  to exactly `root letter-spacing + extra × cell width`.
 - Paint-only typography (weight, style, decoration, color) passes through.
   Note: bold/italic can render wider in some monospace fonts — listed under
   font risks, mitigated by font recommendations.
 - Inline content must not disturb row height: `vertical-align` and any other
   baseline-shifting properties are neutralized on inline descendants.
 
+### Tracking: trailing gaps
+
+Browsers add letter-spacing after an element's LAST character too, and
+require that trailing gap to fit when they break lines. The engine keeps it as well, for exact and
+identical behavior in every engine, with one refinement for a laid-out
+box's **own** tracking: the gap after a line's last character doesn't
+count toward the line's width — the box gives the browser that room by
+carving a trailing-gap allowance out of its engine-owned right
+padding/border cells (only when those are fewer than the gap does the
+element box widen — invisibly; the decorated border stays put). A
+tracked **inline element** therefore shows its trailing gap before the
+following text (`w i d e  end`), exactly as browsers render it natively.
+Cancelling that gap (a negative end margin) was tried and rejected:
+browsers then disagree on where such lines break, in content-dependent
+ways that resist modeling, so no single wrap model could be exact
+everywhere. Laid-out boxes also carry one layout unit (1/32px) of
+headroom in their width: engines store lengths by flooring to 1/64px
+(Chromium, WebKit) or 1/60px (Firefox), so `n × cell` can land one unit
+below the exact advance of a line that fits exactly, and the browser
+would wrap it. (Observed with Menlo/DejaVu Sans Mono metrics, not with
+JetBrains Mono's 0.6em advance — the `SubpixelHeadroom` story test
+guards it with a self-hosted DejaVu subset.)
+
 ## Inline content
 
 Elements whose computed `display` is `inline`/`inline-*`/`contents` are **not
 layout nodes**: they belong to their parent's text run and are rendered by
 the browser in place. Layout-affecting utilities on inline elements are
-ignored (except rescaled relative-position insets, above).
+ignored (except relative insets, rescaled to cells — see
+`positioning.md`).
 
 An element whose direct children are ALL inline (or which has no element
 children) is treated as a **leaf**, with its combined text content as the
@@ -208,8 +251,10 @@ with `justify-center` — that centers at the cell level.
 - **fit-content**: CSS shrink-to-fit — `min(max-content, max(min-content,
 available))`.
 
-All are outer (border-box) widths. On `height` these keywords behave as
-`auto` (content height is already intrinsic). Detection uses Typed OM;
+All are outer (border-box) widths, valid both as `width` and as min/max
+limits (`max-w-max`, `min-w-max`, `max-w-fit`, …). On `height` (and height
+limits) these keywords behave as `auto` / no constraint (content height is
+already intrinsic). Detection uses Typed OM;
 the Firefox pre-157 fallback scans the class list for `w-min`/`w-max`/
 `w-fit` (getComputedStyle would return the browser's used px width, which
 is not on the spacing scale).
@@ -251,8 +296,9 @@ visible cell when `text-overflow: ellipsis` is set.
 1. No parent–child / empty-box margin collapsing (sibling collapsing works
    per CSS: `max` for two positives, `min` for two negatives, sum for mixed).
 2. All lengths round to whole cells (rule above).
-3. Typography is root-only; descendant typography that affects metrics is
-   neutralized.
+3. Font family/size are root-only; descendant `leading-*`/`tracking-*` are
+   re-quantized to whole rows/cells rather than applied as authored, and
+   `leading-*` on inline elements is ignored.
 4. Border-width uses the 1px = 1 cell scale, not the spacing scale.
 5. Inline elements ignore layout-affecting properties (borders, sizing).
 6. `text-align: center | justify` on descendants is forced to `start`.

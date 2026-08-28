@@ -1,136 +1,354 @@
 import { describe, expect, it } from "vitest";
-import { distributeInteger, resolveFlexMainAxis } from "../src/layout.ts";
+import { layoutRoot } from "../src/layout.ts";
+import { makeNode } from "./helpers.ts";
 
-describe("distributeInteger", () => {
-  it("returns zeros when total is 0 or negative", () => {
-    expect(distributeInteger([1, 1, 1], 0)).toEqual([0, 0, 0]);
-    expect(distributeInteger([1, 1, 1], -5)).toEqual([0, 0, 0]);
+/**
+ * Tests for the layoutRoot pipeline: pure-math, no DOM — each builds a
+ * hand-crafted LayoutNode tree and asserts on the resulting `localRect`
+ * coordinates. Flex resolver units live in flex.test.ts, positioning in
+ * positioning.test.ts.
+ */
+
+describe("margin collapsing in block flow", () => {
+  it("collapses adjacent positive sibling margins to their max", () => {
+    const a = makeNode({ text: "a", style: { margin: { top: 0, right: 0, bottom: 4, left: 0 } } });
+    const b = makeNode({ text: "b", style: { margin: { top: 2, right: 0, bottom: 0, left: 0 } } });
+    const container = makeNode({ children: [a, b] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    // a at y=0, height 1 → a bottom at y=1. Collapsed gap = max(4, 2) = 4.
+    // → b at y = 1 + 4 = 5.
+    expect(a.localRect.y).toBe(0);
+    expect(b.localRect.y).toBe(5);
   });
 
-  it("returns zeros when all weights are 0", () => {
-    expect(distributeInteger([0, 0, 0], 10)).toEqual([0, 0, 0]);
+  it("collapses adjacent negative sibling margins to the more negative", () => {
+    const a = makeNode({
+      text: "a",
+      style: { margin: { top: 0, right: 0, bottom: -3, left: 0 } },
+    });
+    const b = makeNode({
+      text: "b",
+      style: { margin: { top: -1, right: 0, bottom: 0, left: 0 } },
+    });
+    const container = makeNode({ children: [a, b] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    // a at y=0, height 1. b at y = 1 + min(-3, -1) = 1 + -3 = -2.
+    expect(b.localRect.y).toBe(-2);
   });
 
-  it("distributes equally when weights are equal", () => {
-    expect(distributeInteger([1, 1], 10)).toEqual([5, 5]);
-    expect(distributeInteger([1, 1, 1], 9)).toEqual([3, 3, 3]);
+  it("sums mixed-sign sibling margins", () => {
+    const a = makeNode({ text: "a", style: { margin: { top: 0, right: 0, bottom: 5, left: 0 } } });
+    const b = makeNode({
+      text: "b",
+      style: { margin: { top: -2, right: 0, bottom: 0, left: 0 } },
+    });
+    const container = makeNode({ children: [a, b] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    // a at y=0, height 1. b at y = 1 + (5 + -2) = 4.
+    expect(b.localRect.y).toBe(4);
   });
 
-  it("distributes remainder deterministically by largest fractional part", () => {
-    // 10 / 3 = 3.33 each → floored [3, 3, 3], deficit 1
-    // Fractional parts equal, so tie-break by document order → index 0 gets +1
-    expect(distributeInteger([1, 1, 1], 10)).toEqual([4, 3, 3]);
-  });
-
-  it("distributes proportionally to weights", () => {
-    // Weights [1, 3], total 8 → raw [2, 6] → [2, 6]
-    expect(distributeInteger([1, 3], 8)).toEqual([2, 6]);
-    // Weights [1, 2], total 10 → raw [3.33, 6.67] → floored [3, 6], deficit 1
-    // Fractional: [0.33, 0.67] → index 1 wins → [3, 7]
-    expect(distributeInteger([1, 2], 10)).toEqual([3, 7]);
-  });
-
-  it("gives leading fractional parts priority on ties", () => {
-    // Weights [2, 2, 2], total 7 → raw [2.33, 2.33, 2.33] → [2, 2, 2] +1 to index 0
-    expect(distributeInteger([2, 2, 2], 7)).toEqual([3, 2, 2]);
-  });
-
-  it("sums to total exactly", () => {
-    for (const total of [1, 7, 13, 100, 1000]) {
-      const weights = [1, 2, 3, 5, 8];
-      const result = distributeInteger(weights, total);
-      expect(result.reduce((s, v) => s + v, 0)).toBe(total);
-    }
+  it("does not collapse the container's leading/trailing gaps (no parent-child collapse)", () => {
+    const child = makeNode({
+      text: "x",
+      style: { margin: { top: 3, right: 0, bottom: 4, left: 0 } },
+    });
+    const container = makeNode({ children: [child] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    // container height = child.marginTop (3) + child.height (1) + child.marginBottom (4) = 8.
+    expect(container.localRect.height).toBe(8);
+    expect(child.localRect.y).toBe(3);
   });
 });
 
-describe("resolveFlexMainAxis", () => {
-  const item = (intrinsic: number, grow = 0, shrink = 1, min?: number, max?: number) => ({
-    intrinsic,
-    grow,
-    shrink,
-    min,
-    max,
+describe("min-width / max-width / min-height / max-height clamping", () => {
+  it("clamps a fill-mode container down to max-width", () => {
+    const container = makeNode({
+      style: { maxWidth: 10 },
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 30);
+    expect(container.localRect.width).toBe(10);
   });
 
-  it("returns intrinsics when total exactly fits", () => {
-    expect(resolveFlexMainAxis([item(10), item(15)], 25)).toEqual([10, 15]);
+  it("clamps intrinsic content down to max-width when smaller", () => {
+    const child = makeNode({ text: "hello world hello world" });
+    const container = makeNode({
+      style: { maxWidth: 8 },
+      children: [child],
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // Container capped at max-width 8; the child must be laid out AGAINST
+    // the clamped width (not the raw 40), so its text wraps to 4 lines.
+    expect(container.localRect.width).toBe(8);
+    expect(child.localRect.width).toBe(8);
+    expect(child.localRect.height).toBe(4);
   });
 
-  it("grows items proportionally to flex-grow", () => {
-    // Total intrinsic 20, available 30, extra 10 distributed to grow=1 items
-    expect(resolveFlexMainAxis([item(10, 1), item(10, 1)], 30)).toEqual([15, 15]);
-    // Only one item grows; leftover all to it
-    expect(resolveFlexMainAxis([item(10, 0), item(10, 1)], 30)).toEqual([10, 20]);
-    // Grow weights [1, 3] on extra 8 → [2, 6]
-    expect(resolveFlexMainAxis([item(10, 1), item(10, 3)], 28)).toEqual([12, 16]);
+  it("respects min-width even if intrinsic content is smaller", () => {
+    const child = makeNode({ text: "hi" });
+    const container = makeNode({
+      style: { minWidth: 12, width: { kind: "cells", value: 4 } },
+      children: [child],
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // Explicit width 4, but min-width 12 wins.
+    expect(container.localRect.width).toBe(12);
   });
 
-  it("keeps intrinsic if extra space but no grow", () => {
-    expect(resolveFlexMainAxis([item(10), item(10)], 50)).toEqual([10, 10]);
+  it("clamps content-driven height down to max-height", () => {
+    const child = makeNode({ text: "a\nb\nc\nd\ne" }); // 5 lines
+    const container = makeNode({
+      style: { maxHeight: 3 },
+      children: [child],
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    // Natural height would be 5; capped at 3.
+    expect(container.localRect.height).toBe(3);
   });
 
-  it("shrinks items proportionally to intrinsic × shrink", () => {
-    // 10 + 20 = 30 intrinsic, available 24, shortfall 6
-    // Weights: 10*1=10, 20*1=20, total 30 → shares [2, 4]
-    expect(resolveFlexMainAxis([item(10, 0, 1), item(20, 0, 1)], 24)).toEqual([8, 16]);
+  it("white-space nowrap: text stays one row instead of wrapping at max-width", () => {
+    const leaf = makeNode({
+      text: "this text is much longer than the container",
+      style: { whiteSpace: "nowrap" },
+    });
+    const container = makeNode({ style: { maxWidth: 10 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // Normal wrapping would need 5+ rows at width 10; nowrap keeps 1.
+    expect(container.localRect.width).toBe(10);
+    expect(leaf.localRect.height).toBe(1);
   });
 
-  it("respects flex-shrink: 0 (item keeps intrinsic even on overflow)", () => {
-    // First item shrink=0 keeps 10; second absorbs shortfall
-    // Available 15, intrinsics [10, 10], shortfall 5. shrink-weights: [0, 10]
-    // → shares [0, 5] → widths [10, 5]
-    expect(resolveFlexMainAxis([item(10, 0, 0), item(10, 0, 1)], 15)).toEqual([10, 5]);
+  it("white-space nowrap: hard <br> breaks still count", () => {
+    const leaf = makeNode({
+      text: "line one that is long\nline two",
+      style: { whiteSpace: "nowrap" },
+    });
+    const container = makeNode({ style: { maxWidth: 10 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    expect(leaf.localRect.height).toBe(2);
   });
 
-  it("keeps intrinsics when all items are shrink: 0 (row overflows)", () => {
-    expect(resolveFlexMainAxis([item(10, 0, 0), item(20, 0, 0)], 15)).toEqual([10, 20]);
+  it("w-min: box narrows to the longest word and mx-auto centers it", () => {
+    const item = makeNode({
+      text: "w-min mx-auto",
+      intrinsicWidth: 13,
+      style: {
+        width: { kind: "min-content" },
+        margin: { top: 0, right: null, bottom: 0, left: null },
+        padding: { top: 0, right: 1, bottom: 0, left: 1 },
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+      },
+    });
+    const container = makeNode({ children: [item] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // Breakable segments: "w-", "min", "mx-", "auto" (hyphens are break
+    // opportunities, like the browser) → min-content = "auto" (4) + px (2)
+    // + border (2) = 8. Text wraps to 4 lines inside → height 4 + border 2.
+    // Centered: (40 - 8) / 2 = 16.
+    expect(item.localRect.width).toBe(8);
+    expect(item.localRect.height).toBe(6);
+    expect(item.localRect.x).toBe(16);
   });
 
-  it("clamps shrunk widths at 0", () => {
-    // Extreme shortfall — an item can't go below 0
-    const result = resolveFlexMainAxis([item(5, 0, 1), item(5, 0, 1)], 0);
-    expect(result.every((w) => w >= 0)).toBe(true);
-    expect(result.reduce((s, w) => s + w, 0)).toBeLessThanOrEqual(5);
+  it("w-fit: shrink-to-fit between min-content and available", () => {
+    const wide = makeNode({
+      text: "short text",
+      intrinsicWidth: 10,
+      style: { width: { kind: "fit-content" } },
+    });
+    const root = makeNode({ children: [wide] });
+    layoutRoot(root, 40);
+    // max-content 10 < available 40 → fit-content = 10.
+    expect(wide.localRect.width).toBe(10);
   });
 
-  // §9.7 freeze loop: violators freeze at their clamp and the remainder
-  // redistributes among the rest.
-  it("shrink: a min-violating item freezes and siblings absorb the rest", () => {
-    // 20+20 into 24; equal shrink would give 12+12, min 16 freezes the
-    // first → second re-shrinks to 8.
-    expect(resolveFlexMainAxis([item(20, 0, 1, 16), item(20, 0, 1)], 24)).toEqual([16, 8]);
+  it("w-max: box takes its unwrapped width even beyond the available space", () => {
+    const leaf = makeNode({
+      text: "this is a very long unwrapped line",
+      intrinsicWidth: 34,
+      style: { width: { kind: "max-content" } },
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 20);
+    expect(leaf.localRect.width).toBe(34);
   });
 
-  it("grow: a max-violating item freezes and siblings absorb the rest", () => {
-    // 1+1 into 30; equal grow would give 15+15, max 5 caps the first →
-    // second takes 25.
-    expect(resolveFlexMainAxis([item(1, 1, 1, undefined, 5), item(1, 1, 1)], 30)).toEqual([5, 25]);
+  it("max-w-full (percent limit) caps an intrinsic-keyword width to the container", () => {
+    const wide = makeNode({
+      text: "a very long unwrappable-ish line of text",
+      intrinsicWidth: 40,
+      style: { width: { kind: "max-content" }, maxWidth: { percent: 100 } },
+    });
+    const container = makeNode({ style: { maxWidth: 20 }, children: [wide] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 60);
+    // w-max wants 40, but max-width: 100% of the 20-wide container clamps it.
+    expect(wide.localRect.width).toBe(20);
   });
 
-  it("grow: a base below its min stays flexible and distribution is unaffected", () => {
-    // Regression: bases must NOT be pre-clamped up to min — flex-1 (base
-    // 0) items with content minimums would otherwise end up unequal.
-    expect(resolveFlexMainAxis([item(0, 1, 1, 9), item(0, 1, 1, 4)], 30)).toEqual([15, 15]);
+  it("min > max: max wins as the ceiling, then min pushes back up", () => {
+    // CSS clamps `max(min, min(max, value))` — if min > max, min wins.
+    const container = makeNode({
+      style: { minWidth: 15, maxWidth: 10 },
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 30);
+    // value=30 → min(10, 30)=10 → max(15, 10)=15.
+    expect(container.localRect.width).toBe(15);
+  });
+});
+
+describe("percent spacing", () => {
+  it("percent padding resolves against the containing block width", () => {
+    const box = makeNode({
+      text: "hi",
+      style: { padding: { top: 0, right: { percent: 10 }, bottom: 0, left: { percent: 10 } } },
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 40);
+    // 10% of 40 = 4 cells per side; fill-width box, content inset by 4.
+    expect(box.resolvedPadding.left).toBe(4);
+    expect(box.resolvedPadding.right).toBe(4);
   });
 
-  it("grow: the min still applies when the grown size falls short of it", () => {
-    // Bases 0, available 10 → 5+5, but min 8 on the first violates → it
-    // freezes at 8 and the second gets base + remaining 2.
-    expect(resolveFlexMainAxis([item(0, 1, 1, 8), item(0, 1, 1)], 10)).toEqual([8, 2]);
+  it("percent margin resolves against the parent content width", () => {
+    const child = makeNode({
+      text: "hi",
+      style: { margin: { top: 0, right: 0, bottom: 0, left: { percent: 25 } } },
+    });
+    const container = makeNode({ children: [child] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // 25% of 40 = 10 cells of left margin.
+    expect(child.localRect.x).toBe(10);
   });
 
-  it("inflexible items freeze at their clamped (hypothetical) size", () => {
-    // grow 0 with base 10 above max 6 → frozen at 6; flexible sibling
-    // takes the rest of 30.
-    expect(resolveFlexMainAxis([item(10, 0, 0, undefined, 6), item(1, 1, 1)], 30)).toEqual([6, 24]);
+  it("percent column-gap resolves against the container's content width", () => {
+    const items = ["aa", "bb"].map((text) => makeNode({ text }));
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "row", gapX: { percent: 10 } },
+      children: items,
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // gap = 10% of 40 = 4: second item at 2 + 4 = 6.
+    expect(items[1]!.localRect.x).toBe(6);
+  });
+});
+
+describe("overflow", () => {
+  it("carries overflow: clip through to CellStyle so the CSS override applies", () => {
+    const container = makeNode({ style: { overflow: "clip" } });
+    expect(container.style.overflow).toBe("clip");
+  });
+});
+
+describe("percent sizes", () => {
+  it("percent height resolves against the parent's definite content height", () => {
+    const half = makeNode({ text: "x", style: { height: { kind: "percent", value: 50 } } });
+    const container = makeNode({
+      style: { height: { kind: "cells", value: 10 } },
+      children: [half],
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    expect(half.localRect.height).toBe(5);
   });
 
-  it("everything frozen by clamps may underfill or overflow the line", () => {
-    // Both capped below the equal-grow target: line underfills (justify
-    // sees the leftover), sizes stay at their maxes.
-    expect(
-      resolveFlexMainAxis([item(1, 1, 1, undefined, 4), item(1, 1, 1, undefined, 4)], 30),
-    ).toEqual([4, 4]);
+  it("percent height with an indefinite parent behaves as auto", () => {
+    const half = makeNode({ text: "x", style: { height: { kind: "percent", value: 50 } } });
+    const container = makeNode({ children: [half] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 20);
+    expect(half.localRect.height).toBe(1);
+  });
+});
+
+describe("absolute children and intrinsic sizing", () => {
+  it("an absolute child doesn't widen its shrink-to-fit parent", () => {
+    const wide = makeNode({
+      text: "very very wide absolute content",
+      style: { position: "absolute", insets: { top: 0, right: null, bottom: null, left: 0 } },
+    });
+    const label = makeNode({ text: "hi" });
+    const item = makeNode({
+      style: { position: "relative", alignSelf: "start" },
+      children: [label, wide],
+    });
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column" },
+      children: [item],
+    });
+    const root = makeNode({ children: [column] });
+    layoutRoot(root, 40);
+    // self-start → shrink-to-fit: only the in-flow "hi" counts.
+    expect(item.localRect.width).toBe(2);
+  });
+});
+
+describe("intrinsic keywords as min/max limits", () => {
+  it("max-w-max caps a fill-width box at its max-content size", () => {
+    const box = makeNode({ text: "hello world", style: { maxWidth: "max-content" } });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 40);
+    expect(box.localRect.width).toBe(11);
+  });
+
+  it("max-w-fit behaves like max-w-max when space is ample", () => {
+    const box = makeNode({ text: "hi there", style: { maxWidth: "fit-content" } });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 40);
+    expect(box.localRect.width).toBe(8);
+  });
+
+  it("min-w-max forces a narrow box up to its unwrapped width", () => {
+    const box = makeNode({
+      text: "wide unwrapped line",
+      style: { width: { kind: "cells", value: 4 }, minWidth: "max-content" },
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 40);
+    expect(box.localRect.width).toBe(19);
+  });
+
+  it("intrinsic keywords on height limits are no-ops", () => {
+    const box = makeNode({ text: "a\nb\nc", style: { maxHeight: "max-content" } });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 10);
+    expect(box.localRect.height).toBe(3);
+  });
+});
+
+describe("typography on the grid", () => {
+  it("line gap adds empty rows between wrapped lines only", () => {
+    const single = makeNode({ text: "short", style: { lineGap: 1 } });
+    const wrapped = makeNode({ text: "one two three", style: { lineGap: 1 } });
+    const container = makeNode({ style: { maxWidth: 5 }, children: [single, wrapped] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    expect(single.localRect.height).toBe(1);
+    // 3 lines + 2 gaps.
+    expect(wrapped.localRect.height).toBe(5);
+  });
+
+  it("tracked text takes its advances into account for width and wrapping", () => {
+    const leaf = makeNode({ text: "ab cd", intrinsicWidth: 9 });
+    leaf.advances = [2, 2, 1, 2, 2];
+    const container = makeNode({ style: { maxWidth: 6 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // "ab" (4) + space (1) + "cd" (4) = 9 > 6 → wraps to 2 lines.
+    expect(leaf.localRect.height).toBe(2);
   });
 });

@@ -1,6 +1,7 @@
 import { collectBorderRuns } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
-import { wrapLines } from "./wrap.ts";
+import { advanceOf, lineAdvance, wrapLineSpans } from "./wrap.ts";
+import type { LineSpan } from "./wrap.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
@@ -56,15 +57,27 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     const contentY = absY + style.border.top + padding.top;
     const contentWidth =
       node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
-    const lines =
+    const spans =
       style.whiteSpace === "nowrap"
-        ? node.text.split("\n").map((line) => truncateLine(line, contentWidth, style))
-        : wrapLines(node.text, contentWidth);
-    for (let row = 0; row < lines.length; row++) {
-      const line = lines[row]!;
-      for (let col = 0; col < line.length; col++) {
-        put(contentX + col, contentY + row, line[col]!);
+        ? hardLineSpans(node.text)
+        : wrapLineSpans(node.text, contentWidth, {
+            advances: node.advances,
+            tracking: style.tracking,
+          });
+    for (let i = 0; i < spans.length; i++) {
+      const span = spans[i]!;
+      const row = contentY + i * (style.lineGap + 1);
+      const truncated =
+        style.whiteSpace === "nowrap" && style.overflow === "clip"
+          ? truncateSpan(node.text, span, contentWidth, node.advances, style)
+          : { end: span.end, ellipsis: false };
+      // Each character advances by its own cell count (tracking gaps).
+      let x = contentX;
+      for (let k = span.start; k < truncated.end; k++) {
+        put(x, row, node.text[k]!);
+        x += advanceOf(k, k + 1, node.advances);
       }
+      if (truncated.ellipsis) put(x, row, "…");
     }
   }
 
@@ -73,15 +86,36 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
   }
 }
 
+function hardLineSpans(text: string): LineSpan[] {
+  const spans: LineSpan[] = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i === text.length || text[i] === "\n") {
+      spans.push({ start, end: i });
+      start = i + 1;
+    }
+  }
+  return spans;
+}
+
 /**
- * Mirror of what the browser paints for a nowrap line: a clipping box cuts
- * it at the content width, with `…` in the last visible cell when
- * `text-overflow: ellipsis` is set. A non-clipping nowrap line is left
- * intact — like the browser, it overflows (the grid edge clips it).
+ * Mirror of what the browser paints for a clipped nowrap line: cut at the
+ * content width, with `…` in the last visible cell when `text-overflow:
+ * ellipsis` is set (the ellipsis reserves one cell).
  */
-function truncateLine(line: string, contentWidth: number, style: LayoutNode["style"]): string {
-  if (style.overflow !== "clip" || line.length <= contentWidth) return line;
-  if (contentWidth <= 0) return "";
-  if (style.textOverflow === "ellipsis") return `${line.slice(0, contentWidth - 1)}…`;
-  return line.slice(0, contentWidth);
+function truncateSpan(
+  text: string,
+  span: LineSpan,
+  contentWidth: number,
+  advances: number[] | undefined,
+  style: LayoutNode["style"],
+): { end: number; ellipsis: boolean } {
+  const { textOverflow, tracking } = style;
+  if (lineAdvance(span.start, span.end, advances, tracking) <= contentWidth) {
+    return { end: span.end, ellipsis: false };
+  }
+  const limit = textOverflow === "ellipsis" ? contentWidth - 1 : contentWidth;
+  let end = span.start;
+  while (end < span.end && lineAdvance(span.start, end + 1, advances, tracking) <= limit) end++;
+  return { end, ellipsis: textOverflow === "ellipsis" && contentWidth > 0 };
 }

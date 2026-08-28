@@ -2,7 +2,7 @@ import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
 import { buildTree } from "./tree.ts";
-import { defaultCellStyle } from "./types.ts";
+import { defaultCellStyle, zeroInsets } from "./types.ts";
 import type { CellMetrics, LayoutNode } from "./types.ts";
 
 const SHADOW_TEMPLATE = `
@@ -104,6 +104,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (name === "data-mw-text-align-blocked") return true;
     if (name === "data-mw-clip") return true;
     if (name === "data-mw-nowrap") return true;
+    if (name === "data-mw-inline-inset") return true;
     // Style attribute mutations are hard to filter precisely from the record
     // alone (we can't tell which property was set). Rely on the counter that
     // brackets our write phase — if we're inside it, treat as owned.
@@ -135,12 +136,13 @@ export class MonoWindElement extends HTMLElementBase {
     this.#suppressMutations++;
     this.setAttribute("measuring", "");
     try {
-      // (1) Cell metrics — cached; invalidated by disconnected callback
-      // (implicit) and by document.fonts.ready.
+      // (1) Cell metrics — cached; invalidated on disconnect, on font
+      // loads, and on class/style changes to the host itself.
       if (!this.#cellMetrics) {
         this.#cellMetrics = measureCellMetrics(this);
         this.style.setProperty("--mw-cw", `${this.#cellMetrics.width}px`);
         this.style.setProperty("--mw-ch", `${this.#cellMetrics.height}px`);
+        this.style.setProperty("--mw-rls", `${this.#cellMetrics.letterSpacing}px`);
       }
       const metrics = this.#cellMetrics;
 
@@ -155,7 +157,7 @@ export class MonoWindElement extends HTMLElementBase {
       const rootFontSizePx = getRootFontSizePx();
       const childNodes: LayoutNode[] = [];
       for (const child of Array.from(this.children)) {
-        const node = buildTree(child, rootFontSizePx);
+        const node = buildTree(child, rootFontSizePx, metrics);
         if (node) childNodes.push(node);
       }
       if (childNodes.length === 0) {
@@ -172,7 +174,7 @@ export class MonoWindElement extends HTMLElementBase {
         intrinsicHeight: 0,
         localRect: { x: 0, y: 0, width: 0, height: 0 },
         unclampedHeight: 0,
-        resolvedPadding: { top: 0, right: 0, bottom: 0, left: 0 },
+        resolvedPadding: zeroInsets(),
       };
 
       // (4) Compute integer layout.

@@ -2,11 +2,25 @@ import { html } from "lit";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 const meta: Meta = {
-  title: "Features/Borders",
+  title: "Features/Box Model",
 };
 export default meta;
 
-export const Styles: StoryObj = {
+export const Margin: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="max-w-50 border border-neutral-500 px-1">
+        <div class="-my-1 border border-red-400 px-1">-my-1</div>
+        <div class="mb-2 border border-cyan-400 px-1">mb-2</div>
+        <div class="mt-1 border border-yellow-400 px-1">mt-1 (collapses to 2, not 3)</div>
+        <div class="mx-auto w-min max-w-full border border-emerald-400 px-1">w-min mx-auto</div>
+        <div class="mx-auto w-max max-w-full border border-amber-400 px-1">w-max mx-auto</div>
+      </div>
+    </mono-wind>
+  `,
+};
+
+export const BorderStyles: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-wrap gap-x-2 gap-y-1">
@@ -19,7 +33,7 @@ export const Styles: StoryObj = {
   `,
 };
 
-export const Widths: StoryObj = {
+export const BorderWidths: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex gap-x-2 gap-y-1">
@@ -32,7 +46,7 @@ export const Widths: StoryObj = {
   `,
 };
 
-export const DifferentSides: StoryObj = {
+export const BorderSides: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-wrap gap-x-2 gap-y-1">
@@ -55,7 +69,7 @@ export const DifferentSides: StoryObj = {
   `,
 };
 
-export const Nested: StoryObj = {
+export const NestedBorders: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="border border-neutral-400">

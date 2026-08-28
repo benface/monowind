@@ -1,6 +1,8 @@
-import { readCellStyle } from "./style.ts";
+import { pxToCells } from "./metrics.ts";
+import { readCellStyle, trackingCells } from "./style.ts";
 import { zeroInsets } from "./types.ts";
-import type { LayoutNode } from "./types.ts";
+import { lineAdvance } from "./wrap.ts";
+import type { CellMetrics, LayoutNode, PerSide } from "./types.ts";
 
 /**
  * Build a LayoutNode tree from an element subtree.
@@ -18,25 +20,32 @@ import type { LayoutNode } from "./types.ts";
  *   markup) are not laid out — CSS creates anonymous inline boxes for them,
  *   but our absolutely-positioned children escape that flow. This is
  *   documented as a deviation in specs/cell-model.md.
+ *
+ * `cellMetrics` (measured by the host) is the basis for leading and
+ * tracking; absent in headless tests (see readCellStyle).
  */
-export function buildTree(root: Element, rootFontSizePx: number): LayoutNode | null {
-  const style = readCellStyle(root, rootFontSizePx);
+export function buildTree(
+  root: Element,
+  rootFontSizePx: number,
+  cellMetrics?: CellMetrics,
+): LayoutNode | null {
+  const style = readCellStyle(root, rootFontSizePx, cellMetrics);
   if (style.display === "none") return null;
 
   const elementChildren = Array.from(root.children);
   const isInlineOnly = elementChildren.every(hasInlineDisplay);
 
   if (isInlineOnly) {
-    // Per-hard-line trim: whitespace around a `<br>` is source formatting
-    // (the browser collapses and strips it at line edges), not content.
-    const text = extractLeafText(root)
-      .split("\n")
-      .map((line) => line.trim())
-      .join("\n")
-      .trim();
-    const intrinsicWidth = longestLine(text);
+    const run = extractLeafRun(
+      root,
+      style.tracking,
+      rootFontSizePx,
+      cellMetrics?.letterSpacing ?? 0,
+    );
+    const text = run.chars.join("");
+    const intrinsicWidth = longestLineAdvance(text, run.advances, style.tracking);
     const intrinsicHeight = text.length > 0 ? countHardLines(text) : 0;
-    return {
+    const node: LayoutNode = {
       source: root,
       style,
       children: [],
@@ -47,11 +56,14 @@ export function buildTree(root: Element, rootFontSizePx: number): LayoutNode | n
       unclampedHeight: 0,
       resolvedPadding: zeroInsets(),
     };
+    if (run.advances.some((a) => a !== 1)) node.advances = run.advances;
+    if (run.inlineElements.length > 0) node.inlineElements = run.inlineElements;
+    return node;
   }
 
   const children: LayoutNode[] = [];
   for (const child of elementChildren) {
-    const node = buildTree(child, rootFontSizePx);
+    const node = buildTree(child, rootFontSizePx, cellMetrics);
     if (node) children.push(node);
   }
   return {
@@ -109,37 +121,139 @@ function hasInlineDisplay(el: Element): boolean {
   return display.startsWith("inline") || display === "contents";
 }
 
+interface LeafRun {
+  chars: string[];
+  /** Cells each character occupies: `1 + tracking` of its innermost element. */
+  advances: number[];
+  inlineElements: NonNullable<LayoutNode["inlineElements"]>;
+}
+
 /**
- * Walk childNodes and produce the leaf's text — with `<br>` emitted as `\n`
- * so the wrap calculation counts the line break the browser will honor.
- * Recurses into inline elements (`<span>`, `<a>`, `<b>`, …).
+ * Walk a leaf's childNodes and produce its text run — with `<br>` emitted as
+ * `\n` so the wrap calculation counts the line break the browser will honor
+ * — plus per-character advances and the inline elements the renderer must
+ * write grid typography (and rewritten relative insets) onto.
  *
  * Whitespace inside text nodes (including literal newlines from source
  * formatting) collapses to single spaces, exactly like the browser under
- * `white-space: normal` — ONLY `<br>` produces a hard `\n`. Without this,
- * markup indentation would masquerade as hard line breaks and the engine
- * would allocate rows the browser never renders.
+ * `white-space: normal` — ONLY `<br>` produces a hard `\n`. Whitespace
+ * around a hard break is stripped (the browser strips it at line edges too).
+ * CSS collapsible white space only (space/tab/CR/LF/FF) — NOT `\s`, which
+ * would also eat NBSP (U+00A0); the browser preserves NBSP and never breaks
+ * at it.
  */
-function extractLeafText(el: Element): string {
-  const parts: string[] = [];
-  for (const node of Array.from(el.childNodes)) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      // CSS collapsible white space only (space/tab/CR/LF/FF) — NOT `\s`,
-      // which would also eat NBSP (U+00A0); the browser preserves NBSP and
-      // never breaks at it.
-      parts.push((node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " "));
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const child = node as Element;
-      if (child.tagName === "BR") parts.push("\n");
-      else parts.push(extractLeafText(child));
-    }
-  }
-  return parts.join("");
+function extractLeafRun(
+  el: Element,
+  tracking: number,
+  rootFontSizePx: number,
+  rootLetterSpacingPx: number,
+): LeafRun {
+  const run: LeafRun = { chars: [], advances: [], inlineElements: [] };
+  collectRun(el, tracking, rootFontSizePx, rootLetterSpacingPx, run);
+  return normalizeRun(run);
 }
 
-function longestLine(text: string): number {
+function collectRun(
+  el: Element,
+  tracking: number,
+  rootFontSizePx: number,
+  rootLetterSpacingPx: number,
+  run: LeafRun,
+): void {
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      for (const ch of (node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " ")) {
+        run.chars.push(ch);
+        run.advances.push(1 + tracking);
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const child = node as Element;
+      if (child.tagName === "BR") {
+        run.chars.push("\n");
+        run.advances.push(0);
+        continue;
+      }
+      // Reads happen during the measure pass, so authored values are visible.
+      const cs = getComputedStyle(child);
+      const childTracking = trackingCells(
+        cs.letterSpacing,
+        parseFloat(cs.fontSize) || rootFontSizePx,
+        rootLetterSpacingPx,
+      );
+      run.inlineElements.push({
+        element: child,
+        tracking: childTracking,
+        insets: cs.position === "static" ? null : inlineInsets(cs, rootFontSizePx),
+      });
+      collectRun(child, childTracking, rootFontSizePx, rootLetterSpacingPx, run);
+    }
+  }
+}
+
+/** Authored relative insets of an inline element, rewritten to whole cells
+ * by the renderer (specs/positioning.md). Percent insets on inline elements
+ * are unsupported (`null`); `absolute`/`fixed` behave as relative — both
+ * documented deviations. */
+function inlineInsets(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<number | null> {
+  const side = (value: string): number | null => {
+    if (!value || value === "auto" || value.endsWith("%")) return null;
+    const px = parseFloat(value);
+    return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : null;
+  };
+  return { top: side(cs.top), right: side(cs.right), bottom: side(cs.bottom), left: side(cs.left) };
+}
+
+/** Collapse consecutive spaces (also across inline-element boundaries), trim
+ * spaces at hard-line edges, and drop leading/trailing blank lines — keeping
+ * chars and advances in lockstep. */
+function normalizeRun(run: LeafRun): LeafRun {
+  const chars: string[] = [];
+  const advances: number[] = [];
+  const lineStart = () => {
+    let i = chars.length;
+    while (i > 0 && chars[i - 1] !== "\n") i--;
+    return i;
+  };
+  const trimLineEnd = () => {
+    while (chars.length > lineStart() && chars[chars.length - 1] === " ") {
+      chars.pop();
+      advances.pop();
+    }
+  };
+  for (let i = 0; i < run.chars.length; i++) {
+    const ch = run.chars[i]!;
+    if (ch === " ") {
+      // Skip spaces at a line start and after another space.
+      const atLineStart = chars.length === lineStart();
+      if (atLineStart || chars[chars.length - 1] === " ") continue;
+    } else if (ch === "\n") {
+      trimLineEnd();
+    }
+    chars.push(ch);
+    advances.push(run.advances[i]!);
+  }
+  trimLineEnd();
+  // Drop leading/trailing blank hard lines (source formatting), like trim().
+  while (chars[0] === "\n") {
+    chars.shift();
+    advances.shift();
+  }
+  while (chars[chars.length - 1] === "\n") {
+    chars.pop();
+    advances.pop();
+  }
+  return { chars, advances, inlineElements: run.inlineElements };
+}
+
+function longestLineAdvance(text: string, advances: number[], tracking: number): number {
   let max = 0;
-  for (const line of text.split("\n")) if (line.length > max) max = line.length;
+  let lineStart = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i === text.length || text[i] === "\n") {
+      max = Math.max(max, lineAdvance(lineStart, i, advances, tracking));
+      lineStart = i + 1;
+    }
+  }
   return max;
 }
 

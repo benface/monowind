@@ -1,4 +1,4 @@
-import { defaultCellStyle } from "../src/types.ts";
+import { defaultCellStyle, zeroInsets } from "../src/types.ts";
 import type { CellStyle, LayoutNode } from "../src/types.ts";
 
 const stubElement = {} as unknown as Element;
@@ -21,6 +21,6 @@ export function makeNode(overrides: {
     intrinsicHeight: overrides.intrinsicHeight ?? (text.length > 0 ? 1 : 0),
     localRect: { x: 0, y: 0, width: 0, height: 0 },
     unclampedHeight: 0,
-    resolvedPadding: { top: 0, right: 0, bottom: 0, left: 0 },
+    resolvedPadding: zeroInsets(),
   };
 }

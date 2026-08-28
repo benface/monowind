@@ -175,6 +175,23 @@ visible flash):
 Do **not** use `display: none` tricks to read computed values — hiding elements
 blurs focus and resets internal scroll state, violating focus preservation.
 
+### Companion-stylesheet techniques worth knowing
+
+Two patterns recur in `styles.css` and are easy to misread:
+
+- **Gating on `:not([measuring])`.** Any rule whose output the style reader
+  would otherwise read back as if the author wrote it (white-space,
+  letter-spacing, line-height, geometry) is gated on the host's `measuring`
+  attribute, so during the read pass elements show their AUTHORED values.
+  Ungated rules are only those that must hold during measurement too (the
+  font lock, which defines the cell metrics).
+- **Invalid-at-computed-value as "inherit".** The letter-spacing rule
+  multiplies `var(--mw-ls)` with no fallback on purpose: an element without
+  `--mw-ls` makes the declaration invalid at computed-value time, which for
+  an inherited property means _inherit the parent's grid-exact value_ — one
+  rule covers every element without per-element selectors. The same trick
+  makes the inline-inset rule leave un-authored sides at `auto`.
+
 ## Reading authored values: CSS Typed OM
 
 `getComputedStyle` returns _used_ values for box properties (always px — `w-full`

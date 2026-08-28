@@ -1,0 +1,143 @@
+import { describe, expect, it } from "vitest";
+import { readCellStyle } from "../src/style.ts";
+import type { CellMetrics } from "../src/types.ts";
+
+/**
+ * Fallback-path tests for the computed-style reader. happy-dom has NO
+ * Typed OM (`computedStyleMap` is undefined), so every read here goes down
+ * the same code paths a pre-157 Firefox does — the class-scan and
+ * inline-style fallbacks. This keeps those branches tested deterministically
+ * even once every real browser ships Typed OM.
+ */
+
+function read(attrs: { class?: string; style?: string }, metrics?: CellMetrics) {
+  const el = document.createElement("div");
+  if (attrs.class) el.setAttribute("class", attrs.class);
+  if (attrs.style) el.setAttribute("style", attrs.style);
+  document.body.appendChild(el);
+  return readCellStyle(el, 16, metrics);
+}
+
+it("has no Typed OM in this environment (the point of this suite)", () => {
+  expect(
+    (document.createElement("div") as { computedStyleMap?: unknown }).computedStyleMap,
+  ).toBeUndefined();
+});
+
+describe("sizing fallbacks", () => {
+  it("reads inline width/height in px, %, and auto", () => {
+    expect(read({ style: "width: 80px" }).width).toEqual({ kind: "cells", value: 20 });
+    expect(read({ style: "width: 50%" }).width).toEqual({ kind: "percent", value: 50 });
+    expect(read({ style: "width: auto" }).width).toEqual({ kind: "auto" });
+    expect(read({ style: "height: 12px" }).height).toEqual({ kind: "cells", value: 3 });
+  });
+
+  it("detects intrinsic keyword utilities via class scan, variants included", () => {
+    expect(read({ class: "w-min" }).width).toEqual({ kind: "min-content" });
+    expect(read({ class: "md:w-max" }).width).toEqual({ kind: "max-content" });
+    expect(read({ class: "hover:w-fit" }).width).toEqual({ kind: "fit-content" });
+    expect(read({ class: "h-min" }).height).toEqual({ kind: "min-content" });
+  });
+
+  it("treats an element without sizing utilities or inline size as auto", () => {
+    expect(read({ class: "border px-2 text-red-500" }).width).toEqual({ kind: "auto" });
+  });
+
+  it("reads inline intrinsic keywords too", () => {
+    expect(read({ style: "width: fit-content" }).width).toEqual({ kind: "fit-content" });
+  });
+});
+
+describe("margin fallbacks", () => {
+  it("detects auto margins via class scan (the used-value trap workaround)", () => {
+    const m = read({ class: "mx-auto" }).margin;
+    expect(m.left).toBeNull();
+    expect(m.right).toBeNull();
+    expect(m.top).toBe(0);
+  });
+
+  it("matches logical and variant-prefixed auto utilities", () => {
+    expect(read({ class: "md:ms-auto" }).margin.left).toBeNull();
+    expect(read({ class: "me-auto" }).margin.right).toBeNull();
+    expect(read({ class: "[&_p]:my-auto" }).margin.top).toBeNull();
+  });
+
+  it("reads numeric and negative inline margins on the cell scale", () => {
+    const m = read({ style: "margin-left: 8px; margin-top: -4px" }).margin;
+    expect(m.left).toBe(2);
+    expect(m.top).toBe(-1);
+  });
+});
+
+describe("inset fallbacks", () => {
+  it("keeps all sides auto without inset utilities or inline insets", () => {
+    expect(read({ class: "absolute" }).insets).toEqual({
+      top: null,
+      right: null,
+      bottom: null,
+      left: null,
+    });
+  });
+
+  it("reads inline insets, negative and percent included", () => {
+    const insets = read({ style: "position: relative; top: 4px; left: -8px; bottom: 50%" }).insets;
+    expect(insets.top).toBe(1);
+    expect(insets.left).toBe(-2);
+    expect(insets.bottom).toEqual({ percent: 50 });
+    expect(insets.right).toBeNull();
+  });
+});
+
+describe("grid typography", () => {
+  it("reads tracking as extra cells over the root's letter-spacing", () => {
+    const metrics = { width: 8, height: 16, letterSpacing: 0.4 };
+    // (1.2 − 0.4) / 0.4 = 2 extra cells; without the root baseline, 3.
+    expect(read({ style: "letter-spacing: 1.2px" }, metrics).tracking).toBe(2);
+    expect(read({ style: "letter-spacing: 1.2px" }).tracking).toBe(3);
+    // Inheriting the root's own letter-spacing adds nothing.
+    expect(read({ style: "letter-spacing: 0.4px" }, metrics).tracking).toBe(0);
+  });
+
+  it("reads leading as gap rows over the measured cell height", () => {
+    const metrics = { width: 8, height: 24, letterSpacing: 0 };
+    expect(read({ style: "line-height: 48px" }, metrics).lineGap).toBe(1);
+    expect(read({ style: "line-height: 48px" }).lineGap).toBe(2);
+  });
+});
+
+describe("plain computed reads (shared with the Typed OM path)", () => {
+  it("maps position values, defaulting to static", () => {
+    expect(read({ style: "position: sticky" }).position).toBe("sticky");
+    expect(read({}).position).toBe("static");
+  });
+
+  it("reads min/max limits with percent kept symbolic", () => {
+    const style = read({ style: "min-width: 16px; max-width: 100%" });
+    expect(style.minWidth).toBe(4);
+    expect(style.maxWidth).toEqual({ percent: 100 });
+    expect(style.maxHeight).toBeUndefined();
+  });
+
+  it("keeps flex-basis percentages symbolic (flex-1 reads as 0%)", () => {
+    expect(read({ style: "flex-basis: 0%" }).flexBasis).toEqual({ kind: "percent", value: 0 });
+    expect(read({ style: "flex-basis: auto" }).flexBasis).toBeUndefined();
+    expect(read({ style: "flex-basis: 24px" }).flexBasis).toEqual({ kind: "cells", value: 6 });
+  });
+
+  it("reads percent gaps symbolically and normal as 0", () => {
+    const style = read({ style: "column-gap: 50%; row-gap: 8px" });
+    expect(style.gapX).toEqual({ percent: 50 });
+    expect(style.gapY).toBe(2);
+  });
+
+  it("maps white-space and text-overflow", () => {
+    const style = read({ style: "white-space: nowrap; text-overflow: ellipsis" });
+    expect(style.whiteSpace).toBe("nowrap");
+    expect(style.textOverflow).toBe("ellipsis");
+  });
+
+  it("blocks authored text-center via class scan (no computed-style echo)", () => {
+    expect(read({ class: "text-center" }).textAlignBlocked).toBe(true);
+    expect(read({ class: "text-end" }).textAlignBlocked).toBe(false);
+  });
+});

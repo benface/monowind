@@ -1,3 +1,5 @@
+import { addons } from "storybook/preview-api";
+import { UPDATE_GLOBALS } from "storybook/internal/core-events";
 import type { Preview } from "@storybook/web-components-vite";
 import { defineMonoWind } from "monowind";
 import "./styles.css";
@@ -9,8 +11,8 @@ defineMonoWind();
 // the toolbar's tiny color swatch renders in the manager UI, which doesn't
 // load the preview CSS, so the swatch chip appears blank there.
 const THEMES = {
-  light: { canvas: "var(--color-neutral-50)", text: "var(--color-neutral-900)" },
-  dark: { canvas: "var(--color-neutral-900)", text: "var(--color-neutral-50)" },
+  light: { canvas: "var(--color-bg-light)", text: "var(--color-fg-light)" },
+  dark: { canvas: "var(--color-bg-dark)", text: "var(--color-fg-dark)" },
 } as const;
 
 // Default the background toggle to the system theme (the toolbar toggle
@@ -18,6 +20,25 @@ const THEMES = {
 const systemTheme = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches
   ? "dark"
   : "light";
+
+// Theming beyond the addon's canvas paint: text color, `color-scheme`, and
+// the `.dark` class that drives the `dark:` variant and the canvas colors
+// (see styles.css).
+function applyTheme(background: unknown): void {
+  const name = background === "dark" ? "dark" : "light";
+  document.body.style.color = THEMES[name].text;
+  document.body.style.colorScheme = name;
+  document.documentElement.classList.toggle("dark", name === "dark");
+}
+
+// A toolbar toggle only reaches decorators after Storybook re-renders the
+// story (~100ms) — the addon's own canvas paint waits on the same
+// re-render. Listening to the globals event applies the theme immediately,
+// and the canvas rules in styles.css make the addon's late paint a no-op.
+addons.getChannel().on(UPDATE_GLOBALS, ({ globals }: { globals: Record<string, unknown> }) => {
+  const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
+  if (value !== undefined) applyTheme(value);
+});
 
 const preview: Preview = {
   parameters: {
@@ -32,15 +53,10 @@ const preview: Preview = {
     backgrounds: { value: systemTheme },
   },
   decorators: [
-    // The backgrounds addon only paints the canvas; make the text color
-    // follow the selected background so stories stay readable in both.
+    // Initial render (and restored globals): the event above hasn't fired,
+    // so sync the theme from the story context here.
     (story, context) => {
-      const background = (context.globals.backgrounds?.value ?? systemTheme) as
-        | keyof typeof THEMES
-        | undefined;
-      const theme = THEMES[background ?? systemTheme] ?? THEMES[systemTheme];
-      document.body.style.color = theme.text;
-      document.body.style.colorScheme = background === "dark" ? "dark" : "light";
+      applyTheme(context.globals.backgrounds?.value ?? systemTheme);
       return story();
     },
   ],

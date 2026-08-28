@@ -1,6 +1,6 @@
 import { collectBorderRuns } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
-import type { Insets, LayoutNode, Rect } from "./types.ts";
+import type { LayoutNode, PerSide } from "./types.ts";
 
 /**
  * Write geometry custom properties on each source element and (re)paint the
@@ -10,8 +10,18 @@ import type { Insets, LayoutNode, Rect } from "./types.ts";
  */
 export function render(root: LayoutNode, decorationLayer: HTMLElement): void {
   const borderRuns: BorderRun[] = [];
-  walk(root, 0, 0, borderRuns, true);
+  const inlineInsetElements = new Set<Element>();
+  walk(root, 0, 0, borderRuns, true, inlineInsetElements);
   paintDecorations(decorationLayer, borderRuns);
+  // Clear engine-written inset vars from inline elements that no longer
+  // carry authored relative insets.
+  for (const el of Array.from(root.source.querySelectorAll("[data-mw-inline-inset]"))) {
+    if (!inlineInsetElements.has(el)) {
+      el.removeAttribute("data-mw-inline-inset");
+      const style = (el as HTMLElement).style;
+      for (const prop of ["--mw-it", "--mw-ir", "--mw-ib", "--mw-il"]) style.removeProperty(prop);
+    }
+  }
 }
 
 function walk(
@@ -20,21 +30,23 @@ function walk(
   parentAbsY: number,
   borderRuns: BorderRun[],
   isRoot: boolean,
+  inlineInsetElements: Set<Element>,
 ): void {
   const absX = parentAbsX + node.localRect.x;
   const absY = parentAbsY + node.localRect.y;
 
-  if (!isRoot) {
-    positionElement(
-      node.source as HTMLElement,
-      node.localRect,
-      node.resolvedPadding,
-      node.style.border,
-      node.style.textAlignBlocked,
-      node.style.overflow,
-      node.style.whiteSpace,
-    );
+  if (node.inlineElements) {
+    for (const { element, tracking, insets } of node.inlineElements) {
+      const el = element as HTMLElement;
+      el.style.setProperty("--mw-ls", String(tracking));
+      if (insets) {
+        inlineInsetElements.add(element);
+        applyInlineInsets(el, insets);
+      }
+    }
   }
+
+  if (!isRoot) positionElement(node);
 
   collectBorderRuns(
     node.style,
@@ -43,20 +55,42 @@ function walk(
   );
 
   for (const child of node.children) {
-    walk(child, absX, absY, borderRuns, false);
+    walk(child, absX, absY, borderRuns, false, inlineInsetElements);
   }
 }
 
-function positionElement(
-  el: HTMLElement,
-  rect: Rect,
-  padding: Insets,
-  border: Insets,
-  textAlignBlocked: boolean,
-  overflow: "visible" | "clip",
-  whiteSpace: "normal" | "nowrap",
-): void {
+/**
+ * Rewrite an inline element's authored relative insets to whole-cell
+ * offsets (specs/positioning.md). The values go into engine-owned custom
+ * properties consumed by a `:not([measuring])`-gated companion rule —
+ * writing `top` etc. directly would be read back as the authored value on
+ * the next measure pass and compound (a feedback loop). Sides the author
+ * left `auto` get no var: the companion declaration is then invalid at
+ * computed-value time and the inset falls back to `auto`.
+ */
+function applyInlineInsets(el: HTMLElement, insets: PerSide<number | null>): void {
+  el.setAttribute("data-mw-inline-inset", "");
+  const write = (prop: string, cells: number | null) => {
+    if (cells === null) el.style.removeProperty(prop);
+    else el.style.setProperty(prop, String(cells));
+  };
+  write("--mw-it", insets.top);
+  write("--mw-ir", insets.right);
+  write("--mw-ib", insets.bottom);
+  write("--mw-il", insets.left);
+}
+
+function positionElement(node: LayoutNode): void {
+  const el = node.source as HTMLElement;
+  const rect = node.localRect;
+  const padding = node.resolvedPadding;
+  const { border, textAlignBlocked, overflow, whiteSpace, tracking, lineGap } = node.style;
   el.setAttribute("data-mw-laid-out", "");
+  // Grid typography (specs/cell-model.md): extra cells per character, rows
+  // per wrapped line, and the half-leading cancellation shift.
+  el.style.setProperty("--mw-ls", String(tracking));
+  el.style.setProperty("--mw-lh", String(lineGap + 1));
+  el.style.setProperty("--mw-lhs", String(-lineGap / 2));
   if (whiteSpace === "nowrap") el.setAttribute("data-mw-nowrap", "");
   else el.removeAttribute("data-mw-nowrap");
   el.style.setProperty("--mw-x", String(rect.x));

@@ -55,24 +55,32 @@ mono-wind:not([data-mw-ready]) {
   visibility: hidden !important;
 }
 
-/* Lock typography on descendants so the grid metrics stay consistent —
+/* Lock the font on descendants so the grid metrics stay consistent —
  * `!important` because user classes (`.text-2xl` etc.) would otherwise beat
  * these element-selector rules on specificity. */
 mono-wind * {
   font-family: inherit !important;
   font-size: inherit !important;
-  line-height: inherit !important;
-  letter-spacing: inherit !important;
   vertical-align: baseline !important;
 }
 
-/* Match the engine's greedy word-wrap: break at spaces, and break long
- * words at cell boundaries when they overflow. Gated on `measuring` (unlike
- * the font lock above) so the style reader sees the authored `white-space`
- * — that's how `nowrap` is detected. */
+/* Grid-quantized typography and the wrap model (specs/cell-model.md). Gated
+ * on `measuring` (unlike the font lock above) so the style reader sees the
+ * AUTHORED white-space / letter-spacing / line-height — that's how nowrap,
+ * tracking, and leading are detected without echoing our own output.
+ *
+ * letter-spacing: the root's own (`--mw-rls`, part of the cell) plus
+ * `--mw-ls` extra cells per character, which the engine writes on every
+ * element it visits; an element without the var makes this declaration
+ * invalid at computed-value time, so the property falls back to inheriting
+ * the parent's grid-exact value. line-height is inherited from the
+ * laid-out ancestor (which sets the row multiple below) — `leading-*` on
+ * inline elements is ignored by design. */
 mono-wind:not([measuring]) * {
   white-space: normal !important;
   overflow-wrap: anywhere !important;
+  letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-ls) * var(--mw-cw, 1px)) !important;
+  line-height: inherit !important;
 }
 
 /* Author-requested `white-space: nowrap` (or `pre`) — the engine sized this
@@ -116,7 +124,23 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   box-sizing: border-box !important;
   left: calc(var(--mw-x, 0) * var(--mw-cw, 1px)) !important;
   top: calc(var(--mw-y, 0) * var(--mw-ch, 1px)) !important;
-  width: calc(var(--mw-w, 0) * var(--mw-cw, 1px)) !important;
+  /* Trailing-gap allowance: a tracked box's lines end with a phantom
+   * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
+   * room by carving it out of the engine-owned right padding/border cells;
+   * only when those are fewer than the gap does the element box itself
+   * widen (invisibly — the decorated border stays where the engine put it).
+   * The extra 1/32px is one layout unit of headroom: engines store lengths
+   * on a fixed grid by flooring (1/64px in Chromium and WebKit, 1/60px in
+   * Firefox), so `cells × cw` can land one unit BELOW the shaped advance of
+   * a line that fits exactly, and the browser would wrap it. Adding at
+   * least one unit before the floor guarantees the stored width is ≥ the
+   * exact product; 1/32px covers every engine's unit and is far below a
+   * cell (and below a device pixel), so it changes neither cell math nor
+   * paint. */
+  width: calc(
+    (var(--mw-w, 0) + max(0, var(--mw-ls, 0) - var(--mw-pr, 0) - var(--mw-br, 0))) *
+      var(--mw-cw, 1px) + 0.03125px
+  ) !important;
   height: calc(var(--mw-h, 0) * var(--mw-ch, 1px)) !important;
   min-width: 0 !important;
   min-height: 0 !important;
@@ -124,10 +148,17 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   max-height: none !important;
   border-width: 0 !important;
   padding-top: calc((var(--mw-pt, 0) + var(--mw-bt, 0)) * var(--mw-ch, 1px)) !important;
-  padding-right: calc((var(--mw-pr, 0) + var(--mw-br, 0)) * var(--mw-cw, 1px)) !important;
+  padding-right: calc(
+    max(0, var(--mw-pr, 0) + var(--mw-br, 0) - var(--mw-ls, 0)) * var(--mw-cw, 1px)
+  ) !important;
   padding-bottom: calc((var(--mw-pb, 0) + var(--mw-bb, 0)) * var(--mw-ch, 1px)) !important;
   padding-left: calc((var(--mw-pl, 0) + var(--mw-bl, 0)) * var(--mw-cw, 1px)) !important;
   margin: 0 !important;
+  /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
+   * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
+   * shifts the box back so every line starts on its own row. */
+  line-height: calc(var(--mw-lh, 1) * var(--mw-ch, 1px)) !important;
+  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
 }
 
 /* Author-requested `overflow: hidden` or `overflow: clip` — both keep
@@ -135,6 +166,22 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
  * container, cheaper, more precise semantic for what we're doing). */
 mono-wind [data-mw-clip] {
   overflow: clip !important;
+}
+
+/* Inline elements with authored relative insets (specs/positioning.md):
+ * the engine writes the cell-rounded offsets into `--mw-it/ir/ib/il` and
+ * this rule applies them on the grid. A side without its var is invalid at
+ * computed-value time and falls back to `auto` — so authored subsets work
+ * and the author's raw off-grid values never apply. Gated on `measuring`
+ * so the style reader sees the authored values (no echo loop). Also pins
+ * `position: relative` — absolute/fixed on inline elements behave as
+ * relative (documented deviation). */
+mono-wind:not([measuring]) [data-mw-inline-inset] {
+  position: relative !important;
+  top: calc(var(--mw-it) * var(--mw-ch, 1px)) !important;
+  right: calc(var(--mw-ir) * var(--mw-cw, 1px)) !important;
+  bottom: calc(var(--mw-ib) * var(--mw-ch, 1px)) !important;
+  left: calc(var(--mw-il) * var(--mw-cw, 1px)) !important;
 }
 
 /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/

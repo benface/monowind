@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { wrapLineCount } from "../src/wrap.ts";
+import { longestSegmentAdvance, wrapLineCount, wrapLines } from "../src/wrap.ts";
 
-describe("wrapLineCount", () => {
+describe("wrapLineCount / wrapLines", () => {
   it("returns 0 for empty text", () => {
     expect(wrapLineCount("", 10)).toBe(0);
     expect(wrapLineCount("   ", 10)).toBe(0);
@@ -55,5 +55,37 @@ describe("wrapLineCount", () => {
     expect(wrapLineCount(text, 24)).toBe(1);
     expect(wrapLineCount(text, 12)).toBe(2); // "This will be" then "on the left"
     expect(wrapLineCount(text, 8)).toBe(4); // wraps to 4 lines
+  });
+
+  it("wraps by per-character advances (a leaf's own tracking)", () => {
+    // Every character tracked ×1 (leaf tracking 1): 2 cells each; the gap
+    // after a line's last character is free.
+    const advances = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2];
+    // "hello world" = 22 − 1 free = 21.
+    expect(wrapLines("hello world", 21, { advances, tracking: 1 })).toEqual(["hello world"]);
+    expect(wrapLines("hello world", 20, { advances, tracking: 1 })).toEqual(["hello", "world"]);
+    // A segment wider than the line breaks at cell boundaries: 3 chars
+    // (2+2+2 − 1 free) fit in 5.
+    expect(wrapLines("abcdef", 5, { advances: [2, 2, 2, 2, 2, 2], tracking: 1 })).toEqual([
+      "abc",
+      "def",
+    ]);
+  });
+
+  it("keeps a tracked inline element's trailing gap (browsers do too)", () => {
+    // "<span tracked ×2>ab</span> cd" in an untracked leaf: a=3, b=3, rest 1.
+    const advances = [3, 3, 1, 1, 1];
+    expect(wrapLines("ab cd", 9, { advances })).toEqual(["ab cd"]);
+    expect(wrapLines("ab cd", 8, { advances })).toEqual(["ab", "cd"]);
+    // At a line end the element's gap still counts: "ab" needs 6.
+    expect(wrapLines("ab cd", 5, { advances })).toEqual(["a", "b", "cd"]);
+  });
+
+  it("measures min-content by advances", () => {
+    expect(longestSegmentAdvance("aa bbb")).toBe(3);
+    // Tracked ×2 inline element in an untracked leaf: its gap is kept → 6.
+    expect(longestSegmentAdvance("aa bbb", { advances: [3, 3, 1, 1, 1, 1] })).toBe(6);
+    // The leaf's own tracking: the trailing gap is free → 9 − 2 = 7.
+    expect(longestSegmentAdvance("aa bbb", { advances: [3, 3, 3, 3, 3, 3], tracking: 2 })).toBe(7);
   });
 });

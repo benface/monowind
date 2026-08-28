@@ -1,13 +1,18 @@
 node_modules/
 dist/
-storybook-static/
-apps/example-html/cdn.js
-apps/example-html/cdn.js.map
-packages/*/LICENSE
-test-results/
-playwright-report/
+coverage/
 *.tsbuildinfo
 .DS_Store
+packages/*/LICENSE
+
+# Storybook build + visual test outputs
+/apps/storybook/storybook-static/
+/apps/storybook/test-results/
+/apps/storybook/playwright-report/
+
+# Copied from packages/core/dist by copy-cdn.mjs
+/apps/example-html/cdn.js
+/apps/example-html/cdn.js.map
 
 # Local Netlify folder
 .netlify

@@ -115,25 +115,30 @@ flex-grow, flex-shrink, flex-basis, order
 justify-content: start | center | end | space-between | space-around | space-evenly
 align-items: start | center | end | stretch
 width, height (incl. min/max/fit-content), min/max-width, min/max-height
-  (px → cells; %, auto — min-*: auto is the flex automatic minimum)
+  (px → cells; %, auto, intrinsic keywords — min-*: auto is the flex
+  automatic minimum)
 padding, margin (per side), gap (row/column)   (percent supported)
 border-*-width (cells per edge) + per-side border-style/color → glyphs + color
 color, background-color                        (paint-only, passed through)
 overflow: hidden | clip                        (normalized to clip)
 white-space: nowrap | pre (no-wrap half), text-overflow: ellipsis (truncate)
+line-height (leading-*) → rows per wrapped line; letter-spacing (tracking-*)
+  → extra cells per character, inline elements included
+position: static | relative | absolute (+ fixed → host, sticky → relative)
+top/right/bottom/left, inset-*                 (per specs/positioning.md,
+                                                incl. inline relative shifts)
 
 # Specified but NOT implemented yet (their milestones):
-position: static | relative + top/right/bottom/left  (cell offsets)
 grid-template-columns/rows, placement          (subset TBD by specs/grid.md)
 aspect-ratio                                   (needs cell-metric ratio; spec TBD)
 ```
 
 Utility classes this covers in practice: `block hidden flex flex-row flex-col
 grid grow shrink basis-* order-* justify-* items-* w-* h-* min-* max-* p-* m-*
-gap-* truncate whitespace-nowrap relative top/right/bottom/left-* border*
-text-* bg-* overflow-hidden` and friends.
-Explicitly not supported: `space-x/y-*` (superseded by `gap-*`), typography
-utilities on descendants (see cell-model spec).
+gap-* truncate whitespace-nowrap leading-* tracking-* relative
+top/right/bottom/left-* border* text-* bg-* overflow-hidden` and friends.
+Explicitly not supported: `space-x/y-*` (superseded by `gap-*`), font
+size/family utilities on descendants (see cell-model spec).
 
 Every variant (`lg:`, arbitrary variants, `group-*`…) _resolves_ for free,
 since the browser applies the cascade before we read. But _changes_ in dynamic
@@ -147,11 +152,10 @@ Text, `<a>`, `<button>`, single-line `<input>`, nested containers.
 
 ### Deferred
 
-Scrolling; `position: absolute/fixed/sticky`; parent–child margin
+Scrolling (including proper `position: sticky`); parent–child margin
 collapsing; transforms (see architecture open questions); selects and
 textareas; Unicode display-width; bidi/vertical text; background patterns;
-broader Tailwind property coverage; virtualization. (`position: relative` +
-insets is NOT deferred — it's scheduled in Milestone 3.)
+broader Tailwind property coverage; virtualization.
 
 ### Never planned
 
@@ -168,7 +172,9 @@ packages/core/
 │   ├── metrics.ts            # cell measurement, px→cells, rounding helpers
 │   ├── style.ts              # computed-style reader (Typed OM + class-scan fallback)
 │   ├── tree.ts               # DOM → LayoutNode tree
-│   ├── layout.ts             # block, flex-row, flex-column; grow/shrink/wrap/margins/gap
+│   ├── layout.ts             # core: per-node sizing pipeline, block flow, intrinsics
+│   ├── flex.ts               # flex row/column + §9.7 resolution (specs/flex.md)
+│   ├── positioning.ts        # absolute/relative positioning pass (specs/positioning.md)
 │   ├── wrap.ts               # greedy word-wrap for text leaves (lines + count)
 │   ├── borders.ts            # border-run collection + glyph sets (pure, shared)
 │   ├── render.ts             # writes geometry vars, paints border decorations (DOM)
@@ -264,12 +270,13 @@ Done (working in MVP):
 2. Block layout with adjacent-sibling margin collapsing
 3. Flex row + column (grow, shrink, wrap, gap, fixed and auto margins)
 4. Padding, min-height/min-width, alignment (justify/align-items/self)
+5. Positioning and insets, including inline relative shifts
+   (`specs/positioning.md`)
 
 Still to do (later milestones):
 
-5. Relative-position cell offsets (`top-1`, `-left-2`, `inset-*`)
 6. Intrinsic size for native controls (input widths, etc.)
-7. Overflow clipping / scrolling
+7. Overflow clipping / scrolling (incl. proper `position: sticky`)
 8. Grid layout (against `specs/grid.md`)
 
 ## Native interactive elements
@@ -341,7 +348,12 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
   rounding, wrap, and `renderAscii` golden outputs (the ASCII renderer is
   also exported as a debugging/agent tool).
 - Story tests: every story in `apps/storybook` runs as a Vitest
-  browser-mode test via `@storybook/addon-vitest` (part of `pnpm check`).
+  browser-mode test via `@storybook/addon-vitest` (part of `pnpm check`),
+  across a Chromium + Firefox + WebKit matrix — Playwright's Firefox
+  (pre-157) has no Typed OM, so it exercises the class-scan fallback
+  against a real engine. The fallback branches also have deterministic
+  headless coverage in `packages/core/test/style.test.ts` (happy-dom has
+  no Typed OM either).
 - Visual regression: `pnpm test:visual` — one screenshot per story,
   auto-discovered, captured inside the official Playwright Docker image
   (byte-stable across machines; JetBrains Mono self-hosted in
@@ -373,11 +385,10 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    rounding, nesting. _Implemented; normative spec extracted afterwards into
    `specs/flex.md` (the spec-first rule slipped here — hold the line for
    grid: write `specs/grid.md` BEFORE implementing Milestone 3)._
-3. **Grid + relative positioning** — cell-based
-   `grid-template-columns/rows`, gap, placement subset (write
-   `specs/grid.md` first); plus `position: relative` + inset utilities as
-   cell offsets (already specified in `specs/cell-model.md`, carried over
-   from Milestone 2).
+3. **Grid + positioning** — cell-based `grid-template-columns/rows`, gap,
+   placement subset (write `specs/grid.md` first); plus `position`
+   (static/relative/absolute; fixed → host-anchored, sticky → relative for
+   now) and inset utilities per `specs/positioning.md`.
 4. **Native interaction** — links, buttons, inputs, focus states,
    keyboard/pointer, forms; React example + integration tests.
 5. **Visual system** — colors, border styles/widths per the cell-model glyph
@@ -385,8 +396,9 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    hover/focus/selected/disabled states (requires settling the
    dynamic-style-detection question).
 6. **Production hardening** — wrapping/clipping, Unicode width, nested border
-   merging, scrolling, performance, incremental layout where justified, a11y
-   audit.
+   merging, scrolling (including proper `position: sticky`, which behaves
+   as `relative` until then), performance, incremental layout where
+   justified, a11y audit.
 7. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
    (`apps/play` → play.monowind.benface.com): live HTML editing rendered
    through `<mono-wind>`, shareable URLs. The CDN bundle (engine +

@@ -3,12 +3,15 @@ import type {
   AlignItems,
   BorderStyle,
   CellLength,
+  CellMetrics,
   CellStyle,
   Display,
   Insets,
   JustifyContent,
   PerSide,
+  Position,
   Size,
+  SizeLimit,
 } from "./types.ts";
 
 /**
@@ -17,24 +20,25 @@ import type {
  * The host must have the `measuring` attribute set while this runs so the
  * engine's own geometry rules (from styles.css) don't feed their outputs back
  * into what we read.
+ *
+ * `metrics` (the host's measured cell) is the basis for leading and
+ * tracking; absent in headless tests, where the cell height defaults to
+ * the font size and the root letter-spacing to 0.
  */
-export function readCellStyle(el: Element, rootFontSizePx: number): CellStyle {
+export function readCellStyle(
+  el: Element,
+  rootFontSizePx: number,
+  metrics?: CellMetrics,
+): CellStyle {
   const cs = getComputedStyle(el);
+  const fontSizePx = parseFloat(cs.fontSize) || rootFontSizePx;
   const csm = supportsTypedOM(el) ? el.computedStyleMap() : null;
   const classAttr = el.getAttribute("class") ?? "";
   const inlineStyle = (el as HTMLElement).style;
 
   const rawDisplay = cs.display;
   const display: Display =
-    rawDisplay === "flex"
-      ? "flex"
-      : rawDisplay === "grid"
-        ? "grid"
-        : rawDisplay === "none"
-          ? "none"
-          : rawDisplay.startsWith("inline")
-            ? "block"
-            : "block";
+    rawDisplay === "flex" || rawDisplay === "grid" || rawDisplay === "none" ? rawDisplay : "block";
 
   return {
     display,
@@ -59,6 +63,8 @@ export function readCellStyle(el: Element, rootFontSizePx: number): CellStyle {
     maxHeight: readLimit(cs.maxHeight, rootFontSizePx),
     padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(cs, csm, classAttr, rootFontSizePx),
+    position: readPosition(cs.position),
+    insets: readInsets(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     gapX: readSpacing(cs.columnGap === "normal" ? "0px" : cs.columnGap, rootFontSizePx),
     gapY: readSpacing(cs.rowGap === "normal" ? "0px" : cs.rowGap, rootFontSizePx),
     border: readBorderInsets(cs),
@@ -84,6 +90,10 @@ export function readCellStyle(el: Element, rootFontSizePx: number): CellStyle {
     // collapses whitespace). Readable via getComputedStyle because the
     // companion stylesheet's white-space lock is gated on `:not([measuring])`.
     whiteSpace: cs.whiteSpace === "nowrap" || cs.whiteSpace === "pre" ? "nowrap" : "normal",
+    // Both readable because the companion stylesheet's typography rewrite
+    // is gated on `:not([measuring])`.
+    lineGap: lineGapRows(cs.lineHeight, metrics?.height ?? fontSizePx),
+    tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     color: cs.color,
     backgroundColor: cs.backgroundColor === "rgba(0, 0, 0, 0)" ? undefined : cs.backgroundColor,
@@ -213,6 +223,83 @@ function readMargin(
   };
 }
 
+/** Extra cells after each character: floor((letter-spacing − root
+ * letter-spacing) ÷ 0.025em), never negative (specs/cell-model.md). The
+ * root's own letter-spacing is part of the cell, so only the excess over
+ * it (inherited by default) counts. */
+export function trackingCells(
+  letterSpacing: string,
+  fontSizePx: number,
+  rootLetterSpacingPx: number,
+): number {
+  const px =
+    (letterSpacing === "normal" ? 0 : parseFloat(letterSpacing) || 0) - rootLetterSpacingPx;
+  if (px <= 0) return 0;
+  return Math.floor(px / (0.025 * fontSizePx) + 1e-6);
+}
+
+/** Empty rows between wrapped lines: floor(line-height ÷ cell height) − 1,
+ * never negative. Computed line-height is always px (or `normal`). */
+function lineGapRows(lineHeight: string, cellHeightPx: number): number {
+  if (!lineHeight || lineHeight === "normal" || cellHeightPx <= 0) return 0;
+  const px = parseFloat(lineHeight);
+  if (!Number.isFinite(px)) return 0;
+  return Math.max(0, Math.floor(px / cellHeightPx + 1e-6) - 1);
+}
+
+function readPosition(value: string): Position {
+  switch (value) {
+    case "relative":
+    case "absolute":
+    case "fixed":
+    case "sticky":
+      return value;
+    default:
+      return "static";
+  }
+}
+
+/**
+ * Read insets, preserving `auto` as `null`.
+ *
+ * Same trap as margins: on POSITIONED elements, `getComputedStyle` returns
+ * *used* values for top/right/bottom/left — an `auto` side comes back as a
+ * resolved distance, indistinguishable from an authored inset (which would
+ * e.g. wrongly trigger the absolute stretch branch). Typed OM returns
+ * *computed* values, so `auto` survives. The no-Typed-OM fallback trusts a
+ * side only when an inline style or a Tailwind inset utility for it is
+ * authored (then the used value equals the authored one). LTR only.
+ */
+function readInsets(
+  cs: CSSStyleDeclaration,
+  csm: StylePropertyMapReadOnly | null,
+  classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
+  rootFontSizePx: number,
+): PerSide<CellLength | null> {
+  const side = (
+    prop: "top" | "right" | "bottom" | "left",
+    utilityPattern: RegExp,
+  ): CellLength | null => {
+    if (csm) {
+      const value = csm.get(prop)?.toString().trim();
+      if (!value || value === "auto") return null;
+      return readSpacing(value, rootFontSizePx);
+    }
+    const inline = inlineStyle[prop];
+    if (inline) return inline === "auto" ? null : readSpacing(inline, rootFontSizePx);
+    if (!utilityPattern.test(classAttr)) return null;
+    const value = cs.getPropertyValue(prop);
+    return !value || value === "auto" ? null : readSpacing(value, rootFontSizePx);
+  };
+  return {
+    top: side("top", /(?:^|[\s:.[!])-?(?:top|inset|inset-y)-/),
+    right: side("right", /(?:^|[\s:.[!])-?(?:right|end|inset|inset-x)-/),
+    bottom: side("bottom", /(?:^|[\s:.[!])-?(?:bottom|inset|inset-y)-/),
+    left: side("left", /(?:^|[\s:.[!])-?(?:left|start|inset|inset-x)-/),
+  };
+}
+
 function mapBorderStyle(value: string): BorderStyle {
   switch (value) {
     case "double":
@@ -231,8 +318,9 @@ function mapBorderStyle(value: string): BorderStyle {
  * against the parent's content box during layout) — naive px parsing would
  * read `"100%"` as 100px and produce a nonsense cell count.
  */
-function readLimit(value: string, rootFontSizePx: number): CellLength | undefined {
+function readLimit(value: string, rootFontSizePx: number): SizeLimit | undefined {
   if (!value || value === "none" || value === "auto") return undefined;
+  if (value === "min-content" || value === "max-content" || value === "fit-content") return value;
   if (value.endsWith("%")) {
     const percent = parseFloat(value);
     return Number.isFinite(percent) ? { percent } : undefined;

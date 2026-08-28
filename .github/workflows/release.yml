@@ -30,7 +30,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Same gate as CI's check job (visual regression runs on the commit's
       # regular CI; not repeated here).
-      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm check
       # -r publishes workspace packages in dependency order (monowind before
       # @monowind/vite, so `workspace:^` resolves against the real version).

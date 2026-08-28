@@ -17,7 +17,10 @@ export function percentToCells(percent: number, containerCells: number): number 
   return roundHalfAwayFromZero((containerCells * percent) / 100);
 }
 
-/** Measure the width of a monospace character and the line-box height. */
+/** Measure the root's cell: the advance of a monospace character (with
+ * the root's own letter-spacing, which it inherits) and the line-box
+ * height. Root leading/tracking thus size the grid; descendants' are
+ * quantized to it (specs/cell-model.md). */
 export function measureCellMetrics(host: HTMLElement): CellMetrics {
   const probe = document.createElement("span");
   probe.setAttribute("aria-hidden", "true");
@@ -32,7 +35,8 @@ export function measureCellMetrics(host: HTMLElement): CellMetrics {
   host.appendChild(probe);
   const rect = probe.getBoundingClientRect();
   host.removeChild(probe);
-  return { width: rect.width / 100, height: rect.height };
+  const letterSpacing = parseFloat(getComputedStyle(host).letterSpacing) || 0;
+  return { width: rect.width / 100, height: rect.height, letterSpacing };
 }
 
 export function getRootFontSizePx(): number {

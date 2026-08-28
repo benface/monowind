@@ -47,6 +47,7 @@ export type AlignItems = "start" | "center" | "end" | "stretch";
 export type AlignSelf = "auto" | "start" | "center" | "end" | "stretch";
 export type BorderStyle = "solid" | "double" | "dashed" | "dotted";
 export type Overflow = "visible" | "clip";
+export type Position = "static" | "relative" | "absolute" | "fixed" | "sticky";
 export type WhiteSpace = "normal" | "nowrap";
 
 /** A length in whole cells, or a percentage kept symbolic until layout.
@@ -55,6 +56,12 @@ export type WhiteSpace = "normal" | "nowrap";
  * block's WIDTH for padding and margins (all four sides, per CSS), and the
  * container's own content box in the gap's axis for gaps. */
 export type CellLength = number | { percent: number };
+
+/** A min/max constraint: a CellLength, or an intrinsic sizing keyword
+ * (`max-w-max` = `max-width: max-content`, …). Keywords are honored on
+ * width limits and behave as "no constraint" on height limits (content
+ * height already is the intrinsic height). */
+export type SizeLimit = CellLength | "min-content" | "max-content" | "fit-content";
 export type TextOverflow = "clip" | "ellipsis";
 
 /** One value per box edge (border style, border color, …). */
@@ -92,14 +99,20 @@ export interface CellStyle {
    * item's automatic minimum (its min-content size, when overflow is
    * visible) on the flex main axis — the reason text in a flex row stops
    * shrinking instead of vanishing, and why `min-w-0` exists. */
-  minWidth: CellLength | "auto";
-  minHeight: CellLength | "auto";
-  maxWidth: CellLength | undefined;
-  maxHeight: CellLength | undefined;
+  minWidth: SizeLimit | "auto";
+  minHeight: SizeLimit | "auto";
+  maxWidth: SizeLimit | undefined;
+  maxHeight: SizeLimit | undefined;
   padding: PerSide<CellLength>;
   /** `null` = `auto`. Percentages resolve against the parent's content
    * width where the margin is consumed. */
   margin: PerSide<CellLength | null>;
+  /** See specs/positioning.md: fixed behaves as absolute anchored to the
+   * host; sticky behaves as relative until the scrolling milestone. */
+  position: Position;
+  /** `top/right/bottom/left`; `null` = `auto`. Percentages resolve against
+   * the containing block (width for left/right, height for top/bottom). */
+  insets: PerSide<CellLength | null>;
   gapX: CellLength;
   gapY: CellLength;
   border: Insets;
@@ -108,6 +121,12 @@ export interface CellStyle {
   overflow: Overflow;
   /** `nowrap` disables soft wrapping (hard `<br>` breaks still apply). */
   whiteSpace: WhiteSpace;
+  /** Empty rows between wrapped lines (`leading-*` re-quantized to the
+   * grid: rows per line − 1). See specs/cell-model.md. */
+  lineGap: number;
+  /** Extra cells after every character (`tracking-*` re-quantized:
+   * floor((letter-spacing − root letter-spacing) ÷ 0.025em)). */
+  tracking: number;
   /** Paint-only: with `nowrap` + clipping, the browser draws the ellipsis.
    * The engine only needs it for the ASCII renderer's mirror of that. */
   textOverflow: TextOverflow;
@@ -129,13 +148,39 @@ export interface LayoutNode {
   source: Element;
   style: CellStyle;
   children: LayoutNode[];
-  /** Raw text content of the element's direct text nodes (leaves only). Empty
-   * for pure containers. May coexist with child element nodes when the
-   * element has mixed text+element children. */
+  /** The leaf's text run (inline descendants included, `<br>` as `\n`).
+   * Empty for containers — their direct text nodes are not laid out. */
   text: string;
   intrinsicWidth: number;
   intrinsicHeight: number;
   localRect: Rect;
+  /** Where an out-of-flow (absolute) box would have sat in normal flow —
+   * its CSS "static position", parent-relative, recorded by the parent's
+   * flow pass and consumed by the absolute-positioning pass for inset-less
+   * axes. Flex parents record the container's content box plus alignment
+   * so the "as if sole flex item" rule can apply once the box is sized. */
+  staticSlot?:
+    | { kind: "block"; x: number; y: number }
+    | {
+        kind: "flex";
+        direction: FlexDirection;
+        originX: number;
+        originY: number;
+        innerWidth: number;
+        innerHeight: number;
+      };
+  /** Per-character cell advances for tracked leaf text (`1 + tracking` of
+   * the character's innermost element, specs/cell-model.md); absent when
+   * every character is a plain 1-cell advance. */
+  advances?: number[];
+  /** Inline descendants of a leaf. The renderer writes each one's grid
+   * tracking and — for the positioned ones — its relative insets rewritten
+   * to whole cells (specs/positioning.md); `null` insets = not positioned. */
+  inlineElements?: {
+    element: Element;
+    tracking: number;
+    insets: PerSide<number | null> | null;
+  }[];
   /** Outer height before min/max clamping — written by layoutNode; the
    * column flex algorithm's base main size (CSS distributes from unclamped
    * bases; limits apply via its freeze loop). */
@@ -146,9 +191,14 @@ export interface LayoutNode {
   resolvedPadding: Insets;
 }
 
+/** The root's cell, in px: width = glyph advance + the root's
+ * letter-spacing, height = the root's line box (specs/cell-model.md).
+ * `letterSpacing` is the root's, kept so descendant tracking can be read
+ * relative to it. */
 export interface CellMetrics {
   width: number;
   height: number;
+  letterSpacing: number;
 }
 
 export function defaultCellStyle(): CellStyle {
@@ -173,12 +223,16 @@ export function defaultCellStyle(): CellStyle {
     maxHeight: undefined,
     padding: zeroInsets(),
     margin: { top: 0, right: 0, bottom: 0, left: 0 },
+    position: "static",
+    insets: { top: null, right: null, bottom: null, left: null },
     gapX: 0,
     gapY: 0,
     border: zeroInsets(),
     borderStyle: { top: "solid", right: "solid", bottom: "solid", left: "solid" },
     overflow: "visible",
     whiteSpace: "normal",
+    lineGap: 0,
+    tracking: 0,
     textOverflow: "clip",
     color: undefined,
     backgroundColor: undefined,
