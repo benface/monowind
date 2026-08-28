@@ -146,10 +146,13 @@ export class MonoWindElement extends HTMLElementBase {
       }
       const metrics = this.#cellMetrics;
 
-      // (2) Available cells from host's padding-box (clientWidth, not
-      // getBoundingClientRect().width — the former excludes any user-set
-      // border/padding on the host itself).
-      const availableCols = Math.max(0, Math.floor(this.clientWidth / metrics.width));
+      // (2) Available cells from the host's CONTENT box — authored padding
+      // on the host stays outside the grid (the shadow #viewport, which
+      // laid-out children position against, already sits inside it).
+      // clientWidth excludes the border; subtract the padding ourselves.
+      const cs = getComputedStyle(this);
+      const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const availableCols = Math.max(0, Math.floor((this.clientWidth - padX) / metrics.width));
       if (availableCols === 0) return;
 
       // (3) Build a tree from the light DOM. Root is a virtual container
@@ -185,7 +188,16 @@ export class MonoWindElement extends HTMLElementBase {
       render(virtualRoot, this.#decorations);
 
       // (6) Size the host to match content rows (content-driven height).
-      this.style.height = `${height * metrics.height}px`;
+      // Under border-box (Tailwind's preflight default) the height must
+      // also cover the host's own padding and border.
+      const chrome =
+        cs.boxSizing === "border-box"
+          ? (parseFloat(cs.paddingTop) || 0) +
+            (parseFloat(cs.paddingBottom) || 0) +
+            (parseFloat(cs.borderTopWidth) || 0) +
+            (parseFloat(cs.borderBottomWidth) || 0)
+          : 0;
+      this.style.height = `${height * metrics.height + chrome}px`;
 
       // (7) Reveal the host now that layout is done — kills the FOUC where
       // the browser paints raw flex/block layout before the engine runs.
