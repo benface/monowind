@@ -193,9 +193,31 @@ export const SubpixelHeadroom: StoryObj = {
       // Half a pixel over the exact multiple so `floor(clientWidth / cw)`
       // is stable; the host sizes its boxes from the column count.
       host.style.width = `${columns * cellWidth + 0.5}px`;
-      await waitFor(() => expect(first.style.getPropertyValue("--mw-w")).toBe(String(columns)), {
-        timeout: 10_000,
-      });
+      try {
+        await waitFor(() => expect(first.style.getPropertyValue("--mw-w")).toBe(String(columns)), {
+          timeout: 10_000,
+        });
+      } catch (error) {
+        // Fail-only diagnostics: this sweep exercises the engine's reactive
+        // path harder than anything else and has failed on CI in ways that
+        // don't reproduce locally — capture what the engine actually saw.
+        const cs = getComputedStyle(host);
+        throw new Error(
+          `sweep stalled: ${JSON.stringify({
+            columns,
+            cellWidth,
+            styleWidth: host.style.width,
+            clientWidth: host.clientWidth,
+            rectWidth: host.getBoundingClientRect().width,
+            mwW: first.style.getPropertyValue("--mw-w"),
+            mwCw: cs.getPropertyValue("--mw-cw"),
+            padding: cs.paddingLeft,
+            measuring: host.hasAttribute("measuring"),
+            visibility: document.visibilityState,
+          })}`,
+          { cause: error },
+        );
+      }
       await expectBrowserRowsToMatchEngine(canvasElement);
     }
   },
