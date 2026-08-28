@@ -207,29 +207,33 @@ export const SubpixelHeadroom: StoryObj = {
     await expectBrowserRowsToMatchEngine(canvasElement);
     const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
     const first = host.firstElementChild as HTMLElement;
+    let pump = false;
     for (let columns = 20; columns <= 90; columns++) {
-      // Half a pixel over the exact multiple so `floor(clientWidth / cw)`
-      // is stable; the host sizes its boxes from the column count.
-      // Resize a plain WRAPPER, not the host: a host style write
-      // invalidates the metrics cache and forces a re-measure per step,
-      // and Chromium's fresh probe can intermittently resolve the fallback
-      // font (seen on CI). The wrapper resize reaches the engine through
-      // its ResizeObserver, which keeps the measured cell.
-      frame.style.width = `${columns * cellWidth + 0.5}px`;
-      try {
-        await waitFor(() => expect(first.style.getPropertyValue("--mw-w")).toBe(String(columns)), {
-          timeout: 10_000,
-        });
-      } catch (error) {
-        // Fail-only diagnostics: this sweep exercises the engine's reactive
-        // path harder than anything else and has failed on CI in ways that
-        // don't reproduce locally — capture what the engine actually saw.
+      // Resize a plain WRAPPER, not the host (reaches the engine via its
+      // ResizeObserver), on an explicitly paced write → wait → check loop
+      // (waitFor would re-check on every mutation, and a write per check
+      // becomes a microtask storm that starves the engine's rAF). The two
+      // alternating widths floor to the same column count but are distinct
+      // box sizes, so every attempt forces a relayout and a fresh cell
+      // measurement — headless CI Chromium can transiently render the
+      // probe with the fallback font (while document.fonts reports the
+      // face applied), and the engine self-heals on the next layout.
+      const deadline = performance.now() + 10_000;
+      let landed = false;
+      while (!landed && performance.now() < deadline) {
+        pump = !pump;
+        frame.style.width = `${columns * cellWidth + (pump ? 0.5 : 0.25)}px`;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        landed = first.style.getPropertyValue("--mw-w") === String(columns);
+      }
+      if (!landed) {
+        // Fail-only diagnostics: capture what the engine actually saw.
         const cs = getComputedStyle(host);
         throw new Error(
           `sweep stalled: ${JSON.stringify({
             columns,
             cellWidth,
-            styleWidth: host.style.width,
+            styleWidth: frame.style.width,
             clientWidth: host.clientWidth,
             rectWidth: host.getBoundingClientRect().width,
             mwW: first.style.getPropertyValue("--mw-w"),
@@ -239,7 +243,6 @@ export const SubpixelHeadroom: StoryObj = {
             measuring: host.hasAttribute("measuring"),
             visibility: document.visibilityState,
           })}`,
-          { cause: error },
         );
       }
       await expectBrowserRowsToMatchEngine(canvasElement);
