@@ -153,7 +153,12 @@ headroom in their width: engines store lengths by flooring to 1/64px
 below the exact advance of a line that fits exactly, and the browser
 would wrap it. (Observed with Menlo/DejaVu Sans Mono metrics, not with
 JetBrains Mono's 0.6em advance — the `SubpixelHeadroom` story test
-guards it with a self-hosted DejaVu subset.)
+guards it with a self-hosted DejaVu subset.) Note: some platforms
+(Linux Chromium under default hinting) QUANTIZE glyph advances to whole
+pixels; the cell width then measures as an integer, the browser lays
+text out with the same quantized advances, and the engine stays
+self-consistent — with no fractional accumulation the exact-fit hazard
+cannot occur there, and the sweep skips itself.
 
 ## Inline content
 

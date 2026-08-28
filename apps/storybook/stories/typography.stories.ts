@@ -176,10 +176,16 @@ export const SubpixelHeadroom: StoryObj = {
     // fonts settle — poll until that layout has landed (a fixed frame count
     // races the re-measure on slow runners).
     await document.fonts.load("14px 'DejaVu Sans Mono Subset'");
-    // Wait for the fixture font to become MEASURABLE, pumping the frame
-    // width so every attempt forces a relayout and a fresh cell
-    // measurement (metrics update only on layout; a passive wait can
-    // wedge on a transient fallback-font rendering).
+    // Wait for the fixture font to measure at its TRUE advance, pumping
+    // the frame width so every attempt forces a relayout and a fresh cell
+    // measurement (metrics update only on layout, so a passive wait can
+    // wedge on a stale value). Root-caused 2026-08: Linux Chromium
+    // QUANTIZES glyph advances to whole pixels under default hinting
+    // (DejaVu's 8.4287px measures as exactly 8px — the font renders fine),
+    // and on the raw CI runner that quantization toggles per renderer
+    // process. The engine is self-consistent either way (the browser lays
+    // text out with the same advances the probe measures); only this
+    // sweep needs the fractional advance to exist.
     const targetCellWidth = (1233 / 2048) * 14;
     const cellWidthNow = () => parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
     const fontDeadline = performance.now() + 10_000;
@@ -193,13 +199,14 @@ export const SubpixelHeadroom: StoryObj = {
       if (!document.fonts.check("14px 'DejaVu Sans Mono Subset'")) {
         throw new Error("fixture font failed to load");
       }
-      // Some headless CI environments report the face loaded and applied
-      // yet never render it, across hundreds of forced re-measures. The
-      // sweep would only test fallback metrics there — skip loudly rather
-      // than flake; every environment that can render the font still runs
-      // the full regression guard.
+      // Integer-quantized advances: with whole-pixel advances there is no
+      // fractional accumulation, so the exact-fit headroom scenario this
+      // sweep guards against PHYSICALLY cannot occur — skipping loses no
+      // coverage on this platform. Environments with precise advances
+      // (macOS, the other browser engines, most real users) run the full
+      // sweep.
       console.warn(
-        "[SubpixelHeadroom] fixture font loaded but never rendered; skipping the exact-fit sweep",
+        "[SubpixelHeadroom] glyph advances are pixel-quantized here; the exact-fit sweep does not apply",
         { mwCw: getComputedStyle(host).getPropertyValue("--mw-cw") },
       );
       return;
@@ -214,9 +221,8 @@ export const SubpixelHeadroom: StoryObj = {
       // becomes a microtask storm that starves the engine's rAF). The two
       // alternating widths floor to the same column count but are distinct
       // box sizes, so every attempt forces a relayout and a fresh cell
-      // measurement — headless CI Chromium can transiently render the
-      // probe with the fallback font (while document.fonts reports the
-      // face applied), and the engine self-heals on the next layout.
+      // measurement — if the platform's advance quantization flips (see
+      // above), the engine self-heals on the next layout.
       const deadline = performance.now() + 10_000;
       let landed = false;
       while (!landed && performance.now() < deadline) {

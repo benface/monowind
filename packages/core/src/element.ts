@@ -42,13 +42,12 @@ export class MonoWindElement extends HTMLElementBase {
     this.#decorations = this.#shadow.getElementById("decorations") as HTMLElement;
     // Cell-metrics probe (see measureCellMetrics): persistent, hidden but
     // measurable, inheriting the host's font/line-height/letter-spacing.
-    // It must live in the LIGHT DOM: document @font-face faces don't
-    // reliably apply inside shadow trees on some Chromium builds (a probe
-    // in the shadow root measured the fallback font on CI while
-    // document.fonts reported the face loaded and applied). Measurement
-    // happens under the `measuring` attribute, so the companion
-    // stylesheet's typography locks are off; the inline `!important`s
-    // guard the box/wrap properties that must hold regardless.
+    // It lives in the LIGHT DOM so it is font-matched in exactly the same
+    // context as the content it stands in for (shadow-tree font matching
+    // has its own quirks on some Chromium builds). Measurement happens
+    // under the `measuring` attribute, so the companion stylesheet's
+    // typography locks are off; the inline `!important`s guard the
+    // box/wrap properties that must hold regardless.
     this.#probe = document.createElement("span");
     this.#probe.setAttribute("aria-hidden", "true");
     this.#probe.setAttribute("data-mw-probe", "");
