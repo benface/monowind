@@ -234,6 +234,7 @@ export const SubpixelHeadroom: StoryObj = {
             rectWidth: host.getBoundingClientRect().width,
             mwW: first.style.getPropertyValue("--mw-w"),
             mwCw: cs.getPropertyValue("--mw-cw"),
+            fontApplied: document.fonts.check("14px 'DejaVu Sans Mono Subset'"),
             padding: cs.paddingLeft,
             measuring: host.hasAttribute("measuring"),
             visibility: document.visibilityState,

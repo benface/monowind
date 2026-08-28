@@ -99,8 +99,16 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #onFontsLoaded = (): void => {
-    this.#cellMetrics = null; // font may have changed dimensions
-    this.#scheduleLayout();
+    // Defer the re-measure by a frame: rAF callbacks run BEFORE the style
+    // recalc that applies a freshly loaded font, so invalidating and
+    // measuring straight away can capture the PRE-swap (fallback) metrics
+    // when the load event and the swap land in the same frame (seen
+    // consistently on slow CI runners). One frame later the swap has
+    // rendered; #scheduleLayout adds its own rAF after that.
+    requestAnimationFrame(() => {
+      this.#cellMetrics = null; // font may have changed dimensions
+      this.#scheduleLayout();
+    });
   };
 
   #isOwnedMutation = (record: MutationRecord): boolean => {
