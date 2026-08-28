@@ -32,7 +32,6 @@ export class MonoWindElement extends HTMLElementBase {
   #resizeObserver: ResizeObserver | null = null;
   #mutationObserver: MutationObserver | null = null;
   #layoutPending = false;
-  #suppressMutations = 0;
   #cellMetrics: CellMetrics | null = null;
 
   constructor() {
@@ -66,11 +65,10 @@ export class MonoWindElement extends HTMLElementBase {
     this.#resizeObserver = new ResizeObserver(() => this.#scheduleLayout());
     this.#resizeObserver.observe(this);
 
-    this.#mutationObserver = new MutationObserver((records) => {
-      if (this.#suppressMutations > 0) return;
-      if (records.every(this.#isOwnedMutation)) return;
-      this.#scheduleLayout();
-    });
+    // Any surviving record is a user mutation: everything the engine
+    // writes happens synchronously inside #performLayout and is drained
+    // there before observation resumes.
+    this.#mutationObserver = new MutationObserver(() => this.#scheduleLayout());
     this.#mutationObserver.observe(this, {
       childList: true,
       subtree: true,
@@ -112,22 +110,6 @@ export class MonoWindElement extends HTMLElementBase {
     requestAnimationFrame(() => this.#scheduleLayout());
   };
 
-  #isOwnedMutation = (record: MutationRecord): boolean => {
-    if (record.type !== "attributes") return false;
-    const name = record.attributeName;
-    if (name === "data-mw-laid-out") return true;
-    if (name === "data-mw-ready") return true;
-    if (name === "data-mw-text-align-blocked") return true;
-    if (name === "data-mw-clip") return true;
-    if (name === "data-mw-nowrap") return true;
-    if (name === "data-mw-inline-inset") return true;
-    // Style attribute mutations are hard to filter precisely from the record
-    // alone (we can't tell which property was set). Rely on the counter that
-    // brackets our write phase — if we're inside it, treat as owned.
-    if (name === "style") return this.#suppressMutations > 0;
-    return false;
-  };
-
   #scheduleLayout(): void {
     if (this.#layoutPending) return;
     this.#layoutPending = true;
@@ -142,14 +124,13 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #performLayout(): void {
-    // The write phase is bracketed by (a) incrementing #suppressMutations
-    // and (b) setting the `measuring` attribute. Everything the engine
-    // writes to the light DOM during this phase — geometry vars, data-mw-*
-    // attributes, decoration DOM — happens synchronously, so a synchronous
-    // takeRecords() at the end drains exactly our own records. Observation
+    // The write phase is bracketed by the `measuring` attribute (gates the
+    // companion stylesheet so reads see authored values). Everything the
+    // engine writes to the light DOM — geometry vars, data-mw-* attributes
+    // — happens synchronously in here, so the synchronous takeRecords() in
+    // `finally` drains exactly our own mutation records. Observation
     // resumes the moment #performLayout returns: a user mutation in the
     // same task (right after a layout) is seen normally.
-    this.#suppressMutations++;
     this.setAttribute("measuring", "");
     try {
       // (1) Cell metrics — measured EVERY layout from the persistent
@@ -232,11 +213,9 @@ export class MonoWindElement extends HTMLElementBase {
     } finally {
       this.removeAttribute("measuring");
       // Drain the records our own writes queued (takeRecords is
-      // synchronous) and resume observation. Deferring this to a microtask
-      // would open a window where a USER mutation gets swallowed as
-      // engine-owned and never triggers a relayout.
+      // synchronous). Deferring this to a microtask would open a window
+      // where a USER mutation gets dropped with the engine's own.
       this.#mutationObserver?.takeRecords();
-      this.#suppressMutations--;
     }
   }
 }

@@ -23,6 +23,26 @@ const CARD = html`
   </div>
 `;
 
+const fontCard = (label: string) => html`
+  <div class="max-w-max border border-neutral-500 px-2 py-1">
+    ${label} — the grid measures this font's own glyph advance and line box.
+  </div>
+`;
+
+export const FontFamily: StoryObj = {
+  render: () => html`
+    <div class="flex flex-col gap-3">
+      <mono-wind>${fontCard("JetBrains Mono (the Storybook default)")}</mono-wind>
+      <mono-wind style="font-family: 'DejaVu Sans Mono Subset', monospace">
+        ${fontCard("DejaVu Sans Mono (a self-hosted @font-face)")}
+      </mono-wind>
+      <mono-wind style="font-family: 'Courier New', monospace">
+        ${fontCard("Courier New (a system font)")}
+      </mono-wind>
+    </div>
+  `,
+};
+
 export const FontSize: StoryObj = {
   render: () => html`
     <div class="flex flex-col gap-3">

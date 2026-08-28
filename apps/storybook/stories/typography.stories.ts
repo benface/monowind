@@ -187,15 +187,23 @@ export const SubpixelHeadroom: StoryObj = {
     // text out with the same advances the probe measures); only this
     // sweep needs the fractional advance to exist.
     const targetCellWidth = (1233 / 2048) * 14;
+    // ±0.01px: tight enough to exclude fallback monospace fonts near
+    // DejaVu's advance (macOS Monaco is 8.401px, 0.028 away — matching it
+    // once desynced the whole sweep), loose enough for engines that round
+    // advances slightly (Linux Firefox measures 8.4333px, 0.0046 away).
+    const advanceTolerance = 0.01;
     const cellWidthNow = () => parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
     const fontDeadline = performance.now() + 10_000;
     let pump = false;
-    while (Math.abs(cellWidthNow() - targetCellWidth) > 0.005 && performance.now() < fontDeadline) {
+    while (
+      Math.abs(cellWidthNow() - targetCellWidth) > advanceTolerance &&
+      performance.now() < fontDeadline
+    ) {
       pump = !pump;
       frame.style.width = `${420 + (pump ? 0.5 : 0.25)}px`;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    if (Math.abs(cellWidthNow() - targetCellWidth) > 0.005) {
+    if (Math.abs(cellWidthNow() - targetCellWidth) > advanceTolerance) {
       if (!document.fonts.check("14px 'DejaVu Sans Mono Subset'")) {
         throw new Error("fixture font failed to load");
       }

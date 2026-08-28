@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "@tailwindcss/browser": "^4.3.3",
-    "happy-dom": "^20.11.8",
+    "happy-dom": "^20.11.12",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
