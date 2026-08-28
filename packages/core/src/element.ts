@@ -10,12 +10,17 @@ const SHADOW_TEMPLATE = `
   :host { display: block; position: relative; contain: layout style; }
   #viewport { position: relative; width: 100%; height: 100%; }
   #decorations { position: absolute; inset: 0; pointer-events: none; user-select: none; white-space: pre; }
+  /* Cell-metrics probe (see measureCellMetrics): inherits the host's font,
+   * line-height, and letter-spacing; hidden but measurable. Light-DOM
+   * companion rules don't reach into the shadow root, so it always shows
+   * authored typography. */
+  #probe { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; user-select: none; white-space: pre; }
 </style>
 <div id="viewport">
   <div id="decorations" aria-hidden="true"></div>
   <slot></slot>
 </div>
-`;
+<div id="probe" aria-hidden="true">${"M".repeat(100)}</div>`;
 
 // Import-safe outside the browser (SSR, Node scripts using renderAscii):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
@@ -28,6 +33,7 @@ const HTMLElementBase = (
 export class MonoWindElement extends HTMLElementBase {
   #shadow: ShadowRoot;
   #decorations: HTMLElement;
+  #probe: HTMLElement;
   #resizeObserver: ResizeObserver | null = null;
   #mutationObserver: MutationObserver | null = null;
   #layoutPending = false;
@@ -39,6 +45,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#shadow = this.attachShadow({ mode: "open" });
     this.#shadow.innerHTML = SHADOW_TEMPLATE;
     this.#decorations = this.#shadow.getElementById("decorations") as HTMLElement;
+    this.#probe = this.#shadow.getElementById("probe") as HTMLElement;
   }
 
   connectedCallback(): void {
@@ -139,7 +146,7 @@ export class MonoWindElement extends HTMLElementBase {
       // (1) Cell metrics — cached; invalidated on disconnect, on font
       // loads, and on class/style changes to the host itself.
       if (!this.#cellMetrics) {
-        this.#cellMetrics = measureCellMetrics(this);
+        this.#cellMetrics = measureCellMetrics(this, this.#probe);
         this.style.setProperty("--mw-cw", `${this.#cellMetrics.width}px`);
         this.style.setProperty("--mw-ch", `${this.#cellMetrics.height}px`);
         this.style.setProperty("--mw-rls", `${this.#cellMetrics.letterSpacing}px`);

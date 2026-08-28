@@ -17,24 +17,17 @@ export function percentToCells(percent: number, containerCells: number): number 
   return roundHalfAwayFromZero((containerCells * percent) / 100);
 }
 
-/** Measure the root's cell: the advance of a monospace character (with
- * the root's own letter-spacing, which it inherits) and the line-box
- * height. Root leading/tracking thus size the grid; descendants' are
- * quantized to it (specs/cell-model.md). */
-export function measureCellMetrics(host: HTMLElement): CellMetrics {
-  const probe = document.createElement("span");
-  probe.setAttribute("aria-hidden", "true");
-  // `!important` overrides the companion stylesheet's `mono-wind *` rules
-  // (white-space, overflow-wrap) that would otherwise wrap the probe to the
-  // host's width and give us a bogus per-cell measurement.
-  probe.style.cssText =
-    "position:absolute!important;visibility:hidden!important;pointer-events:none!important;" +
-    "white-space:pre!important;overflow-wrap:normal!important;" +
-    "top:0!important;left:0!important;padding:0!important;margin:0!important;border:0!important;";
-  probe.textContent = "M".repeat(100);
-  host.appendChild(probe);
+/** Measure the root's cell from the host's PERSISTENT shadow probe (100
+ * "M"s inheriting the host's font): the advance of a monospace character
+ * (with the root's own letter-spacing) and the line-box height. Root
+ * leading/tracking thus size the grid; descendants' are quantized to it
+ * (specs/cell-model.md). The probe must be long-lived: a throwaway node
+ * created at measure time can transiently resolve the FALLBACK font even
+ * after the real font has loaded (observed on CI Chromium), whereas a
+ * persistent node is re-font-matched by the same machinery as real
+ * content. */
+export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellMetrics {
   const rect = probe.getBoundingClientRect();
-  host.removeChild(probe);
   const letterSpacing = parseFloat(getComputedStyle(host).letterSpacing) || 0;
   return { width: rect.width / 100, height: rect.height, letterSpacing };
 }
