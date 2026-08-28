@@ -156,19 +156,22 @@ export const SubpixelHeadroom: StoryObj = {
   // still run by the Vitest story tests.
   tags: ["!dev"],
   render: () => html`
-    <mono-wind style="font-family: 'DejaVu Sans Mono Subset', monospace">
-      <div class="flex flex-col gap-1">
-        <div class="border border-neutral-500 px-1">
-          inline <span class="tracking-wide text-cyan-400">tracking-wide</span> and
-          <span class="tracking-wider text-yellow-400">wider</span> spans in a run
+    <div id="sweep-frame">
+      <mono-wind style="font-family: 'DejaVu Sans Mono Subset', monospace">
+        <div class="flex flex-col gap-1">
+          <div class="border border-neutral-500 px-1">
+            inline <span class="tracking-wide text-cyan-400">tracking-wide</span> and
+            <span class="tracking-wider text-yellow-400">wider</span> spans in a run
+          </div>
+          <div class="tracking-wide">wrapped text with tracking-wide and no border at all</div>
+          <div>plain text alpha beta gamma delta epsilon zeta eta theta iota kappa</div>
         </div>
-        <div class="tracking-wide">wrapped text with tracking-wide and no border at all</div>
-        <div>plain text alpha beta gamma delta epsilon zeta eta theta iota kappa</div>
-      </div>
-    </mono-wind>
+      </mono-wind>
+    </div>
   `,
   play: async ({ canvasElement }) => {
     const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
+    const frame = canvasElement.querySelector<HTMLElement>("#sweep-frame")!;
     // The fixture font loads lazily and the host re-measures its cell once
     // fonts settle — poll until that layout has landed (a fixed frame count
     // races the re-measure on slow runners).
@@ -207,7 +210,12 @@ export const SubpixelHeadroom: StoryObj = {
     for (let columns = 20; columns <= 90; columns++) {
       // Half a pixel over the exact multiple so `floor(clientWidth / cw)`
       // is stable; the host sizes its boxes from the column count.
-      host.style.width = `${columns * cellWidth + 0.5}px`;
+      // Resize a plain WRAPPER, not the host: a host style write
+      // invalidates the metrics cache and forces a re-measure per step,
+      // and Chromium's fresh probe can intermittently resolve the fallback
+      // font (seen on CI). The wrapper resize reaches the engine through
+      // its ResizeObserver, which keeps the measured cell.
+      frame.style.width = `${columns * cellWidth + 0.5}px`;
       try {
         await waitFor(() => expect(first.style.getPropertyValue("--mw-w")).toBe(String(columns)), {
           timeout: 10_000,
