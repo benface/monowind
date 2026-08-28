@@ -7,7 +7,10 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
  * engine (specs/cell-model.md). */
 async function expectBrowserRowsToMatchEngine(canvasElement: HTMLElement): Promise<void> {
   const host = canvasElement.querySelector("mono-wind")!;
-  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
+  // Generous timeouts throughout: three browser instances share the CPU
+  // (worse on CI runners), so a rAF-driven relayout can easily outrun
+  // waitFor's default 1s under load.
+  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
   const leaves = Array.from(host.querySelectorAll<HTMLElement>("[data-mw-laid-out]")).filter(
     (el) => el.textContent!.trim() !== "" && !el.querySelector("[data-mw-laid-out]"),
   );
@@ -167,19 +170,32 @@ export const SubpixelHeadroom: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
     // The fixture font loads lazily and the host re-measures its cell once
-    // fonts settle — read the cell width only after that layout.
+    // fonts settle — poll until that layout has landed (a fixed frame count
+    // races the re-measure on slow runners).
     await document.fonts.load("14px 'DejaVu Sans Mono Subset'");
-    await document.fonts.ready;
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    // ±0.005px tolerance: it must exclude fallback monospace fonts whose
+    // advance is CLOSE to DejaVu's (macOS Monaco is 8.401px vs 8.429px at
+    // 14px) — a looser match can capture the fallback's cell width and
+    // desync the whole sweep.
+    await waitFor(
+      () => {
+        expect(parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"))).toBeCloseTo(
+          (1233 / 2048) * 14,
+          2,
+        );
+      },
+      { timeout: 10_000 },
+    );
     await expectBrowserRowsToMatchEngine(canvasElement);
     const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    expect(cellWidth).toBeCloseTo((1233 / 2048) * 14, 1);
     const first = host.firstElementChild as HTMLElement;
     for (let columns = 20; columns <= 90; columns++) {
       // Half a pixel over the exact multiple so `floor(clientWidth / cw)`
       // is stable; the host sizes its boxes from the column count.
       host.style.width = `${columns * cellWidth + 0.5}px`;
-      await waitFor(() => expect(first.style.getPropertyValue("--mw-w")).toBe(String(columns)));
+      await waitFor(() => expect(first.style.getPropertyValue("--mw-w")).toBe(String(columns)), {
+        timeout: 10_000,
+      });
       await expectBrowserRowsToMatchEngine(canvasElement);
     }
   },
