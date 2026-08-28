@@ -10,17 +10,12 @@ const SHADOW_TEMPLATE = `
   :host { display: block; position: relative; contain: layout style; }
   #viewport { position: relative; width: 100%; height: 100%; }
   #decorations { position: absolute; inset: 0; pointer-events: none; user-select: none; white-space: pre; }
-  /* Cell-metrics probe (see measureCellMetrics): inherits the host's font,
-   * line-height, and letter-spacing; hidden but measurable. Light-DOM
-   * companion rules don't reach into the shadow root, so it always shows
-   * authored typography. */
-  #probe { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; user-select: none; white-space: pre; }
 </style>
 <div id="viewport">
   <div id="decorations" aria-hidden="true"></div>
   <slot></slot>
 </div>
-<div id="probe" aria-hidden="true">${"M".repeat(100)}</div>`;
+`;
 
 // Import-safe outside the browser (SSR, Node scripts using renderAscii):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
@@ -45,10 +40,30 @@ export class MonoWindElement extends HTMLElementBase {
     this.#shadow = this.attachShadow({ mode: "open" });
     this.#shadow.innerHTML = SHADOW_TEMPLATE;
     this.#decorations = this.#shadow.getElementById("decorations") as HTMLElement;
-    this.#probe = this.#shadow.getElementById("probe") as HTMLElement;
+    // Cell-metrics probe (see measureCellMetrics): persistent, hidden but
+    // measurable, inheriting the host's font/line-height/letter-spacing.
+    // It must live in the LIGHT DOM: document @font-face faces don't
+    // reliably apply inside shadow trees on some Chromium builds (a probe
+    // in the shadow root measured the fallback font on CI while
+    // document.fonts reported the face loaded and applied). Measurement
+    // happens under the `measuring` attribute, so the companion
+    // stylesheet's typography locks are off; the inline `!important`s
+    // guard the box/wrap properties that must hold regardless.
+    this.#probe = document.createElement("span");
+    this.#probe.setAttribute("aria-hidden", "true");
+    this.#probe.setAttribute("data-mw-probe", "");
+    this.#probe.style.cssText =
+      "position:absolute!important;top:0!important;left:0!important;" +
+      "visibility:hidden!important;pointer-events:none!important;user-select:none!important;" +
+      "white-space:pre!important;overflow-wrap:normal!important;" +
+      "padding:0!important;margin:0!important;border:0!important;";
+    this.#probe.textContent = "M".repeat(100);
   }
 
   connectedCallback(): void {
+    // Before the observers connect, so its insertion isn't observed.
+    if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
+
     this.#resizeObserver = new ResizeObserver(() => this.#scheduleLayout());
     this.#resizeObserver.observe(this);
 
@@ -172,6 +187,7 @@ export class MonoWindElement extends HTMLElementBase {
       const rootFontSizePx = getRootFontSizePx();
       const childNodes: LayoutNode[] = [];
       for (const child of Array.from(this.children)) {
+        if (child === this.#probe) continue;
         const node = buildTree(child, rootFontSizePx, metrics);
         if (node) childNodes.push(node);
       }
