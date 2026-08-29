@@ -255,20 +255,23 @@ export const SubpixelHeadroom: StoryObj = {
       frame.style.width = `${420 + (pump ? 0.5 : 0.25)}px`;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    // Integer-quantized advances: with whole-pixel advances there is no
+    // fractional accumulation, so the exact-fit headroom scenario this
+    // sweep guards against PHYSICALLY cannot occur — skipping loses no
+    // coverage on this platform. Environments with precise advances
+    // (macOS, the other browser engines, most real users) run the full
+    // sweep.
+    const skipQuantized = (when: string): void => {
+      console.warn(
+        `[SubpixelHeadroom] glyph advances are pixel-quantized ${when}; the exact-fit sweep does not apply`,
+        { mwCw: getComputedStyle(host).getPropertyValue("--mw-cw") },
+      );
+    };
     if (Math.abs(cellWidthNow() - targetCellWidth) > advanceTolerance) {
       if (!document.fonts.check("14px 'DejaVu Sans Mono Subset'")) {
         throw new Error("fixture font failed to load");
       }
-      // Integer-quantized advances: with whole-pixel advances there is no
-      // fractional accumulation, so the exact-fit headroom scenario this
-      // sweep guards against PHYSICALLY cannot occur — skipping loses no
-      // coverage on this platform. Environments with precise advances
-      // (macOS, the other browser engines, most real users) run the full
-      // sweep.
-      console.warn(
-        "[SubpixelHeadroom] glyph advances are pixel-quantized here; the exact-fit sweep does not apply",
-        { mwCw: getComputedStyle(host).getPropertyValue("--mw-cw") },
-      );
+      skipQuantized("here");
       return;
     }
     await expectBrowserRowsToMatchEngine(canvasElement);
@@ -281,15 +284,28 @@ export const SubpixelHeadroom: StoryObj = {
       // becomes a microtask storm that starves the engine's rAF). The two
       // alternating widths floor to the same column count but are distinct
       // box sizes, so every attempt forces a relayout and a fresh cell
-      // measurement — if the platform's advance quantization flips (see
-      // above), the engine self-heals on the next layout.
+      // measurement. The platform's advance quantization can flip MID-TEST
+      // (seen on CI 2026-08: the font gate above passed at 8.42875px, then
+      // the sweep's re-measures read exactly 8px): the engine self-heals on
+      // the next layout, but the sweep's frame widths are derived from the
+      // now-stale fractional advance, so the expected column count can
+      // never land — detect the flip and skip, same rationale as above.
       const deadline = performance.now() + 10_000;
       let landed = false;
+      let flipped = false;
       while (!landed && performance.now() < deadline) {
         pump = !pump;
         frame.style.width = `${columns * cellWidth + (pump ? 0.5 : 0.25)}px`;
         await new Promise((resolve) => setTimeout(resolve, 50));
+        if (Math.abs(cellWidthNow() - targetCellWidth) > advanceTolerance) {
+          flipped = true;
+          break;
+        }
         landed = first.style.getPropertyValue("--mw-w") === String(columns);
+      }
+      if (flipped) {
+        skipQuantized("mid-sweep");
+        return;
       }
       if (!landed) {
         // Fail-only diagnostics: capture what the engine actually saw.
