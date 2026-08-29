@@ -404,8 +404,8 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    preservation (see cell-model deviations 5 and 8). Still-deferred
    deviations ranked by expected hit-rate: Unicode width (Milestone 7),
    `calc()` in track lists, `text-center` (fundamental — fractional
-   per-line offsets), plus a candidate dev-mode warning when a descendant
-   authors a `font-size` (root-only by design, but silently surprising)._
+   per-line offsets). Authored descendant `font-size` now warns once
+   (class + inline-style scan in `readCellStyle`)._
 4. **Tables** — `<table>` / `display: table` with the CSS automatic table
    layout (column widths from cell content; `table-fixed` honored),
    colspan/rowspan, and cell borders through the shared glyph-junction
@@ -425,7 +425,12 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    from the font render with unpredictable fallback advances that no
    counting rule can model — that lands as font-coverage guidance and
    possibly a dev-mode width-mismatch warning, not a fix), nested border
-   merging, scrolling (including proper `position: sticky`, which behaves
+   merging (touching perpendicular borders can junction automatically —
+   pure glyph selection atop the table lattice machinery; parallel
+   doubled borders stay two lines, as in CSS) and CSS gap decorations
+   (`specs/gap-decorations.md` — `rule-*` utilities mirroring
+   css-gaps-1 into `--mw-*` props until browser support is universal),
+   scrolling (including proper `position: sticky`, which behaves
    as `relative` until then), performance, incremental layout where
    justified, a11y audit.
 8. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor

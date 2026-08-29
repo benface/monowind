@@ -39,3 +39,16 @@ interfaces (TUIs) on the web. Start with
   (`cumulativeAutoOffset`, `buttonLabel`, `userConfig`, `index`).
   Standard loop counters (`i`, `j`, `k`) and well-known domain acronyms
   (`url`, `html`, `id`) are fine.
+
+## Releasing
+
+Bump the `version` in both `packages/*/package.json` (same number) —
+preferably inside the release's final substantive commit, to avoid a
+version-only commit and its extra CI run — push, and wait for green CI.
+Then
+`gh release create vX.Y.Z --title vX.Y.Z --notes "…"` — the tag triggers
+`.github/workflows/release.yml`, which re-runs the checks, publishes both
+packages to npm (trusted publishing, no tokens), and deploys the Storybook
+site to Netlify (`NETLIFY_AUTH_TOKEN` repo secret; Netlify never builds on
+its own). The two jobs are independently re-runnable: if only the deploy
+fails, re-run failed jobs — never re-publish a version.

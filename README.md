@@ -26,9 +26,9 @@ forms, and accessibility semantics stay fully intact.
 └──────────────────────────────────────────────────────┘
 ```
 
-> **Status: early development.** Block and flex layout, borders, text wrap,
-> and margins work; grid, native-interaction polish, and the visual system
-> are in progress. Design docs live in
+> **Status: early development.** Block, flex, and grid layout (subgrid and
+> named areas included), borders, text wrap, and margins work; tables,
+> native-interaction polish, and the visual system are next. Design docs live in
 > [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
@@ -73,11 +73,6 @@ pnpm build
 
 # interactively update dependencies across the workspace
 pnpm check-updates
-
-# release: bump package versions, commit + push, then create a GitHub
-# release — its tag triggers the Release workflow, which publishes to npm
-# via trusted publishing (no tokens/OTP)
-gh release create v0.1.1 --generate-notes
 
 # Example apps (each demonstrates one way to consume monowind):
 pnpm --filter @monowind/example-html dev       # CDN mode: one script tag

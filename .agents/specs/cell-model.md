@@ -1,12 +1,12 @@
 # Spec: the cell model
 
-Status: draft (2026-08-25). Normative for the engine and its tests.
+Status: normative for the engine and its tests, updated as milestones ship.
 
 This directory holds simplified, cell-adapted versions of the CSS features
 monowind re-implements. The guiding rule: **follow the CSS specs as closely as
 possible**; every deviation must be called out explicitly in a "Deviations"
-section. Sibling specs: `flex.md` (written), `grid.md` (to be written
-before the grid milestone).
+section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
+`table.md`, `gap-decorations.md`.
 
 ## Units and value mapping
 
@@ -100,7 +100,9 @@ the scrolling milestone.
   glyphs don't stretch, so a cell taller or wider than the glyph shows gaps
   in borders). On inner elements `font-family`/`font-size` are **locked**
   (neutralized by the companion stylesheet); multi-size text is out of
-  scope for the foreseeable future.
+  scope for the foreseeable future. An authored inner font size (Tailwind
+  size utility or inline style — the lock hides it from computed style)
+  triggers a one-time console warning.
 - **Line height on the grid** (`leading-*`, any element the engine lays
   out): `rows per line = max(1, floor(line-height ÷ cell height))`, and
   `line gap = rows − 1` empty rows are inserted **between** wrapped lines

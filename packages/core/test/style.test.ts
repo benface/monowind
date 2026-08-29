@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readCellStyle } from "../src/style.ts";
 import type { CellMetrics } from "../src/types.ts";
 
@@ -139,5 +139,47 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
   it("blocks authored text-center via class scan (no computed-style echo)", () => {
     expect(read({ class: "text-center" }).textAlignBlocked).toBe(true);
     expect(read({ class: "text-end" }).textAlignBlocked).toBe(false);
+  });
+
+  it("warns once per element on authored font sizes, colors excluded", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const cls of [
+        "text-lg",
+        "md:text-2xl",
+        "text-xl/8",
+        "text-[17px]",
+        "text-[length:var(--s)]",
+      ]) {
+        warn.mockClear();
+        read({ class: cls });
+        expect(warn, cls).toHaveBeenCalledOnce();
+      }
+      warn.mockClear();
+      read({ style: "font-size: 20px" });
+      expect(warn).toHaveBeenCalledOnce();
+
+      warn.mockClear();
+      const el = document.createElement("div");
+      el.setAttribute("class", "text-lg");
+      document.body.appendChild(el);
+      readCellStyle(el, 16);
+      readCellStyle(el, 16);
+      expect(warn).toHaveBeenCalledOnce();
+
+      warn.mockClear();
+      for (const cls of [
+        "text-red-500",
+        "text-center",
+        "text-[#fab]",
+        "text-balance",
+        "text-xl-legacy",
+      ]) {
+        read({ class: cls });
+      }
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

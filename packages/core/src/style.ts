@@ -43,6 +43,7 @@ export function readCellStyle(
   const csm = supportsTypedOM(el) ? el.computedStyleMap() : null;
   const classAttr = el.getAttribute("class") ?? "";
   const inlineStyle = (el as HTMLElement).style;
+  warnAuthoredFontSize(el, classAttr, inlineStyle);
 
   // Atomic inline-level boxes lay their CONTENT out like their block-level
   // counterparts (the tree builder blockifies the box itself onto its own
@@ -197,6 +198,30 @@ export function readCellStyle(
 
 function isClipping(value: string): boolean {
   return value === "hidden" || value === "clip";
+}
+
+const warnedFontSize = new WeakSet<Element>();
+
+/** Font sizes are locked to the root (cell-model deviation 3); the lock is
+ * silent, so surface it once. Detected via class + inline style — the
+ * companion stylesheet's `font-size: inherit` hides it from computed style. */
+function warnAuthoredFontSize(
+  el: Element,
+  classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
+): void {
+  if (warnedFontSize.has(el)) return;
+  const authored =
+    /(?:^|[\s:.[!])text-(?:xs|sm|base|lg|[2-9]?xl)(?![\w-])/.test(classAttr) ||
+    /(?:^|[\s:.[!])text-\[(?:(?:length|size):|[\d.])/.test(classAttr) ||
+    inlineStyle.fontSize !== "";
+  if (!authored) return;
+  warnedFontSize.add(el);
+  console.warn(
+    "[monowind] font-size inside <mono-wind> is ignored — all text shares the host's cell " +
+      "size. Size the <mono-wind> element itself instead.",
+    el,
+  );
 }
 
 function authoredTextAlignBlocked(classAttr: string, inlineStyle: CSSStyleDeclaration): boolean {
