@@ -35,3 +35,20 @@ jobs:
       # -r publishes workspace packages in dependency order (monowind before
       # @monowind/vite, so `workspace:^` resolves against the real version).
       - run: pnpm -r publish --access public --no-git-checks
+      # Deploy the Storybook site. Netlify's own builds are STOPPED for
+      # this site (no per-push builds, no build credits): we build here on
+      # Actions and push the finished files, so the site updates once per
+      # release. Needs a NETLIFY_AUTH_TOKEN repository secret (a personal
+      # access token from app.netlify.com/user/applications); the site id
+      # is public, not a secret.
+      - name: Deploy Storybook to Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: 5eacc1ae-4c03-47d9-b749-2d08c073f062
+        run: |
+          if [ -n "$NETLIFY_AUTH_TOKEN" ]; then
+            pnpm --filter @monowind/storybook build
+            npx -y netlify-cli deploy --prod --dir apps/storybook/storybook-static
+          else
+            echo "NETLIFY_AUTH_TOKEN secret not set - skipping Storybook deploy"
+          fi

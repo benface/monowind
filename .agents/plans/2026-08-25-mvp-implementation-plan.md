@@ -108,8 +108,7 @@ document order (documented, tested).
 The engine reads (via the measure/write cycle) and interprets:
 
 ```text
-display: block | flex | grid | none      (grid in its own milestone;
-                                          inline → text run, not a layout node)
+display: block | flex | grid | none      (inline → text run, not a layout node)
 flex-direction: row | column (+ -reverse), flex-wrap (+ wrap-reverse)
 flex-grow, flex-shrink, flex-basis, order
 justify-content: start | center | end | space-between | space-around | space-evenly
@@ -121,7 +120,11 @@ padding, margin (per side), gap (row/column)   (percent supported)
 border-*-width (cells per edge) + per-side border-style/color → glyphs + color
 color, background-color                        (paint-only, passed through)
 overflow: hidden | clip                        (normalized to clip)
-white-space: nowrap | pre (no-wrap half), text-overflow: ellipsis (truncate)
+white-space: nowrap | pre (pre preserves whitespace), text-overflow: ellipsis
+grid-template-columns/rows (cells, %, fr, minmax, repeat, auto-fill/fit,
+  min()/max(), named lines, subgrid), grid-template-areas, grid-auto-*,
+  grid-auto-flow, grid-column/row placement (numbers, spans, names),
+  justify-items/justify-self; inline-element horizontal padding
 line-height (leading-*) → rows per wrapped line; letter-spacing (tracking-*)
   → extra cells per character, inline elements included
 position: static | relative | absolute (+ fixed → host, sticky → relative)
@@ -129,7 +132,6 @@ top/right/bottom/left, inset-*                 (per specs/positioning.md,
                                                 incl. inline relative shifts)
 
 # Specified but NOT implemented yet (their milestones):
-grid-template-columns/rows, placement          (subset TBD by specs/grid.md)
 display: table + table-layout                  (spec TBD by specs/table.md)
 aspect-ratio                                   (needs cell-metric ratio; spec TBD)
 ```
@@ -175,6 +177,7 @@ packages/core/
 │   ├── tree.ts               # DOM → LayoutNode tree
 │   ├── layout.ts             # core: per-node sizing pipeline, block flow, intrinsics
 │   ├── flex.ts               # flex row/column + §9.7 resolution (specs/flex.md)
+│   ├── grid.ts               # grid placement, track sizing, areas, subgrid (specs/grid.md)
 │   ├── positioning.ts        # absolute/relative positioning pass (specs/positioning.md)
 │   ├── wrap.ts               # greedy word-wrap for text leaves (lines + count)
 │   ├── borders.ts            # border-run collection + glyph sets (pure, shared)
@@ -392,11 +395,11 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    (static/relative/absolute; fixed → host-anchored, sticky → relative for
    now) and inset utilities per `specs/positioning.md`. _Core implemented
    2026-08 (placement incl. dense, §11 track sizing, auto-fill/fit,
-   min()/max() breadths, alignment); remaining phases: subgrid, the §10.1
-   grid-area containing block for absolute children, and
-   `grid-template-areas` + named lines (promoted from "deferred" — the
-   TUI-dashboard tool of choice, and the numeric-placement machinery it
-   needs now exists). Inline-fidelity batch also landed: quantized
+   min()/max() breadths, alignment), then the §10.1 grid-area containing
+   block for absolute children, named lines + `grid-template-areas`, and
+   subgrid — the grid milestone is functionally complete; remaining
+   grid deviations are listed in `specs/grid.md`. Inline-fidelity batch
+   also landed: quantized
    horizontal padding on inline elements and `white-space: pre`
    preservation (see cell-model deviations 5 and 8). Still-deferred
    deviations ranked by expected hit-rate: Unicode width (Milestone 7),

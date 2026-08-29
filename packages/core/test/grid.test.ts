@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
 import { placeItems, resolveAxisPlacement } from "../src/grid.ts";
-import { parseGridLine, parseTrackTemplate } from "../src/style.ts";
+import type { AxisLines } from "../src/grid.ts";
+import { parseGridLine, parseGridTemplateAreas, parseTrackTemplate } from "../src/style.ts";
 import type { GridLine, GridTemplate, TrackBreadth, TrackSize } from "../src/types.ts";
 import { makeNode } from "./helpers.ts";
 
@@ -16,33 +17,38 @@ const auto = (): TrackSize => ({ min: { kind: "auto" }, max: { kind: "auto" } })
 const tracks = (...list: TrackSize[]): GridTemplate => ({ kind: "tracks", tracks: list });
 
 const line = (value: number): GridLine => ({ kind: "line", value });
+/** An explicit grid of `count` tracks; `names[i]` names line i. */
+const axis = (count: number, names: Record<number, string[]> = {}): AxisLines => ({
+  explicitCount: count,
+  names: Array.from({ length: count + 1 }, (_, i) => names[i] ?? []),
+});
 const span = (value: number): GridLine => ({ kind: "span", value });
 const autoLine = (): GridLine => ({ kind: "auto" });
 
 describe("resolveAxisPlacement", () => {
   it("resolves two definite lines to start + distance", () => {
-    expect(resolveAxisPlacement(line(1), line(3), 3)).toEqual({ start: 0, span: 2 });
+    expect(resolveAxisPlacement(line(1), line(3), axis(3))).toEqual({ start: 0, span: 2 });
     // Inverted lines swap; equal lines drop the end (span 1).
-    expect(resolveAxisPlacement(line(3), line(1), 3)).toEqual({ start: 0, span: 2 });
-    expect(resolveAxisPlacement(line(2), line(2), 3)).toEqual({ start: 1, span: 1 });
+    expect(resolveAxisPlacement(line(3), line(1), axis(3))).toEqual({ start: 0, span: 2 });
+    expect(resolveAxisPlacement(line(2), line(2), axis(3))).toEqual({ start: 1, span: 1 });
   });
 
   it("counts negative lines from the explicit end", () => {
     // Explicit 3 tracks = lines 1..4; line -1 is line 4.
-    expect(resolveAxisPlacement(line(-1), autoLine(), 3)).toEqual({ start: 3, span: 1 });
-    expect(resolveAxisPlacement(line(1), line(-1), 3)).toEqual({ start: 0, span: 3 });
+    expect(resolveAxisPlacement(line(-1), autoLine(), axis(3))).toEqual({ start: 3, span: 1 });
+    expect(resolveAxisPlacement(line(1), line(-1), axis(3))).toEqual({ start: 0, span: 3 });
   });
 
   it("resolves a span against its definite line", () => {
-    expect(resolveAxisPlacement(line(2), span(2), 3)).toEqual({ start: 1, span: 2 });
-    expect(resolveAxisPlacement(span(2), line(3), 3)).toEqual({ start: 0, span: 2 });
+    expect(resolveAxisPlacement(line(2), span(2), axis(3))).toEqual({ start: 1, span: 2 });
+    expect(resolveAxisPlacement(span(2), line(3), axis(3))).toEqual({ start: 0, span: 2 });
     // Span back past the grid start goes negative (implicit tracks).
-    expect(resolveAxisPlacement(span(3), line(2), 3)).toEqual({ start: -2, span: 3 });
+    expect(resolveAxisPlacement(span(3), line(2), axis(3))).toEqual({ start: -2, span: 3 });
   });
 
   it("keeps span-only and auto placements indefinite", () => {
-    expect(resolveAxisPlacement(span(2), autoLine(), 3)).toEqual({ start: null, span: 2 });
-    expect(resolveAxisPlacement(autoLine(), autoLine(), 3)).toEqual({ start: null, span: 1 });
+    expect(resolveAxisPlacement(span(2), autoLine(), axis(3))).toEqual({ start: null, span: 2 });
+    expect(resolveAxisPlacement(autoLine(), autoLine(), axis(3))).toEqual({ start: null, span: 1 });
   });
 });
 
@@ -653,5 +659,519 @@ describe("spanning items and implicit track sizes", () => {
     // Implicit rows take 2, 4, 2, … from the list; items stretch to them.
     expect(items.map((i) => i.localRect.y)).toEqual([0, 2, 6]);
     expect(items.map((i) => i.localRect.height)).toEqual([2, 4, 2]);
+  });
+});
+
+describe("absolutely positioned grid children (§10.1)", () => {
+  const twoCols = () => ({
+    display: "grid" as const,
+    gridTemplateColumns: tracks(twFr(), twFr()),
+    gapX: 2,
+  });
+
+  it("uses the grid area as containing block when the container is positioned", () => {
+    const overlay = makeNode({
+      text: "x",
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        gridColumnStart: line(1),
+        gridColumnEnd: line(2),
+      },
+    });
+    const root = makeNode({
+      style: { ...twoCols(), position: "relative" },
+      children: [makeNode({ text: "a" }), makeNode({ text: "b" }), overlay],
+    });
+    layoutRoot(root, 20);
+    // Tracks are 9 + 9 with a 2-cell gap; the overlay fills column 1's
+    // area (rows auto → the padding edges, i.e. the single 1-row track).
+    expect(overlay.localRect).toEqual({ x: 0, y: 0, width: 9, height: 1 });
+  });
+
+  it("resolves spans against auto and lines beyond the grid to the padding edges", () => {
+    const spanOnly = makeNode({
+      text: "x",
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        gridColumnStart: span(1),
+      },
+    });
+    const beyond = makeNode({
+      text: "y",
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        gridColumnStart: line(2),
+        gridColumnEnd: line(9),
+      },
+    });
+    const root = makeNode({
+      style: {
+        ...twoCols(),
+        position: "relative",
+        padding: { top: 0, right: 1, bottom: 0, left: 1 },
+      },
+      children: [makeNode({ text: "a" }), spanOnly, beyond],
+    });
+    layoutRoot(root, 22);
+    // Padding box = the whole 22 (no border); span-against-auto → both
+    // padding edges; line 9 is beyond the grid → end at the padding edge.
+    expect(spanOnly.localRect.x).toBe(0);
+    expect(spanOnly.localRect.width).toBe(22);
+    expect(beyond.localRect.x).toBe(1 + 11);
+    expect(beyond.localRect.width).toBe(22 - 12);
+  });
+
+  it("static position is the sole item of the content box, self-aligned", () => {
+    const badge = makeNode({
+      text: "hi",
+      style: { position: "absolute", justifySelf: "end", alignSelf: "end" },
+    });
+    const root = makeNode({
+      style: {
+        ...twoCols(),
+        position: "relative",
+        padding: { top: 1, right: 1, bottom: 1, left: 1 },
+        height: { kind: "cells", value: 6 },
+      },
+      children: [makeNode({ text: "a" }), badge],
+    });
+    layoutRoot(root, 20);
+    // Content box is x 1..19, y 1..5 → end-aligned 2×1 badge at (17, 4).
+    expect(badge.localRect.x).toBe(17);
+    expect(badge.localRect.y).toBe(4);
+  });
+
+  it("uses the padding box as static area when the grid container is itself absolute", () => {
+    const badge = makeNode({ text: "hi", style: { position: "absolute" } });
+    const grid = makeNode({
+      style: {
+        ...twoCols(),
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 0 },
+        width: { kind: "cells", value: 20 },
+        padding: { top: 1, right: 1, bottom: 1, left: 1 },
+      },
+      children: [makeNode({ text: "a" }), badge],
+    });
+    const root = makeNode({ style: { position: "relative" }, children: [grid] });
+    layoutRoot(root, 30);
+    // Start-aligned in the PADDING box → the badge sits at the box's own
+    // corner, not inset by the padding.
+    expect(badge.localRect.x).toBe(0);
+    expect(badge.localRect.y).toBe(0);
+  });
+
+  it("falls through to the nearest positioned ancestor when the grid is static", () => {
+    const badge = makeNode({
+      text: "hi",
+      style: {
+        position: "absolute",
+        insets: { top: null, right: 0, bottom: null, left: null },
+        gridColumnStart: line(1),
+      },
+    });
+    const grid = makeNode({
+      style: twoCols(),
+      children: [makeNode({ text: "a" }), badge],
+    });
+    const root = makeNode({ style: { position: "relative" }, children: [grid] });
+    layoutRoot(root, 30);
+    // right: 0 resolves against the ROOT (30 wide), ignoring the grid's
+    // column placement — the static grid is not a containing block.
+    expect(badge.localRect.x).toBe(28);
+  });
+});
+
+describe("named lines and areas", () => {
+  const named = (name: string, nth?: number): GridLine =>
+    nth === undefined ? { kind: "name", name } : { kind: "name", name, nth };
+
+  it("parses line-name groups, merging around fixed repeats", () => {
+    const parsed = parseTrackTemplate("[a] 40px repeat(2, [b] 1fr [c]) [d]", 16);
+    expect(parsed).toEqual({
+      kind: "tracks",
+      tracks: [fixed(10), fr(), fr()],
+      lineNames: [["a"], ["b"], ["c", "b"], ["c", "d"]],
+    });
+  });
+
+  it("parses named placement longhands in any token order", () => {
+    expect(parseGridLine("main")).toEqual({ kind: "name", name: "main" });
+    expect(parseGridLine("2 col")).toEqual({ kind: "name", name: "col", nth: 2 });
+    expect(parseGridLine("col -1")).toEqual({ kind: "name", name: "col", nth: -1 });
+    expect(parseGridLine("span 2 col")).toEqual({ kind: "span", value: 2, name: "col" });
+    expect(parseGridLine("span col")).toEqual({ kind: "span", value: 1, name: "col" });
+  });
+
+  it("parses grid-template-areas and rejects non-rectangular ones", () => {
+    const areas = parseGridTemplateAreas('"head head" "nav main" ". main"');
+    expect(areas?.columns).toBe(2);
+    expect(areas?.rows).toBe(3);
+    expect(areas?.areas.get("head")).toEqual({ colStart: 0, colEnd: 2, rowStart: 0, rowEnd: 1 });
+    expect(areas?.areas.get("main")).toEqual({ colStart: 1, colEnd: 2, rowStart: 1, rowEnd: 3 });
+    expect(parseGridTemplateAreas("none")).toBeNull();
+    expect(parseGridTemplateAreas('"a a" "a b"')).toBeNull(); // L-shaped
+    expect(parseGridTemplateAreas('"a a" "b"')).toBeNull(); // ragged
+  });
+
+  it("resolves names: area edges first, then nth occurrence, then implicit lines", () => {
+    const lines = axis(3, { 0: ["main-start", "col"], 1: ["col"], 3: ["main-end"] });
+    // Bare name → the -start / -end edge.
+    expect(resolveAxisPlacement(named("main"), named("main"), lines)).toEqual({
+      start: 0,
+      span: 3,
+    });
+    // `2 col` → the second line named col; `-1 col` → the last.
+    expect(resolveAxisPlacement(named("col", 2), autoLine(), lines)).toEqual({ start: 1, span: 1 });
+    expect(resolveAxisPlacement(named("col", -1), autoLine(), lines)).toEqual({
+      start: 1,
+      span: 1,
+    });
+    // Only two `col` lines exist: the third is the first implicit line
+    // past the explicit grid (line 4 = index 3 + 1).
+    expect(resolveAxisPlacement(named("col", 3), autoLine(), lines)).toEqual({ start: 4, span: 1 });
+    // A named span counts named lines from the definite edge.
+    expect(
+      resolveAxisPlacement(named("col", 1), { kind: "span", value: 1, name: "col" }, lines),
+    ).toEqual({ start: 0, span: 1 });
+  });
+
+  it("lays out a dashboard from grid-template-areas and grid-area names", () => {
+    const area = (name: string) => ({
+      gridColumnStart: named(name),
+      gridColumnEnd: named(name),
+      gridRowStart: named(name),
+      gridRowEnd: named(name),
+    });
+    const head = makeNode({ text: "h", style: area("head") });
+    const nav = makeNode({ text: "n", style: area("nav") });
+    const main = makeNode({ text: "m", style: area("main") });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(fixed(4), twFr()),
+        gridTemplateAreas: parseGridTemplateAreas('"head head" "nav main" "nav main"'),
+        gridAutoRows: [fixed(2)],
+        gapX: 1,
+      },
+      // Document order deliberately scrambled: names place, not order.
+      children: [main, nav, head],
+    });
+    layoutRoot(root, 20);
+    // Columns: 4 + gap + 15. Rows: the areas define 3 rows, all sized by
+    // grid-auto-rows (2 each) since the template defines none.
+    expect(head.localRect).toMatchObject({ x: 0, y: 0, width: 20, height: 2 });
+    expect(nav.localRect).toMatchObject({ x: 0, y: 2, width: 4, height: 4 });
+    expect(main.localRect).toMatchObject({ x: 5, y: 2, width: 15, height: 4 });
+  });
+
+  it("places an absolute child by area name", () => {
+    const overlay = makeNode({
+      text: "o",
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        gridColumnStart: named("main"),
+        gridColumnEnd: named("main"),
+        gridRowStart: named("main"),
+        gridRowEnd: named("main"),
+      },
+    });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        position: "relative",
+        gridTemplateColumns: tracks(fixed(4), twFr()),
+        gridTemplateAreas: parseGridTemplateAreas('"nav main"'),
+      },
+      children: [makeNode({ text: "n" }), makeNode({ text: "m" }), overlay],
+    });
+    layoutRoot(root, 20);
+    expect(overlay.localRect).toMatchObject({ x: 4, y: 0, width: 16, height: 1 });
+  });
+});
+
+describe("subgrid", () => {
+  const subgridCols = (): GridTemplate => ({ kind: "subgrid" });
+
+  it("aligns a column-subgrid's items to the parent's tracks and lets them size those tracks", () => {
+    const a = makeNode({ text: "a" });
+    const bigB = makeNode({ text: "abcdefghij" }); // 10 wide, in the subgrid
+    const c = makeNode({ text: "c" });
+    const sub = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: subgridCols(),
+        gridColumnStart: line(1),
+        gridColumnEnd: line(4),
+      },
+      children: [a, bigB, c],
+    });
+    const top = makeNode({ text: "t1" });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(auto(), auto(), auto()),
+        justifyContent: "start",
+        gapX: 1,
+      },
+      children: [top, makeNode({ text: "t2" }), makeNode({ text: "t3" }), sub],
+    });
+    layoutRoot(root, 40);
+    // The subgrid's middle item (10 wide) sized the parent's middle track:
+    // parent tracks are [2, 10, 2], so the top row's items land on them.
+    expect(top.localRect.width).toBe(2);
+    expect(root.children[1]!.localRect.x).toBe(3);
+    expect(root.children[1]!.localRect.width).toBe(10);
+    expect(root.children[2]!.localRect.x).toBe(14);
+    // Inside the subgrid, items sit on the same lines (subgrid-relative).
+    expect(a.localRect.x).toBe(0);
+    expect(bigB.localRect.x).toBe(3);
+    expect(c.localRect.x).toBe(14);
+    expect(sub.localRect.width).toBe(16);
+  });
+
+  it("adds the subgrid's border and padding to its edge tracks", () => {
+    const inner = [makeNode({ text: "a" }), makeNode({ text: "b" })];
+    const sub = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: subgridCols(),
+        gridColumnStart: line(1),
+        gridColumnEnd: line(3),
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        padding: { top: 0, right: 2, bottom: 0, left: 2 },
+      },
+      children: inner,
+    });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(auto(), auto()),
+        justifyContent: "start",
+      },
+      children: [makeNode({ text: "x" }), makeNode({ text: "y" }), sub],
+    });
+    layoutRoot(root, 40);
+    // Each parent track fits its 1-wide item plus the subgrid's chrome on
+    // that side (border 1 + padding 2): 4 + 4.
+    expect(root.children[0]!.localRect.width).toBe(4);
+    expect(root.children[1]!.localRect.x).toBe(4);
+    expect(sub.localRect.width).toBe(8);
+    // The subgrid's items sit inside its chrome, on the parent's lines.
+    expect(inner[0]!.localRect.x).toBe(3);
+    expect(inner[1]!.localRect.x).toBe(4);
+    expect(inner[1]!.localRect.width).toBe(1);
+  });
+
+  it("row subgrids share the parent's rows across siblings (aligned cards)", () => {
+    const card = (bodyText: string) => {
+      const title = makeNode({ text: "title" });
+      const body = makeNode({ text: bodyText });
+      const foot = makeNode({ text: "foot" });
+      const node = makeNode({
+        style: {
+          display: "grid",
+          gridTemplateRows: { kind: "subgrid" },
+          gridRowStart: span(3),
+        },
+        children: [title, body, foot],
+      });
+      return { node, title, body, foot };
+    };
+    const short = card("one line");
+    const tall = card("aa bb cc dd"); // wraps to 2 lines at width 5
+    const root = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(fixed(5), fixed(5)), gapY: 1 },
+      children: [short.node, tall.node],
+    });
+    layoutRoot(root, 11);
+    // The tall body (2 lines at width 5) sizes the shared middle row, so
+    // both cards' footers land on the same row.
+    expect(tall.body.localRect.height).toBe(2);
+    expect(short.foot.localRect.y).toBe(tall.foot.localRect.y);
+    expect(short.foot.localRect.y).toBe(1 + 1 + 2 + 1); // title, gap, body, gap
+    expect(short.body.localRect.height).toBe(2); // stretched to the shared row
+  });
+
+  it("clamps subgrid placement to the inherited tracks (no implicit tracks)", () => {
+    const beyond = makeNode({
+      text: "z",
+      style: { gridColumnStart: line(5), gridColumnEnd: line(9) },
+    });
+    const sub = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: subgridCols(),
+        gridColumnStart: line(1),
+        gridColumnEnd: line(3),
+      },
+      children: [beyond],
+    });
+    const root = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(fixed(4), fixed(4)) },
+      children: [sub],
+    });
+    layoutRoot(root, 20);
+    // Lines 5–9 don't exist in a 2-track subgrid: the item lands in the
+    // last track.
+    expect(beyond.localRect.x).toBe(4);
+    expect(beyond.localRect.width).toBe(4);
+  });
+
+  it("treats subgrid as none outside a grid parent", () => {
+    const sub = makeNode({
+      style: { display: "grid", gridTemplateColumns: subgridCols() },
+      children: [makeNode({ text: "a" }), makeNode({ text: "b" })],
+    });
+    const root = makeNode({ children: [sub] });
+    layoutRoot(root, 20);
+    // No parent tracks to inherit → `none`: items auto-place into one
+    // implicit column, stacking.
+    expect(sub.children[1]!.localRect.y).toBe(1);
+  });
+});
+
+describe("subgrid edge cases", () => {
+  it("composes nested subgrids through both levels", () => {
+    const deep = makeNode({ text: "abcdefgh" }); // 8 wide, two levels down
+    const innerSub = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: { kind: "subgrid" },
+        gridColumnStart: line(1),
+        gridColumnEnd: line(3),
+      },
+      children: [makeNode({ text: "a" }), deep],
+    });
+    const outerSub = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: { kind: "subgrid" },
+        gridColumnStart: line(1),
+        gridColumnEnd: line(3),
+      },
+      children: [innerSub],
+    });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(auto(), auto()),
+        justifyContent: "start",
+      },
+      children: [makeNode({ text: "x" }), makeNode({ text: "y" }), outerSub],
+    });
+    layoutRoot(root, 40);
+    // The grandchild's 8-cell text sized the ROOT's second track through
+    // two subgrid levels; every level's items sit on the same lines.
+    expect(root.children[1]!.localRect.x).toBe(1);
+    expect(root.children[1]!.localRect.width).toBe(8);
+    expect(deep.localRect.x).toBe(1);
+    expect(deep.localRect.width).toBe(8);
+  });
+
+  it("subgrids both axes at once", () => {
+    const items = [makeNode({ text: "a" }), makeNode({ text: "bb bb" })];
+    const both = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: { kind: "subgrid" },
+        gridTemplateRows: { kind: "subgrid" },
+        gridColumnStart: line(1),
+        gridColumnEnd: line(3),
+        gridRowStart: span(1),
+      },
+      children: items,
+    });
+    const root = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(fixed(4), fixed(2)), gapX: 1 },
+      children: [both],
+    });
+    layoutRoot(root, 7);
+    // Columns: parent's [4, 2] with the 1-cell gap; rows: the single
+    // shared row sized by the wrapped second item ("bb bb" at width 2 →
+    // 2 lines... wait, width 2 track: "bb" per line → 3 lines? "bb bb"
+    // → "bb"/"bb" = 2 lines).
+    expect(items[0]!.localRect).toMatchObject({ x: 0, width: 4 });
+    expect(items[1]!.localRect).toMatchObject({ x: 5, width: 2, height: 2 });
+    expect(items[0]!.localRect.height).toBe(2); // stretched to the shared row
+    expect(both.localRect.height).toBe(2);
+  });
+
+  it("an empty subgrid still claims its chrome from the parent's tracks", () => {
+    const empty = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: { kind: "subgrid" },
+        gridColumnStart: line(1),
+        gridColumnEnd: line(2),
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        padding: { top: 0, right: 2, bottom: 0, left: 2 },
+      },
+      children: [],
+    });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(auto()),
+        justifyContent: "start",
+      },
+      children: [empty],
+    });
+    layoutRoot(root, 20);
+    // No items, but the track still fits the subgrid's own chrome:
+    // border 1+1 + padding 2+2 = 6.
+    expect(empty.localRect.width).toBe(6);
+  });
+});
+
+describe("named-line edge cases", () => {
+  const named = (name: string, nth?: number): GridLine =>
+    nth === undefined ? { kind: "name", name } : { kind: "name", name, nth };
+
+  it("merges auto-repeat line names at layout time", () => {
+    // "[a] repeat(auto-fill, [b] 8cells [c]) [d]" at width 26, gap 0:
+    // count = 3 → lines: [a b] [c b] [c b] [c d].
+    const template: GridTemplate = {
+      kind: "tracks",
+      tracks: [],
+      lineNames: [["d"]],
+      autoRepeat: {
+        index: 0,
+        tracks: [fixed(8)],
+        lineNames: [["b"], ["c"]],
+        leadingNames: ["a"],
+        mode: "auto-fill",
+      },
+    };
+    const first = makeNode({
+      text: "x",
+      style: { gridColumnStart: named("a"), gridColumnEnd: { kind: "span", value: 1, name: "c" } },
+    });
+    const second = makeNode({
+      text: "y",
+      style: { gridColumnStart: named("c", 2), gridColumnEnd: named("d") },
+    });
+    const root = makeNode({
+      style: { display: "grid", gridTemplateColumns: template, justifyContent: "start" },
+      children: [first, second],
+    });
+    layoutRoot(root, 26);
+    // `a` names the first line; `span 1 c` reaches the first c-line.
+    expect(first.localRect).toMatchObject({ x: 0, width: 8 });
+    // `2 c` is the second c-line (line 16) through to `d` (the last
+    // line, at 24 — the 2 leftover cells sit past the tracks).
+    expect(second.localRect).toMatchObject({ x: 16, width: 8 });
+  });
+
+  it("walks a missing negative nth into the implicit grid before line 0", () => {
+    // One line named `edge` (index 1 of 2 tracks); `-2 edge` needs a
+    // second from the end → the first implicit line before the grid.
+    expect(
+      resolveAxisPlacement(named("edge", -2), named("edge", -1), axis(2, { 1: ["edge"] })),
+    ).toEqual({ start: -1, span: 2 });
   });
 });

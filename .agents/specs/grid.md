@@ -1,12 +1,10 @@
 # Spec: grid layout
 
-Status: implemented (`grid.ts`) except the two later phases: **subgrid**
-(currently behaves as `none`) and the **§10.1 grid-area containing block**
-for absolutely positioned children (they currently get the block static
-slot at the content origin). Cell-unit fundamentals (rounding, box model,
-margins) live in `cell-model.md`; shared machinery (integer distribution,
-intrinsic widths, alignment offsets) is the same as in `flex.md`.
-Deviations from CSS Grid are listed at the end.
+Status: implemented (`grid.ts`), subgrid included. Cell-unit
+fundamentals (rounding, box model, margins) live in `cell-model.md`;
+shared machinery (integer distribution, intrinsic widths, alignment
+offsets) is the same as in `flex.md`. Deviations from CSS Grid are
+listed at the end.
 
 ## Reading grid styles
 
@@ -46,6 +44,10 @@ per css-align.
   `align-content` (start / center / end / space-between / space-around /
   space-evenly) — reusing the flex offset machinery.
 - CSS `order` participates in auto-placement order, per CSS.
+- Named lines (`[name] 1fr [name-b name-c]`, inside `repeat()` too) and
+  `grid-template-areas` with `grid-area: <name>` placement (see Named
+  lines and areas). No core Tailwind utilities emit these — arbitrary
+  values (`[grid-area:main]`) and inline styles do.
 
 Everything integer cells; columns resolve against the container's content
 width, rows against its content height (definite) or content (indefinite).
@@ -153,6 +155,35 @@ final column widths).
 5. A `span` larger than the remaining explicit tracks also creates implicit
    tracks, per CSS.
 
+## Named lines and areas (CSS §7.3, §8.3)
+
+- **Line names** come from `[name …]` groups in the track lists. Inside a
+  fixed `repeat()` they repeat with each iteration, and the groups at a
+  repetition's edges MERGE with the names on the adjacent lines (a line
+  can carry many names), per CSS; an `auto-fill` / `auto-fit` repetition
+  does the same at layout time once its count is known.
+- **`grid-template-areas`** (a list of strings, one per row; `.` is an
+  empty cell) defines named areas, which must be rectangular — an
+  invalid value (ragged rows, non-rectangular or duplicate-split names)
+  makes the whole property behave as `none`, per CSS. Each area `foo`
+  implicitly names its edge lines `foo-start` / `foo-end` in both axes.
+  The explicit grid is the larger of the template and the areas: tracks
+  the areas need beyond the template are sized by `grid-auto-columns` /
+  `grid-auto-rows`, per CSS §7.3.
+- **Placement by name** (`grid-column-start: foo`, `grid-area: foo`,
+  `2 foo`, `span foo`, `span 2 foo`): a bare name on a start (end) side
+  first matches the first line named `foo-start` (`foo-end`) — the
+  area-implied lines, or explicit lines the author named that way —
+  otherwise it means `1 foo`, the first line named `foo`. `<n> foo` is the
+  n-th such line (negative counts from the end); when fewer named lines
+  exist, every implicit line beyond the explicit grid on that side is
+  assumed to carry the name, so the placement walks into the implicit
+  grid. A named span counts named lines from the opposite, definite
+  edge in the same way. A named span whose opposite edge is `auto` is
+  treated as a plain span of its count (**simplification**).
+- Absolutely positioned children resolve names identically (a named
+  overlay `grid-area: main` covers that area).
+
 ## Items in their areas
 
 An item's **grid area** is the track span plus the gaps it crosses. Within
@@ -179,29 +210,50 @@ CSS Grid 2:
 - A subgridded axis adopts the PARENT's track sizes for the tracks the
   subgrid spans; the subgrid defines no tracks of its own there. The other
   axis (if not subgridded) sizes independently as a normal grid axis.
-- The parent's gap is inherited in the subgridded axis (an explicit gap on
-  the subgrid overrides it, per spec).
+- The parent's gap is inherited in the subgridded axis. (**Deviation**: an
+  explicit gap on the subgrid does not override it — CSS lets it, moving
+  the gutter's extra/missing cells into the adjacent tracks; the engine
+  keeps the parent's gutters.)
 - Subgrid items participate in the PARENT's intrinsic track sizing: during
   the parent's step 2 they contribute through the mapped tracks, with the
   subgrid's own border and padding added to the contributions of the edge
   tracks it spans (the spec's margin/border/padding accounting; margins
   likewise).
 - Nested subgrids compose by mapping through each level.
-- Line NAMES are not inherited (named lines are deferred wholesale).
+- A subgridded axis has no implicit tracks (CSS Grid 2): a placement
+  outside the inherited tracks is clamped onto the nearest edge track.
+- A subgrid is always exactly its grid area in a subgridded axis
+  (self-alignment doesn't apply there), per CSS.
+- Line NAMES are not inherited (**deviation**).
 - A `subgrid` axis on something that is not a grid item behaves as `none`,
   per CSS.
+- Engine mechanics: the parent gathers a subgrid child's items as sizing
+  contributions through the mapped tracks (chrome added at the edges)
+  and hands the sized tracks down, projected into the subgrid's content
+  box. Rows arrive after the parent's first pass: a row subgrid lays out
+  provisionally so its items' heights can feed the parent's row sizing,
+  then again with the inherited rows. **Simplification**: the
+  provisional pass uses the subgrid's natural (unstretched) column
+  widths — an item whose height depends on its final column width could
+  size the shared row a hair off. In practice column sizing converges
+  after the parent's own single pass; a fixed point is not iterated.
 
 ## Out-of-flow children
 
 Per CSS Grid §10.1, for a POSITIONED grid container an absolute child's
 containing block is its **grid area**: placement properties resolve
 normally except that `auto` (and `span` against auto) lines resolve to the
-container's padding edges, and the child does not affect track sizing or
-auto-placement. Insets then resolve against that area, and an inset-less
-axis uses the static-position rectangle — the same area with the child's
-self-alignment applied — through the shared `staticSlot` machinery. A
-non-positioned grid container behaves like any other non-positioned
-ancestor (`positioning.md`).
+container's padding edges, a line beyond the implicit grid counts as
+`auto`, and the child does not affect track sizing or auto-placement.
+Insets then resolve against that area. An inset-less axis uses the CSS
+static position: as if the child were the sole grid item in an area
+whose edges are the container's CONTENT edges (its PADDING edges when the
+grid container is itself absolutely positioned), with the child's
+self-alignment (`justify-self` / `align-self`, stretch behaving as start)
+and fixed margins applied — through the shared `staticSlot` machinery.
+A non-positioned grid container behaves like any other non-positioned
+ancestor (`positioning.md`): the containing block is found further up,
+and the same static-position rule still applies.
 
 ## Interaction with the rest of the engine
 
@@ -219,10 +271,10 @@ ancestor (`positioning.md`).
 
 ## Deviations from CSS Grid
 
-1. Named lines, `grid-template-areas`, and `grid-area: <name>` are
-   deferred — no core Tailwind utilities emit them (arbitrary values
-   only); areas are attractive for TUI dashboards, revisit once numeric
-   placement ships. Subgrids accordingly don't inherit line names.
+1. Subgrids don't inherit line names, and an explicit `gap` on a
+   subgridded axis doesn't override the parent's gutters (see Subgrid).
+   A named span against an `auto` opposite edge is treated as a plain
+   span of its count.
 2. Masonry: never planned.
 3. No baseline alignment (as in flex).
 4. Spanning-item space distribution uses equal weights across spanned

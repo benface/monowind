@@ -127,7 +127,19 @@ function placeAbsolute(
   cache: IntrinsicCache,
 ): void {
   const style = child.style;
-  const cb = containingBlock(ancestors, style.position === "fixed");
+  const fixed = style.position === "fixed";
+  const slot = child.staticSlot;
+  // A positioned GRID parent's absolute child is contained by its grid
+  // area (specs/grid.md §10.1), not the parent's padding box.
+  const cb: Rect =
+    slot?.kind === "grid" && !fixed && isPositioned(parent.style)
+      ? {
+          x: parentAbsX + slot.area.x,
+          y: parentAbsY + slot.area.y,
+          width: slot.area.width,
+          height: slot.area.height,
+        }
+      : containingBlock(ancestors, fixed);
   const left = style.insets.left === null ? null : resolveLength(style.insets.left, cb.width);
   const right = style.insets.right === null ? null : resolveLength(style.insets.right, cb.width);
   const top = style.insets.top === null ? null : resolveLength(style.insets.top, cb.height);
@@ -261,6 +273,33 @@ function flexStaticOffset(
   return offset + before;
 }
 
+/** The grid static position (specs/grid.md §10.1): the sole item of the
+ * recorded static area, self-aligned (`justify-self` / `align-self`,
+ * stretch behaving as start) with its fixed margins in the box. */
+function gridStaticOffset(
+  child: LayoutNode,
+  parent: LayoutNode,
+  area: Rect,
+  axis: "x" | "y",
+  size: number,
+): number {
+  const margin = resolveMargin(child.style.margin, area.width);
+  const justify =
+    child.style.justifySelf === "auto"
+      ? parent.style.justifyItems
+      : (child.style.justifySelf as CellStyle["alignItems"]);
+  const [before, after, inner, align] =
+    axis === "x"
+      ? ([margin.left ?? 0, margin.right ?? 0, area.width, justify] as const)
+      : ([
+          margin.top ?? 0,
+          margin.bottom ?? 0,
+          area.height,
+          effectiveAlign(child, parent),
+        ] as const);
+  return alignCrossOffset(align, inner, size + before + after) + before;
+}
+
 function staticPositionX(
   child: LayoutNode,
   parent: LayoutNode,
@@ -270,6 +309,11 @@ function staticPositionX(
   const slot = child.staticSlot;
   if (slot === undefined) return parentAbsX;
   if (slot.kind === "block") return parentAbsX + slot.x;
+  if (slot.kind === "grid") {
+    return (
+      parentAbsX + slot.staticArea.x + gridStaticOffset(child, parent, slot.staticArea, "x", width)
+    );
+  }
   return parentAbsX + slot.originX + flexStaticOffset(child, parent, slot, "x", width);
 }
 
@@ -282,5 +326,10 @@ function staticPositionY(
   const slot = child.staticSlot;
   if (slot === undefined) return parentAbsY;
   if (slot.kind === "block") return parentAbsY + slot.y;
+  if (slot.kind === "grid") {
+    return (
+      parentAbsY + slot.staticArea.y + gridStaticOffset(child, parent, slot.staticArea, "y", height)
+    );
+  }
   return parentAbsY + slot.originY + flexStaticOffset(child, parent, slot, "y", height);
 }

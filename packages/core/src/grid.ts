@@ -1,4 +1,5 @@
 import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
+import { autoTrack } from "./types.ts";
 import {
   clampSize,
   intrinsicOuterWidth,
@@ -18,10 +19,12 @@ import type {
   GridAutoFlow,
   GridLine,
   GridTemplate,
+  InheritedTracks,
   Insets,
   JustifyContent,
   LayoutNode,
   NullableInsets,
+  Rect,
   TrackBreadth,
   TrackSize,
 } from "./types.ts";
@@ -32,11 +35,6 @@ import type {
  * item placement in areas. Shares the integer distribution and alignment
  * offset machinery with flex. See layout.ts for the deliberate import
  * cycle between the layout modules.
- *
- * Not yet implemented (later milestones-within-the-milestone): subgrid
- * (both axes behave as `none`), and the §10.1 grid-area containing block
- * for absolutely positioned children (they get the block static slot at
- * the content origin for now).
  */
 
 export function layoutGrid(
@@ -52,36 +50,56 @@ export function layoutGrid(
   // any bounded inner height — a `min-height` floor included, same as
   // flex lines — so rows stretch and align inside `min-h-*` containers.
   const rowAvailable = Number.isFinite(innerHeight) ? innerHeight : undefined;
-  const gapX = resolveLength(style.gapX, innerWidth);
-  const gapY = resolveLength(style.gapY, rowAvailable);
+  // A subgridded axis inherits the parent's tracks AND gutters
+  // (specs/grid.md — an own gap on that axis is ignored, a documented
+  // simplification). Rows may still be provisional (see LayoutNode.subgrid).
+  const inheritedCols = node.subgrid?.cols;
+  const inheritedRows = node.subgrid?.rows;
+  const gapX = inheritedCols ? inheritedCols.gap : resolveLength(style.gapX, innerWidth);
+  const gapY = inheritedRows ? inheritedRows.gap : resolveLength(style.gapY, rowAvailable);
 
-  const { children, placed, colTracks, rowTracks, colCollapsed, rowCollapsed } =
-    resolveGridStructure(node, innerWidth, rowAvailable, gapX, gapY);
+  const structure = resolveGridStructure(
+    node,
+    innerWidth,
+    rowAvailable,
+    gapX,
+    gapY,
+    node.subgrid ? { col: node.subgrid.colSpan, row: node.subgrid.rowSpan } : undefined,
+  );
+  const { children, placed, colLines, rowLines, colTracks, rowTracks, colCollapsed, rowCollapsed } =
+    structure;
   const margins = children.map((child) => resolveMargin(child.style.margin, innerWidth));
   const justifies = children.map((child) =>
     child.style.justifySelf === "auto" ? style.justifyItems : child.style.justifySelf,
   );
 
+  // Whether each child subgrids its columns / rows, computed once and
+  // shared by the sizing builders and both item passes.
+  const subs = children.map(subgridAxes);
+
   // Column track sizing from the items' intrinsic width contributions
-  // (outer sizes plus fixed margins, auto margins as 0).
-  const colSizing = sizeTracks(
-    colTracks,
-    colCollapsed,
-    placed.items.map((p, i) => ({
-      start: p.col.start,
-      span: p.col.span,
-      min: widthContribution(children[i]!, "min", cache) + fixedX(margins[i]!),
-      max: widthContribution(children[i]!, "max", cache) + fixedX(margins[i]!),
-    })),
-    innerWidth,
-    gapX,
-    style.justifyContent === "stretch",
-  );
-  const colPos = trackPositions(colSizing, innerWidth, style.justifyContent);
+  // (outer sizes plus fixed margins, auto margins as 0; subgrid children
+  // contribute their own items through the mapped tracks) — or the
+  // parent's tracks when this axis is subgridded.
+  const colSizing: SizingResult = inheritedCols
+    ? sizingResultFromInherited(inheritedCols)
+    : sizeTracks(
+        colTracks,
+        colCollapsed,
+        columnSizingItems(structure, subs, margins, cache),
+        innerWidth,
+        gapX,
+        style.justifyContent === "stretch",
+      );
+  const colPos = inheritedCols
+    ? inheritedCols.positions
+    : trackPositions(colSizing, innerWidth, style.justifyContent);
 
   // First item pass: resolve each item's width in its column area
   // (stretch by default; own min/max still clamp; explicit sizes and auto
-  // margins opt out) and lay it out — heights emerge here.
+  // margins opt out) and lay it out — heights emerge here. A subgrid is
+  // always exactly its area in a subgridded axis, per CSS, and receives
+  // the inherited tracks before its layout.
   const usedWidths: number[] = [];
   for (let i = 0; i < children.length; i++) {
     const child = children[i]!;
@@ -89,10 +107,30 @@ export function layoutGrid(
     const areaW = areaExtent(colPos, colSizing.sizes, p.col.start, p.col.span);
     const margin = margins[i]!;
     const availW = Math.max(0, areaW - fixedX(margin));
+    const sub = subs[i]!;
+    // A child that subgrids either axis carries a subgrid record — the
+    // column half fills in now (rows follow after row sizing).
+    if (sub.cols || sub.rows) {
+      const cols = sub.cols
+        ? inheritTracks(
+            colPos,
+            colSizing,
+            gapX,
+            p.col.start,
+            p.col.span,
+            subgridChrome(child, "cols", margin, areaW),
+          )
+        : undefined;
+      child.subgrid = { colSpan: p.col.span, rowSpan: p.row.span, cols, rows: undefined };
+    } else {
+      child.subgrid = undefined;
+    }
     const justify = justifies[i]!;
     const hasAutoX = margin.left === null || margin.right === null;
     const hasExplicitWidth = child.style.width !== undefined && child.style.width.kind !== "auto";
-    if (justify === "stretch" && !hasAutoX && !hasExplicitWidth) {
+    if (sub.cols) {
+      layoutNode(child, areaW, undefined, 0, 0, "fill", cache, { width: availW });
+    } else if (justify === "stretch" && !hasAutoX && !hasExplicitWidth) {
       // The automatic minimum (`min-width: auto` = min-content while
       // overflow is visible) floors the stretched width, same as flex —
       // the item can overflow a `minmax(0, 1fr)` track narrower than its
@@ -113,24 +151,25 @@ export function layoutGrid(
   }
 
   // Row track sizing from the laid-out heights (at final column widths,
-  // the item's min- and max-content block contributions coincide).
-  const rowSizing = sizeTracks(
-    rowTracks,
-    rowCollapsed,
-    placed.items.map((p, i) => ({
-      start: p.row.start,
-      span: p.row.span,
-      min: children[i]!.localRect.height + fixedY(margins[i]!),
-      max: children[i]!.localRect.height + fixedY(margins[i]!),
-    })),
-    rowAvailable ?? "max-content",
-    gapY,
-    style.alignContent === "stretch",
-  );
+  // the item's min- and max-content block contributions coincide) — or
+  // the parent's tracks when this axis is subgridded.
+  const rowSizing: SizingResult = inheritedRows
+    ? sizingResultFromInherited(inheritedRows)
+    : sizeTracks(
+        rowTracks,
+        rowCollapsed,
+        rowSizingItems(structure, subs, margins),
+        rowAvailable ?? "max-content",
+        gapY,
+        style.alignContent === "stretch",
+      );
   const contentRows = totalExtent(rowSizing);
-  const rowPos = trackPositions(rowSizing, rowAvailable ?? contentRows, style.alignContent);
+  const rowPos = inheritedRows
+    ? inheritedRows.positions
+    : trackPositions(rowSizing, rowAvailable ?? contentRows, style.alignContent);
 
-  // Second item pass: block-axis stretch and final placement.
+  // Second item pass: block-axis stretch and final placement (a row
+  // subgrid gets its inherited rows now and is laid out for real).
   const originX = border.left + padding.left;
   const originY = border.top + padding.top;
   for (let i = 0; i < children.length; i++) {
@@ -144,7 +183,20 @@ export function layoutGrid(
     const hasAutoY = margin.top === null || margin.bottom === null;
     const hasExplicitHeight =
       child.style.height !== undefined && child.style.height.kind !== "auto";
-    if (align === "stretch" && !hasAutoY && !hasExplicitHeight) {
+    if (subs[i]!.rows) {
+      child.subgrid!.rows = inheritTracks(
+        rowPos,
+        rowSizing,
+        gapY,
+        p.row.start,
+        p.row.span,
+        subgridChrome(child, "rows", margin, areaW),
+      );
+      layoutNode(child, areaW, areaH, 0, 0, "fill", cache, {
+        width: usedWidths[i]!,
+        height: availH,
+      });
+    } else if (align === "stretch" && !hasAutoY && !hasExplicitHeight) {
       // Same automatic minimum in the block axis: the laid-out content
       // height floors the stretch (a definite row smaller than the content
       // overflows instead of crushing it), unless overflow opts out.
@@ -181,20 +233,296 @@ export function layoutGrid(
     };
   }
 
-  // Out-of-flow children: block static slot at the content origin plus
-  // margins for now (the §10.1 grid-area containing block is a later
-  // phase, specs/grid.md).
-  for (const child of node.children) {
-    if (!isOutOfFlow(child.style)) continue;
-    const margin = resolveMargin(child.style.margin, innerWidth);
-    child.staticSlot = {
-      kind: "block",
-      x: originX + (margin.left ?? 0),
-      y: originY + (margin.top ?? 0),
-    };
+  const contentHeight = Number.isFinite(innerHeight)
+    ? Math.max(innerHeight, contentRows)
+    : contentRows;
+
+  // Out-of-flow children (specs/grid.md §10.1): the child's grid area —
+  // its containing block when this container is positioned — plus the
+  // sole-item static area: the content box, or the padding box when this
+  // container is itself absolutely positioned. Both parent-relative.
+  const outOfFlow = node.children.filter((child) => isOutOfFlow(child.style));
+  if (outOfFlow.length > 0) {
+    const staticArea: Rect = isOutOfFlow(style)
+      ? {
+          x: border.left,
+          y: border.top,
+          width: padding.left + innerWidth + padding.right,
+          height: padding.top + contentHeight + padding.bottom,
+        }
+      : { x: originX, y: originY, width: innerWidth, height: contentHeight };
+    for (const child of outOfFlow) {
+      const cols = absoluteAxisExtent(
+        child.style.gridColumnStart,
+        child.style.gridColumnEnd,
+        colLines,
+        placed.colOrigin,
+        colPos,
+        colSizing.sizes,
+        -padding.left,
+        innerWidth + padding.right,
+      );
+      const rows = absoluteAxisExtent(
+        child.style.gridRowStart,
+        child.style.gridRowEnd,
+        rowLines,
+        placed.rowOrigin,
+        rowPos,
+        rowSizing.sizes,
+        -padding.top,
+        contentHeight + padding.bottom,
+      );
+      child.staticSlot = {
+        kind: "grid",
+        area: {
+          x: originX + cols.start,
+          y: originY + rows.start,
+          width: Math.max(0, cols.end - cols.start),
+          height: Math.max(0, rows.end - rows.start),
+        },
+        staticArea,
+      };
+    }
   }
 
-  return Number.isFinite(innerHeight) ? Math.max(innerHeight, contentRows) : contentRows;
+  return contentHeight;
+}
+
+/** Which axes of an in-flow grid child are `subgrid`. */
+function subgridAxes(child: LayoutNode): { cols: boolean; rows: boolean } {
+  const isGrid = child.style.display === "grid";
+  return {
+    cols: isGrid && child.style.gridTemplateColumns.kind === "subgrid",
+    rows: isGrid && child.style.gridTemplateRows.kind === "subgrid",
+  };
+}
+
+/**
+ * Project the parent's tracks `[start, start + span)` into a subgrid's
+ * content-box coordinates: the subgrid's content box starts `chrome.start`
+ * (margin + border + padding) inside the first track, so that track
+ * loses those cells at its start and the last track loses `chrome.end`
+ * at its end; interior lines keep their positions. All returned arrays
+ * are fresh — later mutation of the parent's sizing can never leak into
+ * the child's inherited tracks.
+ */
+function inheritTracks(
+  positions: number[],
+  sizing: SizingResult,
+  gap: number,
+  start: number,
+  span: number,
+  chrome: { start: number; end: number },
+): InheritedTracks {
+  const base = positions[start]! + chrome.start;
+  const sizes = sizing.sizes.slice(start, start + span);
+  sizes[0] = Math.max(0, sizes[0]! - chrome.start);
+  sizes[span - 1] = Math.max(0, sizes[span - 1]! - chrome.end);
+  return {
+    positions: Array.from({ length: span }, (_, i) => (i === 0 ? 0 : positions[start + i]! - base)),
+    sizes,
+    gapBefore: Array.from({ length: span }, (_, i) => (i === 0 ? 0 : sizing.gapBefore[start + i]!)),
+    gap,
+  };
+}
+
+/** Adapt inherited tracks to the `SizingResult` shape the rest of
+ * `layoutGrid` reads. The tracks are already sized (limits = sizes) —
+ * downstream code never mutates a `SizingResult`, so the arrays can be
+ * shared. */
+function sizingResultFromInherited(t: InheritedTracks): SizingResult {
+  return { sizes: t.sizes, gapBefore: t.gapBefore, limits: t.sizes };
+}
+
+/** Column sizing contributions for a resolved grid: each item's
+ * min-/max-content outer width plus fixed margins; a column-subgrid child
+ * is replaced by its own items, mapped onto the parent's tracks. */
+function columnSizingItems(
+  structure: GridStructure,
+  subs: { cols: boolean; rows: boolean }[],
+  margins: NullableInsets[],
+  cache: IntrinsicCache,
+): SizingItem[] {
+  const items: SizingItem[] = [];
+  structure.children.forEach((child, i) => {
+    const p = structure.placed.items[i]!;
+    const margin = margins[i]!;
+    if (subs[i]!.cols) {
+      const chrome = subgridChrome(child, "cols", margin, 0);
+      for (const item of subgridContributions(child, "cols", p, chrome, cache)) {
+        items.push({ ...item, start: item.start + p.col.start });
+      }
+      return;
+    }
+    items.push({
+      start: p.col.start,
+      span: p.col.span,
+      min: widthContribution(child, "min", cache) + fixedX(margin),
+      max: widthContribution(child, "max", cache) + fixedX(margin),
+    });
+  });
+  return items;
+}
+
+/** Row sizing contributions: each laid-out item's height plus fixed
+ * margins (min = max at the final width); a row-subgrid child is
+ * replaced by its own items, mapped onto the parent's tracks. */
+function rowSizingItems(
+  structure: GridStructure,
+  subs: { cols: boolean; rows: boolean }[],
+  margins: NullableInsets[],
+): SizingItem[] {
+  const items: SizingItem[] = [];
+  structure.children.forEach((child, i) => {
+    const p = structure.placed.items[i]!;
+    const margin = margins[i]!;
+    if (subs[i]!.rows) {
+      const chrome = subgridChrome(child, "rows", margin, 0);
+      for (const item of subgridContributions(child, "rows", p, chrome)) {
+        items.push({ ...item, start: item.start + p.row.start });
+      }
+      return;
+    }
+    const height = child.localRect.height + fixedY(margin);
+    items.push({ start: p.row.start, span: p.row.span, min: height, max: height });
+  });
+  return items;
+}
+
+/** A subgrid's own chrome on one axis — margin + border + padding on the
+ * subgrid box itself — which its edge-track items must also cover (CSS
+ * Grid 2 §3.1). `basis` resolves percent padding (per CSS, against the
+ * containing-block WIDTH on all four sides); pass 0 during intrinsic
+ * sizing so percent padding contributes 0, matching the intrinsic-size
+ * rule for percent padding on any box. */
+function subgridChrome(
+  child: LayoutNode,
+  axis: "cols" | "rows",
+  margin: NullableInsets,
+  basis: number,
+): { start: number; end: number } {
+  const { border, padding } = child.style;
+  return axis === "cols"
+    ? {
+        start: (margin.left ?? 0) + border.left + resolveLength(padding.left, basis),
+        end: (margin.right ?? 0) + border.right + resolveLength(padding.right, basis),
+      }
+    : {
+        start: (margin.top ?? 0) + border.top + resolveLength(padding.top, basis),
+        end: (margin.bottom ?? 0) + border.bottom + resolveLength(padding.bottom, basis),
+      };
+}
+
+/**
+ * A subgrid child's items as sizing contributions in the CHILD's own
+ * track coordinates for the subgridded `axis` (the caller shifts them
+ * onto the parent's tracks). Items in the subgrid's first/last track
+ * also carry the subgrid's chrome on that side; nested subgrids compose
+ * recursively. A subgrid without items still claims its chrome. `cache`
+ * is needed for column (intrinsic) contributions only — rows use the
+ * heights the provisional first pass laid out.
+ *
+ * `child.subgrid` is NOT written here — placement span is passed
+ * explicitly to `resolveGridStructure`, keeping that field owned solely
+ * by the parent's item passes.
+ */
+function subgridContributions(
+  child: LayoutNode,
+  axis: "cols" | "rows",
+  placement: { col: PlacedAxis; row: PlacedAxis },
+  chrome: { start: number; end: number },
+  cache?: IntrinsicCache,
+): SizingItem[] {
+  const span = axis === "cols" ? placement.col.span : placement.row.span;
+  const structure = resolveGridStructure(child, undefined, undefined, 0, 0, {
+    col: placement.col.span,
+    row: placement.row.span,
+  });
+  const items: SizingItem[] = [];
+  structure.children.forEach((item, j) => {
+    const q = structure.placed.items[j]!;
+    const a = axis === "cols" ? q.col : q.row;
+    const first = a.start === 0;
+    const last = a.start + a.span === span;
+    const extra = (first ? chrome.start : 0) + (last ? chrome.end : 0);
+    const margin = resolveMargin(item.style.margin, 0);
+    if (subgridAxes(item)[axis]) {
+      const own = subgridChrome(item, axis, margin, 0);
+      const nested = subgridContributions(
+        item,
+        axis,
+        q,
+        { start: own.start + (first ? chrome.start : 0), end: own.end + (last ? chrome.end : 0) },
+        cache,
+      );
+      for (const c of nested) items.push({ ...c, start: c.start + a.start });
+      return;
+    }
+    if (axis === "cols") {
+      items.push({
+        start: a.start,
+        span: a.span,
+        min: widthContribution(item, "min", cache!) + fixedX(margin) + extra,
+        max: widthContribution(item, "max", cache!) + fixedX(margin) + extra,
+      });
+    } else {
+      const height = item.localRect.height + fixedY(margin) + extra;
+      items.push({ start: a.start, span: a.span, min: height, max: height });
+    }
+  });
+  if (items.length === 0) {
+    const total = chrome.start + chrome.end;
+    items.push({ start: 0, span, min: total, max: total });
+  }
+  return items;
+}
+
+/**
+ * One axis of an absolutely positioned grid child's area (CSS §10.1 with
+ * §8.3 line resolution): definite lines map to track edges; `auto`, a
+ * span against `auto`, and a line beyond the implicit grid resolve to the
+ * container's padding edges (`edgeStart` / `edgeEnd`, content-relative).
+ * Positions are content-relative track starts.
+ */
+function absoluteAxisExtent(
+  startLine: GridLine,
+  endLine: GridLine,
+  lines: AxisLines,
+  origin: number,
+  positions: number[],
+  sizes: number[],
+  edgeStart: number,
+  edgeEnd: number,
+): { start: number; end: number } {
+  let start = lineToIndex(startLine, "start", lines);
+  let end = lineToIndex(endLine, "end", lines);
+  if (start !== null && end !== null) {
+    if (start > end) [start, end] = [end, start];
+    else if (start === end) end = null;
+  } else if (start !== null && endLine.kind === "span") {
+    end = spanFrom(start, endLine, 1, lines);
+  } else if (end !== null && startLine.kind === "span") {
+    start = spanFrom(end, startLine, -1, lines);
+  }
+  // A grid line sits between two tracks with the gutter around it: as a
+  // START line it is the following track's start edge, as an END line the
+  // preceding track's end edge (an area never includes an outer gutter).
+  const count = positions.length;
+  const normalized = (line: number | null): number | undefined => {
+    if (line === null) return undefined;
+    const n = line - origin;
+    return n < 0 || n > count || count === 0 ? undefined : n;
+  };
+  const startLineAt = (n: number): number =>
+    n === count ? positions[count - 1]! + sizes[count - 1]! : positions[n]!;
+  const endLineAt = (n: number): number =>
+    n === 0 ? positions[0]! : positions[n - 1]! + sizes[n - 1]!;
+  const s = normalized(start);
+  const e = normalized(end);
+  return {
+    start: s === undefined ? edgeStart : startLineAt(s),
+    end: e === undefined ? edgeEnd : endLineAt(e),
+  };
 }
 
 /** The container's intrinsic content widths (specs/grid.md interaction
@@ -210,25 +538,20 @@ export function gridIntrinsicInnerWidths(
   if (cached !== undefined) return cached;
   const style = node.style;
   const gapX = typeof style.gapX === "number" ? style.gapX : 0;
-  const { children, placed, colTracks, colCollapsed } = resolveGridStructure(
+  const structure = resolveGridStructure(
     node,
     undefined,
     undefined,
     gapX,
     0,
+    node.subgrid ? { col: node.subgrid.colSpan, row: node.subgrid.rowSpan } : undefined,
   );
+  const subs = structure.children.map(subgridAxes);
+  const margins = structure.children.map((child) => resolveMargin(child.style.margin, 0));
   const sizing = sizeTracks(
-    colTracks,
-    colCollapsed,
-    placed.items.map((p, i) => {
-      const margins = fixedX(resolveMargin(children[i]!.style.margin, 0));
-      return {
-        start: p.col.start,
-        span: p.col.span,
-        min: widthContribution(children[i]!, "min", cache) + margins,
-        max: widthContribution(children[i]!, "max", cache) + margins,
-      };
-    }),
+    structure.colTracks,
+    structure.colCollapsed,
+    columnSizingItems(structure, subs, margins, cache),
     "min-content",
     gapX,
     false,
@@ -245,6 +568,9 @@ export function gridIntrinsicInnerWidths(
 interface GridStructure {
   children: LayoutNode[];
   placed: PlacementResult;
+  /** The explicit grid per axis — the basis for line resolution. */
+  colLines: AxisLines;
+  rowLines: AxisLines;
   colTracks: TrackSize[];
   rowTracks: TrackSize[];
   colCollapsed: boolean[];
@@ -252,53 +578,77 @@ interface GridStructure {
 }
 
 /** Everything upstream of track sizing: template resolution against the
- * axes' available sizes, placement spec resolution, §8.5 auto-placement,
- * the full per-axis track lists (implicit tracks included), and auto-fit
- * collapse flags. */
+ * axes' available sizes (a subgridded axis has exactly its span's worth
+ * of placeholder tracks, and clamps placement to them — no implicit
+ * tracks there, per CSS Grid 2), placement spec resolution, §8.5
+ * auto-placement, the full per-axis track lists (implicit tracks
+ * included), and auto-fit collapse flags. */
 function resolveGridStructure(
   node: LayoutNode,
   colAvailable: number | undefined,
   rowAvailable: number | undefined,
   gapX: number,
   gapY: number,
+  subgridSpans?: { col: number; row: number },
 ): GridStructure {
   const style = node.style;
   const children = gridOrderedChildren(node);
-  const colTemplate = resolveTemplate(style.gridTemplateColumns, colAvailable, gapX);
-  const rowTemplate = resolveTemplate(style.gridTemplateRows, rowAvailable, gapY);
+  const colSubgrid = style.gridTemplateColumns.kind === "subgrid" && subgridSpans !== undefined;
+  const rowSubgrid = style.gridTemplateRows.kind === "subgrid" && subgridSpans !== undefined;
+  const colTemplate = colSubgrid
+    ? placeholderTemplate(subgridSpans.col)
+    : resolveTemplate(style.gridTemplateColumns, colAvailable, gapX);
+  const rowTemplate = rowSubgrid
+    ? placeholderTemplate(subgridSpans.row)
+    : resolveTemplate(style.gridTemplateRows, rowAvailable, gapY);
+  // `grid-template-areas` (specs/grid.md): the explicit grid is the
+  // larger of the template and the areas — extra tracks come from the
+  // grid-auto-* lists — and every area names its edge lines
+  // `<name>-start` / `<name>-end` in both axes. A subgridded axis keeps
+  // its inherited track count.
+  const areas = style.gridTemplateAreas;
+  const colExplicit = [...colTemplate.tracks];
+  const rowExplicit = [...rowTemplate.tracks];
+  if (areas) {
+    if (!colSubgrid) {
+      extendExplicitTracks(
+        colExplicit,
+        colTemplate.lineNames,
+        areas.columns,
+        style.gridAutoColumns,
+      );
+    }
+    if (!rowSubgrid) {
+      extendExplicitTracks(rowExplicit, rowTemplate.lineNames, areas.rows, style.gridAutoRows);
+    }
+    for (const [name, area] of areas.areas) {
+      colTemplate.lineNames[Math.min(area.colStart, colExplicit.length)]!.push(`${name}-start`);
+      colTemplate.lineNames[Math.min(area.colEnd, colExplicit.length)]!.push(`${name}-end`);
+      rowTemplate.lineNames[Math.min(area.rowStart, rowExplicit.length)]!.push(`${name}-start`);
+      rowTemplate.lineNames[Math.min(area.rowEnd, rowExplicit.length)]!.push(`${name}-end`);
+    }
+  }
+  const colLines: AxisLines = { explicitCount: colExplicit.length, names: colTemplate.lineNames };
+  const rowLines: AxisLines = { explicitCount: rowExplicit.length, names: rowTemplate.lineNames };
   const specs = children.map((child) => ({
-    col: resolveAxisPlacement(
-      child.style.gridColumnStart,
-      child.style.gridColumnEnd,
-      colTemplate.tracks.length,
-    ),
-    row: resolveAxisPlacement(
-      child.style.gridRowStart,
-      child.style.gridRowEnd,
-      rowTemplate.tracks.length,
-    ),
+    col: resolveAxisPlacement(child.style.gridColumnStart, child.style.gridColumnEnd, colLines),
+    row: resolveAxisPlacement(child.style.gridRowStart, child.style.gridRowEnd, rowLines),
   }));
-  const placed = placeItems(
-    specs,
-    colTemplate.tracks.length,
-    rowTemplate.tracks.length,
-    style.gridAutoFlow,
-  );
+  const placed = placeItems(specs, colExplicit.length, rowExplicit.length, style.gridAutoFlow);
+  if (colSubgrid) clampToExplicit(placed, "col", colExplicit.length);
+  if (rowSubgrid) clampToExplicit(placed, "row", rowExplicit.length);
   return {
     children,
     placed,
+    colLines,
+    rowLines,
     colTracks: buildAxisTracks(
-      colTemplate.tracks,
+      colExplicit,
       placed.colOrigin,
       placed.colCount,
       style.gridAutoColumns,
     ),
-    rowTracks: buildAxisTracks(
-      rowTemplate.tracks,
-      placed.rowOrigin,
-      placed.rowCount,
-      style.gridAutoRows,
-    ),
+    rowTracks: buildAxisTracks(rowExplicit, placed.rowOrigin, placed.rowCount, style.gridAutoRows),
     colCollapsed: collapsedTracks(
       colTemplate,
       placed.colOrigin,
@@ -312,6 +662,37 @@ function resolveGridStructure(
       placed.items.map((p) => p.row),
     ),
   };
+}
+
+/** A subgridded axis's stand-in template: `span` auto tracks. The
+ * parent's inherited tracks replace them at sizing time; they only size
+ * themselves during a row subgrid's provisional first pass. */
+function placeholderTemplate(span: number): ResolvedTemplate {
+  return {
+    tracks: Array.from({ length: span }, () => autoTrack()),
+    lineNames: Array.from({ length: span + 1 }, () => []),
+  };
+}
+
+/** Subgrids have no implicit tracks in a subgridded axis: any placement
+ * outside the explicit `count` tracks is clamped onto the nearest edge
+ * track(s), and the axis is normalized to exactly those tracks. */
+function clampToExplicit(placed: PlacementResult, axis: "col" | "row", count: number): void {
+  const origin = axis === "col" ? placed.colOrigin : placed.rowOrigin;
+  for (const item of placed.items) {
+    const a = item[axis];
+    const start = Math.min(Math.max(a.start + origin, 0), count - 1);
+    const end = Math.min(Math.max(a.start + origin + a.span, start + 1), count);
+    a.start = start;
+    a.span = end - start;
+  }
+  if (axis === "col") {
+    placed.colOrigin = 0;
+    placed.colCount = count;
+  } else {
+    placed.rowOrigin = 0;
+    placed.rowCount = count;
+  }
 }
 
 /** Grid item order: stable sort by CSS `order` (document order ties) —
@@ -353,6 +734,9 @@ function widthContribution(child: LayoutNode, kind: "min" | "max", cache: Intrin
 
 interface ResolvedTemplate {
   tracks: TrackSize[];
+  /** Names per line, tracks.length + 1 entries (fresh arrays — the
+   * structure step adds area-implied names to them). */
+  lineNames: string[][];
   /** The index range [start, end) of the tracks an `auto-fit` repetition
    * produced — those collapse to 0 when empty (gaps dropped too). */
   autoFit?: { start: number; end: number };
@@ -363,16 +747,20 @@ interface ResolvedTemplate {
  * `count = max(1, floor((available + gap) ÷ (iteration + gap·tracks)))`
  * with `iteration` the sum of the repeated tracks' fixed mins (their fixed
  * max when the min is intrinsic) — exact in integer cells. An indefinite
- * axis repeats once, per CSS. `subgrid` behaves as `none` for now
- * (specs/grid.md — subgrid is a later phase).
+ * axis repeats once, per CSS. (`subgrid` never reaches here — the
+ * structure step substitutes the inherited span; outside a grid parent
+ * it behaves as `none`, per CSS.)
  */
 function resolveTemplate(
   template: GridTemplate,
   available: number | undefined,
   gap: number,
 ): ResolvedTemplate {
-  if (template.kind !== "tracks") return { tracks: [] };
-  if (!template.autoRepeat) return { tracks: template.tracks };
+  if (template.kind !== "tracks") return { tracks: [], lineNames: [[]] };
+  const baseNames = (
+    template.lineNames ?? Array.from({ length: template.tracks.length + 1 }, () => [])
+  ).map((names) => [...names]);
+  if (!template.autoRepeat) return { tracks: template.tracks, lineNames: baseNames };
   const { index, tracks: repetition, mode } = template.autoRepeat;
   let count = 1;
   if (available !== undefined) {
@@ -385,10 +773,26 @@ function resolveTemplate(
   const repeated: TrackSize[] = [];
   for (let i = 0; i < count; i++) repeated.push(...repetition);
   const tracks = [...template.tracks.slice(0, index), ...repeated, ...template.tracks.slice(index)];
-  if (mode === "auto-fit") {
-    return { tracks, autoFit: { start: index, end: index + repeated.length } };
+  // Line names: the repetition's edge groups merge with their neighbors
+  // at every boundary (the names authored before the repeat land on the
+  // first repeated line, the names after it on the line past the last).
+  const repNames =
+    template.autoRepeat.lineNames ?? Array.from({ length: repetition.length + 1 }, () => []);
+  const lineNames: string[][] = baseNames.slice(0, index);
+  let pending = [...(template.autoRepeat.leadingNames ?? [])];
+  for (let i = 0; i < count; i++) {
+    pending.push(...repNames[0]!);
+    for (let j = 0; j < repetition.length; j++) {
+      lineNames.push(pending);
+      pending = [...repNames[j + 1]!];
+    }
   }
-  return { tracks };
+  lineNames.push([...pending, ...baseNames[index]!]);
+  lineNames.push(...baseNames.slice(index + 1));
+  if (mode === "auto-fit") {
+    return { tracks, lineNames, autoFit: { start: index, end: index + repeated.length } };
+  }
+  return { tracks, lineNames };
 }
 
 /** A fixed track breadth in cells, or undefined for intrinsic/fr (percent
@@ -409,6 +813,21 @@ function fixedBreadth(breadth: TrackBreadth, available: number | undefined): num
     return breadth.fn === "min" ? Math.min(...values) : Math.max(...values);
   }
   return undefined;
+}
+
+/** Grow an explicit track list to `count` tracks with the `grid-auto-*`
+ * list (cycled), keeping `lineNames` at tracks + 1 entries — for tracks
+ * that `grid-template-areas` defines beyond the template, per CSS §7.3. */
+function extendExplicitTracks(
+  tracks: TrackSize[],
+  lineNames: string[][],
+  count: number,
+  autoList: TrackSize[],
+): void {
+  for (let i = tracks.length; i < count; i++) {
+    tracks.push(autoList[(i - tracks.length) % autoList.length]!);
+    lineNames.push([]);
+  }
 }
 
 /** The full per-axis track list: explicit tracks at normalized indices
@@ -464,32 +883,96 @@ interface AxisSpec {
   span: number;
 }
 
+/** The explicit grid of one axis for line resolution: its track count
+ * and the names on each of its `explicitCount + 1` lines (template
+ * `[name]` groups plus the `<area>-start` / `<area>-end` lines areas
+ * imply). Line indices are 0-based; indices outside `0 … explicitCount`
+ * are implicit lines. */
+export interface AxisLines {
+  explicitCount: number;
+  names: string[][];
+}
+
 /**
- * Resolve one axis of an item's placement from the two line longhands.
- * Line numbers are 1-based; negative numbers count from the explicit
- * grid's end (line −1 = the last explicit line). Both lines definite:
- * start = the earlier line, span = the distance (equal lines → the end
- * line is discarded, span 1). One definite line + a span → definite. Only
- * spans (or nothing) → indefinite with the requested span.
+ * A definite line (numeric or named) as a 0-based line index, or null
+ * for `auto` and spans. Numbers are 1-based, negatives count from the
+ * explicit grid's end. A bare name first matches the first line named
+ * `<name>-start` / `<name>-end` for its side (the area edges), else it
+ * means `1 <name>`; `<n> <name>` is the n-th line so named, walking into
+ * the implicit grid when fewer exist (every implicit line is assumed to
+ * carry every name, per CSS §8.3).
+ */
+function lineToIndex(line: GridLine, side: "start" | "end", lines: AxisLines): number | null {
+  if (line.kind === "line") {
+    return line.value > 0 ? line.value - 1 : lines.explicitCount + 1 + line.value;
+  }
+  if (line.kind !== "name") return null;
+  if (line.nth === undefined) {
+    const edge = `${line.name}-${side}`;
+    const index = lines.names.findIndex((names) => names.includes(edge));
+    if (index !== -1) return index;
+  }
+  const nth = line.nth ?? 1;
+  const count = lines.explicitCount;
+  let seen = 0;
+  if (nth > 0) {
+    for (let i = 0; i <= count; i++) {
+      if (lines.names[i]!.includes(line.name) && ++seen === nth) return i;
+    }
+    return count + (nth - seen);
+  }
+  for (let i = count; i >= 0; i--) {
+    if (lines.names[i]!.includes(line.name) && ++seen === -nth) return i;
+  }
+  return -(-nth - seen);
+}
+
+/** The line a span reaches from a definite line: plain spans count every
+ * line; a named span counts only lines carrying the name (all implicit
+ * lines beyond the explicit grid count, per CSS). */
+function spanFrom(
+  from: number,
+  span: { value: number; name?: string },
+  direction: 1 | -1,
+  lines: AxisLines,
+): number {
+  if (span.name === undefined) return from + direction * span.value;
+  let remaining = span.value;
+  let i = from;
+  while (remaining > 0) {
+    i += direction;
+    const explicit = i >= 0 && i <= lines.explicitCount;
+    if (!explicit || lines.names[i]!.includes(span.name)) remaining--;
+  }
+  return i;
+}
+
+/**
+ * Resolve one axis of an item's placement from the two line longhands
+ * (CSS §8.3). Both lines definite: start = the earlier line, span = the
+ * distance (equal lines → the end line is discarded, span 1). One
+ * definite line + a span → definite. Only spans (or nothing) →
+ * indefinite with the requested span (a named span against `auto` is a
+ * plain span — specs/grid.md deviation).
  */
 export function resolveAxisPlacement(
   startLine: GridLine,
   endLine: GridLine,
-  explicitCount: number,
+  lines: AxisLines,
 ): AxisSpec {
-  const lineIndex = (n: number) => (n > 0 ? n - 1 : explicitCount + 1 + n);
-  const start = startLine.kind === "line" ? lineIndex(startLine.value) : null;
-  const end = endLine.kind === "line" ? lineIndex(endLine.value) : null;
+  const start = lineToIndex(startLine, "start", lines);
+  const end = lineToIndex(endLine, "end", lines);
   if (start !== null && end !== null) {
     if (start === end) return { start, span: 1 };
     return { start: Math.min(start, end), span: Math.abs(end - start) };
   }
   if (start !== null) {
-    return { start, span: endLine.kind === "span" ? endLine.value : 1 };
+    const spanEnd = endLine.kind === "span" ? spanFrom(start, endLine, 1, lines) : start + 1;
+    return { start, span: spanEnd - start };
   }
   if (end !== null) {
-    const span = startLine.kind === "span" ? startLine.value : 1;
-    return { start: end - span, span };
+    const spanStart = startLine.kind === "span" ? spanFrom(end, startLine, -1, lines) : end - 1;
+    return { start: spanStart, span: end - spanStart };
   }
   const span =
     startLine.kind === "span" ? startLine.value : endLine.kind === "span" ? endLine.value : 1;

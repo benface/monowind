@@ -110,20 +110,65 @@ export type GridTemplate =
   | {
       kind: "tracks";
       tracks: TrackSize[];
-      autoRepeat?: { index: number; tracks: TrackSize[]; mode: "auto-fill" | "auto-fit" };
+      /** `[name …]` groups: `lineNames[i]` names line i (0 … tracks.length).
+       * Absent when the template names no lines. */
+      lineNames?: string[][];
+      autoRepeat?: {
+        index: number;
+        tracks: TrackSize[];
+        /** Names inside the repetition (tracks.length + 1 entries); the
+         * edge groups merge with neighbors at every iteration boundary. */
+        lineNames?: string[][];
+        /** Names authored just before the `repeat()` — they attach to the
+         * first repeated line once the count is known. */
+        leadingNames?: string[];
+        mode: "auto-fill" | "auto-fit";
+      };
     };
 
 /** One side of a grid item's placement (`grid-column-start`, …): a line
- * number (negative counts from the explicit grid's end, per CSS), a span,
- * or auto. Named lines are deferred (specs/grid.md deviations). */
+ * number (negative counts from the explicit grid's end, per CSS), a span
+ * (optionally counting only lines with a name), a named line (`foo`, or
+ * `<n> foo` — `nth` absent for the bare form, whose area-edge lookup
+ * comes first, specs/grid.md), or auto. */
 export type GridLine =
   | { kind: "auto" }
   | { kind: "line"; value: number }
-  | { kind: "span"; value: number };
+  | { kind: "span"; value: number; name?: string }
+  | { kind: "name"; name: string; nth?: number };
+
+/** A named area from `grid-template-areas`, as 0-based line indices
+ * (`colEnd` / `rowEnd` exclusive of the last cell's track). */
+export interface GridArea {
+  colStart: number;
+  colEnd: number;
+  rowStart: number;
+  rowEnd: number;
+}
+
+/** `grid-template-areas`: the row/column count it defines and its
+ * (rectangular) named areas. */
+export interface GridAreas {
+  columns: number;
+  rows: number;
+  areas: Map<string, GridArea>;
+}
 
 export interface GridAutoFlow {
   direction: "row" | "column";
   dense: boolean;
+}
+
+/** Tracks a subgrid inherits from its parent grid in a subgridded axis
+ * (specs/grid.md), projected into the subgrid's CONTENT-box coordinates:
+ * the first and last tracks are shrunk by the subgrid's own margin,
+ * border, and padding on that side, so its items still land on the
+ * parent's lines. `gap` is the parent's gutter. */
+export interface InheritedTracks {
+  positions: number[];
+  sizes: number[];
+  gapBefore: number[];
+  gap: number;
 }
 
 /** One value per box edge (border style, border color, …). */
@@ -172,6 +217,9 @@ export interface CellStyle {
   gridAutoColumns: TrackSize[];
   gridAutoRows: TrackSize[];
   gridAutoFlow: GridAutoFlow;
+  /** Parsed `grid-template-areas`; `null` for `none` or an invalid value
+   * (per CSS the whole property then doesn't apply). */
+  gridTemplateAreas: GridAreas | null;
   /** Grid item placement longhands. `auto` on non-grid-item elements. */
   gridColumnStart: GridLine;
   gridColumnEnd: GridLine;
@@ -254,7 +302,12 @@ export interface LayoutNode {
         originY: number;
         innerWidth: number;
         innerHeight: number;
-      };
+      }
+    /** Grid parents (specs/grid.md §10.1): `area` is the child's grid
+     * area (its containing block when the grid container is positioned)
+     * and `staticArea` the sole-item area for inset-less axes — both
+     * parent-relative border-box rects. */
+    | { kind: "grid"; area: Rect; staticArea: Rect };
   /** Per-character cell advances for tracked leaf text (`1 + tracking` of
    * the character's innermost element, specs/cell-model.md); absent when
    * every character is a plain 1-cell advance. */
@@ -281,6 +334,21 @@ export interface LayoutNode {
    * engine and browser agree because both treat it as an atomic unit of
    * the same width (specs/cell-model.md). */
   inlineBox?: boolean;
+  /** Set by a grid parent on a child whose template is `subgrid` in at
+   * least one axis: the child's span in each axis (its explicit track
+   * count there — placement clamps to it) and, once the parent has sized
+   * that axis, the inherited tracks. Rows arrive in the parent's second
+   * pass: the first pass lays the subgrid out provisionally (its own
+   * items' heights feed the parent's row sizing). Absent on everything
+   * else — a `subgrid` template then behaves as `none`, per CSS. */
+  subgrid?:
+    | {
+        colSpan: number;
+        rowSpan: number;
+        cols?: InheritedTracks | undefined;
+        rows?: InheritedTracks | undefined;
+      }
+    | undefined;
   /** True on a container whose direct text nodes were dropped (mixed
    * text + in-flow block children — cell-model deviation). The renderer
    * hides that text and warns instead of letting the browser paint it
@@ -330,6 +398,7 @@ export function defaultCellStyle(): CellStyle {
     gridAutoColumns: [autoTrack()],
     gridAutoRows: [autoTrack()],
     gridAutoFlow: { direction: "row", dense: false },
+    gridTemplateAreas: null,
     gridColumnStart: { kind: "auto" },
     gridColumnEnd: { kind: "auto" },
     gridRowStart: { kind: "auto" },

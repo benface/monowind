@@ -1,6 +1,14 @@
-# Netlify site config for the deployed Storybook.
-# In the Netlify UI, create a site from this repo with base directory
-# "apps/storybook" — Netlify then picks up this file automatically.
+# Netlify site config for the deployed Storybook (site: monowind-storybook).
+#
+# Netlify does NOT build this site: "Stopped builds" is enabled in the
+# site's build settings, so pushes never trigger (or bill) a Netlify
+# build. Instead, the release workflow (.github/workflows/release.yml)
+# builds Storybook on GitHub Actions and pushes the finished files with
+# `netlify deploy --prod` — the site updates once per release.
+#
+# The publish directory below still applies to those CLI deploys; the
+# build command is kept for anyone deploying manually with
+# `netlify build && netlify deploy`.
 
 [build]
 command = "pnpm --filter @monowind/storybook build"

@@ -7,6 +7,8 @@ import type {
   CellMetrics,
   CellStyle,
   Display,
+  GridArea,
+  GridAreas,
   GridAutoFlow,
   GridLine,
   GridTemplate,
@@ -70,6 +72,7 @@ export function readCellStyle(
   let gridAutoColumns: TrackSize[] = [autoTrack()];
   let gridAutoRows: TrackSize[] = [autoTrack()];
   let gridAutoFlow: GridAutoFlow = { direction: "row", dense: false };
+  let gridTemplateAreas: GridAreas | null = null;
   if (display === "grid") {
     if (csm) {
       gridTemplateColumns = parseTrackTemplate(
@@ -100,6 +103,7 @@ export function readCellStyle(
     gridAutoColumns = parseAutoTracks(cs.getPropertyValue("grid-auto-columns"), rootFontSizePx);
     gridAutoRows = parseAutoTracks(cs.getPropertyValue("grid-auto-rows"), rootFontSizePx);
     gridAutoFlow = parseGridAutoFlow(cs.getPropertyValue("grid-auto-flow"));
+    gridTemplateAreas = parseGridTemplateAreas(cs.getPropertyValue("grid-template-areas"));
   }
 
   return {
@@ -125,6 +129,7 @@ export function readCellStyle(
     gridAutoColumns,
     gridAutoRows,
     gridAutoFlow,
+    gridTemplateAreas,
     // Placement longhands have no used-value trap (computed = as
     // specified) and cost four cheap reads, so they're read on every
     // element — items don't know their parent's display here.
@@ -515,31 +520,130 @@ export function parseTrackTemplate(value: string, rootFontSizePx: number): GridT
   if (!trimmed || trimmed === "none") return { kind: "none" };
   if (trimmed === "subgrid" || trimmed.startsWith("subgrid ")) return { kind: "subgrid" };
   const tracks: TrackSize[] = [];
-  let autoRepeat:
-    | { index: number; tracks: TrackSize[]; mode: "auto-fill" | "auto-fit" }
-    | undefined;
+  const lineNames: string[][] = [];
+  // Names collected for the line BEFORE the next track (or the trailing
+  // line); a `repeat()`'s edge groups merge into it, per CSS.
+  let pending: string[] = [];
+  const pushTrack = (track: TrackSize) => {
+    lineNames.push(pending);
+    pending = [];
+    tracks.push(track);
+  };
+  let autoRepeat: NonNullable<Extract<GridTemplate, { kind: "tracks" }>["autoRepeat"]> | undefined;
   for (const token of splitTopLevel(trimmed)) {
-    if (token.startsWith("[")) continue; // line-name group (deferred)
+    const names = parseLineNames(token);
+    if (names) {
+      pending.push(...names);
+      continue;
+    }
     const repeat = token.match(/^repeat\(\s*([^,]+?)\s*,(.*)\)$/s);
     if (repeat) {
-      const inner = splitTopLevel(repeat[2]!.trim())
-        .filter((t) => !t.startsWith("["))
-        .map((t) => parseTrackSize(t, rootFontSizePx));
-      if (inner.length === 0) continue;
+      const inner = parseTrackList(repeat[2]!.trim(), rootFontSizePx);
+      if (inner.tracks.length === 0) continue;
       const count = repeat[1]!;
       if (count === "auto-fill" || count === "auto-fit") {
         // Per CSS only one auto-repeat is allowed; a second is ignored.
-        if (!autoRepeat) autoRepeat = { index: tracks.length, tracks: inner, mode: count };
+        if (!autoRepeat) {
+          autoRepeat = { index: tracks.length, tracks: inner.tracks, mode: count };
+          if (inner.lineNames.some((n) => n.length > 0)) autoRepeat.lineNames = inner.lineNames;
+          if (pending.length > 0) autoRepeat.leadingNames = pending;
+          pending = [];
+        }
         continue;
       }
       const n = Math.max(0, Math.floor(Number(count) || 0));
-      for (let i = 0; i < n; i++) tracks.push(...inner);
+      for (let i = 0; i < n; i++) {
+        pending.push(...inner.lineNames[0]!);
+        for (let j = 0; j < inner.tracks.length; j++) {
+          pushTrack(inner.tracks[j]!);
+          pending.push(...inner.lineNames[j + 1]!);
+        }
+      }
       continue;
     }
+    pushTrack(parseTrackSize(token, rootFontSizePx));
+  }
+  lineNames.push(pending);
+  if (tracks.length === 0 && !autoRepeat) return { kind: "none" };
+  const template: Extract<GridTemplate, { kind: "tracks" }> = { kind: "tracks", tracks };
+  if (lineNames.some((n) => n.length > 0)) template.lineNames = lineNames;
+  if (autoRepeat) template.autoRepeat = autoRepeat;
+  return template;
+}
+
+/** A plain track list (no `repeat()`): tracks plus the line names around
+ * them — `lineNames` has one entry per line, tracks.length + 1. */
+function parseTrackList(
+  value: string,
+  rootFontSizePx: number,
+): { tracks: TrackSize[]; lineNames: string[][] } {
+  const tracks: TrackSize[] = [];
+  const lineNames: string[][] = [];
+  let pending: string[] = [];
+  for (const token of splitTopLevel(value)) {
+    const names = parseLineNames(token);
+    if (names) {
+      pending.push(...names);
+      continue;
+    }
+    lineNames.push(pending);
+    pending = [];
     tracks.push(parseTrackSize(token, rootFontSizePx));
   }
-  if (tracks.length === 0 && !autoRepeat) return { kind: "none" };
-  return autoRepeat ? { kind: "tracks", tracks, autoRepeat } : { kind: "tracks", tracks };
+  lineNames.push(pending);
+  return { tracks, lineNames };
+}
+
+/** `[name other-name]` → the names; null for any other token. */
+function parseLineNames(token: string): string[] | null {
+  const group = token.match(/^\[(.*)\]$/s);
+  if (!group) return null;
+  return group[1]!.split(/\s+/).filter((name) => name !== "");
+}
+
+/**
+ * Parse `grid-template-areas` (specs/grid.md): one quoted string per row,
+ * whitespace-separated cell tokens, `.` (any run of dots) for an empty
+ * cell. Per CSS the whole value is invalid — and reads as `none` — when
+ * rows have different lengths or a name's cells don't form one
+ * filled-in rectangle.
+ */
+export function parseGridTemplateAreas(value: string): GridAreas | null {
+  const rows: string[][] = [];
+  for (const match of value.matchAll(/"([^"]*)"|'([^']*)'/g)) {
+    const cells = (match[1] ?? match[2] ?? "")
+      .trim()
+      .split(/\s+/)
+      .filter((c) => c !== "");
+    if (cells.length === 0) return null;
+    rows.push(cells);
+  }
+  if (rows.length === 0) return null;
+  const columns = rows[0]!.length;
+  if (rows.some((row) => row.length !== columns)) return null;
+  const areas = new Map<string, GridArea>();
+  rows.forEach((row, r) => {
+    row.forEach((cell, c) => {
+      if (/^\.+$/.test(cell)) return;
+      const area = areas.get(cell);
+      if (!area) areas.set(cell, { colStart: c, colEnd: c + 1, rowStart: r, rowEnd: r + 1 });
+      else {
+        area.colStart = Math.min(area.colStart, c);
+        area.colEnd = Math.max(area.colEnd, c + 1);
+        area.rowStart = Math.min(area.rowStart, r);
+        area.rowEnd = Math.max(area.rowEnd, r + 1);
+      }
+    });
+  });
+  // Rectangular check: every cell inside a name's bounding box carries it.
+  for (const [name, area] of areas) {
+    for (let r = area.rowStart; r < area.rowEnd; r++) {
+      for (let c = area.colStart; c < area.colEnd; c++) {
+        if (rows[r]![c] !== name) return null;
+      }
+    }
+  }
+  return { columns, rows: rows.length, areas };
 }
 
 /** Parse `grid-auto-columns` / `grid-auto-rows`: a track-size list, cycled
@@ -651,18 +755,33 @@ function splitTopLevel(value: string): string[] {
 }
 
 /** Parse a `grid-column-start`-family longhand: `auto`, an integer line
- * (possibly negative), or `span <n>`. Named lines are deferred — a name
- * token reads as `auto`. */
+ * (possibly negative), `span <n>`, or the named forms — `foo`, `<n> foo`,
+ * `span foo`, `span <n> foo` (specs/grid.md "Named lines and areas"). */
 export function parseGridLine(value: string): GridLine {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "auto") return { kind: "auto" };
-  const span = trimmed.match(/^span\s+(\d+)/);
-  if (span) {
-    const n = Math.floor(Number(span[1]));
-    return n >= 1 ? { kind: "span", value: n } : { kind: "auto" };
+  // `span`, an integer, and a custom-ident, in any order (browsers
+  // serialize `span 2 foo`; the grammar allows every order).
+  let span = false;
+  let integer: number | undefined;
+  let name: string | undefined;
+  for (const token of trimmed.split(/\s+/)) {
+    if (token === "span") span = true;
+    else if (/^-?\d+$/.test(token)) integer = Number(token);
+    else name = token;
   }
-  const line = Math.trunc(parseFloat(trimmed));
-  if (Number.isFinite(line) && line !== 0) return { kind: "line", value: line };
+  if (span) {
+    const count = integer ?? 1;
+    if (count < 1) return { kind: "auto" };
+    return name === undefined
+      ? { kind: "span", value: count }
+      : { kind: "span", value: count, name };
+  }
+  if (name !== undefined) {
+    if (integer === 0) return { kind: "auto" };
+    return integer === undefined ? { kind: "name", name } : { kind: "name", name, nth: integer };
+  }
+  if (integer !== undefined && integer !== 0) return { kind: "line", value: integer };
   return { kind: "auto" };
 }
 

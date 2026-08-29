@@ -208,7 +208,7 @@ export const SubpixelHeadroom: StoryObj = {
     // The fixture font loads lazily and the host re-measures its cell once
     // fonts settle — poll until that layout has landed (a fixed frame count
     // races the re-measure on slow runners).
-    await document.fonts.load("14px 'DejaVu Sans Mono Subset'");
+    await document.fonts.load(`${getComputedStyle(host).fontSize} 'DejaVu Sans Mono Subset'`);
     // Wait for the fixture font to measure at its TRUE advance, pumping
     // the frame width so every attempt forces a relayout and a fresh cell
     // measurement (metrics update only on layout, so a passive wait can
@@ -219,7 +219,11 @@ export const SubpixelHeadroom: StoryObj = {
     // process. The engine is self-consistent either way (the browser lays
     // text out with the same advances the probe measures); only this
     // sweep needs the fractional advance to exist.
-    const targetCellWidth = (1233 / 2048) * 14;
+    // 1233/2048 em is the fixture font's glyph advance; the em size comes
+    // from the host's computed font-size rather than a hardcoded 14 so a
+    // base-stylesheet change can't silently desync the sweep.
+    const fontSizePx = parseFloat(getComputedStyle(host).fontSize);
+    const targetCellWidth = (1233 / 2048) * fontSizePx;
     // ±0.01px: tight enough to exclude fallback monospace fonts near
     // DejaVu's advance (macOS Monaco is 8.401px, 0.028 away — matching it
     // once desynced the whole sweep), loose enough for engines that round
@@ -249,7 +253,7 @@ export const SubpixelHeadroom: StoryObj = {
       );
     };
     if (Math.abs(cellWidthNow() - targetCellWidth) > advanceTolerance) {
-      if (!document.fonts.check("14px 'DejaVu Sans Mono Subset'")) {
+      if (!document.fonts.check(`${fontSizePx}px 'DejaVu Sans Mono Subset'`)) {
         throw new Error("fixture font failed to load");
       }
       skipQuantized("here");
@@ -300,7 +304,7 @@ export const SubpixelHeadroom: StoryObj = {
             rectWidth: host.getBoundingClientRect().width,
             mwW: first.style.getPropertyValue("--mw-w"),
             mwCw: cs.getPropertyValue("--mw-cw"),
-            fontApplied: document.fonts.check("14px 'DejaVu Sans Mono Subset'"),
+            fontApplied: document.fonts.check(`${fontSizePx}px 'DejaVu Sans Mono Subset'`),
             padding: cs.paddingLeft,
             measuring: host.hasAttribute("measuring"),
             visibility: document.visibilityState,

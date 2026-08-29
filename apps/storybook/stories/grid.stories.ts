@@ -37,10 +37,11 @@ export const Columns: StoryObj = {
     const container = canvasElement.querySelector<HTMLElement>('[data-test="cols"]')!;
     const items = Array.from(container.querySelectorAll<HTMLElement>(":scope > div"));
     const widths = items.slice(0, 3).map((el) => cellsOf(el, "--mw-w"));
+    const gap = cellsOf(items[1]!, "--mw-x") - cellsOf(items[0]!, "--mw-x") - widths[0]!;
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
-    expect(widths.reduce((s, w) => s + w, 0)).toBe(cellsOf(container, "--mw-w") - 2);
+    expect(widths.reduce((s, w) => s + w, 0)).toBe(cellsOf(container, "--mw-w") - 2 * gap);
     // The span covers the second and third tracks plus the gap between.
-    expect(cellsOf(items[4]!, "--mw-w")).toBe(widths[1]! + widths[2]! + 1);
+    expect(cellsOf(items[4]!, "--mw-w")).toBe(widths[1]! + widths[2]! + gap);
   },
 };
 
@@ -60,12 +61,18 @@ export const MixedTracks: StoryObj = {
     const [fixed, flexible, autoSized] = Array.from(
       container.querySelectorAll<HTMLElement>(":scope > div"),
     );
-    // 6rem = 24 cells; the auto track is its item's max-content ("auto" +
-    // padding + borders = 8); 1fr absorbs the rest of the content box.
+    // 6rem = 24 cells; the auto track is its item's max-content (text +
+    // its own padding and border cells); 1fr absorbs the rest.
+    const chrome = ["--mw-pl", "--mw-pr", "--mw-bl", "--mw-br"]
+      .map((name) => cellsOf(autoSized!, name))
+      .reduce((a, b) => a + b, 0);
+    const autoCells = autoSized!.textContent!.trim().length + chrome;
+    const gap =
+      cellsOf(flexible!, "--mw-x") - cellsOf(fixed!, "--mw-x") - cellsOf(fixed!, "--mw-w");
     expect(cellsOf(fixed!, "--mw-w")).toBe(24);
-    expect(cellsOf(autoSized!, "--mw-w")).toBe(8);
+    expect(cellsOf(autoSized!, "--mw-w")).toBe(autoCells);
     const containerCells = cellsOf(container, "--mw-w");
-    expect(cellsOf(flexible!, "--mw-w")).toBe(containerCells - 24 - 8 - 2);
+    expect(cellsOf(flexible!, "--mw-w")).toBe(containerCells - 24 - autoCells - 2 * gap);
   },
 };
 
@@ -161,7 +168,8 @@ export const AutoFillResize: StoryObj = {
       canvasElement.querySelectorAll<HTMLElement>('[data-test="fill"] > div'),
     );
     const rowCount = () => new Set(items.map((el) => cellsOf(el, "--mw-y"))).size;
-    // minmax(8rem, 1fr) = 32-cell minimum: count = ⌊(width + 1) ÷ 33⌋.
+    // minmax(min(8rem, 100%), 1fr): at these widths 100% > 8rem, so the
+    // minimum is 32 cells → count = ⌊(width + 1) ÷ 33⌋.
     // 68 columns fit 2 tracks (5 items → 3 rows); 100 columns fit 3
     // (→ 2 rows). The count resolving at LAYOUT time against the cell
     // grid is what this asserts — a static read could never adapt.
@@ -197,4 +205,152 @@ export const Alignment: StoryObj = {
     </mono-wind>
   `,
   play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
+};
+
+export const AbsoluteChildren: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="relative grid grid-cols-3 gap-x-1 border border-neutral-500 px-1" data-test="abs">
+        <div class="border border-neutral-500 px-1">one</div>
+        <div class="border border-neutral-500 px-1">two</div>
+        <div class="border border-neutral-500 px-1">three</div>
+        <div class="border border-neutral-500 px-1">four</div>
+        <div class="border border-neutral-500 px-1">five</div>
+        <div class="border border-neutral-500 px-1">six</div>
+        <div
+          class="absolute inset-0 col-start-2 col-end-3 row-start-1 row-end-2 border px-1 text-cyan-400"
+        >
+          inset-0 in area (2, 1)
+        </div>
+        <!-- No insets at all: an absolute box then lands on its CSS "static
+             position", which for a grid child (§10.1) is the content box
+             with the child's own self-alignment applied. -->
+        <div class="absolute self-center justify-self-end text-yellow-400">
+          no insets: self-aligned end/center
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    // The overlay's leaf is stretched to its area (taller than its text).
+    await expectBrowserRowsToMatchEngine(canvasElement, { allowStretchedLeaves: true });
+    const container = canvasElement.querySelector<HTMLElement>('[data-test="abs"]')!;
+    const items = Array.from(container.querySelectorAll<HTMLElement>(":scope > div"));
+    const [, two, , , , , overlay, badge] = items;
+    // Containing block = the (2, 1) grid area: the overlay shares item
+    // two's column geometry exactly.
+    expect(cellsOf(overlay!, "--mw-x")).toBe(cellsOf(two!, "--mw-x"));
+    expect(cellsOf(overlay!, "--mw-w")).toBe(cellsOf(two!, "--mw-w"));
+    expect(cellsOf(overlay!, "--mw-h")).toBe(cellsOf(two!, "--mw-h"));
+    // No insets → the CSS static position: sole item of the CONTENT box,
+    // self-aligned end/center — flush with the content box's right edge
+    // and vertically centered in it (computed from the container's own
+    // border + padding vars so the markup can change freely).
+    const c = (name: string) => cellsOf(container, name);
+    const contentTop = c("--mw-bt") + c("--mw-pt");
+    const contentHeight = c("--mw-h") - contentTop - c("--mw-bb") - c("--mw-pb");
+    expect(cellsOf(badge!, "--mw-x") + cellsOf(badge!, "--mw-w")).toBe(
+      c("--mw-w") - c("--mw-br") - c("--mw-pr"),
+    );
+    expect(cellsOf(badge!, "--mw-y")).toBe(
+      contentTop + Math.floor((contentHeight - cellsOf(badge!, "--mw-h")) / 2),
+    );
+  },
+};
+
+export const NamedAreas: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div
+        class="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-1"
+        style="grid-template-areas: 'head head' 'nav main' 'nav foot'"
+        data-test="areas"
+      >
+        <div class="border border-cyan-400 px-1 [grid-area:head]">header — grid-area: head</div>
+        <div class="border border-yellow-400 px-1 [grid-area:nav]">nav (spans two rows)</div>
+        <div class="border border-emerald-400 px-1 [grid-area:main]">main</div>
+        <div class="border border-fuchsia-400 px-1 [grid-area:foot]">footer</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    // nav is stretched across two rows (taller than its text).
+    await expectBrowserRowsToMatchEngine(canvasElement, { allowStretchedLeaves: true });
+    const container = canvasElement.querySelector<HTMLElement>('[data-test="areas"]')!;
+    const [head, nav, main, foot] = Array.from(
+      container.querySelectorAll<HTMLElement>(":scope > div"),
+    );
+    // Areas, not document order, decide placement: head spans both
+    // columns (incl. the gap), nav spans the two lower rows beside main
+    // and foot. Gaps are derived from the geometry so the markup's gap
+    // utilities can change freely.
+    const colGap = cellsOf(main!, "--mw-x") - cellsOf(nav!, "--mw-x") - cellsOf(nav!, "--mw-w");
+    const rowGap = cellsOf(foot!, "--mw-y") - cellsOf(main!, "--mw-y") - cellsOf(main!, "--mw-h");
+    expect(cellsOf(head!, "--mw-w")).toBe(
+      cellsOf(nav!, "--mw-w") + colGap + cellsOf(main!, "--mw-w"),
+    );
+    expect(cellsOf(nav!, "--mw-h")).toBe(
+      cellsOf(main!, "--mw-h") + rowGap + cellsOf(foot!, "--mw-h"),
+    );
+    expect(cellsOf(nav!, "--mw-w")).toBe(32); // 8rem
+    expect(cellsOf(foot!, "--mw-x")).toBe(cellsOf(main!, "--mw-x"));
+  },
+};
+
+export const Subgrid: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <div class="grid grid-cols-[auto_auto_auto] gap-x-1" data-test="sub-cols">
+          <div class="border border-neutral-500 px-1">name</div>
+          <div class="border border-neutral-500 px-1">qty</div>
+          <div class="border border-neutral-500 px-1">price</div>
+          <div class="col-span-3 grid grid-cols-subgrid border border-cyan-400 px-1">
+            <div class="border border-cyan-400 px-1">a subgrid row keeps the columns</div>
+            <div class="border border-cyan-400 px-1">2</div>
+            <div class="border border-cyan-400 px-1">12.50</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-x-1" data-test="sub-rows">
+          <div class="row-span-3 grid grid-rows-subgrid border border-yellow-400 px-1">
+            <div class="text-yellow-400">Card A</div>
+            <div>short body</div>
+            <div class="border-t border-neutral-500">footer</div>
+          </div>
+          <div class="row-span-3 grid grid-rows-subgrid border border-yellow-400 px-1">
+            <div class="text-yellow-400">Card B</div>
+            <div>a much longer body that wraps onto several lines and sets the shared row</div>
+            <div class="border-t border-neutral-500">footer</div>
+          </div>
+          <div class="row-span-3 grid grid-rows-subgrid border border-yellow-400 px-1">
+            <div class="text-yellow-400">Card C</div>
+            <div>medium body text here</div>
+            <div class="border-t border-neutral-500">
+              footer with more text to set the height for all the footers
+            </div>
+          </div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    // Subgrid cells stretch to shared rows (taller than their text).
+    await expectBrowserRowsToMatchEngine(canvasElement, { allowStretchedLeaves: true });
+    const cols = canvasElement.querySelector<HTMLElement>('[data-test="sub-cols"]')!;
+    const [name, qty, price, sub] = Array.from(cols.querySelectorAll<HTMLElement>(":scope > div"));
+    const [subA, subB, subC] = Array.from(sub!.querySelectorAll<HTMLElement>(":scope > div"));
+    // The subgrid's items land on the parent's columns: same widths as
+    // the header cells, minus the subgrid's own chrome (padding + border)
+    // on the edge tracks — derived from its vars so classes can change.
+    const chromeL = cellsOf(sub!, "--mw-pl") + cellsOf(sub!, "--mw-bl");
+    const chromeR = cellsOf(sub!, "--mw-pr") + cellsOf(sub!, "--mw-br");
+    expect(cellsOf(subA!, "--mw-w")).toBe(cellsOf(name!, "--mw-w") - chromeL);
+    expect(cellsOf(subB!, "--mw-w")).toBe(cellsOf(qty!, "--mw-w"));
+    expect(cellsOf(subC!, "--mw-w")).toBe(cellsOf(price!, "--mw-w") - chromeR);
+    // Row subgrids: every card's footer sits on the same shared row.
+    const rows = canvasElement.querySelector<HTMLElement>('[data-test="sub-rows"]')!;
+    const footers = Array.from(rows.querySelectorAll<HTMLElement>(":scope > div > div:last-child"));
+    const ys = new Set(footers.map((el) => cellsOf(el, "--mw-y")));
+    expect(ys.size).toBe(1);
+  },
 };
