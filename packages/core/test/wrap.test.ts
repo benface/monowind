@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { longestSegmentAdvance, wrapLineCount, wrapLines } from "../src/wrap.ts";
+import { INLINE_PAD, longestSegmentAdvance, wrapLineCount, wrapLines } from "../src/wrap.ts";
 
 describe("wrapLineCount / wrapLines", () => {
   it("returns 0 for empty text", () => {
@@ -98,5 +98,15 @@ describe("wrapLineCount / wrapLines", () => {
     expect(longestSegmentAdvance("aa bbb", { advances: [3, 3, 1, 1, 1, 1] })).toBe(6);
     // The leaf's own tracking: the trailing gap is free → 9 − 2 = 7.
     expect(longestSegmentAdvance("aa bbb", { advances: [3, 3, 3, 3, 3, 3], tracking: 2 })).toBe(7);
+  });
+});
+
+describe("inline padding markers", () => {
+  it("glues INLINE_PAD to its neighbors — the padding travels with the word", () => {
+    // "aa ⁠bb": the marker is the padded span's left edge. At width 4 the
+    // padded word (3 cells) doesn't fit after "aa " → wraps as one unit.
+    expect(wrapLines(`aa ${INLINE_PAD}bb`, 4)).toEqual(["aa", `${INLINE_PAD}bb`]);
+    // No break between the marker and the following character.
+    expect(wrapLines(`${INLINE_PAD}bbb`, 2)).toEqual([`${INLINE_PAD}b`, "bb"]);
   });
 });

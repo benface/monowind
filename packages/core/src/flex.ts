@@ -700,10 +700,14 @@ function effectiveAlignContent(style: CellStyle): CellStyle["alignContent"] {
 }
 
 export function effectiveJustify(style: CellStyle): CellStyle["justifyContent"] {
-  if (!style.flexReverse) return style.justifyContent;
-  if (style.justifyContent === "start") return "end";
-  if (style.justifyContent === "end") return "start";
-  return style.justifyContent;
+  // `stretch` (CSS `normal`/`stretch`) behaves as `start` in flex, per
+  // css-align — normalize before the reverse flip so `row-reverse` still
+  // packs from the main-start (right) edge under the default value.
+  const justify = style.justifyContent === "stretch" ? "start" : style.justifyContent;
+  if (!style.flexReverse) return justify;
+  if (justify === "start") return "end";
+  if (justify === "end") return "start";
+  return justify;
 }
 
 /**

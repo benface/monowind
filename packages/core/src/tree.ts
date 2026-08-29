@@ -1,9 +1,8 @@
-import { intrinsicOuterWidth } from "./layout.ts";
-import type { IntrinsicCache } from "./layout.ts";
+import { intrinsicOuterWidth, makeIntrinsicCache } from "./layout.ts";
 import { pxToCells } from "./metrics.ts";
 import { readCellStyle, trackingCells } from "./style.ts";
 import { zeroInsets } from "./types.ts";
-import { eachObjectMarker, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
+import { eachObjectMarker, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { CellMetrics, LayoutNode, PerSide } from "./types.ts";
 
 /**
@@ -46,12 +45,14 @@ export function buildTree(
       rootFontSizePx,
       rootLetterSpacingPx: cellMetrics?.letterSpacing ?? 0,
       cellMetrics,
+      preserve: style.whiteSpace === "pre",
+      tabSize: style.tabSize,
     });
     const text = run.chars.join("");
     // Intrinsic advances for the box markers use the boxes' max-content
     // widths; layout overwrites them with the laid-out widths per pass.
     if (run.boxes.length > 0) {
-      const cache: IntrinsicCache = { maxContent: new WeakMap(), minContent: new WeakMap() };
+      const cache = makeIntrinsicCache();
       eachObjectMarker(run.chars, (charIndex, boxIndex) => {
         run.advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
       });
@@ -185,6 +186,12 @@ interface RunContext {
   rootFontSizePx: number;
   rootLetterSpacingPx: number;
   cellMetrics: CellMetrics | undefined;
+  /** Leaf-level `white-space: pre`: keep the source's spaces and newlines
+   * (tabs expand to `tabSize` stops from each hard line's start) instead
+   * of collapsing. Applies to the whole run — a `white-space` override on
+   * an inline descendant is not honored (specs/cell-model.md). */
+  preserve: boolean;
+  tabSize: number;
 }
 
 /**
@@ -199,20 +206,60 @@ interface RunContext {
  * around a hard break is stripped (the browser strips it at line edges too).
  * CSS collapsible white space only (space/tab/CR/LF/FF) — NOT `\s`, which
  * would also eat NBSP (U+00A0); the browser preserves NBSP and never breaks
- * at it.
+ * at it. A `white-space: pre` leaf skips all of that: spaces and newlines
+ * survive as authored and tabs expand to tab stops (see RunContext).
  */
 function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun {
   const run: LeafRun = { chars: [], advances: [], inlineElements: [], boxes: [] };
   collectRun(el, tracking, ctx, run);
+  if (ctx.preserve) {
+    // Browsers give a final newline in `pre` content no line box of its
+    // own — drop exactly one (the HTML parser already ate the one right
+    // after the opening tag).
+    if (run.chars[run.chars.length - 1] === "\n") {
+      run.chars.pop();
+      run.advances.pop();
+    }
+    return run;
+  }
   return normalizeRun(run);
 }
 
 function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun): void {
+  // Cells since the current hard line began — the tab-stop basis.
+  const column = (): number => {
+    let cells = 0;
+    for (let i = run.chars.length - 1; i >= 0 && run.chars[i] !== "\n"; i--) {
+      cells += run.advances[i]!;
+    }
+    return cells;
+  };
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
-      for (const ch of (node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " ")) {
-        run.chars.push(ch);
-        run.advances.push(1 + tracking);
+      if (ctx.preserve) {
+        // `white-space: pre`: spaces and newlines survive as authored;
+        // tabs expand to the next `tabSize` stop (spaces are pushed
+        // untracked — tab stops are grid columns, not glyphs).
+        for (const ch of (node.textContent ?? "").replace(/\r\n?/g, "\n")) {
+          if (ch === "\n") {
+            run.chars.push("\n");
+            run.advances.push(0);
+          } else if (ch === "\t") {
+            const target = (Math.floor(column() / ctx.tabSize) + 1) * ctx.tabSize;
+            for (let cells = column(); cells < target; cells++) {
+              run.chars.push(" ");
+              run.advances.push(1);
+            }
+          } else {
+            run.chars.push(ch);
+            run.advances.push(1 + tracking);
+          }
+        }
+      } else {
+        for (const ch of (node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " ")) {
+          run.chars.push(ch);
+          run.advances.push(1 + tracking);
+        }
       }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const child = node as Element;
@@ -249,14 +296,41 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
         parseFloat(cs.fontSize) || ctx.rootFontSizePx,
         ctx.rootLetterSpacingPx,
       );
+      // Horizontal padding on an inline element (`px-1` badges), quantized
+      // to cells: the run reserves the cells as 1-cell INLINE_PAD markers
+      // glued to the element's edges, and the renderer writes the same
+      // cells back as real padding (percent padding is unsupported and
+      // reads as 0; vertical inline padding never moves layout, per CSS,
+      // and passes through untouched).
+      const padLeft = inlinePadCells(cs.paddingLeft, ctx.rootFontSizePx);
+      const padRight = inlinePadCells(cs.paddingRight, ctx.rootFontSizePx);
       run.inlineElements.push({
         element: child,
         tracking: childTracking,
+        padLeft,
+        padRight,
         insets: cs.position === "static" ? null : inlineInsets(cs, ctx.rootFontSizePx),
       });
+      for (let i = 0; i < padLeft; i++) {
+        run.chars.push(INLINE_PAD);
+        run.advances.push(1);
+      }
       collectRun(child, childTracking, ctx, run);
+      for (let i = 0; i < padRight; i++) {
+        run.chars.push(INLINE_PAD);
+        run.advances.push(1);
+      }
     }
   }
+}
+
+/** Quantize an inline element's horizontal padding to cells. Computed
+ * padding is px in every browser; a percent that survives (pre-Typed-OM
+ * quirk) is unsupported on inline elements and reads as 0. */
+function inlinePadCells(value: string, rootFontSizePx: number): number {
+  if (!value || value.endsWith("%")) return 0;
+  const px = parseFloat(value);
+  return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
 }
 
 /** Authored relative insets of an inline (relative/sticky) element,
@@ -293,9 +367,15 @@ function normalizeRun(run: LeafRun): LeafRun {
   for (let i = 0; i < run.chars.length; i++) {
     const ch = run.chars[i]!;
     if (ch === " ") {
-      // Skip spaces at a line start and after another space.
-      const atLineStart = chars.length === lineStart();
-      if (atLineStart || chars[chars.length - 1] === " ") continue;
+      // Skip spaces at a line start and after another space. Collapsing
+      // looks THROUGH inline-padding markers: white-space processing is
+      // character-based, so padding between two spaces doesn't stop them
+      // collapsing (and a space preceded only by padding still counts as
+      // line-start, both per CSS).
+      let previous = chars.length - 1;
+      while (previous >= 0 && chars[previous] === INLINE_PAD) previous--;
+      const atLineStart = previous < 0 || chars[previous] === "\n";
+      if (atLineStart || chars[previous] === " ") continue;
     } else if (ch === "\n") {
       trimLineEnd();
     }

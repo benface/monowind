@@ -390,7 +390,19 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
 3. **Grid + positioning** — cell-based `grid-template-columns/rows`, gap,
    placement subset (write `specs/grid.md` first); plus `position`
    (static/relative/absolute; fixed → host-anchored, sticky → relative for
-   now) and inset utilities per `specs/positioning.md`.
+   now) and inset utilities per `specs/positioning.md`. _Core implemented
+   2026-08 (placement incl. dense, §11 track sizing, auto-fill/fit,
+   min()/max() breadths, alignment); remaining phases: subgrid, the §10.1
+   grid-area containing block for absolute children, and
+   `grid-template-areas` + named lines (promoted from "deferred" — the
+   TUI-dashboard tool of choice, and the numeric-placement machinery it
+   needs now exists). Inline-fidelity batch also landed: quantized
+   horizontal padding on inline elements and `white-space: pre`
+   preservation (see cell-model deviations 5 and 8). Still-deferred
+   deviations ranked by expected hit-rate: Unicode width (Milestone 7),
+   `calc()` in track lists, `text-center` (fundamental — fractional
+   per-line offsets), plus a candidate dev-mode warning when a descendant
+   authors a `font-size` (root-only by design, but silently surprising)._
 4. **Tables** — `<table>` / `display: table` with the CSS automatic table
    layout (column widths from cell content; `table-fixed` honored),
    colspan/rowspan, and cell borders through the shared glyph-junction

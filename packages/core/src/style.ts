@@ -1,18 +1,23 @@
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
+import { autoTrack } from "./types.ts";
 import type {
-  AlignContent,
   AlignItems,
   BorderStyle,
   CellLength,
   CellMetrics,
   CellStyle,
   Display,
+  GridAutoFlow,
+  GridLine,
+  GridTemplate,
   Insets,
   JustifyContent,
   PerSide,
   Position,
   Size,
   SizeLimit,
+  TrackBreadth,
+  TrackSize,
 } from "./types.ts";
 
 /**
@@ -50,6 +55,53 @@ export function readCellStyle(
           ? "none"
           : "block";
 
+  // Grid templates: `getComputedStyle` on a live grid container returns
+  // the USED track list (expanded, in px) — fr factors, repeat(), and
+  // minmax() are gone. Typed OM returns the COMPUTED value with the
+  // authored structure intact (verified in Chromium and WebKit), so it's
+  // the primary source, as for margins and insets. Without Typed OM
+  // (Firefox pre-157), a `data-mw-degrid` attribute (measuring-gated
+  // `display: block` rule in styles.css) blockifies the element for the
+  // read, which makes getComputedStyle hand back the computed value too.
+  // The attribute is not in the engine's MutationObserver filter, so the
+  // write doesn't re-trigger layout.
+  let gridTemplateColumns: GridTemplate = { kind: "none" };
+  let gridTemplateRows: GridTemplate = { kind: "none" };
+  let gridAutoColumns: TrackSize[] = [autoTrack()];
+  let gridAutoRows: TrackSize[] = [autoTrack()];
+  let gridAutoFlow: GridAutoFlow = { direction: "row", dense: false };
+  if (display === "grid") {
+    if (csm) {
+      gridTemplateColumns = parseTrackTemplate(
+        csm.get("grid-template-columns")?.toString() ?? "",
+        rootFontSizePx,
+      );
+      gridTemplateRows = parseTrackTemplate(
+        csm.get("grid-template-rows")?.toString() ?? "",
+        rootFontSizePx,
+      );
+    } else {
+      el.setAttribute("data-mw-degrid", "");
+      try {
+        gridTemplateColumns = parseTrackTemplate(
+          cs.getPropertyValue("grid-template-columns"),
+          rootFontSizePx,
+        );
+        gridTemplateRows = parseTrackTemplate(
+          cs.getPropertyValue("grid-template-rows"),
+          rootFontSizePx,
+        );
+      } finally {
+        el.removeAttribute("data-mw-degrid");
+      }
+    }
+    // No used-value trap for these: their computed values keep the
+    // authored form on grid containers too.
+    gridAutoColumns = parseAutoTracks(cs.getPropertyValue("grid-auto-columns"), rootFontSizePx);
+    gridAutoRows = parseAutoTracks(cs.getPropertyValue("grid-auto-rows"), rootFontSizePx);
+    gridAutoFlow = parseGridAutoFlow(cs.getPropertyValue("grid-auto-flow"));
+  }
+
   return {
     display,
     flexDirection: cs.flexDirection.startsWith("column") ? "column" : "row",
@@ -63,9 +115,23 @@ export function readCellStyle(
     flexBasis: readFlexBasis(cs.flexBasis, rootFontSizePx),
     order: Number(cs.order) || 0,
     justifyContent: mapJustify(cs.justifyContent),
-    alignContent: mapAlignContent(cs.alignContent),
+    alignContent: mapJustify(cs.alignContent),
     alignItems: mapAlign(cs.alignItems),
     alignSelf: mapAlignSelf(cs.alignSelf),
+    justifyItems: mapAlign(cs.justifyItems),
+    justifySelf: mapAlignSelf(cs.justifySelf),
+    gridTemplateColumns,
+    gridTemplateRows,
+    gridAutoColumns,
+    gridAutoRows,
+    gridAutoFlow,
+    // Placement longhands have no used-value trap (computed = as
+    // specified) and cost four cheap reads, so they're read on every
+    // element — items don't know their parent's display here.
+    gridColumnStart: parseGridLine(cs.getPropertyValue("grid-column-start")),
+    gridColumnEnd: parseGridLine(cs.getPropertyValue("grid-column-end")),
+    gridRowStart: parseGridLine(cs.getPropertyValue("grid-row-start")),
+    gridRowEnd: parseGridLine(cs.getPropertyValue("grid-row-end")),
     width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle),
     height: readSize(csm, cs.height, "height", rootFontSizePx, classAttr, inlineStyle),
     minWidth: readLimit(cs.minWidth, rootFontSizePx) ?? "auto",
@@ -96,11 +162,12 @@ export function readCellStyle(
       isClipping(cs.overflow) || isClipping(cs.overflowX) || isClipping(cs.overflowY)
         ? "clip"
         : "visible",
-    // `nowrap` and `pre` disable soft wrapping; `pre`'s whitespace
-    // preservation is NOT honored (documented deviation — the tree builder
-    // collapses whitespace). Readable via getComputedStyle because the
+    // `nowrap` and `pre` disable soft wrapping; `pre` additionally makes
+    // the tree builder preserve the source's spaces and newlines
+    // (specs/cell-model.md). Readable via getComputedStyle because the
     // companion stylesheet's white-space lock is gated on `:not([measuring])`.
-    whiteSpace: cs.whiteSpace === "nowrap" || cs.whiteSpace === "pre" ? "nowrap" : "normal",
+    whiteSpace: cs.whiteSpace === "pre" ? "pre" : cs.whiteSpace === "nowrap" ? "nowrap" : "normal",
+    tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
     // Both readable because the companion stylesheet's typography rewrite
     // is gated on `:not([measuring])`.
     lineGap: lineGapRows(cs.lineHeight, metrics?.height ?? fontSizePx),
@@ -139,6 +206,8 @@ function supportsTypedOM(
   return typeof (el as { computedStyleMap?: unknown }).computedStyleMap === "function";
 }
 
+/** `normal` (the initial value) and `stretch` both read as `stretch`: flex
+ * treats it as `start` (per css-align), grid stretches auto tracks. */
 function mapJustify(value: string): JustifyContent {
   switch (value) {
     case "center":
@@ -153,15 +222,13 @@ function mapJustify(value: string): JustifyContent {
       return "space-around";
     case "space-evenly":
       return "space-evenly";
+    case "normal":
+    case "stretch":
+    case "":
+      return "stretch";
     default:
       return "start";
   }
-}
-
-/** CSS initial `normal` behaves as `stretch` for align-content in flex. */
-function mapAlignContent(value: string): AlignContent {
-  if (value === "stretch" || value === "normal" || value === "") return "stretch";
-  return mapJustify(value);
 }
 
 function mapAlign(value: string): AlignItems {
@@ -433,6 +500,177 @@ function intrinsicSizeKeyword(value: string): Size | undefined {
   if (value === "max-content") return { kind: "max-content" };
   if (value === "fit-content") return { kind: "fit-content" };
   return undefined;
+}
+
+/**
+ * Parse a computed `grid-template-columns` / `grid-template-rows` value
+ * (specs/grid.md). Expected on a NON-grid element (see the degrid read in
+ * readCellStyle), so the authored structure survives: lengths are computed
+ * to px, but `fr`, `minmax()`, and `repeat()` keep their form. Fixed
+ * repeats expand here; `auto-fill` / `auto-fit` stay symbolic for layout.
+ * Line names would appear in `[bracket]` groups — deferred, dropped.
+ */
+export function parseTrackTemplate(value: string, rootFontSizePx: number): GridTemplate {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "none") return { kind: "none" };
+  if (trimmed === "subgrid" || trimmed.startsWith("subgrid ")) return { kind: "subgrid" };
+  const tracks: TrackSize[] = [];
+  let autoRepeat:
+    | { index: number; tracks: TrackSize[]; mode: "auto-fill" | "auto-fit" }
+    | undefined;
+  for (const token of splitTopLevel(trimmed)) {
+    if (token.startsWith("[")) continue; // line-name group (deferred)
+    const repeat = token.match(/^repeat\(\s*([^,]+?)\s*,(.*)\)$/s);
+    if (repeat) {
+      const inner = splitTopLevel(repeat[2]!.trim())
+        .filter((t) => !t.startsWith("["))
+        .map((t) => parseTrackSize(t, rootFontSizePx));
+      if (inner.length === 0) continue;
+      const count = repeat[1]!;
+      if (count === "auto-fill" || count === "auto-fit") {
+        // Per CSS only one auto-repeat is allowed; a second is ignored.
+        if (!autoRepeat) autoRepeat = { index: tracks.length, tracks: inner, mode: count };
+        continue;
+      }
+      const n = Math.max(0, Math.floor(Number(count) || 0));
+      for (let i = 0; i < n; i++) tracks.push(...inner);
+      continue;
+    }
+    tracks.push(parseTrackSize(token, rootFontSizePx));
+  }
+  if (tracks.length === 0 && !autoRepeat) return { kind: "none" };
+  return autoRepeat ? { kind: "tracks", tracks, autoRepeat } : { kind: "tracks", tracks };
+}
+
+/** Parse `grid-auto-columns` / `grid-auto-rows`: a track-size list, cycled
+ * across implicit tracks. Falls back to a single `auto`. */
+function parseAutoTracks(value: string, rootFontSizePx: number): TrackSize[] {
+  const tracks = splitTopLevel(value.trim())
+    .filter((t) => t !== "" && !t.startsWith("["))
+    .map((t) => parseTrackSize(t, rootFontSizePx));
+  return tracks.length > 0 ? tracks : [autoTrack()];
+}
+
+/** Normalize one track size to a minmax pair: `<n>fr` → minmax(auto, fr)
+ * per CSS; a fixed/intrinsic breadth b → minmax(b, b). `fit-content()` is
+ * deferred (specs/grid.md deviations) and reads as `auto`. */
+function parseTrackSize(token: string, rootFontSizePx: number): TrackSize {
+  const minmax = token.match(/^minmax\((.*)\)$/s);
+  if (minmax) {
+    // Depth-aware argument split — a nested function (`minmax(min(8rem,
+    // 100%), 1fr)`) has commas of its own.
+    const args = splitTopLevelCommas(minmax[1]!).map((arg) => arg.trim());
+    if (args.length === 2) {
+      return {
+        min: parseTrackBreadth(args[0]!, rootFontSizePx),
+        max: parseTrackBreadth(args[1]!, rootFontSizePx),
+      };
+    }
+    return { min: { kind: "auto" }, max: { kind: "auto" } };
+  }
+  const breadth = parseTrackBreadth(token, rootFontSizePx);
+  if (breadth.kind === "fr") return { min: { kind: "auto" }, max: breadth };
+  return { min: breadth, max: breadth };
+}
+
+function parseTrackBreadth(token: string, rootFontSizePx: number): TrackBreadth {
+  if (token === "auto" || token.startsWith("fit-content")) return { kind: "auto" };
+  if (token === "min-content") return { kind: "min-content" };
+  if (token === "max-content") return { kind: "max-content" };
+  // min()/max() over fixed breadths stay symbolic (percent arguments
+  // resolve against the axis at layout time). Anything unresolvable —
+  // calc() arithmetic included — degrades to `auto` (specs/grid.md
+  // deviations).
+  const math = token.match(/^(min|max)\((.*)\)$/s);
+  if (math) {
+    const args = splitTopLevelCommas(math[2]!).map((arg) =>
+      parseTrackBreadth(arg.trim(), rootFontSizePx),
+    );
+    const fixed = args.every(
+      (a) => a.kind === "cells" || a.kind === "percent" || a.kind === "math",
+    );
+    if (args.length > 0 && fixed) {
+      return { kind: "math", fn: math[1] as "min" | "max", args };
+    }
+    return { kind: "auto" };
+  }
+  if (token.endsWith("fr")) {
+    const value = parseFloat(token);
+    return Number.isFinite(value) && value >= 0 ? { kind: "fr", value } : { kind: "auto" };
+  }
+  if (token.endsWith("%")) {
+    const percent = parseFloat(token);
+    return Number.isFinite(percent) ? { kind: "percent", value: percent } : { kind: "auto" };
+  }
+  const px = parseFloat(token);
+  if (!Number.isFinite(px)) return { kind: "auto" };
+  const cells = token.endsWith("rem")
+    ? roundHalfAwayFromZero(px / 0.25)
+    : pxToCells(px, rootFontSizePx);
+  return { kind: "cells", value: cells };
+}
+
+/** Split a CSS function's arguments on top-level commas (nested parens
+ * stay intact). */
+function splitTopLevelCommas(value: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]!;
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      args.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  args.push(value.slice(start));
+  return args.filter((a) => a.trim() !== "");
+}
+
+/** Split a CSS value list on top-level whitespace (nested parens and
+ * brackets stay intact). */
+function splitTopLevel(value: string): string[] {
+  const tokens: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]!;
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (/\s/.test(ch) && depth === 0) {
+      if (start !== -1) tokens.push(value.slice(start, i));
+      start = -1;
+    } else if (start === -1) {
+      start = i;
+    }
+  }
+  if (start !== -1) tokens.push(value.slice(start));
+  return tokens;
+}
+
+/** Parse a `grid-column-start`-family longhand: `auto`, an integer line
+ * (possibly negative), or `span <n>`. Named lines are deferred — a name
+ * token reads as `auto`. */
+export function parseGridLine(value: string): GridLine {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "auto") return { kind: "auto" };
+  const span = trimmed.match(/^span\s+(\d+)/);
+  if (span) {
+    const n = Math.floor(Number(span[1]));
+    return n >= 1 ? { kind: "span", value: n } : { kind: "auto" };
+  }
+  const line = Math.trunc(parseFloat(trimmed));
+  if (Number.isFinite(line) && line !== 0) return { kind: "line", value: line };
+  return { kind: "auto" };
+}
+
+function parseGridAutoFlow(value: string): GridAutoFlow {
+  return {
+    direction: value.includes("column") ? "column" : "row",
+    dense: value.includes("dense"),
+  };
 }
 
 /**

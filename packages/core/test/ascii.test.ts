@@ -3,7 +3,7 @@ import { renderAscii } from "../src/ascii.ts";
 import { collectBorderRuns } from "../src/borders.ts";
 import type { BorderRun } from "../src/borders.ts";
 import { layoutRoot } from "../src/layout.ts";
-import { wrapLines } from "../src/wrap.ts";
+import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
 import { makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -221,5 +221,14 @@ describe("wrapLines", () => {
     // "10\u00a0km" is one unbreakable unit of 5 cells.
     expect(wrapLines("10\u00a0km fits", 6)).toEqual(["10\u00a0km", "fits"]);
     expect(wrapLines("a 10\u00a0km", 6)).toEqual(["a", "10\u00a0km"]);
+  });
+});
+
+describe("inline padding rendering", () => {
+  it("renders pad markers as blank cells", () => {
+    const leaf = makeNode({ text: `a${INLINE_PAD}b`, intrinsicWidth: 3 });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 3);
+    expect(renderAscii(root)).toBe("a b");
   });
 });

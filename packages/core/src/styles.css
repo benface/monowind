@@ -64,6 +64,17 @@ mono-wind * {
   vertical-align: baseline !important;
 }
 
+/* Grid-template read assist (specs/grid.md), no-Typed-OM engines only
+ * (Firefox pre-157): getComputedStyle on a live grid container returns
+ * the USED `grid-template-*` track list (expanded px) — the authored
+ * fr/repeat/minmax structure is gone. The style reader sets this
+ * attribute for the duration of the read; blockifying the element makes
+ * getComputedStyle return the COMPUTED value, structure intact.
+ * `!important` so inline `style="display: grid"` can't defeat the read. */
+mono-wind[measuring] [data-mw-degrid] {
+  display: block !important;
+}
+
 /* Grid-quantized typography and the wrap model (specs/cell-model.md). Gated
  * on `measuring` (unlike the font lock above) so the style reader sees the
  * AUTHORED white-space / letter-spacing / line-height — that's how nowrap,
@@ -81,6 +92,15 @@ mono-wind:not([measuring]) * {
   overflow-wrap: anywhere !important;
   letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-ls) * var(--mw-cw, 1px)) !important;
   line-height: inherit !important;
+  /* Inline-element horizontal padding, quantized: the engine writes
+   * `--mw-ipl`/`--mw-ipr` (whole cells) on inline elements whose authored
+   * padding it reserved in the run; everything else gets 0, so raw
+   * off-grid padding never renders. Laid-out elements and atomic inline
+   * boxes override this with their own engine-owned padding rule (higher
+   * specificity). Vertical inline padding never moves layout, per CSS,
+   * and passes through untouched. */
+  padding-left: calc(var(--mw-ipl, 0) * var(--mw-cw, 1px)) !important;
+  padding-right: calc(var(--mw-ipr, 0) * var(--mw-cw, 1px)) !important;
 }
 
 /* Author-requested `white-space: nowrap` (or `pre`) — the engine sized this
@@ -88,6 +108,16 @@ mono-wind:not([measuring]) * {
  * over the lock above on specificity. */
 mono-wind:not([measuring]) [data-mw-nowrap] {
   white-space: nowrap !important;
+}
+
+/* `white-space: pre` leaves (specs/cell-model.md): the tree builder kept
+ * the source's spaces and newlines in the run, so the browser must render
+ * them too — on the leaf AND its inline descendants (the lock above would
+ * collapse text inside nested spans). Later than the nowrap rule, so it
+ * wins on the leaf itself at equal specificity. */
+mono-wind:not([measuring]) [data-mw-pre],
+mono-wind:not([measuring]) [data-mw-pre] * {
+  white-space: pre !important;
 }
 
 /* Truncation (`truncate` = nowrap + clip + text-overflow: ellipsis): use
@@ -123,6 +153,22 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   position: absolute !important;
   left: calc(var(--mw-x, 0) * var(--mw-cw, 1px)) !important;
   top: calc(var(--mw-y, 0) * var(--mw-ch, 1px)) !important;
+  /* Neutralize the browser's residual grid machinery (specs/grid.md).
+   * grid-area: per CSS §10.1 an ABSOLUTE child of a grid container with
+   * placement properties uses its grid area as containing block — our
+   * left/top would resolve against that area and double-offset the
+   * element (the engine already placed it). The template and content/item
+   * alignment resets make a laid-out container's own grid/flex inert for
+   * the one box the browser still lays out: the anonymous item holding a
+   * leaf's direct text (a template would trap it in track 1; the
+   * browser's place-* offsets are FRACTIONAL, off the cell grid — the
+   * engine applies the quantized offsets through its owned padding
+   * instead, specs/cell-model.md). */
+  grid-area: auto !important;
+  grid-template-columns: none !important;
+  grid-template-rows: none !important;
+  place-content: start !important;
+  place-items: stretch !important;
   /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
    * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
    * shifts the box back so every line starts on its own row. */

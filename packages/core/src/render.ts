@@ -36,9 +36,17 @@ function walk(
   const absY = parentAbsY + node.localRect.y;
 
   if (node.inlineElements) {
-    for (const { element, tracking, insets } of node.inlineElements) {
+    for (const { element, tracking, padLeft, padRight, insets } of node.inlineElements) {
       const el = element as HTMLElement;
       el.style.setProperty("--mw-ls", String(tracking));
+      // Quantized horizontal padding (specs/cell-model.md): the companion
+      // stylesheet applies these cells as the element's real padding —
+      // its typography lock zeroes any authored value, so browser padding
+      // always equals the cells the run reserved.
+      if (padLeft > 0) el.style.setProperty("--mw-ipl", String(padLeft));
+      else el.style.removeProperty("--mw-ipl");
+      if (padRight > 0) el.style.setProperty("--mw-ipr", String(padRight));
+      else el.style.removeProperty("--mw-ipr");
       if (insets) {
         inlineInsetElements.add(element);
         applyInlineInsets(el, insets);
@@ -95,8 +103,12 @@ function positionElement(node: LayoutNode): void {
   el.style.setProperty("--mw-ls", String(tracking));
   el.style.setProperty("--mw-lh", String(lineGap + 1));
   el.style.setProperty("--mw-lhs", String(-lineGap / 2));
-  if (whiteSpace === "nowrap") el.setAttribute("data-mw-nowrap", "");
+  if (whiteSpace !== "normal") el.setAttribute("data-mw-nowrap", "");
   else el.removeAttribute("data-mw-nowrap");
+  // `white-space: pre` leaves also keep their preserved spaces
+  // browser-side (the tree builder kept them in the run) — see styles.css.
+  if (whiteSpace === "pre") el.setAttribute("data-mw-pre", "");
+  else el.removeAttribute("data-mw-pre");
   el.style.setProperty("--mw-x", String(rect.x));
   el.style.setProperty("--mw-y", String(rect.y));
   el.style.setProperty("--mw-w", String(rect.width));

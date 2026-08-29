@@ -42,16 +42,24 @@ export type JustifyContent =
   | "end"
   | "space-between"
   | "space-around"
-  | "space-evenly";
+  | "space-evenly"
+  /** CSS `normal` / `stretch`. In flex both behave as `start` (per
+   * css-align); in grid they stretch auto-sized tracks over leftover space
+   * (CSS Grid §11.8) and otherwise behave as `start`. */
+  | "stretch";
 export type AlignItems = "start" | "center" | "end" | "stretch";
 /** Multi-line cross distribution (`content-*`); `stretch` (the CSS
- * default `normal`) grows the lines instead of offsetting them. */
-export type AlignContent = JustifyContent | "stretch";
+ * default `normal`) grows flex lines / grid tracks instead of offsetting
+ * them. */
+export type AlignContent = JustifyContent;
 export type AlignSelf = "auto" | "start" | "center" | "end" | "stretch";
 export type BorderStyle = "solid" | "double" | "dashed" | "dotted";
 export type Overflow = "visible" | "clip";
 export type Position = "static" | "relative" | "absolute" | "fixed" | "sticky";
-export type WhiteSpace = "normal" | "nowrap";
+/** `nowrap` disables soft wrapping; `pre` additionally preserves the
+ * source's spaces and newlines (specs/cell-model.md). Everything else
+ * (`pre-wrap` included) behaves as `normal`. */
+export type WhiteSpace = "normal" | "nowrap" | "pre";
 
 /** A length in whole cells, or a percentage kept symbolic until layout.
  * Percentages resolve against the CSS-appropriate basis at layout time:
@@ -66,6 +74,57 @@ export type CellLength = number | { percent: number };
  * height already is the intrinsic height). */
 export type SizeLimit = CellLength | "min-content" | "max-content" | "fit-content";
 export type TextOverflow = "clip" | "ellipsis";
+
+/** One bound of a grid track size (specs/grid.md). `fr` is only valid as a
+ * max (the reader normalizes bare `<n>fr` to `minmax(auto, <n>fr)`, per
+ * CSS); percent resolves against the container's content box in the
+ * track's axis (indefinite axis → treated as `auto`). */
+export type TrackBreadth =
+  | { kind: "cells"; value: number }
+  | { kind: "percent"; value: number }
+  | { kind: "fr"; value: number }
+  | { kind: "auto" }
+  | { kind: "min-content" }
+  | { kind: "max-content" }
+  /** `min()` / `max()` over fixed breadths — the canonical responsive
+   * auto-fill pattern `minmax(min(8rem, 100%), 1fr)`. Resolvable only
+   * when every argument is (a percent argument needs a definite axis);
+   * otherwise the whole function behaves as `auto`. `calc()` arithmetic
+   * stays unsupported (specs/grid.md deviations). */
+  | { kind: "math"; fn: "min" | "max"; args: TrackBreadth[] };
+
+/** A grid track as a normalized minmax pair — every track-size form reads
+ * as one (`8rem` → minmax(cells, cells), `1fr` → minmax(auto, fr), …). */
+export interface TrackSize {
+  min: TrackBreadth;
+  max: TrackBreadth;
+}
+
+/** A parsed `grid-template-columns` / `grid-template-rows`. Fixed repeats
+ * are expanded at read time; an `auto-fill` / `auto-fit` repetition stays
+ * symbolic (`autoRepeat`, spliced in at `tracks[autoRepeat.index]`) and
+ * resolves its count at layout time against the definite axis size. */
+export type GridTemplate =
+  | { kind: "none" }
+  | { kind: "subgrid" }
+  | {
+      kind: "tracks";
+      tracks: TrackSize[];
+      autoRepeat?: { index: number; tracks: TrackSize[]; mode: "auto-fill" | "auto-fit" };
+    };
+
+/** One side of a grid item's placement (`grid-column-start`, …): a line
+ * number (negative counts from the explicit grid's end, per CSS), a span,
+ * or auto. Named lines are deferred (specs/grid.md deviations). */
+export type GridLine =
+  | { kind: "auto" }
+  | { kind: "line"; value: number }
+  | { kind: "span"; value: number };
+
+export interface GridAutoFlow {
+  direction: "row" | "column";
+  dense: boolean;
+}
 
 /** One value per box edge (border style, border color, …). */
 export interface PerSide<T> {
@@ -94,10 +153,30 @@ export interface CellStyle {
   /** CSS `order` — flex items sort by it (stable, document order ties). */
   order: number;
   justifyContent: JustifyContent;
-  /** Applies to multi-line (wrap-enabled) flex containers only, per CSS. */
+  /** Flex: multi-line (wrap-enabled) containers only, per CSS. Grid: row
+   * track distribution. */
   alignContent: AlignContent;
   alignItems: AlignItems;
   alignSelf: AlignSelf;
+  /** Grid container inline-axis item alignment (`justify-items`); the CSS
+   * default `normal` behaves as `stretch` in grid. */
+  justifyItems: AlignItems;
+  /** Grid item inline-axis self-alignment override (`justify-self`). */
+  justifySelf: AlignSelf;
+  /** Parsed track templates (specs/grid.md). `none` for non-grid elements. */
+  gridTemplateColumns: GridTemplate;
+  gridTemplateRows: GridTemplate;
+  /** Sizes for implicit tracks (`grid-auto-columns` / `grid-auto-rows`),
+   * cycled across the implicit tracks in each axis. Never empty — the CSS
+   * initial value is a single `auto`. */
+  gridAutoColumns: TrackSize[];
+  gridAutoRows: TrackSize[];
+  gridAutoFlow: GridAutoFlow;
+  /** Grid item placement longhands. `auto` on non-grid-item elements. */
+  gridColumnStart: GridLine;
+  gridColumnEnd: GridLine;
+  gridRowStart: GridLine;
+  gridRowEnd: GridLine;
   width: Size | undefined;
   height: Size | undefined;
   /** `"auto"` is CSS `min-width/height: auto`: 0 in block flow, but a flex
@@ -124,8 +203,10 @@ export interface CellStyle {
   borderStyle: PerSide<BorderStyle>;
   borderColor: PerSide<string | undefined>;
   overflow: Overflow;
-  /** `nowrap` disables soft wrapping (hard `<br>` breaks still apply). */
   whiteSpace: WhiteSpace;
+  /** CSS `tab-size` in cells — tab stops for preserved (`pre`) text,
+   * expanded by the tree builder from each hard line's start. */
+  tabSize: number;
   /** Empty rows between wrapped lines (`leading-*` re-quantized to the
    * grid: rows per line − 1). See specs/cell-model.md. */
   lineGap: number;
@@ -179,11 +260,16 @@ export interface LayoutNode {
    * every character is a plain 1-cell advance. */
   advances?: number[];
   /** Inline descendants of a leaf. The renderer writes each one's grid
-   * tracking and — for the positioned ones — its relative insets rewritten
-   * to whole cells (specs/positioning.md); `null` insets = not positioned. */
+   * tracking, its quantized horizontal padding (the run reserves the
+   * cells as INLINE_PAD markers; the browser applies the same cells as
+   * real padding via engine-owned vars), and — for the positioned ones —
+   * its relative insets rewritten to whole cells (specs/positioning.md);
+   * `null` insets = not positioned. */
   inlineElements?: {
     element: Element;
     tracking: number;
+    padLeft: number;
+    padRight: number;
     insets: PerSide<number | null> | null;
   }[];
   /** True on an atomic inline-level box (`inline-flex`/`inline-block`/
@@ -231,10 +317,23 @@ export function defaultCellStyle(): CellStyle {
     flexShrink: 0,
     flexBasis: undefined,
     order: 0,
-    justifyContent: "start",
+    // The CSS initial value `normal` reads as `stretch` (flex treats it
+    // as `start`; grid stretches auto tracks).
+    justifyContent: "stretch",
     alignContent: "stretch",
-    alignItems: "start",
+    alignItems: "stretch",
     alignSelf: "auto",
+    justifyItems: "stretch",
+    justifySelf: "auto",
+    gridTemplateColumns: { kind: "none" },
+    gridTemplateRows: { kind: "none" },
+    gridAutoColumns: [autoTrack()],
+    gridAutoRows: [autoTrack()],
+    gridAutoFlow: { direction: "row", dense: false },
+    gridColumnStart: { kind: "auto" },
+    gridColumnEnd: { kind: "auto" },
+    gridRowStart: { kind: "auto" },
+    gridRowEnd: { kind: "auto" },
     width: undefined,
     height: undefined,
     minWidth: "auto",
@@ -251,6 +350,7 @@ export function defaultCellStyle(): CellStyle {
     borderStyle: { top: "solid", right: "solid", bottom: "solid", left: "solid" },
     overflow: "visible",
     whiteSpace: "normal",
+    tabSize: 8,
     lineGap: 0,
     tracking: 0,
     textOverflow: "clip",
@@ -263,4 +363,9 @@ export function defaultCellStyle(): CellStyle {
 
 export function zeroInsets(): Insets {
   return { top: 0, right: 0, bottom: 0, left: 0 };
+}
+
+/** The CSS initial implicit-track size: `minmax(auto, auto)`. */
+export function autoTrack(): TrackSize {
+  return { min: { kind: "auto" }, max: { kind: "auto" } };
 }

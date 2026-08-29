@@ -3,12 +3,20 @@ import {
   advanceOf,
   eachObjectMarker,
   hardLineSpans,
+  lineAdvance,
   longestSegmentAdvance,
   OBJECT_REPLACEMENT,
   wrapLineSpans,
 } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
-import { layoutFlexColumn, layoutFlexRow } from "./flex.ts";
+import {
+  alignCrossOffset,
+  effectiveJustify,
+  layoutFlexColumn,
+  layoutFlexRow,
+  mainAxisOffsets,
+} from "./flex.ts";
+import { gridIntrinsicInnerWidths, layoutGrid } from "./grid.ts";
 import { walkPositioned } from "./positioning.ts";
 import type {
   CellLength,
@@ -35,7 +43,7 @@ import type {
  * Coordinates are parent-relative (root's rect is at 0,0).
  */
 export function layoutRoot(root: LayoutNode, availableWidth: number): { height: number } {
-  const cache: IntrinsicCache = { maxContent: new WeakMap(), minContent: new WeakMap() };
+  const cache = makeIntrinsicCache();
   layoutNode(root, availableWidth, undefined, 0, 0, "fill", cache);
   // Positioning pass (specs/positioning.md): out-of-flow boxes were skipped
   // by flow layout; place them against their containing blocks, and apply
@@ -59,6 +67,13 @@ export type SizingMode = "fill" | "shrink";
 export interface IntrinsicCache {
   maxContent: WeakMap<LayoutNode, number>;
   minContent: WeakMap<LayoutNode, number>;
+  /** Grid containers compute both intrinsic widths in one placement +
+   * sizing pass — cached here so the min and max lookups share it. */
+  gridIntrinsic: WeakMap<LayoutNode, { min: number; max: number }>;
+}
+
+export function makeIntrinsicCache(): IntrinsicCache {
+  return { maxContent: new WeakMap(), minContent: new WeakMap(), gridIntrinsic: new WeakMap() };
 }
 
 /**
@@ -147,6 +162,16 @@ export function layoutNode(
       });
       const geometry = leafLineGeometry(node, inner.width);
       contentHeight = geometry.totalRows;
+      // Content alignment of the anonymous text item, quantized to whole
+      // cells (specs/cell-model.md): a flex/grid element whose content is
+      // bare text centers/ends it by folding the leftover into the
+      // engine-owned padding. The browser's own (fractional, off-grid)
+      // anonymous-item alignment is reset in styles.css; padding places
+      // the text instead, so browser, ASCII, and decorations agree.
+      // Symmetry of the wrap is preserved: the padded content box is
+      // exactly the widest line, and greedy wrap breaks identically there
+      // (every line fits, and every overflow still overflows).
+      alignLeafText(node, geometry, inner.width, inner.height, padding);
       // Place each box at its marker's wrapped (line, column) — the
       // browser's own line layout puts the in-flow box in the same spot
       // because both models reserve exactly the same cells for it, and a
@@ -201,6 +226,8 @@ export function layoutNode(
       padding,
       cache,
     );
+  } else if (style.display === "grid") {
+    contentHeight = layoutGrid(node, inner.width, inner.height, style.border, padding, cache);
   } else {
     contentHeight = layoutBlock(
       node,
@@ -230,22 +257,83 @@ export function layoutNode(
  * True when the node lays out as a TEXT LEAF: no in-flow block children
  * (atomic inline boxes ride the text run and out-of-flow boxes hang off
  * it, so neither counts), and either text to wrap or nothing at all. The
- * one exception: a TEXTLESS flex container keeps the flex path, so its
- * out-of-flow children get the sole-flex-item static position. A flex
- * element WITH text is still a leaf — CSS renders its text as a single
- * anonymous item, and the text must size the box.
+ * one exception: a TEXTLESS flex or grid container keeps its own path —
+ * flex so its out-of-flow children get the sole-flex-item static
+ * position, grid so explicit tracks still size an empty container. A
+ * flex/grid element WITH text is still a leaf — its text lays out as a
+ * single anonymous item that must size the box (for grid this skips
+ * placing the anonymous item into the track grid; specs/grid.md
+ * deviation).
  */
 function laysOutAsTextLeaf(node: LayoutNode): boolean {
   const hasInFlowChildren = node.children.some(
     (child) => !isOutOfFlow(child.style) && !child.inlineBox,
   );
   if (hasInFlowChildren) return false;
-  return node.text !== "" || node.style.display !== "flex";
+  return node.text !== "" || (node.style.display !== "flex" && node.style.display !== "grid");
 }
 
 export function clampSize(value: number, min: number, max: number | undefined): number {
   const clamped = max !== undefined ? Math.min(value, max) : value;
   return Math.max(min, clamped);
+}
+
+/**
+ * Quantized content alignment for a flex/grid text leaf: fold the leftover
+ * space around the anonymous text item into the engine-owned padding so the
+ * text lands on whole cells. Flex rows justify horizontally and align
+ * vertically; columns swap; grid uses item alignment (justify-items /
+ * align-items — the anonymous item's single implicit track fills the box).
+ * The padded content box becomes exactly the widest line, which preserves
+ * the wrap: every line still fits, and greedy breaks are unchanged.
+ * Mutates `padding` (=== node.resolvedPadding), which the renderers and
+ * this leaf's box/slot placement below all read.
+ */
+function alignLeafText(
+  node: LayoutNode,
+  geometry: { spans: LineSpan[]; totalRows: number },
+  innerWidth: number,
+  innerHeight: number,
+  padding: Insets,
+): void {
+  const style = node.style;
+  if (style.display !== "flex" && style.display !== "grid") return;
+  if (geometry.spans.length === 0) return;
+  const isColumn = style.display === "flex" && style.flexDirection === "column";
+
+  const itemWidth = geometry.spans.reduce(
+    (max, span) => Math.max(max, lineAdvance(span.start, span.end, node.advances, style.tracking)),
+    0,
+  );
+  const leftoverX = Math.max(0, innerWidth - itemWidth);
+  if (leftoverX > 0) {
+    const tx =
+      style.display === "grid"
+        ? alignCrossOffset(style.justifyItems, innerWidth, itemWidth)
+        : isColumn
+          ? alignCrossOffset(style.alignItems, innerWidth, itemWidth)
+          : mainAxisOffsets(effectiveJustify(style), [itemWidth], leftoverX)[0]!;
+    if (tx > 0) {
+      padding.left += tx;
+      padding.right += leftoverX - tx;
+    }
+  }
+
+  // Vertical offsets only exist inside a bounded box (explicit height,
+  // min-height floor, or a flex/grid-assigned size).
+  if (Number.isFinite(innerHeight)) {
+    const leftoverY = Math.max(0, innerHeight - geometry.totalRows);
+    if (leftoverY > 0) {
+      const ty =
+        style.display === "grid" || !isColumn
+          ? alignCrossOffset(style.alignItems, innerHeight, geometry.totalRows)
+          : mainAxisOffsets(effectiveJustify(style), [geometry.totalRows], leftoverY)[0]!;
+      if (ty > 0) {
+        padding.top += ty;
+        padding.bottom += leftoverY - ty;
+      }
+    }
+  }
 }
 
 /**
@@ -261,7 +349,7 @@ export function leafLineGeometry(
   contentWidth: number,
 ): { spans: LineSpan[]; lineY: number[]; totalRows: number } {
   const spans =
-    node.style.whiteSpace === "nowrap"
+    node.style.whiteSpace !== "normal"
       ? hardLineSpans(node.text)
       : wrapLineSpans(node.text, contentWidth, {
           advances: node.advances,
@@ -492,6 +580,7 @@ export function intrinsicOuterWidth(node: LayoutNode, cache: IntrinsicCache): nu
 function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
   if (inFlow.length === 0) return node.intrinsicWidth;
+  if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "flex" && node.style.flexDirection === "row") {
     const gap = intrinsicCells(node.style.gapX) * Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + intrinsicOuterWidth(c, cache), 0) + gap;
@@ -524,12 +613,13 @@ export function minContentOuterWidth(node: LayoutNode, cache: IntrinsicCache): n
 function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
   if (inFlow.length === 0) {
-    if (!node.text || node.style.whiteSpace === "nowrap") return node.intrinsicWidth;
+    if (!node.text || node.style.whiteSpace !== "normal") return node.intrinsicWidth;
     return longestSegmentAdvance(node.text, {
       advances: node.advances,
       tracking: node.style.tracking,
     });
   }
+  if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).min;
   if (
     node.style.display === "flex" &&
     node.style.flexDirection === "row" &&

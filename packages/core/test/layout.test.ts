@@ -427,3 +427,88 @@ describe("typography on the grid", () => {
     expect(leaf.localRect.height).toBe(2);
   });
 });
+
+describe("quantized content alignment on text leaves", () => {
+  it("centers bare text in a flex box via engine padding, on whole cells", () => {
+    const leaf = makeNode({
+      text: "abcd",
+      style: {
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        height: { kind: "cells", value: 5 },
+      },
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 20);
+    // Horizontal: leftover 16 → 8 each side; vertical: leftover 4 → 2 + 2.
+    expect(leaf.resolvedPadding).toEqual({ top: 2, right: 8, bottom: 2, left: 8 });
+    expect(leaf.localRect.height).toBe(5);
+  });
+
+  it("floors odd leftovers and pushes end-alignment fully over", () => {
+    const centered = makeNode({
+      text: "abc",
+      style: { display: "flex", justifyContent: "center" },
+    });
+    const ended = makeNode({
+      text: "abc",
+      style: { display: "flex", justifyContent: "end" },
+    });
+    const root = makeNode({ children: [centered, ended] });
+    layoutRoot(root, 10);
+    // Leftover 7: center floors to 3 (4 on the right); end takes all 7.
+    expect(centered.resolvedPadding.left).toBe(3);
+    expect(centered.resolvedPadding.right).toBe(4);
+    expect(ended.resolvedPadding.left).toBe(7);
+    expect(ended.resolvedPadding.right).toBe(0);
+  });
+
+  it("swaps axes for flex columns and honors grid place-items", () => {
+    const column = makeNode({
+      text: "ab",
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "end",
+        alignItems: "center",
+        height: { kind: "cells", value: 4 },
+      },
+    });
+    const grid = makeNode({
+      text: "ab",
+      style: {
+        display: "grid",
+        justifyItems: "center",
+        alignItems: "center",
+        height: { kind: "cells", value: 3 },
+      },
+    });
+    const root = makeNode({ children: [column, grid] });
+    layoutRoot(root, 10);
+    // Column: justify = vertical (end → all 3 rows above), align =
+    // horizontal (center → 4 + 4).
+    expect(column.resolvedPadding).toEqual({ top: 3, right: 4, bottom: 0, left: 4 });
+    // Grid: place-items center on both axes.
+    expect(grid.resolvedPadding).toEqual({ top: 1, right: 4, bottom: 1, left: 4 });
+  });
+
+  it("leaves default (stretch) alignment and wrapped text untouched", () => {
+    const plain = makeNode({
+      text: "abcd",
+      style: { display: "flex", height: { kind: "cells", value: 5 } },
+    });
+    const wrapped = makeNode({
+      text: "one two three",
+      style: { display: "flex", justifyContent: "center", maxWidth: 5 },
+    });
+    const root = makeNode({ children: [plain, wrapped] });
+    layoutRoot(root, 20);
+    // Default justify/align resolve to stretch → no offsets.
+    expect(plain.resolvedPadding).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+    // Wrapped: widest line is "three" (5) = the content width → no
+    // horizontal leftover, and the wrap is unchanged (3 lines).
+    expect(wrapped.localRect.height).toBe(3);
+    expect(wrapped.resolvedPadding.left).toBe(0);
+  });
+});

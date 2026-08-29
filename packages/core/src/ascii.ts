@@ -1,7 +1,7 @@
 import { collectBorderRuns } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
 import { leafLineGeometry } from "./layout.ts";
-import { advanceOf, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
+import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
 import type { LayoutNode } from "./types.ts";
 
@@ -67,15 +67,18 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
       const span = spans[i]!;
       const row = contentY + lineY[i]!;
       const truncated =
-        style.whiteSpace === "nowrap" && style.overflow === "clip"
+        style.whiteSpace !== "normal" && style.overflow === "clip"
           ? truncateSpan(node.text, span, contentWidth, node.advances, style)
           : { end: span.end, ellipsis: false };
       // Each character advances by its own cell count (tracking gaps).
       let x = contentX;
       for (let k = span.start; k < truncated.end; k++) {
-        // U+FFFC marks an embedded inline box — its cells are drawn by
-        // the box's own walk, not as a glyph.
-        if (node.text[k] !== OBJECT_REPLACEMENT) put(x, row, node.text[k]!);
+        // U+FFFC marks an embedded inline box (its cells are drawn by the
+        // box's own walk); INLINE_PAD marks a blank inline-padding cell —
+        // neither is a glyph.
+        if (node.text[k] !== OBJECT_REPLACEMENT && node.text[k] !== INLINE_PAD) {
+          put(x, row, node.text[k]!);
+        }
         x += advanceOf(k, k + 1, node.advances);
       }
       if (truncated.ellipsis) put(x, row, "…");

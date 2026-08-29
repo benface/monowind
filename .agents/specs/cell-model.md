@@ -326,19 +326,55 @@ visible cell when `text-overflow: ellipsis` is set.
    re-quantized to whole rows/cells rather than applied as authored, and
    `leading-*` on inline elements is ignored.
 4. Border-width uses the 1px = 1 cell scale, not the spacing scale.
-5. Inline elements ignore layout-affecting properties (borders, sizing);
-   atomic inline boxes ride the line per CSS (growing their line when
+5. Inline elements ignore MOST layout-affecting properties (borders,
+   sizing, margins). Horizontal padding IS honored, quantized to whole
+   cells: the run reserves the cells as blank markers glued to the
+   element's edges (U+2060, so a wrap carries the padding with the edge
+   like `box-decoration-break: slice`), and the companion stylesheet
+   applies exactly those cells as real padding — any raw off-grid inline
+   padding is neutralized. Percent padding reads as 0; vertical inline
+   padding passes through untouched (it never moves layout, per CSS).
+   Note: an inline element's BACKGROUND paints the font's content area
+   (ascent + descent, ~1.2em — taller than the 1em row), so it bleeds
+   slightly into adjacent rows. That's standard CSS at line-height 1
+   (`text-box-trim`/`text-box-edge` can't fix it: Chromium ignores it on
+   inlines, WebKit trims to cap-height — below the row — and Firefox
+   doesn't ship it). Cell-aligned backgrounds arrive with the
+   visual-system milestone via the VERIFIED gradient clamp — solid-color
+   `background-image: linear-gradient(<color> 0 0); background-size:
+100% 1em; background-position: center; background-repeat: no-repeat`
+   paints exactly the line box in all three engines (half-leading is
+   symmetric, so the content area is centered on the row) — using the
+   same read-and-rewrite var machinery as inline padding.
+   Atomic inline boxes ride the line per CSS (growing their line when
    taller) but their margins are ignored, and BLOCK-level elements nested
    inside a run are skipped with a warning.
 6. `text-align: center | justify` on descendants is forced to `start`.
+   Content/item alignment on a flex or grid element whose content is BARE
+   text (`flex items-center justify-center`, `grid place-items-center`) IS
+   supported, but quantized: the browser's own anonymous-item alignment
+   would land at fractional, off-grid offsets, so the companion stylesheet
+   resets `place-content`/`place-items` on laid-out elements and the
+   engine folds the whole-cell offsets into its owned padding instead
+   (flex rows justify horizontally / align vertically, columns swap, grid
+   uses `justify-items`/`align-items`). The wrap is unchanged — the padded
+   content box is exactly the widest line.
 7. Mixed direct text nodes + in-flow block-level element children in one
    container don't get their text laid out (an all-inline mix does, and
    out-of-flow children don't count — see Inline content). The dropped
    text is HIDDEN (it would otherwise paint unpositioned over the laid-out
    children) and the engine warns once with the fix: wrap each text
    segment in its own element.
-8. `white-space: pre | pre-wrap | pre-line | break-spaces` don't preserve
-   whitespace — only the wrap/no-wrap half of their behavior is honored.
+8. `white-space: pre` DOES preserve whitespace: spaces and newlines
+   survive as authored, tabs expand to `tab-size` stops (default 8)
+   measured from each hard line's start, and browsers render the same
+   preserved text (a companion rule restores `pre` on the leaf and its
+   inline descendants). Caveats: preservation is decided by the LEAF's
+   white-space (an override on an inline descendant is ignored), a final
+   newline produces no extra line (as in browsers), and tab stops under
+   `tracking-*` may drift from the browser's letter-spaced tabs.
+   `pre-wrap | pre-line | break-spaces` still collapse — only the
+   wrap/no-wrap half of their behavior is honored.
 9. `aspect-ratio` is ignored (deferred: cells aren't square, so it needs
    the cell-metric ratio plumbed into layout plus a spec decision on
    px-square vs cell-square semantics).

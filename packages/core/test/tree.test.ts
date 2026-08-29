@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTree } from "../src/tree.ts";
+import { INLINE_PAD } from "../src/wrap.ts";
 import type { PerSide } from "../src/types.ts";
 
 /**
@@ -179,5 +180,55 @@ describe("buildTree", () => {
   it("collapses whitespace across inline-element boundaries", () => {
     const node = buildTree(el("<div>a <span> b </span> c</div>"), 16)!;
     expect(node.text).toBe("a b c");
+  });
+});
+
+describe("inline padding", () => {
+  it("reserves quantized cells as glued pad markers and records them", () => {
+    // Root 16px → cell 4px: 4px padding = 1 cell each side.
+    const node = buildTree(el('<div>a <span style="padding: 0 4px">bb</span> c</div>'), 16)!;
+    expect(node.text).toBe(`a ${INLINE_PAD}bb${INLINE_PAD} c`);
+    expect(node.advances).toBeUndefined(); // every advance is 1 cell
+    expect(node.inlineElements).toHaveLength(1);
+    expect(node.inlineElements![0]!.padLeft).toBe(1);
+    expect(node.inlineElements![0]!.padRight).toBe(1);
+    expect(node.intrinsicWidth).toBe(8);
+  });
+
+  it("emits one marker per cell for multi-cell padding", () => {
+    const node = buildTree(el('<div><span style="padding-left: 8px">x</span></div>'), 16)!;
+    expect(node.text).toBe(`${INLINE_PAD}${INLINE_PAD}x`);
+  });
+
+  it("collapses spaces through pad markers, per CSS", () => {
+    const node = buildTree(el('<div>a <span style="padding-left: 4px"> b</span></div>'), 16)!;
+    // The space inside the span follows the outer space (padding between
+    // them is not a character) — collapsed.
+    expect(node.text).toBe(`a ${INLINE_PAD}b`);
+  });
+});
+
+describe("white-space: pre", () => {
+  it("preserves spaces and newlines, dropping only a final newline", () => {
+    const node = buildTree(
+      el('<div style="white-space: pre">  two  spaces\nsecond line\n</div>'),
+      16,
+    )!;
+    expect(node.text).toBe("  two  spaces\nsecond line");
+    expect(node.intrinsicHeight).toBe(2);
+    expect(node.intrinsicWidth).toBe(13);
+    expect(node.style.whiteSpace).toBe("pre");
+  });
+
+  it("expands tabs to tab stops from each hard line's start", () => {
+    const node = buildTree(el('<div style="white-space: pre">ab\tc\n\td</div>'), 16)!;
+    // Column 2 → next stop 8; line start → stop 8.
+    expect(node.text).toBe("ab      c\n        d");
+  });
+
+  it("keeps collapsing without the pre flag", () => {
+    const node = buildTree(el('<div style="white-space: pre-line">a\n b</div>'), 16)!;
+    expect(node.style.whiteSpace).toBe("normal");
+    expect(node.text).toBe("a b");
   });
 });

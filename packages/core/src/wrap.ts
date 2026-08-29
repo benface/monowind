@@ -124,6 +124,15 @@ export function breakableSegments(word: string): string[] {
  * browsers give replaced elements. */
 export const OBJECT_REPLACEMENT = "\uFFFC";
 
+/** U+2060 (word joiner) marks ONE CELL of inline-element horizontal
+ * padding in a run (specs/cell-model.md): pure blank space glued to its
+ * neighbors — not collapsible white space, no break opportunity — so it
+ * travels with the padded element's edge across wraps exactly like the
+ * browser's `box-decoration-break: slice` padding. Multi-cell padding is
+ * several 1-cell markers, keeping every gap/advance invariant intact.
+ * (Escape form on purpose: the character is invisible.) */
+export const INLINE_PAD = "\u2060";
+
 /** Visit each object-replacement marker in a run, pairing its character
  * index with its ordinal (= index into the leaf's box list, which is in
  * run order). */

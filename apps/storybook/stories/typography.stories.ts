@@ -1,44 +1,7 @@
 import { html } from "lit";
-import { expect, waitFor } from "storybook/test";
+import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-
-/** Assert that the browser painted every laid-out leaf's text on exactly
- * the rows the engine allocated — the wrap models must agree in every
- * engine (specs/cell-model.md). */
-async function expectBrowserRowsToMatchEngine(canvasElement: HTMLElement): Promise<void> {
-  const host = canvasElement.querySelector("mono-wind")!;
-  // Generous timeouts throughout: three browser instances share the CPU
-  // (worse on CI runners), so a rAF-driven relayout can easily outrun
-  // waitFor's default 1s under load.
-  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-  const leaves = Array.from(host.querySelectorAll<HTMLElement>("[data-mw-laid-out]")).filter(
-    (el) =>
-      el.textContent!.trim() !== "" &&
-      !el.querySelector("[data-mw-laid-out], [data-mw-inline-box]"),
-  );
-  expect(leaves.length).toBeGreaterThan(0);
-  const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-  for (const el of leaves) {
-    const cells = (name: string) => Number(el.style.getPropertyValue(name));
-    const contentRows =
-      cells("--mw-h") - cells("--mw-bt") - cells("--mw-bb") - cells("--mw-pt") - cells("--mw-pb");
-    // N lines occupy N + (N − 1) × gap rows, with gap = rows per line − 1.
-    const rowsPerLine = cells("--mw-lh") || 1;
-    const engineLines = (contentRows + rowsPerLine - 1) / rowsPerLine;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    // Fragments on one line can differ slightly in top (an italic or bold
-    // fallback face has its own ascent), so count rows by the fragment's
-    // vertical centre rather than distinct tops.
-    const top = el.getBoundingClientRect().top;
-    const lines = new Set(
-      Array.from(range.getClientRects(), (r) =>
-        Math.floor((r.top + r.height / 2 - top) / cellHeight),
-      ),
-    );
-    expect(lines.size, `"${el.textContent!.trim()}" lines`).toBe(engineLines);
-  }
-}
+import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features/Typography",
@@ -75,6 +38,24 @@ export const HardBreaks: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+// Interpolated so no formatter ever reflows the whitespace-sensitive
+// content (tabs and newlines included).
+const asciiArt =
+  "<mono-wind>\n  spaces   survive\n    and so does\n      indentation\n</mono-wind>";
+const tabbedColumns = "name\tqty\nfoobar\t1\nbuzz\t12\ntabs land on tab stops";
+
+export const Preformatted: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <pre class="border border-neutral-500 px-2 py-1">${asciiArt}</pre>
+        <div class="border border-emerald-400 px-2 py-1 whitespace-pre">${tabbedColumns}</div>
+      </div>
+    </mono-wind>
+  `,
+  play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
 };
 
 export const InlineElements: StoryObj = {
