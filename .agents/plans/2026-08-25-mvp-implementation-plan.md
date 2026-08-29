@@ -108,7 +108,8 @@ document order (documented, tested).
 The engine reads (via the measure/write cycle) and interprets:
 
 ```text
-display: block | flex | grid | none      (inline → text run, not a layout node)
+display: block | flex | grid | table | none   (inline → text run, not a layout node;
+  table-internal displays → roles: rows, cells, groups, captions, columns)
 flex-direction: row | column (+ -reverse), flex-wrap (+ wrap-reverse)
 flex-grow, flex-shrink, flex-basis, order
 justify-content: start | center | end | space-between | space-around | space-evenly
@@ -130,16 +131,19 @@ line-height (leading-*) → rows per wrapped line; letter-spacing (tracking-*)
 position: static | relative | absolute (+ fixed → host, sticky → relative)
 top/right/bottom/left, inset-*                 (per specs/positioning.md,
                                                 incl. inline relative shifts)
+table-layout, border-collapse (lattice) | separate + border-spacing,
+  caption-side, vertical-align on cells (align-* scan + valign/align
+  attributes), colspan/rowspan/span attributes  (specs/table.md)
 
 # Specified but NOT implemented yet (their milestones):
-display: table + table-layout                  (spec TBD by specs/table.md)
 aspect-ratio                                   (needs cell-metric ratio; spec TBD)
 ```
 
 Utility classes this covers in practice: `block hidden flex flex-row flex-col
 grid grow shrink basis-* order-* justify-* items-* w-* h-* min-* max-* p-* m-*
 gap-* truncate whitespace-nowrap leading-* tracking-* relative
-top/right/bottom/left-* border* text-* bg-* overflow-hidden` and friends.
+top/right/bottom/left-* border* text-* bg-* overflow-hidden table-*
+border-collapse border-separate border-spacing-* caption-* align-*` and friends.
 Explicitly not supported: `space-x/y-*` (superseded by `gap-*`), font
 size/family utilities on descendants (see cell-model spec).
 
@@ -178,9 +182,11 @@ packages/core/
 │   ├── layout.ts             # core: per-node sizing pipeline, block flow, intrinsics
 │   ├── flex.ts               # flex row/column + §9.7 resolution (specs/flex.md)
 │   ├── grid.ts               # grid placement, track sizing, areas, subgrid (specs/grid.md)
+│   ├── table.ts              # table structure, column/row sizing, border lattice (specs/table.md)
 │   ├── positioning.ts        # absolute/relative positioning pass (specs/positioning.md)
 │   ├── wrap.ts               # greedy word-wrap for text leaves (lines + count)
 │   ├── borders.ts            # border-run collection + glyph sets (pure, shared)
+│   ├── warn.ts               # one-time developer warnings (silent deviations)
 │   ├── render.ts             # writes geometry vars, paints border decorations (DOM)
 │   ├── ascii.ts              # renders a laid-out tree as ASCII art (goldens + debug/AX)
 │   ├── cdn.ts                # CDN entry: engine + companion CSS + @tailwindcss/browser
@@ -405,14 +411,28 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    deviations ranked by expected hit-rate: Unicode width (Milestone 7),
    `calc()` in track lists, `text-center` (fundamental — fractional
    per-line offsets). Authored descendant `font-size` now warns once
-   (class + inline-style scan in `readCellStyle`)._
-4. **Tables** — `<table>` / `display: table` with the CSS automatic table
-   layout (column widths from cell content; `table-fixed` honored),
-   colspan/rowspan, and cell borders through the shared glyph-junction
-   machinery — `border-collapse` maps naturally onto shared box-drawing
-   edges (`├ ┼ ┤`), the classic TUI table. Write `specs/table.md` FIRST;
-   scheduled right after grid because the column-sizing machinery
-   (intrinsic contributions, integer distribution) is shared.
+   (class + inline-style scan in `readCellStyle`). Reader-overhaul idea
+   investigated and REJECTED: reading styles under a `display: none`
+   ancestor returns computed values for everything (probed — `50%`,
+   `auto`, percent insets, full grid templates, no Typed OM needed) and
+   could have deleted the degrid trick and every used-value-trap class
+   scan — but a synchronous hide/read/restore destroys the user's text
+   selection in Firefox (probed; the very engine it would serve — focus
+   survives, Chromium/WebKit keep selection), restarts CSS
+   animations/transitions in content, and costs a per-pass layout-tree
+   rebuild vs Typed OM's zero-layout reads. The real simplification
+   event is dropping Firefox pre-157 support, which deletes the
+   fallback scans and converges on the single Typed OM path for free._
+4. **Tables** — DONE (`table.ts`, spec'd first in `specs/table.md`):
+   automatic + fixed layout with percent inflation, colspan/rowspan
+   (`rowspan="0"` included), row-group reordering, captions,
+   `border-collapse` as a shared junction-glyph lattice (`├ ┼ ┤`) and
+   `border-separate` + spacing, `vertical-align` via class scan.
+   Also: percent heights in cells (the legacy second pass), legacy
+   `align`/`valign` attributes, `border-hidden`, fixed-layout auto-width
+   fallback, percent width utilities (`w-1/2`, `w-full`, `w-[N%]`) in
+   the no-Typed-OM class-scan fallback, and a companion reset for the
+   UA's `th`/`caption` centering.
 5. **Native interaction** — links, buttons, inputs, focus states,
    keyboard/pointer, forms; React example + integration tests.
 6. **Visual system** — colors, border styles/widths per the cell-model glyph

@@ -46,6 +46,16 @@ describe("sizing fallbacks", () => {
   it("reads inline intrinsic keywords too", () => {
     expect(read({ style: "width: fit-content" }).width).toEqual({ kind: "fit-content" });
   });
+
+  it("detects percent utilities via class scan (used px would mislead)", () => {
+    expect(read({ class: "w-1/2" }).width).toEqual({ kind: "percent", value: 50 });
+    expect(read({ class: "md:w-2/3" }).width).toEqual({ kind: "percent", value: (100 * 2) / 3 });
+    expect(read({ class: "w-full" }).width).toEqual({ kind: "percent", value: 100 });
+    expect(read({ class: "w-[33%]" }).width).toEqual({ kind: "percent", value: 33 });
+    expect(read({ class: "h-1/4" }).height).toEqual({ kind: "percent", value: 25 });
+    // Not percents: w-fit already matched, w-4 is the used-px path.
+    expect(read({ class: "w-fit" }).width).toEqual({ kind: "fit-content" });
+  });
 });
 
 describe("margin fallbacks", () => {
@@ -136,9 +146,16 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
     expect(style.textOverflow).toBe("ellipsis");
   });
 
-  it("blocks authored text-center via class scan (no computed-style echo)", () => {
-    expect(read({ class: "text-center" }).textAlignBlocked).toBe(true);
-    expect(read({ class: "text-end" }).textAlignBlocked).toBe(false);
+  it("blocks authored center/justify via computed text-align and the align attribute", () => {
+    // Computed detection is echo-safe: the forced-start rule is
+    // measuring-gated, so the read sees the authored value.
+    expect(read({ style: "text-align: center" }).textAlignBlocked).toBe(true);
+    expect(read({ style: "text-align: justify" }).textAlignBlocked).toBe(true);
+    expect(read({ style: "text-align: end" }).textAlignBlocked).toBe(false);
+    const el = document.createElement("td");
+    el.setAttribute("align", "CENTER");
+    document.body.appendChild(el);
+    expect(readCellStyle(el, 16).textAlignBlocked).toBe(true);
   });
 
   it("warns once per element on authored font sizes, colors excluded", () => {

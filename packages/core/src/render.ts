@@ -55,12 +55,19 @@ function walk(
   }
 
   if (!isRoot) positionElement(node);
+  // A hidden table box (misparented content, <col>) hides its whole
+  // subtree browser-side; nothing to paint or recurse into.
+  if (node.tableHidden) return;
 
   collectBorderRuns(
     node.style,
     { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height },
     borderRuns,
   );
+  if (node.decorationRuns) {
+    for (const run of node.decorationRuns)
+      borderRuns.push({ ...run, x: absX + run.x, y: absY + run.y });
+  }
 
   for (const child of node.children) {
     walk(child, absX, absY, borderRuns, false, inlineInsetElements);
@@ -98,6 +105,10 @@ function positionElement(node: LayoutNode): void {
   // different companion rule (see styles.css).
   el.setAttribute(node.inlineBox ? "data-mw-inline-box" : "data-mw-laid-out", "");
   el.removeAttribute(node.inlineBox ? "data-mw-laid-out" : "data-mw-inline-box");
+  // Bottom-aligned atomic boxes keep their browser alignment (grid-exact,
+  // probed); everything else is pinned top by the companion rule.
+  if (node.inlineBox && node.style.verticalAlign === "end") el.setAttribute("data-mw-vbottom", "");
+  else el.removeAttribute("data-mw-vbottom");
   // Grid typography (specs/cell-model.md): extra cells per character, rows
   // per wrapped line, and the half-leading cancellation shift.
   el.style.setProperty("--mw-ls", String(tracking));
@@ -133,6 +144,8 @@ function positionElement(node: LayoutNode): void {
   // paint unpositioned over the children — hide it (see styles.css).
   if (node.droppedText) el.setAttribute("data-mw-dropped-text", "");
   else el.removeAttribute("data-mw-dropped-text");
+  if (node.tableHidden) el.setAttribute("data-mw-table-hidden", "");
+  else el.removeAttribute("data-mw-table-hidden");
 }
 
 function paintDecorations(layer: HTMLElement, runs: BorderRun[]): void {

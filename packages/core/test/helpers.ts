@@ -1,7 +1,7 @@
 import { defaultCellStyle, zeroInsets } from "../src/types.ts";
 import type { CellStyle, LayoutNode } from "../src/types.ts";
 
-const stubElement = {} as unknown as Element;
+const stubElement = { getAttribute: () => null } as unknown as Element;
 
 /** Build a LayoutNode for headless layout tests — no DOM required. */
 export function makeNode(overrides: {

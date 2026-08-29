@@ -1,6 +1,6 @@
 # Spec: table layout
 
-Status: draft (Milestone 4, spec-first — nothing implemented yet).
+Status: implemented (`table.ts`; lattice glyphs in `borders.ts`).
 Cell-unit fundamentals (rounding, box model) live in `cell-model.md`;
 column sizing reuses the integer-distribution and intrinsic-contribution
 machinery from `flex.md`/`grid.md`. The normative sources are CSS 2.1
@@ -22,16 +22,20 @@ that is what neutralizes the browser's native table layout afterwards,
 same trick as grid).
 
 No used-value traps: `table-layout`, `border-collapse`, `border-spacing`
-(px → cells per axis), and `caption-side` read fine from
-`getComputedStyle`. `vertical-align` does not — the companion stylesheet
-locks it to `baseline` on all inner elements (the inline-glyph lock), so
-authored cell alignment is detected via class + inline-style scan
-(`align-top` / `align-middle` / `align-bottom`), the same pattern as
-`text-align` and auto margins. `colspan`/`rowspan` are HTML content attributes
+(px → cells per axis), `caption-side`, and `vertical-align` all read
+from computed style — the companion's baseline lock (and the forced
+`text-align: start` on blocked elements) is measuring-gated, so the
+reader sees the authored/UA values from any authoring, Tailwind or
+plain CSS. The UA's `td`/`th { vertical-align: middle }` arrives the
+same way. `colspan`/`rowspan` are HTML content attributes
 on `<td>`/`<th>` (CSS has no span property, so div-tables can't span);
 parsed per HTML: `colspan` clamped to 1–1000, `rowspan` to 0–65534, and
 `rowspan="0"` spans to the end of the row group. `<col>`/`<colgroup>`
-`span` attributes and widths are read for column sizing.
+`span` attributes and widths are read for column sizing. The legacy
+`valign`/`align` attributes work through their computed forms (browsers
+map presentational hints into computed style — `align` surfaces as
+vendor-prefixed centering); direct attribute reads remain only as
+fallbacks for environments that don't map hints (happy-dom).
 
 ## Scope
 
@@ -80,10 +84,11 @@ the grid track machinery.
 
 1. Per column: **min width** = max over its cells of their min-content
    outer width, **max width** = max of their max-content outer widths.
-   A cell-count `w-*` on a cell or `<col>` raises both the column's min
-   and max to that many cells (content can still push min higher); a
-   percent width leaves the column's intrinsic sums content-based; it
-   acts through inflation (step 3) and resolution (step 4).
+   A cell-count `w-*` on a cell or `<col>` REPLACES the max contribution
+   (floored at the content min — a width can't shrink a column below its
+   content, and doesn't raise its min, per CSS 2.1); a percent width
+   leaves the column's intrinsic sums content-based and acts through
+   inflation (step 3) and resolution (step 4).
 2. Spanning cells distribute their excess (contribution minus what the
    spanned columns already provide, minus the chrome between them) in
    ascending span order, proportionally to the spanned columns' max
@@ -121,10 +126,12 @@ for abspos shrink-to-fit) are the step-3 sums.
 
 ## Column sizing — fixed
 
-`table-layout: fixed`: the used table width is the authored width or,
-when auto, the full available width — always definite, so percents
-resolve against it directly. Column widths come from `<col>` widths,
-then the first row's cells (a spanning cell splits its width equally);
+`table-layout: fixed` applies only with an authored (non-auto) width —
+a width-auto fixed table uses the automatic algorithm, like every
+browser (probed; CSS 2.1 §17.5.2 allows it). The used table width is
+then definite, so percents resolve against it directly. Column widths
+come from `<col>` widths, then the first row's cells (a spanning cell
+splits its width equally);
 columns still unsized share the remaining table width equally (integer
 distribution). Cell content is never measured — overflow clips per the
 cell's own overflow handling. A width sum exceeding the table width
@@ -134,9 +141,9 @@ wins (the table overflows, per CSS).
 
 A row's height is the max of its cells' content heights laid out at the
 final column widths (plus each cell's vertical chrome), floored by any
-`h-*` on the row or its cells. `rowspan` cells contribute like spanning
-grid items: ascending span, excess over the spanned rows distributed
-equally. Authored table height beyond the row sum is distributed equally
+cell-count `h-*` on the row or its cells (percent heights behave as
+auto). `rowspan` cells contribute like spanning grid items: ascending
+span, excess over the spanned rows distributed equally. Authored table height beyond the row sum is distributed equally
 to the rows (CSS leaves this undefined; browsers vary).
 
 ## Cells
@@ -144,13 +151,26 @@ to the rows (CSS leaves this undefined; browsers vary).
 A cell is a normal block container: own padding, borders (drawn as its
 own ring in the separate model, contributed to the lattice when
 collapsed), background, and nested layout at its final column width.
+An explicit cell height makes the natural box taller (flooring the row
+through it), but `vertical-align` still positions the CONTENT within
+the final area, per CSS — alignment works from the content-derived
+height. A cell whose direct children have percent heights is laid out
+a second time at its final area height so they resolve against it —
+the browsers' legacy pass (percent heights never contribute to the row
+height itself; that would be circular).
 `vertical-align: top | middle | bottom` normalizes to the engine's
 `start | center | end` and goes through the shared alignment-offset
 machinery (`center` floors the extra, as everywhere); `baseline` maps to
 `start`, the same rule as `items-baseline` in flex/grid — and exact for
 us: with one shared font size all first lines have identical metrics, so
-baseline alignment degenerates to top alignment. `text-align` follows
-the cell-model rules (start/end honored, center blocked).
+baseline alignment degenerates to top alignment. The default is
+`center` on `<td>`/`<th>` (UA `middle`, probed in all three engines;
+the companion's lock hides it, so the tag decides) and `start` on
+div-cells (CSS initial `baseline`). `text-align` follows the
+cell-model rules (start/end honored, center blocked); the UA's
+`th`/`caption` centering is reset to `start` by a base-layer companion
+rule, since off-grid centering can't be honored anyway. The legacy
+`align` attribute joins the blocking scan (see Reading).
 
 ## Borders — collapsed
 
@@ -169,7 +189,8 @@ the integer analog, documented as a deviation.
 Conflict resolution at each line segment, per §17.6.2.1: `hidden` wins
 (suppresses the segment), then wider border, then style rank (`double` >
 `solid` > `dashed` > `dotted`), then origin (cell > row > row group >
-column > table). Color comes from the winner.
+table; `<col>`/`<colgroup>` borders are not read — they carry widths
+only). Color comes from the winner.
 
 Rendering: junction glyphs. At each lattice intersection the glyph is
 picked from which of the four arms exist — `┼ ├ ┤ ┬ ┴ ─ │` and the
@@ -191,7 +212,8 @@ preflight's collapse default means this only appears when authored.
 `display: table-caption` lays out as a block spanning the used table
 width, above the table box for `caption-side: top` (default), below for
 `bottom`; it sits inside the table's margin box (margins on the table
-wrap caption and grid together, per CSS).
+wrap caption and grid together, per CSS). Margins on the caption itself
+are ignored.
 
 ## Interaction with the rest of the engine
 

@@ -61,14 +61,37 @@ export const Preformatted: StoryObj = {
 export const InlineElements: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-40 border border-neutral-500 px-2 py-1">
+      <div class="max-w-40 border border-neutral-500 px-2 py-1" data-test="run">
         Inline elements like <b class="text-yellow-400">bold text</b>,
         <i class="text-cyan-400">italic text</i>, and
         <a href="#" class="text-blue-400 underline">links (click me)</a> ride along in the text run.
+        Atomic boxes too: an inline-block
+        <span class="inline-block border border-fuchsia-400 px-1" data-test="block">boxed</span>
+        pinned to its line's top, and a bottom-aligned inline table with
+        <table class="inline-table align-bottom" data-test="inline-table">
+          <tbody>
+            <tr>
+              <td class="border px-1">two</td>
+              <td class="border px-1">cells</td>
+            </tr>
+          </tbody>
+        </table>
+        that drops the text to its last row.
       </div>
     </mono-wind>
   `,
-  play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
+  play: async ({ canvasElement }) => {
+    await expectBrowserRowsToMatchEngine(canvasElement, { allowStretchedLeaves: true });
+    // Both atomic boxes ride the run in flow.
+    const block = canvasElement.querySelector<HTMLElement>('[data-test="block"]')!;
+    const inlineTable = canvasElement.querySelector<HTMLElement>('[data-test="inline-table"]')!;
+    expect(block.hasAttribute("data-mw-inline-box")).toBe(true);
+    expect(inlineTable.hasAttribute("data-mw-inline-box")).toBe(true);
+    expect(Number(inlineTable.style.getPropertyValue("--mw-h"))).toBe(3);
+    // align-bottom passes through to the browser (grid-exact, probed).
+    expect(inlineTable.hasAttribute("data-mw-vbottom")).toBe(true);
+    expect(block.hasAttribute("data-mw-vbottom")).toBe(false);
+  },
 };
 
 export const InlineDisplay: StoryObj = {

@@ -1,5 +1,6 @@
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
-import { autoTrack } from "./types.ts";
+import { autoTrack, zeroInsets } from "./types.ts";
+import { warnOnce } from "./warn.ts";
 import type {
   AlignItems,
   BorderStyle,
@@ -18,6 +19,7 @@ import type {
   Position,
   Size,
   SizeLimit,
+  TableRole,
   TrackBreadth,
   TrackSize,
 } from "./types.ts";
@@ -48,15 +50,18 @@ export function readCellStyle(
   // Atomic inline-level boxes lay their CONTENT out like their block-level
   // counterparts (the tree builder blockifies the box itself onto its own
   // row — cell-model deviation).
-  const rawDisplay = cs.display;
+  const rawDisplay = cs.display || TABLE_DISPLAY_FALLBACK[el.tagName] || "";
+  const tableRole: TableRole = TABLE_ROLES[rawDisplay] ?? "none";
   const display: Display =
     rawDisplay === "flex" || rawDisplay === "inline-flex"
       ? "flex"
       : rawDisplay === "grid" || rawDisplay === "inline-grid"
         ? "grid"
-        : rawDisplay === "none"
-          ? "none"
-          : "block";
+        : rawDisplay === "table" || rawDisplay === "inline-table"
+          ? "table"
+          : rawDisplay === "none"
+            ? "none"
+            : "block";
 
   // Grid templates: `getComputedStyle` on a live grid container returns
   // the USED track list (expanded, in px) — fr factors, repeat(), and
@@ -107,8 +112,34 @@ export function readCellStyle(
     gridTemplateAreas = parseGridTemplateAreas(cs.getPropertyValue("grid-template-areas"));
   }
 
-  return {
+  let tableLayout: "auto" | "fixed" = "auto";
+  let borderCollapse = false;
+  let borderSpacingX = 0;
+  let borderSpacingY = 0;
+  if (display === "table") {
+    tableLayout = cs.tableLayout === "fixed" ? "fixed" : "auto";
+    borderCollapse = cs.borderCollapse === "collapse";
+    if (!borderCollapse) {
+      // Computed form is "Xpx" or "Xpx Ypx" (horizontal first, per CSS).
+      const parts = cs.borderSpacing.split(" ");
+      borderSpacingX = pxToCells(parseFloat(parts[0] ?? "") || 0, rootFontSizePx);
+      borderSpacingY = pxToCells(parseFloat(parts[1] ?? parts[0] ?? "") || 0, rootFontSizePx);
+    }
+  }
+
+  const style: CellStyle = {
     display,
+    tableRole,
+    tableLayout,
+    borderCollapse,
+    borderSpacingX,
+    borderSpacingY,
+    captionSide: cs.captionSide === "bottom" ? "bottom" : "top",
+    // Cells and atomic-inline candidates; the rest never consume it.
+    verticalAlign:
+      tableRole === "cell" || rawDisplay.startsWith("inline-")
+        ? readVerticalAlign(el, cs)
+        : "start",
     flexDirection: cs.flexDirection.startsWith("column") ? "column" : "row",
     flexReverse: cs.flexDirection.endsWith("-reverse"),
     flexWrap: cs.flexWrap.startsWith("wrap") ? "wrap" : "nowrap",
@@ -145,7 +176,7 @@ export function readCellStyle(
     maxWidth: readLimit(cs.maxWidth, rootFontSizePx),
     maxHeight: readLimit(cs.maxHeight, rootFontSizePx),
     padding: readPadding(cs, rootFontSizePx),
-    margin: readMargin(cs, csm, classAttr, rootFontSizePx),
+    margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     position: readPosition(cs.position),
     insets: readInsets(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     gapX: readSpacing(cs.columnGap === "normal" ? "0px" : cs.columnGap, rootFontSizePx),
@@ -187,20 +218,93 @@ export function readCellStyle(
       bottom: cs.borderBottomColor,
       left: cs.borderLeftColor,
     },
-    // Detect authored text-align via class + inline style rather than
-    // getComputedStyle, since our own override would otherwise be echoed
-    // back and cause oscillation. Inheritance is handled by CSS: forcing
-    // `text-align: start` on the element that authors center/justify
-    // cascades to its descendants automatically.
-    textAlignBlocked: authoredTextAlignBlocked(classAttr, inlineStyle),
+    // The forced-start rule is measuring-gated, so the computed value is
+    // the authored one (no echo); the legacy `align` attribute surfaces
+    // as `-webkit-center`/`-moz-center`. Inherited centering blocks each
+    // descendant individually — same net effect as CSS inheritance.
+    textAlignBlocked: authoredTextAlignBlocked(el, cs),
+    latticeBorder: null,
   };
+  applyBorderCollapse(style, cs);
+  return style;
+}
+
+/** Collapsed-table participants surrender their borders to the lattice
+ * (`border-collapse` inherits, so each element knows on its own); the
+ * table also drops its padding, per CSS 2.1 (specs/table.md). */
+function applyBorderCollapse(style: CellStyle, cs: CSSStyleDeclaration): void {
+  if (cs.borderCollapse !== "collapse") return;
+  const participates =
+    style.display === "table" ||
+    style.tableRole === "cell" ||
+    style.tableRole === "row" ||
+    style.tableRole === "row-group" ||
+    style.tableRole === "header-group" ||
+    style.tableRole === "footer-group";
+  if (!participates) return;
+  style.latticeBorder = {
+    width: style.border,
+    style: style.borderStyle,
+    color: style.borderColor,
+    hidden: {
+      top: cs.borderTopStyle === "hidden",
+      right: cs.borderRightStyle === "hidden",
+      bottom: cs.borderBottomStyle === "hidden",
+      left: cs.borderLeftStyle === "hidden",
+    },
+  };
+  style.border = zeroInsets();
+  if (style.display === "table") style.padding = zeroInsets();
 }
 
 function isClipping(value: string): boolean {
   return value === "hidden" || value === "clip";
 }
 
-const warnedFontSize = new WeakSet<Element>();
+/** Tag → display fallback for environments whose getComputedStyle
+ * returns "" for UA-styled table elements (happy-dom); real browsers
+ * always resolve a computed display. */
+const TABLE_DISPLAY_FALLBACK: Record<string, string> = {
+  TABLE: "table",
+  THEAD: "table-header-group",
+  TBODY: "table-row-group",
+  TFOOT: "table-footer-group",
+  TR: "table-row",
+  TD: "table-cell",
+  TH: "table-cell",
+  CAPTION: "table-caption",
+  COL: "table-column",
+  COLGROUP: "table-column-group",
+};
+
+const TABLE_ROLES: Record<string, TableRole> = {
+  "table-header-group": "header-group",
+  "table-row-group": "row-group",
+  "table-footer-group": "footer-group",
+  "table-row": "row",
+  "table-cell": "cell",
+  "table-caption": "caption",
+  "table-column": "column",
+  "table-column-group": "column-group",
+};
+
+/** Cell block-axis alignment, from the COMPUTED `vertical-align` — the
+ * companion's baseline lock is measuring-gated, so the read sees the
+ * authored/UA value from any authoring (classes, plain CSS, hints).
+ * Only top/middle/bottom apply to cells (CSS 2.1); everything else
+ * behaves as baseline, which behaves as `start`. Fallbacks are for
+ * environments without presentational hints or UA table styles
+ * (happy-dom): the `valign` attribute, then the tag's UA `middle`. */
+function readVerticalAlign(el: Element, cs: CSSStyleDeclaration): "start" | "center" | "end" {
+  const value =
+    cs.verticalAlign ||
+    el.getAttribute("valign")?.toLowerCase() ||
+    (el.tagName === "TD" || el.tagName === "TH" ? "middle" : "baseline");
+  if (value === "top") return "start";
+  if (value === "middle") return "center";
+  if (value === "bottom") return "end";
+  return "start";
+}
 
 /** Font sizes are locked to the root (cell-model deviation 3); the lock is
  * silent, so surface it once. Detected via class + inline style — the
@@ -210,24 +314,23 @@ function warnAuthoredFontSize(
   classAttr: string,
   inlineStyle: CSSStyleDeclaration,
 ): void {
-  if (warnedFontSize.has(el)) return;
   const authored =
     /(?:^|[\s:.[!])text-(?:xs|sm|base|lg|[2-9]?xl)(?![\w-])/.test(classAttr) ||
     /(?:^|[\s:.[!])text-\[(?:(?:length|size):|[\d.])/.test(classAttr) ||
     inlineStyle.fontSize !== "";
   if (!authored) return;
-  warnedFontSize.add(el);
-  console.warn(
-    "[monowind] font-size inside <mono-wind> is ignored — all text shares the host's cell " +
-      "size. Size the <mono-wind> element itself instead.",
+  warnOnce(
     el,
+    "font-size inside <mono-wind> is ignored — all text shares the host's cell " +
+      "size. Size the <mono-wind> element itself instead.",
   );
 }
 
-function authoredTextAlignBlocked(classAttr: string, inlineStyle: CSSStyleDeclaration): boolean {
-  if (/(?:^|[\s:.[!])text-(?:center|justify)/.test(classAttr)) return true;
-  const inline = inlineStyle.textAlign;
-  return inline === "center" || inline === "justify";
+function authoredTextAlignBlocked(el: Element, cs: CSSStyleDeclaration): boolean {
+  if (/center|justify/.test(cs.textAlign)) return true;
+  // Hint fallback for environments that don't map `align` (happy-dom).
+  const attr = el.getAttribute("align")?.toLowerCase();
+  return attr === "center" || attr === "justify";
 }
 
 function supportsTypedOM(
@@ -300,6 +403,7 @@ function readMargin(
   cs: CSSStyleDeclaration,
   csm: StylePropertyMapReadOnly | null,
   classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
   rootFontSizePx: number,
 ): PerSide<CellLength | null> {
   const readSide = (
@@ -318,7 +422,10 @@ function readMargin(
         const percent = parseFloat(physicalValue);
         if (Number.isFinite(percent) && percent !== 0) return { percent };
       }
-    } else if (autoClassPattern.test(classAttr)) {
+    } else if (
+      autoClassPattern.test(classAttr) ||
+      inlineStyle.getPropertyValue(physical) === "auto"
+    ) {
       return null;
     }
     const physicalValue = cs.getPropertyValue(physical);
@@ -500,6 +607,17 @@ function readSize(
   if (new RegExp(`(?:^|[\\s:.[!])${axis}-min\\b`).test(classAttr)) return { kind: "min-content" };
   if (new RegExp(`(?:^|[\\s:.[!])${axis}-max\\b`).test(classAttr)) return { kind: "max-content" };
   if (new RegExp(`(?:^|[\\s:.[!])${axis}-fit\\b`).test(classAttr)) return { kind: "fit-content" };
+  // Percent utilities must be caught here too: their used px depends on
+  // the (pre-neutralization) native layout — badly wrong inside tables.
+  const fraction = new RegExp(`(?:^|[\\s:.[!])${axis}-(\\d+)/(\\d+)(?![\\w./])`).exec(classAttr);
+  if (fraction)
+    return { kind: "percent", value: (100 * Number(fraction[1])) / Number(fraction[2]) };
+  if (new RegExp(`(?:^|[\\s:.[!])${axis}-full(?![\\w-])`).test(classAttr))
+    return { kind: "percent", value: 100 };
+  const arbitraryPercent = new RegExp(`(?:^|[\\s:.[!])${axis}-\\[(\\d+(?:\\.\\d+)?)%\\]`).exec(
+    classAttr,
+  );
+  if (arbitraryPercent) return { kind: "percent", value: Number(arbitraryPercent[1]) };
   if (!hasSizingUtility(classAttr, axis)) return { kind: "auto" };
   if (fallback === "auto") return { kind: "auto" };
   if (fallback.endsWith("%")) return { kind: "percent", value: parseFloat(fallback) };

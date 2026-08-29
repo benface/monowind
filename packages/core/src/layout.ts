@@ -17,7 +17,10 @@ import {
   mainAxisOffsets,
 } from "./flex.ts";
 import { gridIntrinsicInnerWidths, layoutGrid } from "./grid.ts";
+import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
+import type { TableData } from "./table.ts";
 import { walkPositioned } from "./positioning.ts";
+import { warnOnce } from "./warn.ts";
 import type {
   CellLength,
   CellStyle,
@@ -70,10 +73,18 @@ export interface IntrinsicCache {
   /** Grid containers compute both intrinsic widths in one placement +
    * sizing pass — cached here so the min and max lookups share it. */
   gridIntrinsic: WeakMap<LayoutNode, { min: number; max: number }>;
+  /** Table structure + chrome + column bounds, shared by the intrinsic,
+   * width-resolution, and layout passes. */
+  tableData: WeakMap<LayoutNode, TableData>;
 }
 
 export function makeIntrinsicCache(): IntrinsicCache {
-  return { maxContent: new WeakMap(), minContent: new WeakMap(), gridIntrinsic: new WeakMap() };
+  return {
+    maxContent: new WeakMap(),
+    minContent: new WeakMap(),
+    gridIntrinsic: new WeakMap(),
+    tableData: new WeakMap(),
+  };
 }
 
 /**
@@ -228,6 +239,15 @@ export function layoutNode(
     );
   } else if (style.display === "grid") {
     contentHeight = layoutGrid(node, inner.width, inner.height, style.border, padding, cache);
+  } else if (style.display === "table") {
+    contentHeight = layoutTable(
+      node,
+      inner.width,
+      definiteInnerHeight,
+      style.border,
+      padding,
+      cache,
+    );
   } else {
     contentHeight = layoutBlock(
       node,
@@ -248,6 +268,7 @@ export function layoutNode(
   // distributes from UNclamped bases; min/max apply via its freeze loop).
   const unclampedHeight = forcedHeight ?? outerHeightExplicit ?? naturalHeight;
   node.unclampedHeight = unclampedHeight;
+  node.naturalContentHeight = naturalHeight;
   const finalHeight = clampSize(unclampedHeight, minHeight, maxHeight);
 
   node.localRect = { x: parentX, y: parentY, width: outerWidth, height: finalHeight };
@@ -347,7 +368,7 @@ function alignLeafText(
 export function leafLineGeometry(
   node: LayoutNode,
   contentWidth: number,
-): { spans: LineSpan[]; lineY: number[]; totalRows: number } {
+): { spans: LineSpan[]; lineY: number[]; textY: number[]; totalRows: number } {
   const spans =
     node.style.whiteSpace !== "normal"
       ? hardLineSpans(node.text)
@@ -357,20 +378,36 @@ export function leafLineGeometry(
         });
   const boxes = node.children.filter((child) => child.inlineBox);
   const lineY: number[] = [];
+  const textY: number[] = [];
   let y = 0;
   let boxIndex = 0;
   for (let s = 0; s < spans.length; s++) {
     lineY.push(y);
     const span = spans[s]!;
     let height = 1;
+    // `vertical-align: bottom` on an atomic box drops the line's TEXT to
+    // the box's last row (grid-exact in every engine, probed); the
+    // largest such box wins. top/middle/baseline behave as top
+    // (cell-model deviation — middle and baseline are off-grid).
+    let textOffset = 0;
     for (let i = span.start; i < span.end; i++) {
       if (node.text[i] !== OBJECT_REPLACEMENT) continue;
-      height = Math.max(height, boxes[boxIndex]!.localRect.height);
+      const box = boxes[boxIndex]!;
+      height = Math.max(height, box.localRect.height);
+      if (box.style.verticalAlign === "end")
+        textOffset = Math.max(textOffset, box.localRect.height - 1);
+      else if (box.style.verticalAlign === "center")
+        warnOnce(
+          box.source,
+          "vertical-align: middle on an inline box can't land on whole rows and " +
+            "behaves as top. Use align-top or align-bottom.",
+        );
       boxIndex++;
     }
+    textY.push(y + Math.min(textOffset, height - 1));
     y += height + (s < spans.length - 1 ? node.style.lineGap : 0);
   }
-  return { spans, lineY, totalRows: y };
+  return { spans, lineY, textY, totalRows: y };
 }
 
 /** Resolve a spacing length to cells against its containing-block basis.
@@ -522,9 +559,39 @@ function resolveWidth(
   cache: IntrinsicCache,
 ): number {
   const width = style.width;
+  if (style.display === "table") {
+    // Tables shrink-to-fit even in block flow, floored at their min sum
+    // (specs/table.md step 3); fixed layout fills, percents inflate. A
+    // table degraded to a text leaf (no rows) shrink-to-fits on its
+    // plain intrinsics.
+    const hasStructure = node.children.some(
+      (child) => !isOutOfFlow(child.style) && !child.inlineBox,
+    );
+    if (!hasStructure) {
+      if (width !== undefined && width.kind !== "auto")
+        return resolveSizeAgainst(width, available, node, cache);
+      return Math.min(available, intrinsicOuterWidth(node, cache));
+    }
+    if (width !== undefined && width.kind !== "auto") {
+      const resolved = resolveSizeAgainst(width, available, node, cache);
+      return Math.max(resolved, tableMinOuterWidth(node, available, cache));
+    }
+    return tableUsedOuterWidth(node, available, cache);
+  }
   if (width !== undefined && width.kind !== "auto")
     return resolveSizeAgainst(width, available, node, cache);
   return mode === "shrink" ? Math.min(available, intrinsicOuterWidth(node, cache)) : available;
+}
+
+function tableMinOuterWidth(node: LayoutNode, available: number, cache: IntrinsicCache): number {
+  const style = node.style;
+  return (
+    tableIntrinsicInnerWidths(node, cache).min +
+    style.border.left +
+    style.border.right +
+    resolveLength(style.padding.left, available) +
+    resolveLength(style.padding.right, available)
+  );
 }
 
 function resolveHeight(style: CellStyle, available: number | undefined): number | undefined {
@@ -581,6 +648,7 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
   if (inFlow.length === 0) return node.intrinsicWidth;
   if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).max;
+  if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "flex" && node.style.flexDirection === "row") {
     const gap = intrinsicCells(node.style.gapX) * Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + intrinsicOuterWidth(c, cache), 0) + gap;
@@ -620,6 +688,7 @@ function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
     });
   }
   if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).min;
+  if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).min;
   if (
     node.style.display === "flex" &&
     node.style.flexDirection === "row" &&

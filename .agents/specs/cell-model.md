@@ -133,6 +133,14 @@ the scrolling milestone.
   font risks, mitigated by font recommendations.
 - Inline content must not disturb row height: `vertical-align` and any other
   baseline-shifting properties are neutralized on inline descendants.
+  On ATOMIC inline boxes, authored `vertical-align: bottom` is honored —
+  the box passes it through to the browser (grid-exact in every engine,
+  probed) and the engine drops the line's text to the box's last row
+  (the largest bottom-aligned box on the line wins; mixing top- and
+  bottom-aligned boxes on one line follows the engine's single text row);
+  `top` is the default pin, and `middle`/`baseline` behave as `top`
+  (both off-grid: fractional centering, descender-grown line boxes);
+  an authored `middle` warns once, like other silent deviations.
 
 ### Tracking: trailing gaps
 

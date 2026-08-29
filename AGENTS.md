@@ -1,6 +1,6 @@
 # Agent guidelines
 
-This is `monowind`, a pnpm workspaces monorepo for a library that renders
+This is a pnpm workspaces monorepo for `monowind`, a library that renders
 ordinary HTML styled with Tailwind utility classes as text-based user
 interfaces (TUIs) on the web. Start with
 `.agents/architecture/core-architecture.md` for the design decisions.

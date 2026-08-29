@@ -26,9 +26,10 @@ forms, and accessibility semantics stay fully intact.
 └──────────────────────────────────────────────────────┘
 ```
 
-> **Status: early development.** Block, flex, and grid layout (subgrid and
-> named areas included), borders, text wrap, and margins work; tables,
-> native-interaction polish, and the visual system are next. Design docs live in
+> **Status: early development.** Block, flex, grid (subgrid and named
+> areas included), and table layout (collapsed borders as shared
+> box-drawing lattices), text wrap, and margins work; native-interaction
+> polish and the visual system are next. Design docs live in
 > [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { renderAscii } from "../src/ascii.ts";
+import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD } from "../src/wrap.ts";
 import type { PerSide } from "../src/types.ts";
@@ -230,5 +232,30 @@ describe("white-space: pre", () => {
     const node = buildTree(el('<div style="white-space: pre-line">a\n b</div>'), 16)!;
     expect(node.style.whiteSpace).toBe("normal");
     expect(node.text).toBe("a b");
+  });
+});
+
+describe("atomic inline box vertical-align", () => {
+  const box = (align: string) =>
+    `<span style="display: inline-block; width: 4px; height: 12px; vertical-align: ${align}"></span>`;
+
+  it("drops the line's text to a bottom-aligned box's last row", () => {
+    const node = buildTree(el(`<div>lo ${box("bottom")} fi</div>`), 16)!;
+    layoutRoot(node, 20);
+    expect(renderAscii(node)).toBe(["", "", "lo   fi"].join("\n"));
+  });
+
+  it("keeps text on the first row for top (and off-grid values); middle warns once", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const align of ["top", "middle", "baseline"]) {
+        const node = buildTree(el(`<div>lo ${box(align)} fi</div>`), 16)!;
+        layoutRoot(node, 20);
+        expect(renderAscii(node), align).toBe(["lo   fi", "", ""].join("\n"));
+      }
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

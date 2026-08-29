@@ -33,7 +33,21 @@ export type Size =
   | { kind: "max-content" }
   | { kind: "fit-content" };
 
-export type Display = "block" | "flex" | "grid" | "none";
+export type Display = "block" | "flex" | "grid" | "table" | "none";
+/** Table-internal role from the computed display (specs/table.md).
+ * `"none"` on everything that isn't table-internal. Cells and captions
+ * keep `display: "block"` — they ARE block containers; the table
+ * container finds them by role. */
+export type TableRole =
+  | "none"
+  | "header-group"
+  | "row-group"
+  | "footer-group"
+  | "row"
+  | "cell"
+  | "caption"
+  | "column"
+  | "column-group";
 export type FlexDirection = "row" | "column";
 export type FlexWrap = "nowrap" | "wrap";
 export type JustifyContent =
@@ -171,6 +185,30 @@ export interface InheritedTracks {
   gap: number;
 }
 
+/** One run of identical border glyphs, in absolute cell coordinates. */
+export interface BorderRun {
+  glyph: string;
+  x: number;
+  y: number;
+  length: number;
+  color: string | undefined;
+}
+
+/** A collapsed table participant's authored border, moved out of
+ * `CellStyle.border` at read time (`border-collapse` inherits, so every
+ * internal element knows): geometry and painting then treat the element
+ * as borderless, and the table's lattice consumes this instead
+ * (specs/table.md). */
+export interface LatticeBorder {
+  width: Insets;
+  style: PerSide<BorderStyle>;
+  color: PerSide<string | undefined>;
+  /** `border-style: hidden` (`border-hidden`): suppresses the shared
+   * segment outright, beating any neighbor — its computed width is 0, so
+   * the flag must ride separately (CSS 2.1 §17.6.2.1). */
+  hidden: PerSide<boolean>;
+}
+
 /** One value per box edge (border style, border color, …). */
 export interface PerSide<T> {
   top: T;
@@ -276,6 +314,24 @@ export interface CellStyle {
   /** True when text-align is center/justify — forced back to `start` since
    * per-line centering can't be snapped to whole cells. See cell-model spec. */
   textAlignBlocked: boolean;
+  tableRole: TableRole;
+  tableLayout: "auto" | "fixed";
+  /** True for `border-collapse: collapse` (Tailwind preflight's default
+   * on `<table>`): cell borders merge into the shared lattice. */
+  borderCollapse: boolean;
+  /** `border-spacing`, quantized per axis; separate borders only. */
+  borderSpacingX: number;
+  borderSpacingY: number;
+  captionSide: "top" | "bottom";
+  /** Computed `vertical-align` normalized (the companion's baseline
+   * lock is measuring-gated, so the read sees the authored/UA value).
+   * Consumed by table cells (`td`/`th` default to the UA's `middle`;
+   * `baseline` behaves as `start`) and by atomic inline boxes, where
+   * only `end` (bottom) acts — it drops the line's text to the box's
+   * last row (specs/cell-model.md). */
+  verticalAlign: "start" | "center" | "end";
+  /** Set on collapsed-table participants; null everywhere else. */
+  latticeBorder: LatticeBorder | null;
 }
 
 export interface LayoutNode {
@@ -354,10 +410,24 @@ export interface LayoutNode {
    * hides that text and warns instead of letting the browser paint it
    * unpositioned. */
   droppedText?: boolean;
+  /** Engine-generated glyph runs in this node's local coordinates
+   * (offset by its absolute position at paint time). Today: a collapsed
+   * table's border lattice; future producers (css-gaps rules,
+   * specs/gap-decorations.md) plug in here with no renderer changes. */
+  decorationRuns?: BorderRun[];
+  /** True on a node the table pass removed from rendering: misparented
+   * table content (no anonymous boxes — specs/table.md) and `<col>`/
+   * `<colgroup>` boxes (width carriers, never rendered). */
+  tableHidden?: boolean;
   /** Outer height before min/max clamping — written by layoutNode; the
    * column flex algorithm's base main size (CSS distributes from unclamped
    * bases; limits apply via its freeze loop). */
   unclampedHeight: number;
+  /** Content-derived outer height, before explicit-height/min-height
+   * flooring — written by layoutNode. Table cells align their content
+   * against this: an explicit cell height tallens the box (and floors
+   * the row), but `vertical-align` centers the CONTENT, per CSS. */
+  naturalContentHeight?: number;
   /** Padding with percentages resolved to cells — written by layoutNode
    * (percent resolves against the containing block width, which only
    * layout knows); the renderers read this, never `style.padding`. */
@@ -427,6 +497,14 @@ export function defaultCellStyle(): CellStyle {
     backgroundColor: undefined,
     borderColor: { top: undefined, right: undefined, bottom: undefined, left: undefined },
     textAlignBlocked: false,
+    tableRole: "none",
+    tableLayout: "auto",
+    borderCollapse: false,
+    borderSpacingX: 0,
+    borderSpacingY: 0,
+    captionSide: "top",
+    verticalAlign: "start",
+    latticeBorder: null,
   };
 }
 

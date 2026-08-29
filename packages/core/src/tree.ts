@@ -2,6 +2,7 @@ import { intrinsicOuterWidth, makeIntrinsicCache } from "./layout.ts";
 import { pxToCells } from "./metrics.ts";
 import { readCellStyle, trackingCells } from "./style.ts";
 import { zeroInsets } from "./types.ts";
+import { warnOnce } from "./warn.ts";
 import { eachObjectMarker, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { CellMetrics, LayoutNode, PerSide } from "./types.ts";
 
@@ -411,17 +412,11 @@ function countHardLines(text: string): number {
   return text.split("\n").length;
 }
 
-const warnedDroppedText = new WeakSet<Element>();
-
-const warnedSkippedRunContent = new WeakSet<Element>();
-
 function warnSkippedRunContent(el: Element): void {
-  if (warnedSkippedRunContent.has(el)) return;
-  warnedSkippedRunContent.add(el);
-  console.warn(
-    "[monowind] A block-level element nested inside a text run can't be laid out and was " +
-      "skipped. Give it its own place in the layout instead.",
+  warnOnce(
     el,
+    "A block-level element nested inside a text run can't be laid out and was " +
+      "skipped. Give it its own place in the layout instead.",
   );
 }
 
@@ -434,11 +429,9 @@ function flagDroppedText(el: Element, node: LayoutNode): void {
   );
   if (!hasText) return;
   node.droppedText = true;
-  if (warnedDroppedText.has(el)) return;
-  warnedDroppedText.add(el);
-  console.warn(
-    "[monowind] Direct text next to block-level children can't be laid out and was hidden. " +
-      "Wrap each text segment in its own element (e.g. a <div>).",
+  warnOnce(
     el,
+    "Direct text next to block-level children can't be laid out and was hidden. " +
+      "Wrap each text segment in its own element (e.g. a <div>).",
   );
 }

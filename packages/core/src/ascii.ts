@@ -38,6 +38,7 @@ export function renderAscii(root: LayoutNode): string {
 type PutGlyph = (x: number, y: number, glyph: string) => void;
 
 function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: PutGlyph): void {
+  if (node.tableHidden) return;
   const absX = parentAbsX + node.localRect.x;
   const absY = parentAbsY + node.localRect.y;
   const style = node.style;
@@ -51,6 +52,10 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
   for (const run of borderRuns) {
     for (let i = 0; i < run.length; i++) put(run.x + i, run.y, run.glyph);
   }
+  if (node.decorationRuns) {
+    for (const run of node.decorationRuns)
+      for (let i = 0; i < run.length; i++) put(absX + run.x + i, absY + run.y, run.glyph);
+  }
 
   const hasInFlowChildren = node.children.some(
     (child) =>
@@ -62,10 +67,10 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     const contentY = absY + style.border.top + padding.top;
     const contentWidth =
       node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
-    const { spans, lineY } = leafLineGeometry(node, contentWidth);
+    const { spans, textY } = leafLineGeometry(node, contentWidth);
     for (let i = 0; i < spans.length; i++) {
       const span = spans[i]!;
-      const row = contentY + lineY[i]!;
+      const row = contentY + textY[i]!;
       const truncated =
         style.whiteSpace !== "normal" && style.overflow === "clip"
           ? truncateSpan(node.text, span, contentWidth, node.advances, style)

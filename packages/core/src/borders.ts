@@ -1,13 +1,6 @@
-import type { BorderStyle, CellStyle, PerSide, Rect } from "./types.ts";
+import type { BorderRun, BorderStyle, CellStyle, PerSide, Rect } from "./types.ts";
 
-/** One run of identical border glyphs, in absolute cell coordinates. */
-export interface BorderRun {
-  glyph: string;
-  x: number;
-  y: number;
-  length: number;
-  color: string | undefined;
-}
+export type { BorderRun } from "./types.ts";
 
 interface Glyphs {
   h: string;
@@ -150,17 +143,83 @@ function paintRing(
   }
 }
 
+/** A style's straight line glyph, for lattice segments. */
+export function lineGlyph(style: BorderStyle, axis: "h" | "v"): string {
+  const glyphs = borderGlyphs(style);
+  return axis === "h" ? glyphs.h : glyphs.v;
+}
+
+/** Junction glyph for a lattice intersection, from which of the four
+ * arms exist. `double` has a full junction set; dashed/dotted (and mixed
+ * styles, decided by the caller) use the light set — the corner
+ * convention (specs/cell-model.md). Stubs (≤1 arm) fall back to plain
+ * line glyphs. */
+export function junctionGlyph(
+  style: BorderStyle,
+  up: boolean,
+  down: boolean,
+  left: boolean,
+  right: boolean,
+): string {
+  const set = style === "double" ? DOUBLE_JUNCTIONS : LIGHT_JUNCTIONS;
+  return set[(up ? 8 : 0) | (down ? 4 : 0) | (left ? 2 : 0) | (right ? 1 : 0)]!;
+}
+
+// Indexed by the up/down/left/right bitmask (8/4/2/1).
+const LIGHT_JUNCTIONS = [
+  " ",
+  "─",
+  "─",
+  "─", // no vertical arm
+  "│",
+  "┌",
+  "┐",
+  "┬",
+  "│",
+  "└",
+  "┘",
+  "┴",
+  "│",
+  "├",
+  "┤",
+  "┼",
+];
+const DOUBLE_JUNCTIONS = [
+  " ",
+  "═",
+  "═",
+  "═",
+  "║",
+  "╔",
+  "╗",
+  "╦",
+  "║",
+  "╚",
+  "╝",
+  "╩",
+  "║",
+  "╠",
+  "╣",
+  "╬",
+];
+
+/** Rings are junction special cases: lines are two collinear arms,
+ * corners two perpendicular ones. Only dashed/dotted lines need their own
+ * glyphs (`╌`/`╎` — the double dash pair reads cleaner than the triple
+ * dash, which looks like dots in many fonts; `┄`/`┊` for dotted). Their
+ * corners fall back to light via the junction set, as before. */
 function borderGlyphs(style: BorderStyle): Glyphs {
-  switch (style) {
-    case "double":
-      return { h: "═", v: "║", tl: "╔", tr: "╗", bl: "╚", br: "╝" };
-    // Light double dash pair: two dashes per cell, cleaner than the triple
-    // dash `┄`/`┆` which reads as dots in many fonts.
-    case "dashed":
-      return { h: "╌", v: "╎", tl: "┌", tr: "┐", bl: "└", br: "┘" };
-    case "dotted":
-      return { h: "┄", v: "┊", tl: "┌", tr: "┐", bl: "└", br: "┘" };
-    default:
-      return { h: "─", v: "│", tl: "┌", tr: "┐", bl: "└", br: "┘" };
-  }
+  const j = (up: boolean, down: boolean, left: boolean, right: boolean) =>
+    junctionGlyph(style, up, down, left, right);
+  const base: Glyphs = {
+    h: j(false, false, true, true),
+    v: j(true, true, false, false),
+    tl: j(false, true, false, true),
+    tr: j(false, true, true, false),
+    bl: j(true, false, false, true),
+    br: j(true, false, true, false),
+  };
+  if (style === "dashed") return { ...base, h: "╌", v: "╎" };
+  if (style === "dotted") return { ...base, h: "┄", v: "┊" };
+  return base;
 }

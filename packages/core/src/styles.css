@@ -23,6 +23,14 @@
     --mw-focus-color: currentColor;
   }
 
+  /* UA `th`/`caption { text-align: center }` (preflight leaves them):
+   * center can't land on whole cells, and the engine renders start
+   * (specs/table.md). Base layer, so alignment utilities still override
+   * (into the blocked path for center/justify, as anywhere else). */
+  mono-wind :is(th, caption) {
+    text-align: start;
+  }
+
   /* Normalize native form controls so they don't borrow browser chrome that
    * would break the grid. Padding, margin, border-width, and box-sizing are
    * handled by the engine-owned rules below. In `base` so utilities
@@ -61,7 +69,6 @@ mono-wind:not([data-mw-ready]) {
 mono-wind * {
   font-family: inherit !important;
   font-size: inherit !important;
-  vertical-align: baseline !important;
 }
 
 /* Grid-template read assist (specs/grid.md), no-Typed-OM engines only
@@ -88,6 +95,9 @@ mono-wind[measuring] [data-mw-degrid] {
  * laid-out ancestor (which sets the row multiple below) — `leading-*` on
  * inline elements is ignored by design. */
 mono-wind:not([measuring]) * {
+  /* Baseline-shift lock (cell-model): gated like the rest, so the style
+   * reader sees the authored/UA vertical-align (table cells read it). */
+  vertical-align: baseline !important;
   white-space: normal !important;
   overflow-wrap: anywhere !important;
   letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-ls) * var(--mw-cw, 1px)) !important;
@@ -226,6 +236,14 @@ mono-wind:not([measuring]) [data-mw-inline-box] {
   vertical-align: top !important;
 }
 
+/* Authored `vertical-align: bottom` on an atomic inline box: grid-exact
+ * in every engine (probed), so it passes through; the engine drops the
+ * line's text to the box's last row to match. middle/baseline are
+ * off-grid and behave as top (cell-model deviation). */
+mono-wind:not([measuring]) [data-mw-inline-box][data-mw-vbottom] {
+  vertical-align: bottom !important;
+}
+
 /* Author-requested `overflow: hidden` or `overflow: clip` — both keep
  * content inside the engine-allocated box. Uses `clip` (no scroll
  * container, cheaper, more precise semantic for what we're doing). */
@@ -264,9 +282,15 @@ mono-wind:not([measuring]) [data-mw-dropped-text] > [data-mw-laid-out] {
   visibility: visible !important;
 }
 
+/* Misparented table content (no anonymous boxes, specs/table.md) and
+ * <col>/<colgroup> boxes: fully hidden, subtree included. */
+mono-wind:not([measuring]) [data-mw-table-hidden] {
+  display: none !important;
+}
+
 /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/
  * `end` all land on whole cells (offset = (W - N) × cell width); `center` and
  * `justify` produce fractional per-line offsets we can't snap to the grid. */
-mono-wind [data-mw-text-align-blocked] {
+mono-wind:not([measuring]) [data-mw-text-align-blocked] {
   text-align: start !important;
 }

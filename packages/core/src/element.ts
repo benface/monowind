@@ -78,7 +78,8 @@ export class MonoWindElement extends HTMLElementBase {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["class", "style"],
+      // colspan/rowspan/span are layout inputs too (specs/table.md).
+      attributeFilter: ["class", "style", "colspan", "rowspan", "span"],
     });
 
     // Fonts can finish loading after our first layout (the first layout then
