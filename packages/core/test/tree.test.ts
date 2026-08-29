@@ -101,6 +101,81 @@ describe("buildTree", () => {
     expect(node.inlineElements?.[0]?.tracking).toBe(1);
   });
 
+  it("gives a computed-block span its own layout node (blockification honored)", () => {
+    const node = buildTree(
+      el('<div>before <span style="display: block">own line</span> after</div>'),
+      16,
+    )!;
+    // An in-flow block child forces container mode (the direct text is
+    // dropped — the documented mixed-content deviation).
+    expect(node.children.length).toBe(1);
+    expect(node.children[0]!.text).toBe("own line");
+  });
+
+  it("excludes display: none inline content from the text run", () => {
+    const node = buildTree(el('<div>a <span style="display: none">hidden</span> b</div>'), 16)!;
+    expect(node.children).toEqual([]);
+    expect(node.text).toBe("a b");
+  });
+
+  it("pulls an absolute span out of the run as an out-of-flow child", () => {
+    const node = buildTree(
+      el('<div>a <span style="position: absolute; top: 0px; left: 0px">badge</span> b</div>'),
+      16,
+    )!;
+    // The leaf keeps its (reflowed) text AND carries the positioned box.
+    expect(node.text).toBe("a b");
+    expect(node.children.length).toBe(1);
+    expect(node.children[0]!.text).toBe("badge");
+    expect(node.children[0]!.style.position).toBe("absolute");
+  });
+
+  it("keeps a plain inline div in the run; an atomic box becomes a U+FFFC marker", () => {
+    const inline = buildTree(el('<div>a <div style="display: inline">b</div> c</div>'), 16)!;
+    expect(inline.children).toEqual([]);
+    expect(inline.text).toBe("a b c");
+    const atomic = buildTree(el('<div>a <div style="display: inline-flex">xy</div> b</div>'), 16)!;
+    expect(atomic.text).toBe("a \uFFFC b");
+    expect(atomic.children.length).toBe(1);
+    expect(atomic.children[0]!.inlineBox).toBe(true);
+    expect(atomic.children[0]!.text).toBe("xy");
+    // The marker's intrinsic advance is the box's max-content width.
+    expect(atomic.advances![2]).toBe(2);
+  });
+
+  it("maps an inline-flex box's inner layout to flex", () => {
+    const node = buildTree(
+      el('<div><div style="display: inline-flex"><i>a</i></i></div></div>'),
+      16,
+    )!;
+    expect(node.children[0]!.style.display).toBe("flex");
+  });
+
+  it("skips block-level elements nested inside a run", () => {
+    const node = buildTree(
+      el('<div>a <span>b <span style="display: block">skipped</span></span> c</div>'),
+      16,
+    )!;
+    expect(node.text).toBe("a b c");
+  });
+
+  it("collects a NESTED atomic inline box as a marker too", () => {
+    const node = buildTree(
+      el('<div>a <span>b <span style="display: inline-block">chip</span></span> c</div>'),
+      16,
+    )!;
+    expect(node.text).toBe("a b \uFFFC c");
+    expect(node.children[0]!.inlineBox).toBe(true);
+  });
+
+  it("flags dropped direct text on mixed containers (hidden + warned)", () => {
+    const mixed = buildTree(el("<div>orphan <div>child</div></div>"), 16)!;
+    expect(mixed.droppedText).toBe(true);
+    // Whitespace-only text between block children is not "dropped text".
+    const clean = buildTree(el("<div>\n  <div>a</div>\n  <div>b</div>\n</div>"), 16)!;
+    expect(clean.droppedText).toBeUndefined();
+  });
+
   it("collapses whitespace across inline-element boundaries", () => {
     const node = buildTree(el("<div>a <span> b </span> c</div>"), 16)!;
     expect(node.text).toBe("a b c");

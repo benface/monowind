@@ -73,11 +73,10 @@ export function layoutFlexRow(
 
   const originX = border.left + padding.left;
   const originY = border.top + padding.top;
-  let y = 0;
-  let totalRowHeight = 0;
 
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-    const row = rows[rowIndex]!;
+  // Phase A: resolve each line's item widths, lay the items out, and take
+  // the line's natural height (tallest item).
+  const lines = rows.map((row) => {
     const totalGap = gapX * Math.max(0, row.length - 1);
     const fixedMarginTotal = row.reduce(
       (sum, item) => sum + (item.margin.left ?? 0) + (item.margin.right ?? 0),
@@ -104,15 +103,50 @@ export function layoutFlexRow(
         width: widths[i]!,
       });
     }
-    const maxChildHeight = row.reduce((h, item) => Math.max(h, item.node.localRect.height), 0);
-    // For a nowrap single row, the row can stretch to the container's inner
-    // height (from min-h or explicit height) so items-center / items-end
-    // have the enforced size to align against. With wrap, each row's height
-    // is just its tallest child.
-    const rowHeight =
-      rows.length === 1 && Number.isFinite(innerHeight)
-        ? Math.max(innerHeight, maxChildHeight)
-        : maxChildHeight;
+    const height = row.reduce((h, item) => Math.max(h, item.node.localRect.height), 0);
+    return { row, widths, availableForItems, height };
+  });
+
+  // Line heights and cross offsets (specs/flex.md step 9). A single nowrap
+  // line stretches to a bounded inner height so items-center / items-end
+  // have the enforced size to align against. A wrap-enabled ("multi-line",
+  // per CSS — even with one line) container distributes bounded leftover
+  // cross space per `align-content`: `stretch` grows the lines; the other
+  // keywords offset them with the shared justify math.
+  const rowHeights = lines.map((line) => line.height);
+  const totalGapY = gapY * Math.max(0, lines.length - 1);
+  let lineOffsets: number[];
+  if (node.style.flexWrap === "nowrap") {
+    if (Number.isFinite(innerHeight)) rowHeights[0] = Math.max(innerHeight, rowHeights[0] ?? 0);
+    lineOffsets = [0];
+  } else {
+    const naturalTotal = rowHeights.reduce((s, h) => s + h, 0);
+    const leftover = Number.isFinite(innerHeight)
+      ? Math.max(0, innerHeight - naturalTotal - totalGapY)
+      : 0;
+    const alignContent = effectiveAlignContent(node.style);
+    if (alignContent === "stretch" && leftover > 0) {
+      const shares = distributeInteger(
+        Array.from({ length: lines.length }, () => 1),
+        leftover,
+      );
+      for (let i = 0; i < rowHeights.length; i++) rowHeights[i]! += shares[i]!;
+      lineOffsets = mainAxisOffsets("start", rowHeights, 0);
+    } else {
+      lineOffsets = mainAxisOffsets(
+        alignContent === "stretch" ? "start" : alignContent,
+        rowHeights,
+        leftover,
+      );
+    }
+  }
+
+  // Phase B: per line, stretch items to the (possibly grown) line height
+  // and place them.
+  for (let rowIndex = 0; rowIndex < lines.length; rowIndex++) {
+    const { row, widths, availableForItems } = lines[rowIndex]!;
+    const rowHeight = rowHeights[rowIndex]!;
+    const y = lineOffsets[rowIndex]! + rowIndex * gapY;
 
     // Stretch phase: any item whose effective cross alignment is `stretch`
     // (no explicit height, no auto cross-axis margins) grows to fill the
@@ -193,14 +227,12 @@ export function layoutFlexRow(
       };
       cumulativeExtraOffset += autoMarginAfter[i]! + fixedRight;
     }
-    const rowSpacing = rowIndex < rows.length - 1 ? gapY : 0;
-    y += rowHeight + rowSpacing;
-    totalRowHeight += rowHeight + rowSpacing;
   }
 
+  const totalOccupied = rowHeights.reduce((s, h) => s + h, 0) + totalGapY;
   const contentHeight = Number.isFinite(innerHeight)
-    ? Math.max(innerHeight, totalRowHeight)
-    : totalRowHeight;
+    ? Math.max(innerHeight, totalOccupied)
+    : totalOccupied;
   recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
   return contentHeight;
 }
@@ -655,6 +687,16 @@ function flexOrderedChildren(node: LayoutNode): LayoutNode[] {
     .sort((a, b) => a.style.order - b.style.order);
   if (node.style.flexReverse) children.reverse();
   return children;
+}
+
+/** wrap-reverse runs the cross axis backwards: start/end swap, the
+ * symmetric values are unaffected (the line order is already reversed at
+ * collection time). */
+function effectiveAlignContent(style: CellStyle): CellStyle["alignContent"] {
+  if (!style.wrapReverse) return style.alignContent;
+  if (style.alignContent === "start") return "end";
+  if (style.alignContent === "end") return "start";
+  return style.alignContent;
 }
 
 export function effectiveJustify(style: CellStyle): CellStyle["justifyContent"] {

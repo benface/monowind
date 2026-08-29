@@ -12,7 +12,9 @@ async function expectBrowserRowsToMatchEngine(canvasElement: HTMLElement): Promi
   // waitFor's default 1s under load.
   await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
   const leaves = Array.from(host.querySelectorAll<HTMLElement>("[data-mw-laid-out]")).filter(
-    (el) => el.textContent!.trim() !== "" && !el.querySelector("[data-mw-laid-out]"),
+    (el) =>
+      el.textContent!.trim() !== "" &&
+      !el.querySelector("[data-mw-laid-out], [data-mw-inline-box]"),
   );
   expect(leaves.length).toBeGreaterThan(0);
   const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
@@ -86,6 +88,56 @@ export const InlineElements: StoryObj = {
     </mono-wind>
   `,
   play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
+};
+
+export const InlineDisplay: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="relative max-w-54 border border-neutral-500 px-2 py-1">
+        <!-- A block child turns its parent into a container, and containers
+             don't lay out direct text (cell-model deviation 7) — so the
+             running text lives in its own div beside the block span. -->
+        <div>
+          Inline-ness follows computed display: this text run contains
+          <div class="inline">an inline div,</div>
+          <div class="inline-flex flex-wrap">
+            <div>an&nbsp;</div>
+            <div>inline-flex&nbsp;</div>
+            <div>div,</div>
+          </div>
+          a <span class="hidden">completely invisible</span> hidden span whose text never joins the
+          flow, and an absolute span that leaves the flow to become the corner badge
+          <span class="absolute -top-1 right-2 bg-bg-light px-1 text-yellow-500 dark:bg-bg-dark">
+            * badge
+          </span>
+          instead of rendering here.
+        </div>
+        <span class="block text-cyan-400">Finally, this is a block span on its own line.</span>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await expectBrowserRowsToMatchEngine(canvasElement);
+    // The load-bearing agreement of atomic inline boxes: the BROWSER's own
+    // line layout must place the in-flow box exactly where the ENGINE's
+    // wrap model computed it (the engine writes its cells to --mw-x/y but
+    // no CSS consumes them for inline boxes — the browser flows it).
+    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const box = host.querySelector<HTMLElement>("[data-mw-inline-box]")!;
+    const leaf = box.parentElement!;
+    const engineX = Number(box.style.getPropertyValue("--mw-x")) * cellWidth;
+    const engineY = Number(box.style.getPropertyValue("--mw-y")) * cellHeight;
+    const boxRect = box.getBoundingClientRect();
+    const leafRect = leaf.getBoundingClientRect();
+    expect(boxRect.left - leafRect.left).toBeCloseTo(engineX, 0);
+    expect(boxRect.top - leafRect.top).toBeCloseTo(engineY, 0);
+    expect(boxRect.height).toBeCloseTo(
+      Number(box.style.getPropertyValue("--mw-h")) * cellHeight,
+      0,
+    );
+  },
 };
 
 export const TextAlign: StoryObj = {

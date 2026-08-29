@@ -9,6 +9,10 @@ const SHADOW_TEMPLATE = `
 <style>
   :host { display: block; position: relative; contain: layout style; }
   #viewport { position: relative; width: 100%; height: 100%; }
+  /* When the host hides its own dropped direct text (visibility, see
+   * styles.css), the decoration layer must not sink with it. Scoped to
+   * that state so an authored 'invisible' on the host stays intact. */
+  :host([data-mw-dropped-text]) #viewport { visibility: visible; }
   #decorations { position: absolute; inset: 0; pointer-events: none; user-select: none; white-space: pre; }
 </style>
 <div id="viewport">
@@ -170,6 +174,25 @@ export class MonoWindElement extends HTMLElementBase {
         if (child === this.#probe) continue;
         const node = buildTree(child, rootFontSizePx, metrics);
         if (node) childNodes.push(node);
+      }
+      // The host is a container like any other: direct text on it can't
+      // be laid out — hide it and warn (cell-model deviation), same as
+      // tree.ts does for nested containers.
+      const hostText = Array.from(this.childNodes).some(
+        (child) =>
+          child.nodeType === Node.TEXT_NODE && /[^ \t\r\n\f]/.test(child.textContent ?? ""),
+      );
+      if (hostText) {
+        if (!this.hasAttribute("data-mw-dropped-text")) {
+          console.warn(
+            "[monowind] Direct text inside <mono-wind> can't be laid out and was hidden. " +
+              "Wrap each text segment in its own element (e.g. a <div>).",
+            this,
+          );
+        }
+        this.setAttribute("data-mw-dropped-text", "");
+      } else {
+        this.removeAttribute("data-mw-dropped-text");
       }
       if (childNodes.length === 0) {
         this.#decorations.replaceChildren();

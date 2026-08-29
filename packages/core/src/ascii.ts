@@ -1,6 +1,7 @@
 import { collectBorderRuns } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
-import { advanceOf, lineAdvance, wrapLineSpans } from "./wrap.ts";
+import { leafLineGeometry } from "./layout.ts";
+import { advanceOf, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
 import type { LayoutNode } from "./types.ts";
 
@@ -51,22 +52,20 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     for (let i = 0; i < run.length; i++) put(run.x + i, run.y, run.glyph);
   }
 
-  if (node.children.length === 0 && node.text) {
+  const hasInFlowChildren = node.children.some(
+    (child) =>
+      !child.inlineBox && child.style.position !== "absolute" && child.style.position !== "fixed",
+  );
+  if (!hasInFlowChildren && node.text) {
     const padding = node.resolvedPadding;
     const contentX = absX + style.border.left + padding.left;
     const contentY = absY + style.border.top + padding.top;
     const contentWidth =
       node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
-    const spans =
-      style.whiteSpace === "nowrap"
-        ? hardLineSpans(node.text)
-        : wrapLineSpans(node.text, contentWidth, {
-            advances: node.advances,
-            tracking: style.tracking,
-          });
+    const { spans, lineY } = leafLineGeometry(node, contentWidth);
     for (let i = 0; i < spans.length; i++) {
       const span = spans[i]!;
-      const row = contentY + i * (style.lineGap + 1);
+      const row = contentY + lineY[i]!;
       const truncated =
         style.whiteSpace === "nowrap" && style.overflow === "clip"
           ? truncateSpan(node.text, span, contentWidth, node.advances, style)
@@ -74,7 +73,9 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
       // Each character advances by its own cell count (tracking gaps).
       let x = contentX;
       for (let k = span.start; k < truncated.end; k++) {
-        put(x, row, node.text[k]!);
+        // U+FFFC marks an embedded inline box — its cells are drawn by
+        // the box's own walk, not as a glyph.
+        if (node.text[k] !== OBJECT_REPLACEMENT) put(x, row, node.text[k]!);
         x += advanceOf(k, k + 1, node.advances);
       }
       if (truncated.ellipsis) put(x, row, "…");
@@ -84,18 +85,6 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
   for (const child of node.children) {
     walk(child, absX, absY, put);
   }
-}
-
-function hardLineSpans(text: string): LineSpan[] {
-  const spans: LineSpan[] = [];
-  let start = 0;
-  for (let i = 0; i <= text.length; i++) {
-    if (i === text.length || text[i] === "\n") {
-      spans.push({ start, end: i });
-      start = i + 1;
-    }
-  }
-  return spans;
 }
 
 /**

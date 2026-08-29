@@ -121,9 +121,19 @@ mono-wind:not([measuring]) [data-mw-nowrap][data-mw-clip] {
  * position:absolute (out of flow), so nothing consumes them anyway. */
 mono-wind:not([measuring]) [data-mw-laid-out] {
   position: absolute !important;
-  box-sizing: border-box !important;
   left: calc(var(--mw-x, 0) * var(--mw-cw, 1px)) !important;
   top: calc(var(--mw-y, 0) * var(--mw-ch, 1px)) !important;
+  /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
+   * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
+   * shifts the box back so every line starts on its own row. */
+  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
+}
+
+/* Shared cell geometry for engine-sized boxes — both engine-POSITIONED
+ * elements and in-flow atomic inline boxes (below). */
+mono-wind:not([measuring]) [data-mw-laid-out],
+mono-wind:not([measuring]) [data-mw-inline-box] {
+  box-sizing: border-box !important;
   /* Trailing-gap allowance: a tracked box's lines end with a phantom
    * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
    * room by carving it out of the engine-owned right padding/border cells;
@@ -154,11 +164,20 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   padding-bottom: calc((var(--mw-pb, 0) + var(--mw-bb, 0)) * var(--mw-ch, 1px)) !important;
   padding-left: calc((var(--mw-pl, 0) + var(--mw-bl, 0)) * var(--mw-cw, 1px)) !important;
   margin: 0 !important;
-  /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
-   * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
-   * shifts the box back so every line starts on its own row. */
   line-height: calc(var(--mw-lh, 1) * var(--mw-ch, 1px)) !important;
-  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
+}
+
+/* Atomic inline boxes (`inline-flex`/`inline-block`/`inline-grid` riding a
+ * text run, specs/cell-model.md): the box stays IN FLOW — the browser's
+ * own line layout places it, and both models agree because the engine
+ * sizes it to exactly the cells its U+FFFC marker occupies in the wrap.
+ * `position: relative` makes it the containing block for its laid-out
+ * children; `vertical-align: top` pins the box's top to its line's first
+ * row (the global baseline lock would hang an abspos-only box below the
+ * line) — a box taller than one row grows its line, per CSS. */
+mono-wind:not([measuring]) [data-mw-inline-box] {
+  position: relative !important;
+  vertical-align: top !important;
 }
 
 /* Author-requested `overflow: hidden` or `overflow: clip` — both keep
@@ -168,20 +187,35 @@ mono-wind [data-mw-clip] {
   overflow: clip !important;
 }
 
-/* Inline elements with authored relative insets (specs/positioning.md):
- * the engine writes the cell-rounded offsets into `--mw-it/ir/ib/il` and
- * this rule applies them on the grid. A side without its var is invalid at
- * computed-value time and falls back to `auto` — so authored subsets work
- * and the author's raw off-grid values never apply. Gated on `measuring`
- * so the style reader sees the authored values (no echo loop). Also pins
- * `position: relative` — absolute/fixed on inline elements behave as
- * relative (documented deviation). */
+/* Inline (relative/sticky) elements with authored relative insets
+ * (specs/positioning.md): the engine writes the cell-rounded offsets into
+ * `--mw-it/ir/ib/il` and this rule applies them on the grid. A side
+ * without its var is invalid at computed-value time and falls back to
+ * `auto` — so authored subsets work and the author's raw off-grid values
+ * never apply. Gated on `measuring` so the style reader sees the authored
+ * values (no echo loop). Also pins `position: relative` — sticky behaves
+ * as relative until the scrolling milestone. */
 mono-wind:not([measuring]) [data-mw-inline-inset] {
   position: relative !important;
   top: calc(var(--mw-it) * var(--mw-ch, 1px)) !important;
   right: calc(var(--mw-ir) * var(--mw-cw, 1px)) !important;
   bottom: calc(var(--mw-ib) * var(--mw-ch, 1px)) !important;
   left: calc(var(--mw-il) * var(--mw-cw, 1px)) !important;
+}
+
+/* A container whose direct text was dropped (mixed text + block children,
+ * cell-model deviation): the browser would paint that text unpositioned
+ * over the laid-out children, so hide it. `visibility` is inherited AND
+ * resettable, so the container's laid-out children come back — only in
+ * this warned state, which is why the reset may also override an authored
+ * `invisible` utility there. */
+mono-wind:not([measuring])[data-mw-dropped-text],
+mono-wind:not([measuring]) [data-mw-dropped-text] {
+  visibility: hidden !important;
+}
+mono-wind:not([measuring])[data-mw-dropped-text] > [data-mw-laid-out],
+mono-wind:not([measuring]) [data-mw-dropped-text] > [data-mw-laid-out] {
+  visibility: visible !important;
 }
 
 /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/

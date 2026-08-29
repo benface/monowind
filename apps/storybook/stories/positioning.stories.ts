@@ -31,13 +31,17 @@ export const Absolute: StoryObj = {
           <div class="absolute bottom-0 left-0 border border-yellow-400 px-1">bottom-0 left-0</div>
         </div>
         <div class="relative min-h-9 max-w-40 border border-neutral-500 px-1">
-          <div class="z-10 w-max bg-bg-light dark:bg-bg-dark">filled</div>
-          <div class="absolute inset-0 border border-fuchsia-400 px-1">inset-0</div>
+          <div class="z-10 -mt-1 w-max bg-bg-light px-1 dark:bg-bg-dark">filled</div>
+          <div
+            class="absolute inset-0 flex items-center justify-center border border-fuchsia-400 px-1"
+          >
+            inset-0
+          </div>
         </div>
         <div class="relative min-h-9 max-w-40 border border-neutral-500 px-1">
-          <div>centered</div>
+          <div class="z-10 -mt-1 w-max bg-bg-light px-1 dark:bg-bg-dark">centered</div>
           <div class="absolute inset-0 m-auto size-max max-w-full border border-fuchsia-400 px-1">
-            inset-0 m-auto
+            inset-0 m-auto size-max
           </div>
         </div>
       </div>

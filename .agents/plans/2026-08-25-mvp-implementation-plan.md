@@ -130,6 +130,7 @@ top/right/bottom/left, inset-*                 (per specs/positioning.md,
 
 # Specified but NOT implemented yet (their milestones):
 grid-template-columns/rows, placement          (subset TBD by specs/grid.md)
+display: table + table-layout                  (spec TBD by specs/table.md)
 aspect-ratio                                   (needs cell-metric ratio; spec TBD)
 ```
 
@@ -278,6 +279,7 @@ Still to do (later milestones):
 6. Intrinsic size for native controls (input widths, etc.)
 7. Overflow clipping / scrolling (incl. proper `position: sticky`)
 8. Grid layout (against `specs/grid.md`)
+9. Table layout (against `specs/table.md` — the milestone after grid)
 
 ## Native interactive elements
 
@@ -318,7 +320,7 @@ Current shape (`packages/core/src/render.ts`): `BorderRun { glyph, x, y, length,
 — each edge of each ring is emitted as one run, painted as a `<span>` with
 `text-content = glyph.repeat(length)`. Multi-cell borders paint as concentric
 rings (`border-2`, `border-3`, …), same style per ring. Border intersections
-(`├ ┤ ┬ ┴ ┼`) and merged nested borders are Milestone 5 work.
+(`├ ┤ ┬ ┴ ┼`) and merged nested borders are visual-system milestone work.
 
 ## Observation and scheduling
 
@@ -389,22 +391,34 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    placement subset (write `specs/grid.md` first); plus `position`
    (static/relative/absolute; fixed → host-anchored, sticky → relative for
    now) and inset utilities per `specs/positioning.md`.
-4. **Native interaction** — links, buttons, inputs, focus states,
+4. **Tables** — `<table>` / `display: table` with the CSS automatic table
+   layout (column widths from cell content; `table-fixed` honored),
+   colspan/rowspan, and cell borders through the shared glyph-junction
+   machinery — `border-collapse` maps naturally onto shared box-drawing
+   edges (`├ ┼ ┤`), the classic TUI table. Write `specs/table.md` FIRST;
+   scheduled right after grid because the column-sizing machinery
+   (intrinsic contributions, integer distribution) is shared.
+5. **Native interaction** — links, buttons, inputs, focus states,
    keyboard/pointer, forms; React example + integration tests.
-5. **Visual system** — colors, border styles/widths per the cell-model glyph
+6. **Visual system** — colors, border styles/widths per the cell-model glyph
    mapping, intersections, control framing, theme variables, public parts;
    hover/focus/selected/disabled states (requires settling the
    dynamic-style-detection question).
-6. **Production hardening** — wrapping/clipping, Unicode width, nested border
+7. **Production hardening** — wrapping/clipping, Unicode width (two
+   distinct problems: legitimately wide characters — CJK, emoji — get
+   wcwidth-style 2-cell counting that browsers agree with; glyphs MISSING
+   from the font render with unpredictable fallback advances that no
+   counting rule can model — that lands as font-coverage guidance and
+   possibly a dev-mode width-mismatch warning, not a fix), nested border
    merging, scrolling (including proper `position: sticky`, which behaves
    as `relative` until then), performance, incremental layout where
    justified, a11y audit.
-7. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
+8. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
    (`apps/play` → play.monowind.benface.com): live HTML editing rendered
    through `<mono-wind>`, shareable URLs. The CDN bundle (engine +
    `@tailwindcss/browser`) is already exactly the required runtime, so this
    is mostly editor UI.
-8. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
+9. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
    doesn't need JS. Requires (a) a bundled reference monospace font with
    known metrics so cell width is deterministic on the server, (b) a fixed
    set of breakpoints emitted as `@media` blocks with per-breakpoint

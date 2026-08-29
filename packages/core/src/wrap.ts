@@ -44,6 +44,19 @@ export function wrapLineCount(text: string, width: number, options: WrapOptions 
   return wrapLineSpans(text, width, options).length;
 }
 
+/** Split at hard `\n` breaks only (the `white-space: nowrap` line model). */
+export function hardLineSpans(text: string): LineSpan[] {
+  const spans: LineSpan[] = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i === text.length || text[i] === "\n") {
+      spans.push({ start, end: i });
+      start = i + 1;
+    }
+  }
+  return spans;
+}
+
 export function wrapLineSpans(text: string, width: number, options: WrapOptions = {}): LineSpan[] {
   // Empty = nothing but collapsible white space. NOT `trim()`, which would
   // also eat NBSP — an NBSP-only leaf still renders a line in the browser.
@@ -106,10 +119,36 @@ export function breakableSegments(word: string): string[] {
   return breakableSegmentRanges(word, 0, word.length).map((r) => word.slice(r.start, r.end));
 }
 
+/** U+FFFC marks an embedded atomic inline box (see LayoutNode.inlineBox):
+ * unbreakable itself, but with break opportunities on BOTH sides, like
+ * browsers give replaced elements. */
+export const OBJECT_REPLACEMENT = "\uFFFC";
+
+/** Visit each object-replacement marker in a run, pairing its character
+ * index with its ordinal (= index into the leaf's box list, which is in
+ * run order). */
+export function eachObjectMarker(
+  text: ArrayLike<string>,
+  visit: (charIndex: number, boxIndex: number) => void,
+): void {
+  let boxIndex = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== OBJECT_REPLACEMENT) continue;
+    visit(i, boxIndex);
+    boxIndex++;
+  }
+}
+
 function breakableSegmentRanges(text: string, start: number, end: number): LineSpan[] {
   const segments: LineSpan[] = [];
   let segmentStart = start;
   for (let i = start; i < end; i++) {
+    if (text[i] === OBJECT_REPLACEMENT) {
+      if (i > segmentStart) segments.push({ start: segmentStart, end: i });
+      segments.push({ start: i, end: i + 1 });
+      segmentStart = i + 1;
+      continue;
+    }
     if (text[i] !== "-") continue;
     while (i + 1 < end && text[i + 1] === "-") i++;
     const next = i + 1;

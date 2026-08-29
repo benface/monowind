@@ -632,6 +632,68 @@ describe("flex-column re-layout when grown/shrunk child height changes", () => {
   });
 });
 
+describe("align-content (multi-line cross distribution)", () => {
+  const wrapContainer = (
+    alignContent: "start" | "center" | "end" | "space-between" | "stretch",
+  ) => {
+    const items = ["aaaa", "bbbb", "cccc"].map((text) => makeNode({ text }));
+    const container = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignContent,
+        height: { kind: "cells", value: 8 },
+      },
+      children: items,
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 9);
+    return items;
+  };
+
+  it("content-center offsets the packed lines into the middle", () => {
+    // Two lines (2 + 1 items) of height 1; leftover 6 → centered at 3.
+    const items = wrapContainer("center");
+    expect(items[0]!.localRect.y).toBe(3);
+    expect(items[2]!.localRect.y).toBe(4);
+  });
+
+  it("content-between pushes the lines to the edges", () => {
+    const items = wrapContainer("space-between");
+    expect(items[0]!.localRect.y).toBe(0);
+    expect(items[2]!.localRect.y).toBe(7);
+  });
+
+  it("stretch (the default) grows the lines to fill", () => {
+    // Leftover 6 split equally: lines become 4 tall; second starts at 4.
+    const items = wrapContainer("stretch");
+    expect(items[0]!.localRect.y).toBe(0);
+    expect(items[2]!.localRect.y).toBe(4);
+  });
+
+  it("content-end under wrap-reverse packs to the top (cross-start flip)", () => {
+    const items = ["aaaa", "bbbb", "cccc"].map((text) => makeNode({ text }));
+    const container = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        flexWrap: "wrap",
+        wrapReverse: true,
+        alignContent: "end",
+        height: { kind: "cells", value: 8 },
+      },
+      children: items,
+    });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 9);
+    // wrap-reverse: line order flipped (c's line first) AND end ≡ cross
+    // start → packed at the top.
+    expect(items[2]!.localRect.y).toBe(0);
+    expect(items[0]!.localRect.y).toBe(1);
+  });
+});
+
 describe("flex-wrap", () => {
   it("wraps items to a new row when the next item would overflow", () => {
     const a = makeNode({ text: "aaaaa" }); // width 5

@@ -88,8 +88,17 @@ All sizes and positions are integer cells.
    centered, floor; one auto → that side absorbs the space); otherwise
    fixed margin-top plus the alignment offset (start 0, center floor,
    end flush).
-9. Line heights plus `row-gap` between lines add up to the container's
-   content height.
+9. **`align-content`** (multi-line only, i.e. `flex-wrap: wrap`, per CSS):
+   with a bounded inner height taller than the lines, the leftover cross
+   space is distributed with the shared offset math — start / center /
+   end / space-between / space-around / space-evenly — or, for `stretch`
+   (the CSS default `normal`), split across the LINES' heights with the
+   integer distribution (each line's items then re-align/stretch within
+   the grown line). Under `wrap-reverse` the cross axis runs backwards:
+   the line order is reversed at collection time and `start`/`end` swap
+   meaning (symmetric values are unaffected).
+10. Line heights plus `row-gap` between lines add up to the container's
+    content height.
 
 ## Column algorithm
 
@@ -141,7 +150,5 @@ shrink content.
    never wrap.
 2. No baseline alignment (`items-baseline` behaves as `start` — cells make
    baselines moot anyway; revisit with the forms milestone).
-3. `align-content` (multi-line cross distribution) is not implemented;
-   wrapped lines stack from the top (bottom-up under `wrap-reverse`).
-4. `flex-basis: content` behaves as `auto`.
-5. All the cell-model deviations (integer rounding, etc.) apply.
+3. `flex-basis: content` behaves as `auto`.
+4. All the cell-model deviations (integer rounding, etc.) apply.

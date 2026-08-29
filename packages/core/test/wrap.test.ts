@@ -81,6 +81,17 @@ describe("wrapLineCount / wrapLines", () => {
     expect(wrapLines("ab cd", 5, { advances })).toEqual(["a", "b", "cd"]);
   });
 
+  it("treats U+FFFC (atomic inline box) as unbreakable with breaks on both sides", () => {
+    // 4-cell box glued to text with NO spaces: breaks are still allowed
+    // around it, like browsers give replaced elements.
+    const advances = [1, 1, 4, 1, 1];
+    expect(wrapLines("ab\uFFFCcd", 10, { advances })).toEqual(["ab\uFFFCcd"]);
+    expect(wrapLines("ab\uFFFCcd", 6, { advances })).toEqual(["ab\uFFFC", "cd"]);
+    expect(wrapLines("ab\uFFFCcd", 5, { advances })).toEqual(["ab", "\uFFFC", "cd"]);
+    // Narrower than the box: it overflows alone, never splits.
+    expect(wrapLines("ab\uFFFCcd", 3, { advances })).toEqual(["ab", "\uFFFC", "cd"]);
+  });
+
   it("measures min-content by advances", () => {
     expect(longestSegmentAdvance("aa bbb")).toBe(3);
     // Tracked ×2 inline element in an untracked leaf: its gap is kept → 6.

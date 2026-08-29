@@ -44,6 +44,9 @@ export type JustifyContent =
   | "space-around"
   | "space-evenly";
 export type AlignItems = "start" | "center" | "end" | "stretch";
+/** Multi-line cross distribution (`content-*`); `stretch` (the CSS
+ * default `normal`) grows the lines instead of offsetting them. */
+export type AlignContent = JustifyContent | "stretch";
 export type AlignSelf = "auto" | "start" | "center" | "end" | "stretch";
 export type BorderStyle = "solid" | "double" | "dashed" | "dotted";
 export type Overflow = "visible" | "clip";
@@ -91,6 +94,8 @@ export interface CellStyle {
   /** CSS `order` — flex items sort by it (stable, document order ties). */
   order: number;
   justifyContent: JustifyContent;
+  /** Applies to multi-line (wrap-enabled) flex containers only, per CSS. */
+  alignContent: AlignContent;
   alignItems: AlignItems;
   alignSelf: AlignSelf;
   width: Size | undefined;
@@ -181,6 +186,20 @@ export interface LayoutNode {
     tracking: number;
     insets: PerSide<number | null> | null;
   }[];
+  /** True on an atomic inline-level box (`inline-flex`/`inline-block`/
+   * `inline-grid`) riding its parent leaf's text run as a single
+   * unbreakable unit: the leaf's run holds an OBJECT REPLACEMENT
+   * CHARACTER (U+FFFC) for it whose advance is the box's laid-out width.
+   * The box stays IN FLOW in the browser (sized to whole cells by the
+   * companion stylesheet) so the browser's own line layout places it —
+   * engine and browser agree because both treat it as an atomic unit of
+   * the same width (specs/cell-model.md). */
+  inlineBox?: boolean;
+  /** True on a container whose direct text nodes were dropped (mixed
+   * text + in-flow block children — cell-model deviation). The renderer
+   * hides that text and warns instead of letting the browser paint it
+   * unpositioned. */
+  droppedText?: boolean;
   /** Outer height before min/max clamping — written by layoutNode; the
    * column flex algorithm's base main size (CSS distributes from unclamped
    * bases; limits apply via its freeze loop). */
@@ -213,6 +232,7 @@ export function defaultCellStyle(): CellStyle {
     flexBasis: undefined,
     order: 0,
     justifyContent: "start",
+    alignContent: "stretch",
     alignItems: "start",
     alignSelf: "auto",
     width: undefined,

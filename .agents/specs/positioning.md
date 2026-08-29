@@ -64,8 +64,9 @@ content box (its containing block in flow).
     origin + margin; y: where the next in-flow sibling starts).
   - Flex parent: as if it were the **sole flex item** of the container —
     `justify-content` (reverse-aware) / `align-items` (with its own
-    `align-self`) applied to its hypothetical box (css-flexbox §4.1).
-    **Deviation:** the hypothetical box's own margins are ignored here.
+    `align-self`) applied to its hypothetical box (css-flexbox §4.1),
+    whose outer size includes the box's fixed margins (`auto` margins
+    count as 0 in the static position).
 - Margins apply between the inset edges and the box, per CSS. `auto`
   margins center within the inset-defined space when the size is definite
   (the `inset-0 m-auto` centering idiom).
@@ -84,10 +85,12 @@ author's `position: relative` itself intact.
   insets on inline elements are treated as 0** (deviation — their CSS
   basis is the containing block of the text run, which the engine doesn't
   model per-line).
-- `absolute` on an inline element makes it a layout concern, not a text
-  run concern; it is out of scope here (**deviation**: treated as
-  relative) — pull the element out of the text run into its own box if
-  absolute positioning is needed.
+- `absolute`/`fixed` on an inline element blockifies it, per CSS: it
+  leaves the text run entirely (the text reflows without it) and becomes
+  an out-of-flow box positioned like any other. **Deviation:** its static
+  position approximates to its leaf's content-box origin rather than
+  CSS's hypothetical inline position (the spot mid-text where it would
+  have sat).
 
 ## Paint order
 
@@ -108,7 +111,8 @@ which inline element); visual tests cover them.
 1. `fixed` anchors to the `<mono-wind>` host, not the viewport.
 2. `sticky` behaves as `relative` until the scrolling milestone.
 3. Percent insets on inline elements are treated as 0.
-4. `absolute` on inline elements behaves as `relative`.
+4. An out-of-flow element extracted from a text run takes its leaf's
+   content-box origin as its static position, not CSS's hypothetical
+   inline position.
 5. Inline relative shifts don't appear in `renderAscii` output.
-6. The flex sole-item static position ignores the box's own margins.
-7. All cell-model deviations (integer rounding, etc.) apply.
+6. All cell-model deviations (integer rounding, etc.) apply.

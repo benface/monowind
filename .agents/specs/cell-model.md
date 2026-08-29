@@ -174,13 +174,34 @@ text to wrap. So `<div>hello <span class="text-red-500">world</span></div>`
 lays out as a single "hello world" text run — the inline `<span>` still
 renders red (browser inheritance), but doesn't get its own layout box.
 
-**Inline detection**: because CSS "blockifies" every direct child of a
-`display: flex`/`grid` container (so a `<br>` inside a flex parent computes
-to `display: block`), the engine can't rely on `getComputedStyle` alone to
-decide inline-ness. It uses a hardcoded list of HTML tags whose default
-display is inline (`a`, `br`, `span`, `b`, `i`, `em`, `strong`, `code`, …),
-falling back to computed style for anything else. That list is small and
-the HTML spec rarely adds new inline elements.
+**Inline detection** goes by COMPUTED display: a child belongs to the
+text run iff its computed display is exactly `inline` (or `contents`).
+
+**Atomic inline boxes** (`inline-block`, `inline-flex`, `inline-grid`)
+ride the run as SINGLE UNBREAKABLE UNITS, per CSS: the run holds an
+object-replacement marker (U+FFFC) whose advance is the box's laid-out
+width (shrink-to-fit against the leaf's content box), with break
+opportunities on both sides like browsers give replaced elements. The
+box stays IN FLOW — the engine sizes it to exactly those cells and the
+browser's own line layout places it, so the two agree by construction;
+its interior is a normal layout subtree on the grid (`inline-flex`
+really is a flex container inside). A box taller than one row GROWS its
+line, per CSS line-box growth: the box is `vertical-align: top`, the
+line's text stays on the line's first row, and later lines shift down.
+**Deviation:** the box's margins are ignored. A BLOCK-level element
+nested inside a run is skipped with a warning.
+CSS blockification then falls out for free: an authored `block`/`flex` on
+a `<span>` makes it a layout node; `position: absolute`/`fixed` blockifies
+at computed-value time, so a positioned span leaves the run and becomes an
+out-of-flow box (see `positioning.md`); and every element child of a
+flex/grid container is an item, exactly as CSS makes it. `display: none`
+children are ignored entirely (their text never joins the run).
+
+**Leaves with out-of-flow children**: out-of-flow (absolute/fixed)
+children don't force container mode — the element stays a text leaf, its
+in-flow inline content forms the run, and the out-of-flow children hang
+off it as layout nodes placed by the positioning pass (the
+`relative`-parent badge idiom inside a text block).
 
 **`<br>` support**: a `<br>` inside a leaf becomes a hard line break in the
 wrap calculation. The leaf's intrinsic width is the longest hard-broken
@@ -305,18 +326,22 @@ visible cell when `text-overflow: ellipsis` is set.
    re-quantized to whole rows/cells rather than applied as authored, and
    `leading-*` on inline elements is ignored.
 4. Border-width uses the 1px = 1 cell scale, not the spacing scale.
-5. Inline elements ignore layout-affecting properties (borders, sizing).
+5. Inline elements ignore layout-affecting properties (borders, sizing);
+   atomic inline boxes ride the line per CSS (growing their line when
+   taller) but their margins are ignored, and BLOCK-level elements nested
+   inside a run are skipped with a warning.
 6. `text-align: center | justify` on descendants is forced to `start`.
-7. Mixed direct text nodes + block-level element children in one container
-   don't get their text laid out (an all-inline mix does — see Inline content).
-8. Inline-ness of an element is determined by its HTML tag (`br`, `span`,
-   `a`, `b`, `i`, `em`, `strong`, `code`, …), not by its computed display —
-   flex/grid "blockification" of direct children is ignored on purpose.
-9. `white-space: pre | pre-wrap | pre-line | break-spaces` don't preserve
+7. Mixed direct text nodes + in-flow block-level element children in one
+   container don't get their text laid out (an all-inline mix does, and
+   out-of-flow children don't count — see Inline content). The dropped
+   text is HIDDEN (it would otherwise paint unpositioned over the laid-out
+   children) and the engine warns once with the fix: wrap each text
+   segment in its own element.
+8. `white-space: pre | pre-wrap | pre-line | break-spaces` don't preserve
    whitespace — only the wrap/no-wrap half of their behavior is honored.
-10. `aspect-ratio` is ignored (deferred: cells aren't square, so it needs
-    the cell-metric ratio plumbed into layout plus a spec decision on
-    px-square vs cell-square semantics).
-11. CSS `order` applies to flex items only (as in CSS); double-width glyphs
+9. `aspect-ratio` is ignored (deferred: cells aren't square, so it needs
+   the cell-metric ratio plumbed into layout plus a spec decision on
+   px-square vs cell-square semantics).
+10. CSS `order` applies to flex items only (as in CSS); double-width glyphs
     (CJK, emoji) are counted as their UTF-16 length, not their rendered
     width — wcwidth-style counting is future work.

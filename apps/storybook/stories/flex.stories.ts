@@ -6,7 +6,7 @@ const meta: Meta = {
 };
 export default meta;
 
-export const Justify: StoryObj = {
+export const JustifyContent: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-col gap-1">
@@ -39,7 +39,7 @@ export const Justify: StoryObj = {
   `,
 };
 
-export const Align: StoryObj = {
+export const AlignItems: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex min-h-7 items-center gap-1 border border-neutral-500 px-1">
@@ -47,6 +47,36 @@ export const Align: StoryObj = {
         <div class="self-start border border-yellow-400 px-1">self-start</div>
         <div class="self-end border border-fuchsia-400 px-1">self-end</div>
         <div class="self-stretch border border-emerald-400 px-1">self-stretch</div>
+      </div>
+    </mono-wind>
+  `,
+};
+
+export const AlignContent: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <div
+          class="flex min-h-10 max-w-32 flex-wrap content-start gap-x-1 border border-neutral-500 px-1"
+        >
+          <div class="border border-cyan-400 px-1">content</div>
+          <div class="border border-cyan-400 px-1">start</div>
+          <div class="border border-cyan-400 px-1">packs lines up</div>
+        </div>
+        <div
+          class="flex min-h-10 max-w-32 flex-wrap content-center gap-x-1 border border-neutral-500 px-1"
+        >
+          <div class="border border-yellow-400 px-1">content</div>
+          <div class="border border-yellow-400 px-1">center</div>
+          <div class="border border-yellow-400 px-1">centers lines</div>
+        </div>
+        <div
+          class="flex min-h-10 max-w-32 flex-wrap content-between gap-x-1 border border-neutral-500 px-1"
+        >
+          <div class="border border-fuchsia-400 px-1">content</div>
+          <div class="border border-fuchsia-400 px-1">between</div>
+          <div class="border border-fuchsia-400 px-1">spreads lines</div>
+        </div>
       </div>
     </mono-wind>
   `,

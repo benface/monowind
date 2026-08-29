@@ -1,25 +1,28 @@
+import { intrinsicOuterWidth } from "./layout.ts";
+import type { IntrinsicCache } from "./layout.ts";
 import { pxToCells } from "./metrics.ts";
 import { readCellStyle, trackingCells } from "./style.ts";
 import { zeroInsets } from "./types.ts";
-import { lineAdvance } from "./wrap.ts";
+import { eachObjectMarker, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { CellMetrics, LayoutNode, PerSide } from "./types.ts";
 
 /**
  * Build a LayoutNode tree from an element subtree.
  *
- * Rules:
- * - Elements with computed `display: none` are skipped entirely.
- * - An element becomes a **leaf** if it has no element children, or if all
- *   its element children have computed `display: inline`/`inline-*`/`contents`
- *   (they're part of the inline text flow, not laid out separately). The
- *   leaf's `text` is the element's combined `textContent`, so text nodes
- *   interleaved with inline elements (`<div>hello <span>world</span></div>`)
- *   participate in the wrap calculation and render correctly.
- * - Elements with at least one block-level element child become **containers**
- *   and recurse. Direct text nodes on containers (uncommon in utility-first
- *   markup) are not laid out — CSS creates anonymous inline boxes for them,
- *   but our absolutely-positioned children escape that flow. This is
- *   documented as a deviation in specs/cell-model.md.
+ * Rules (specs/cell-model.md "Inline detection"):
+ * - Elements with computed `display: none` are skipped entirely (their
+ *   text never joins a run).
+ * - An element is a **leaf** when it has no IN-FLOW block-level element
+ *   children: in-flow inline children (computed `inline`/`inline-*`/
+ *   `contents`) are part of the text run, and out-of-flow children
+ *   (absolute/fixed — blockified per CSS) hang off the leaf as layout
+ *   nodes for the positioning pass. The leaf's `text` is its combined
+ *   in-flow text, so text nodes interleaved with inline elements
+ *   (`<div>hello <span>world</span></div>`) participate in the wrap
+ *   calculation and render correctly.
+ * - Elements with at least one in-flow block-level element child become
+ *   **containers** and recurse. Direct text nodes on containers (uncommon
+ *   in utility-first markup) are not laid out — a documented deviation.
  *
  * `cellMetrics` (measured by the host) is the basis for leading and
  * tracking; absent in headless tests (see readCellStyle).
@@ -33,22 +36,38 @@ export function buildTree(
   if (style.display === "none") return null;
 
   const elementChildren = Array.from(root.children);
-  const isInlineOnly = elementChildren.every(hasInlineDisplay);
+  const roles = elementChildren.map(childRole);
 
-  if (isInlineOnly) {
-    const run = extractLeafRun(
-      root,
-      style.tracking,
+  if (!roles.includes("block")) {
+    // Leaf: in-flow inline content forms the text run (atomic inline
+    // boxes ride it as U+FFFC markers); out-of-flow children become
+    // layout nodes for the positioning pass.
+    const run = extractLeafRun(root, style.tracking, {
       rootFontSizePx,
-      cellMetrics?.letterSpacing ?? 0,
-    );
+      rootLetterSpacingPx: cellMetrics?.letterSpacing ?? 0,
+      cellMetrics,
+    });
     const text = run.chars.join("");
+    // Intrinsic advances for the box markers use the boxes' max-content
+    // widths; layout overwrites them with the laid-out widths per pass.
+    if (run.boxes.length > 0) {
+      const cache: IntrinsicCache = { maxContent: new WeakMap(), minContent: new WeakMap() };
+      eachObjectMarker(run.chars, (charIndex, boxIndex) => {
+        run.advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
+      });
+    }
     const intrinsicWidth = longestLineAdvance(text, run.advances, style.tracking);
     const intrinsicHeight = text.length > 0 ? countHardLines(text) : 0;
+    const children: LayoutNode[] = [...run.boxes];
+    for (let i = 0; i < elementChildren.length; i++) {
+      if (roles[i] !== "out-of-flow") continue;
+      const child = buildTree(elementChildren[i]!, rootFontSizePx, cellMetrics);
+      if (child) children.push(child);
+    }
     const node: LayoutNode = {
       source: root,
       style,
-      children: [],
+      children,
       text,
       intrinsicWidth,
       intrinsicHeight,
@@ -56,17 +75,18 @@ export function buildTree(
       unclampedHeight: 0,
       resolvedPadding: zeroInsets(),
     };
-    if (run.advances.some((a) => a !== 1)) node.advances = run.advances;
+    if (run.advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = run.advances;
     if (run.inlineElements.length > 0) node.inlineElements = run.inlineElements;
     return node;
   }
 
   const children: LayoutNode[] = [];
-  for (const child of elementChildren) {
-    const node = buildTree(child, rootFontSizePx, cellMetrics);
+  for (let i = 0; i < elementChildren.length; i++) {
+    if (roles[i] === "none") continue;
+    const node = buildTree(elementChildren[i]!, rootFontSizePx, cellMetrics);
     if (node) children.push(node);
   }
-  return {
+  const container: LayoutNode = {
     source: root,
     style,
     children,
@@ -77,16 +97,19 @@ export function buildTree(
     unclampedHeight: 0,
     resolvedPadding: zeroInsets(),
   };
+  flagDroppedText(root, container);
+  return container;
 }
 
 /**
- * HTML tags whose default display is inline. Checked BEFORE computed display
- * because a flex/grid parent "blockifies" its direct children (per CSS), so
- * `<br>`/`<span>`/etc. inside a `display: flex` element compute to "block".
- * For our purposes those are still semantically inline text-flow markers
- * and shouldn't force their parent into container mode.
+ * HTML tags whose default display is inline — a FALLBACK for environments
+ * whose getComputedStyle returns "" for un-styled elements (happy-dom in
+ * the headless tests). Real browsers always resolve a computed display,
+ * so there this list is never consulted: computed display decides, and
+ * CSS blockification (flex/grid children, absolute positioning) is
+ * honored (specs/cell-model.md "Inline detection").
  */
-const INLINE_BY_DEFAULT_TAGS = new Set([
+const FALLBACK_INLINE_TAGS = new Set([
   "A",
   "ABBR",
   "B",
@@ -115,10 +138,36 @@ const INLINE_BY_DEFAULT_TAGS = new Set([
   "WBR",
 ]);
 
-function hasInlineDisplay(el: Element): boolean {
-  if (INLINE_BY_DEFAULT_TAGS.has(el.tagName)) return true;
-  const display = getComputedStyle(el).display;
-  return display.startsWith("inline") || display === "contents";
+/** Resolve a computed display, falling back per tag for environments
+ * that return "" (happy-dom). */
+function resolvedDisplay(el: Element, display: string): string {
+  return display || (FALLBACK_INLINE_TAGS.has(el.tagName) ? "inline" : "block");
+}
+
+/** True for content that flows WITH the surrounding text (computed
+ * `inline` or `contents`). */
+function isRunInline(el: Element, display: string): boolean {
+  const resolved = resolvedDisplay(el, display);
+  return resolved === "inline" || resolved === "contents";
+}
+
+/** Atomic inline-level boxes (`inline-flex`/`inline-block`/`inline-grid`)
+ * ride the line as single unbreakable units with their own internal
+ * layout (specs/cell-model.md). */
+function isAtomicInline(el: Element, display: string): boolean {
+  const resolved = resolvedDisplay(el, display);
+  return resolved.startsWith("inline") && resolved !== "inline";
+}
+
+/** Classify a direct child: skipped, out-of-flow box, text-run content
+ * (plain inline AND atomic inline boxes), or in-flow block (which forces
+ * container mode). */
+function childRole(el: Element): "none" | "out-of-flow" | "inline" | "block" {
+  const cs = getComputedStyle(el);
+  if (cs.display === "none") return "none";
+  if (cs.position === "absolute" || cs.position === "fixed") return "out-of-flow";
+  if (isRunInline(el, cs.display) || isAtomicInline(el, cs.display)) return "inline";
+  return "block";
 }
 
 interface LeafRun {
@@ -126,6 +175,16 @@ interface LeafRun {
   /** Cells each character occupies: `1 + tracking` of its innermost element. */
   advances: number[];
   inlineElements: NonNullable<LayoutNode["inlineElements"]>;
+  /** Atomic inline boxes, in run order — each corresponds to one U+FFFC
+   * marker in `chars` (layout resolves the marker's advance to the box's
+   * laid-out width). */
+  boxes: LayoutNode[];
+}
+
+interface RunContext {
+  rootFontSizePx: number;
+  rootLetterSpacingPx: number;
+  cellMetrics: CellMetrics | undefined;
 }
 
 /**
@@ -142,24 +201,13 @@ interface LeafRun {
  * would also eat NBSP (U+00A0); the browser preserves NBSP and never breaks
  * at it.
  */
-function extractLeafRun(
-  el: Element,
-  tracking: number,
-  rootFontSizePx: number,
-  rootLetterSpacingPx: number,
-): LeafRun {
-  const run: LeafRun = { chars: [], advances: [], inlineElements: [] };
-  collectRun(el, tracking, rootFontSizePx, rootLetterSpacingPx, run);
+function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun {
+  const run: LeafRun = { chars: [], advances: [], inlineElements: [], boxes: [] };
+  collectRun(el, tracking, ctx, run);
   return normalizeRun(run);
 }
 
-function collectRun(
-  el: Element,
-  tracking: number,
-  rootFontSizePx: number,
-  rootLetterSpacingPx: number,
-  run: LeafRun,
-): void {
+function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun): void {
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
       for (const ch of (node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " ")) {
@@ -175,25 +223,47 @@ function collectRun(
       }
       // Reads happen during the measure pass, so authored values are visible.
       const cs = getComputedStyle(child);
+      // Skipped or out-of-flow content never joins the run (a hidden
+      // span's text must not render; an absolute span leaves the flow).
+      if (cs.display === "none" || cs.position === "absolute" || cs.position === "fixed") continue;
+      // An atomic inline box rides the run as ONE unbreakable unit: a
+      // U+FFFC marker whose advance layout resolves to the box's width.
+      if (isAtomicInline(child, cs.display)) {
+        const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics);
+        if (box) {
+          box.inlineBox = true;
+          run.chars.push(OBJECT_REPLACEMENT);
+          run.advances.push(1);
+          run.boxes.push(box);
+        }
+        continue;
+      }
+      // A BLOCK-level element nested inside the run can't be laid out
+      // from here — skip its subtree and warn, mirroring dropped text.
+      if (!isRunInline(child, cs.display)) {
+        warnSkippedRunContent(child);
+        continue;
+      }
       const childTracking = trackingCells(
         cs.letterSpacing,
-        parseFloat(cs.fontSize) || rootFontSizePx,
-        rootLetterSpacingPx,
+        parseFloat(cs.fontSize) || ctx.rootFontSizePx,
+        ctx.rootLetterSpacingPx,
       );
       run.inlineElements.push({
         element: child,
         tracking: childTracking,
-        insets: cs.position === "static" ? null : inlineInsets(cs, rootFontSizePx),
+        insets: cs.position === "static" ? null : inlineInsets(cs, ctx.rootFontSizePx),
       });
-      collectRun(child, childTracking, rootFontSizePx, rootLetterSpacingPx, run);
+      collectRun(child, childTracking, ctx, run);
     }
   }
 }
 
-/** Authored relative insets of an inline element, rewritten to whole cells
- * by the renderer (specs/positioning.md). Percent insets on inline elements
- * are unsupported (`null`); `absolute`/`fixed` behave as relative — both
- * documented deviations. */
+/** Authored relative insets of an inline (relative/sticky) element,
+ * rewritten to whole cells by the renderer (specs/positioning.md).
+ * Percent insets on inline elements are unsupported (`null`), a
+ * documented deviation. (Absolute/fixed inline elements never reach
+ * here — they leave the run as out-of-flow boxes.) */
 function inlineInsets(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<number | null> {
   const side = (value: string): number | null => {
     if (!value || value === "auto" || value.endsWith("%")) return null;
@@ -242,7 +312,7 @@ function normalizeRun(run: LeafRun): LeafRun {
     chars.pop();
     advances.pop();
   }
-  return { chars, advances, inlineElements: run.inlineElements };
+  return { chars, advances, inlineElements: run.inlineElements, boxes: run.boxes };
 }
 
 function longestLineAdvance(text: string, advances: number[], tracking: number): number {
@@ -259,4 +329,36 @@ function longestLineAdvance(text: string, advances: number[], tracking: number):
 
 function countHardLines(text: string): number {
   return text.split("\n").length;
+}
+
+const warnedDroppedText = new WeakSet<Element>();
+
+const warnedSkippedRunContent = new WeakSet<Element>();
+
+function warnSkippedRunContent(el: Element): void {
+  if (warnedSkippedRunContent.has(el)) return;
+  warnedSkippedRunContent.add(el);
+  console.warn(
+    "[monowind] A block-level element nested inside a text run can't be laid out and was " +
+      "skipped. Give it its own place in the layout instead.",
+    el,
+  );
+}
+
+/** Mixed direct text + in-flow block children: the text can't be laid out
+ * (no element to position — cell-model deviation). Hide it (via the
+ * renderer) and tell the author how to fix their markup, once. */
+function flagDroppedText(el: Element, node: LayoutNode): void {
+  const hasText = Array.from(el.childNodes).some(
+    (child) => child.nodeType === Node.TEXT_NODE && /[^ \t\r\n\f]/.test(child.textContent ?? ""),
+  );
+  if (!hasText) return;
+  node.droppedText = true;
+  if (warnedDroppedText.has(el)) return;
+  warnedDroppedText.add(el);
+  console.warn(
+    "[monowind] Direct text next to block-level children can't be laid out and was hidden. " +
+      "Wrap each text segment in its own element (e.g. a <div>).",
+    el,
+  );
 }

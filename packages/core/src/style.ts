@@ -1,5 +1,6 @@
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import type {
+  AlignContent,
   AlignItems,
   BorderStyle,
   CellLength,
@@ -36,9 +37,18 @@ export function readCellStyle(
   const classAttr = el.getAttribute("class") ?? "";
   const inlineStyle = (el as HTMLElement).style;
 
+  // Atomic inline-level boxes lay their CONTENT out like their block-level
+  // counterparts (the tree builder blockifies the box itself onto its own
+  // row — cell-model deviation).
   const rawDisplay = cs.display;
   const display: Display =
-    rawDisplay === "flex" || rawDisplay === "grid" || rawDisplay === "none" ? rawDisplay : "block";
+    rawDisplay === "flex" || rawDisplay === "inline-flex"
+      ? "flex"
+      : rawDisplay === "grid" || rawDisplay === "inline-grid"
+        ? "grid"
+        : rawDisplay === "none"
+          ? "none"
+          : "block";
 
   return {
     display,
@@ -53,6 +63,7 @@ export function readCellStyle(
     flexBasis: readFlexBasis(cs.flexBasis, rootFontSizePx),
     order: Number(cs.order) || 0,
     justifyContent: mapJustify(cs.justifyContent),
+    alignContent: mapAlignContent(cs.alignContent),
     alignItems: mapAlign(cs.alignItems),
     alignSelf: mapAlignSelf(cs.alignSelf),
     width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle),
@@ -145,6 +156,12 @@ function mapJustify(value: string): JustifyContent {
     default:
       return "start";
   }
+}
+
+/** CSS initial `normal` behaves as `stretch` for align-content in flex. */
+function mapAlignContent(value: string): AlignContent {
+  if (value === "stretch" || value === "normal" || value === "") return "stretch";
+  return mapJustify(value);
 }
 
 function mapAlign(value: string): AlignItems {

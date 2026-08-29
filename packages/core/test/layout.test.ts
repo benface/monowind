@@ -209,6 +209,81 @@ describe("min-width / max-width / min-height / max-height clamping", () => {
   });
 });
 
+describe("text leaves with non-block display", () => {
+  it("a display:flex element with only text is sized by its text", () => {
+    // Regression: flex-display text leaves were routed to the (empty)
+    // flex path and got height 0, so the text overflowed the box into
+    // the parent's padding.
+    const leaf = makeNode({
+      text: "one two three",
+      style: { display: "flex", flexDirection: "row" },
+    });
+    const container = makeNode({ style: { maxWidth: 5 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    expect(leaf.localRect.height).toBe(3);
+  });
+});
+
+describe("atomic inline boxes in text runs", () => {
+  const leafWithBox = () => {
+    // "aa \uFFFC bb" with a 4-cell box (its own text "wxyz").
+    const box = makeNode({ text: "wxyz" });
+    box.inlineBox = true;
+    const leaf = makeNode({ text: "aa \uFFFC bb", children: [box] });
+    leaf.advances = [1, 1, 1, 1, 1, 1, 1];
+    return { box, leaf };
+  };
+
+  it("wraps the box atomically at its laid-out width", () => {
+    const { leaf } = leafWithBox();
+    const container = makeNode({ style: { maxWidth: 8 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // "aa " + 4-cell box = 7 ≤ 8, " bb" wraps → 2 lines; the box never
+    // splits internally.
+    expect(leaf.localRect.height).toBe(2);
+  });
+
+  it("places the box at its wrapped line and column", () => {
+    const { box, leaf } = leafWithBox();
+    const container = makeNode({ style: { maxWidth: 8 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    expect(box.localRect).toEqual({ x: 3, y: 0, width: 4, height: 1 });
+  });
+
+  it("moves the whole box to the next line when it doesn't fit", () => {
+    const { box, leaf } = leafWithBox();
+    const container = makeNode({ style: { maxWidth: 5 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // "aa" line 1; box (4) line 2; "bb" fits after? 4 + space 1 + 2 = 7 > 5
+    // → "bb" line 3.
+    expect(leaf.localRect.height).toBe(3);
+    expect(box.localRect.x).toBe(0);
+    expect(box.localRect.y).toBe(1);
+  });
+});
+
+describe("multi-row inline boxes grow their line (CSS line-box growth)", () => {
+  it("pushes following lines down by the box's extra rows", () => {
+    // Box is 2 rows tall (hard break); leaf wraps to put text after it.
+    const box = makeNode({ text: "aa\nbb" });
+    box.inlineBox = true;
+    const leaf = makeNode({ text: "xx \uFFFC yy", children: [box] });
+    leaf.advances = [1, 1, 1, 1, 1, 1, 1];
+    const container = makeNode({ style: { maxWidth: 5 }, children: [leaf] });
+    const root = makeNode({ children: [container] });
+    layoutRoot(root, 40);
+    // Line 1: "xx" (1 row). Line 2: the 2-row box. Line 3: "yy" starts
+    // BELOW the grown line, at row 3.
+    expect(box.localRect.height).toBe(2);
+    expect(box.localRect.y).toBe(1);
+    expect(leaf.localRect.height).toBe(4);
+  });
+});
+
 describe("percent spacing", () => {
   it("percent padding resolves against the containing block width", () => {
     const box = makeNode({

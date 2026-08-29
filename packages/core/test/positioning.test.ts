@@ -214,6 +214,90 @@ describe("positioning (specs/positioning.md)", () => {
   });
 });
 
+describe("out-of-flow children of text leaves", () => {
+  it("keeps the leaf's text and positions the badge by its insets", () => {
+    const badge = makeNode({
+      text: "*",
+      style: { position: "absolute", insets: { top: 0, right: 0, bottom: null, left: null } },
+    });
+    const leaf = makeNode({ text: "hello world", intrinsicWidth: 11, children: [badge] });
+    leaf.style.position = "relative";
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 11);
+    // Text still wraps/sizes the leaf (2 rows at width 11? no — fits: 1).
+    expect(leaf.localRect.height).toBe(1);
+    expect(badge.localRect.x).toBe(10);
+    expect(badge.localRect.y).toBe(0);
+  });
+
+  it("uses the leaf's content origin as the static position", () => {
+    const badge = makeNode({
+      text: "*",
+      style: { position: "absolute", insets: { top: null, right: null, bottom: null, left: null } },
+    });
+    const leaf = makeNode({
+      text: "hi",
+      children: [badge],
+      style: {
+        position: "relative",
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        padding: { top: 0, right: 1, bottom: 0, left: 1 },
+      },
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 20);
+    // Content origin: border 1 + padding 1 = x 2, border 1 + padding 0 = y 1.
+    expect(badge.localRect.x).toBe(2);
+    expect(badge.localRect.y).toBe(1);
+  });
+});
+
+describe("flex sole-item static position includes fixed margins", () => {
+  it("offsets the hypothetical box by its margins under start alignment", () => {
+    const abs = makeNode({
+      text: "ab",
+      style: {
+        position: "absolute",
+        insets: { top: null, right: null, bottom: null, left: null },
+        margin: { top: 1, right: 0, bottom: 0, left: 3 },
+      },
+    });
+    const row = makeNode({
+      style: { display: "flex", flexDirection: "row", position: "relative", minHeight: 4 },
+      children: [abs],
+    });
+    const root = makeNode({ children: [row] });
+    layoutRoot(root, 20);
+    expect(abs.localRect.x).toBe(3);
+    expect(abs.localRect.y).toBe(1);
+  });
+
+  it("centers the margin-inclusive box, then adds the leading margin", () => {
+    const abs = makeNode({
+      text: "ab",
+      style: {
+        position: "absolute",
+        insets: { top: null, right: null, bottom: null, left: null },
+        margin: { top: 0, right: 0, bottom: 0, left: 4 },
+      },
+    });
+    const row = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        justifyContent: "center",
+        position: "relative",
+        minHeight: 2,
+      },
+      children: [abs],
+    });
+    const root = makeNode({ children: [row] });
+    layoutRoot(root, 20);
+    // Outer box = 2 + 4 = 6; centered in 20 → offset 7; + margin-left 4 = 11.
+    expect(abs.localRect.x).toBe(11);
+  });
+});
+
 describe("absolute sizing fidelity", () => {
   it("percent width resolves against the containing block, not the inset-reduced space", () => {
     const half = makeNode({

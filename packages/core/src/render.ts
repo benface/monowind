@@ -85,7 +85,11 @@ function positionElement(node: LayoutNode): void {
   const rect = node.localRect;
   const padding = node.resolvedPadding;
   const { border, textAlignBlocked, overflow, whiteSpace, tracking, lineGap } = node.style;
-  el.setAttribute("data-mw-laid-out", "");
+  // Atomic inline boxes stay IN FLOW (the browser's line layout places
+  // them); everything else is engine-positioned. Same geometry vars, a
+  // different companion rule (see styles.css).
+  el.setAttribute(node.inlineBox ? "data-mw-inline-box" : "data-mw-laid-out", "");
+  el.removeAttribute(node.inlineBox ? "data-mw-laid-out" : "data-mw-inline-box");
   // Grid typography (specs/cell-model.md): extra cells per character, rows
   // per wrapped line, and the half-leading cancellation shift.
   el.style.setProperty("--mw-ls", String(tracking));
@@ -113,6 +117,10 @@ function positionElement(node: LayoutNode): void {
   el.style.setProperty("--mw-bl", String(border.left));
   if (textAlignBlocked) el.setAttribute("data-mw-text-align-blocked", "");
   else el.removeAttribute("data-mw-text-align-blocked");
+  // Un-laid-out direct text (mixed with block children) would otherwise
+  // paint unpositioned over the children — hide it (see styles.css).
+  if (node.droppedText) el.setAttribute("data-mw-dropped-text", "");
+  else el.removeAttribute("data-mw-dropped-text");
 }
 
 function paintDecorations(layer: HTMLElement, runs: BorderRun[]): void {

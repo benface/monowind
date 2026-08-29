@@ -1,5 +1,13 @@
 import { percentToCells } from "./metrics.ts";
-import { longestSegmentAdvance, wrapLineCount } from "./wrap.ts";
+import {
+  advanceOf,
+  eachObjectMarker,
+  hardLineSpans,
+  longestSegmentAdvance,
+  OBJECT_REPLACEMENT,
+  wrapLineSpans,
+} from "./wrap.ts";
+import type { LineSpan } from "./wrap.ts";
 import { layoutFlexColumn, layoutFlexRow } from "./flex.ts";
 import { walkPositioned } from "./positioning.ts";
 import type {
@@ -121,21 +129,57 @@ export function layoutNode(
     heightIsDefinite && Number.isFinite(inner.height) ? inner.height : undefined;
 
   let contentHeight: number;
-  if (node.children.length === 0) {
-    // `white-space: nowrap` text never soft-wraps: its height is the
+  if (laysOutAsTextLeaf(node)) {
+    // A text leaf (possibly carrying out-of-flow children), or an empty
+    // box. `white-space: nowrap` text never soft-wraps: its height is the
     // hard-line (`<br>`) count, regardless of width. `leading-*` adds
     // `lineGap` empty rows BETWEEN lines only (specs/cell-model.md).
     if (node.text) {
-      const lines =
-        style.whiteSpace === "nowrap"
-          ? node.text.split("\n").length
-          : wrapLineCount(node.text, inner.width, {
-              advances: node.advances,
-              tracking: style.tracking,
-            });
-      contentHeight = lines + Math.max(0, lines - 1) * style.lineGap;
+      // Atomic inline boxes first: lay each out (shrink-to-fit; height =
+      // its own content) and resolve its U+FFFC marker's advance to the
+      // laid-out width, so the wrap below treats it as an unbreakable
+      // unit of exactly that many cells.
+      const boxes = node.children.filter((child) => child.inlineBox);
+      eachObjectMarker(node.text, (charIndex, boxIndex) => {
+        const box = boxes[boxIndex]!;
+        layoutNode(box, inner.width, undefined, 0, 0, "shrink", cache);
+        node.advances![charIndex] = Math.max(1, box.localRect.width);
+      });
+      const geometry = leafLineGeometry(node, inner.width);
+      contentHeight = geometry.totalRows;
+      // Place each box at its marker's wrapped (line, column) — the
+      // browser's own line layout puts the in-flow box in the same spot
+      // because both models reserve exactly the same cells for it, and a
+      // taller box grows its LINE (per CSS; the box is vertical-align:
+      // top, so its top sits on the line's first row like the text).
+      if (boxes.length > 0) {
+        const lineOfChar = (charIndex: number) =>
+          geometry.spans.findIndex((span) => charIndex >= span.start && charIndex < span.end);
+        eachObjectMarker(node.text, (charIndex, boxIndex) => {
+          const line = lineOfChar(charIndex);
+          if (line === -1) return; // e.g. width 0 edge; box stays at origin
+          const span = geometry.spans[line]!;
+          boxes[boxIndex]!.localRect = {
+            ...boxes[boxIndex]!.localRect,
+            x: style.border.left + padding.left + advanceOf(span.start, charIndex, node.advances),
+            y: style.border.top + padding.top + geometry.lineY[line]!,
+          };
+        });
+      }
     } else {
       contentHeight = node.intrinsicHeight;
+    }
+    // Out-of-flow children of a leaf: static position = the content-box
+    // origin plus their margins (specs/positioning.md — CSS's hypothetical
+    // inline position is approximated by the run's origin).
+    for (const child of node.children) {
+      if (child.inlineBox) continue;
+      const margin = resolveMargin(child.style.margin, inner.width);
+      child.staticSlot = {
+        kind: "block",
+        x: style.border.left + padding.left + (margin.left ?? 0),
+        y: style.border.top + padding.top + (margin.top ?? 0),
+      };
     }
   } else if (style.display === "flex" && style.flexDirection === "row") {
     contentHeight = layoutFlexRow(
@@ -182,9 +226,63 @@ export function layoutNode(
   node.localRect = { x: parentX, y: parentY, width: outerWidth, height: finalHeight };
 }
 
+/**
+ * True when the node lays out as a TEXT LEAF: no in-flow block children
+ * (atomic inline boxes ride the text run and out-of-flow boxes hang off
+ * it, so neither counts), and either text to wrap or nothing at all. The
+ * one exception: a TEXTLESS flex container keeps the flex path, so its
+ * out-of-flow children get the sole-flex-item static position. A flex
+ * element WITH text is still a leaf — CSS renders its text as a single
+ * anonymous item, and the text must size the box.
+ */
+function laysOutAsTextLeaf(node: LayoutNode): boolean {
+  const hasInFlowChildren = node.children.some(
+    (child) => !isOutOfFlow(child.style) && !child.inlineBox,
+  );
+  if (hasInFlowChildren) return false;
+  return node.text !== "" || node.style.display !== "flex";
+}
+
 export function clampSize(value: number, min: number, max: number | undefined): number {
   const clamped = max !== undefined ? Math.min(value, max) : value;
   return Math.max(min, clamped);
+}
+
+/**
+ * A text leaf's wrapped lines with their vertical geometry. Lines are one
+ * row tall unless an atomic inline box on the line is taller — the line
+ * grows to the tallest box (per CSS line-box growth), and later lines
+ * shift down. `lineGap` rows separate lines as usual. Requires the leaf's
+ * inline boxes to be laid out already (their rect heights are read here);
+ * marker advances must be resolved.
+ */
+export function leafLineGeometry(
+  node: LayoutNode,
+  contentWidth: number,
+): { spans: LineSpan[]; lineY: number[]; totalRows: number } {
+  const spans =
+    node.style.whiteSpace === "nowrap"
+      ? hardLineSpans(node.text)
+      : wrapLineSpans(node.text, contentWidth, {
+          advances: node.advances,
+          tracking: node.style.tracking,
+        });
+  const boxes = node.children.filter((child) => child.inlineBox);
+  const lineY: number[] = [];
+  let y = 0;
+  let boxIndex = 0;
+  for (let s = 0; s < spans.length; s++) {
+    lineY.push(y);
+    const span = spans[s]!;
+    let height = 1;
+    for (let i = span.start; i < span.end; i++) {
+      if (node.text[i] !== OBJECT_REPLACEMENT) continue;
+      height = Math.max(height, boxes[boxIndex]!.localRect.height);
+      boxIndex++;
+    }
+    y += height + (s < spans.length - 1 ? node.style.lineGap : 0);
+  }
+  return { spans, lineY, totalRows: y };
 }
 
 /** Resolve a spacing length to cells against its containing-block basis.
@@ -392,8 +490,8 @@ export function intrinsicOuterWidth(node: LayoutNode, cache: IntrinsicCache): nu
 }
 
 function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
-  if (node.children.length === 0) return node.intrinsicWidth;
-  const inFlow = node.children.filter((c) => !isOutOfFlow(c.style));
+  const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
+  if (inFlow.length === 0) return node.intrinsicWidth;
   if (node.style.display === "flex" && node.style.flexDirection === "row") {
     const gap = intrinsicCells(node.style.gapX) * Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + intrinsicOuterWidth(c, cache), 0) + gap;
@@ -424,14 +522,14 @@ export function minContentOuterWidth(node: LayoutNode, cache: IntrinsicCache): n
 }
 
 function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
-  if (node.children.length === 0) {
+  const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
+  if (inFlow.length === 0) {
     if (!node.text || node.style.whiteSpace === "nowrap") return node.intrinsicWidth;
     return longestSegmentAdvance(node.text, {
       advances: node.advances,
       tracking: node.style.tracking,
     });
   }
-  const inFlow = node.children.filter((c) => !isOutOfFlow(c.style));
   if (
     node.style.display === "flex" &&
     node.style.flexDirection === "row" &&

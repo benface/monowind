@@ -235,6 +235,32 @@ function soleItemCrossOffset(
   return alignCrossOffset(effectiveAlign(child, parent), inner, size);
 }
 
+/** The hypothetical sole-item box includes the element's fixed margins
+ * (auto margins count as 0 in the static position, per CSS §10.1). */
+function flexStaticOffset(
+  child: LayoutNode,
+  parent: LayoutNode,
+  slot: { direction: "row" | "column"; innerWidth: number; innerHeight: number },
+  axis: "x" | "y",
+  size: number,
+): number {
+  const margin = resolveMargin(child.style.margin, slot.innerWidth);
+  const [before, after, inner, isMain] =
+    axis === "x"
+      ? ([margin.left ?? 0, margin.right ?? 0, slot.innerWidth, slot.direction === "row"] as const)
+      : ([
+          margin.top ?? 0,
+          margin.bottom ?? 0,
+          slot.innerHeight,
+          slot.direction === "column",
+        ] as const);
+  const outer = size + before + after;
+  const offset = isMain
+    ? soleItemMainOffset(effectiveJustify(parent.style), inner, outer)
+    : soleItemCrossOffset(child, parent, inner, outer);
+  return offset + before;
+}
+
 function staticPositionX(
   child: LayoutNode,
   parent: LayoutNode,
@@ -244,11 +270,7 @@ function staticPositionX(
   const slot = child.staticSlot;
   if (slot === undefined) return parentAbsX;
   if (slot.kind === "block") return parentAbsX + slot.x;
-  const offset =
-    slot.direction === "row"
-      ? soleItemMainOffset(effectiveJustify(parent.style), slot.innerWidth, width)
-      : soleItemCrossOffset(child, parent, slot.innerWidth, width);
-  return parentAbsX + slot.originX + offset;
+  return parentAbsX + slot.originX + flexStaticOffset(child, parent, slot, "x", width);
 }
 
 function staticPositionY(
@@ -260,9 +282,5 @@ function staticPositionY(
   const slot = child.staticSlot;
   if (slot === undefined) return parentAbsY;
   if (slot.kind === "block") return parentAbsY + slot.y;
-  const offset =
-    slot.direction === "column"
-      ? soleItemMainOffset(effectiveJustify(parent.style), slot.innerHeight, height)
-      : soleItemCrossOffset(child, parent, slot.innerHeight, height);
-  return parentAbsY + slot.originY + offset;
+  return parentAbsY + slot.originY + flexStaticOffset(child, parent, slot, "y", height);
 }
