@@ -10,9 +10,9 @@ export default defineConfig({
   ],
   test: {
     name: "storybook",
-    // CI runners boot browsers slowly (WebKit especially) — the default
-    // 15s can expire on a story mid-file while the worker warms up.
-    testTimeout: 30_000,
+    // Generous: three browsers share a loaded CI runner's CPU, and slow
+    // tails have crossed 30s.
+    testTimeout: 60_000,
     browser: {
       enabled: true,
       provider: playwright(),

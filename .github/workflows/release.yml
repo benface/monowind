@@ -1,21 +1,23 @@
 name: Release
 
-# Publishes both packages to npm when a version tag (v*) is pushed.
-# Uses npm trusted publishing (OIDC) — no tokens, no OTP; npm links the
-# publish to this repo+workflow and attaches provenance. Each package must
-# list this workflow as a trusted publisher in its npmjs.com settings.
-#
-# Publishing MUST go through pnpm: `publishConfig.exports` (the src → dist
-# swap) is applied by pnpm only.
+# On a version tag (v*): publish both packages to npm (trusted publishing
+# via OIDC — each package lists this workflow as a trusted publisher on
+# npmjs.com), then deploy the Storybook site. Two jobs so a deploy hiccup
+# can be re-run without re-publishing. Publishing MUST go through pnpm:
+# `publishConfig.exports` (the src → dist swap) is pnpm-only.
 
 on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write # OIDC token for npm trusted publishing
@@ -28,27 +30,44 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      # Same gate as CI's check job (visual regression runs on the commit's
-      # regular CI; not repeated here).
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      # Deliberately repeats CI's check: a tag can point at a commit
+      # without green CI, and a publish is irreversible.
       - run: pnpm check
-      # -r publishes workspace packages in dependency order (monowind before
-      # @monowind/vite, so `workspace:^` resolves against the real version).
+      # -r publishes in dependency order, so `workspace:^` resolves.
       - run: pnpm -r publish --access public --no-git-checks
-      # Deploy the Storybook site. Netlify's own builds are STOPPED for
-      # this site (no per-push builds, no build credits): we build here on
-      # Actions and push the finished files, so the site updates once per
-      # release. Needs a NETLIFY_AUTH_TOKEN repository secret (a personal
-      # access token from app.netlify.com/user/applications); the site id
-      # is public, not a secret.
-      - name: Deploy Storybook to Netlify
+
+  deploy:
+    name: Deploy Storybook
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm --filter @monowind/storybook... install --frozen-lockfile
+      # Netlify's own builds are stopped (saves credits) — this push of the
+      # built files is the only deploy path. The CLI must run from the
+      # site's base directory with an absolute --dir. Site id is public;
+      # NETLIFY_AUTH_TOKEN is a personal access token repo secret.
+      - name: Build and deploy
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: 5eacc1ae-4c03-47d9-b749-2d08c073f062
         run: |
-          if [ -n "$NETLIFY_AUTH_TOKEN" ]; then
-            pnpm --filter @monowind/storybook build
-            npx -y netlify-cli deploy --prod --dir apps/storybook/storybook-static
-          else
-            echo "NETLIFY_AUTH_TOKEN secret not set - skipping Storybook deploy"
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "NETLIFY_AUTH_TOKEN secret not set - skipping deploy"
+            exit 0
           fi
+          pnpm --filter @monowind/storybook build
+          cd apps/storybook
+          npx -y netlify-cli@27 deploy --prod --no-build --dir "$PWD/storybook-static"

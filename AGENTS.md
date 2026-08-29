@@ -30,6 +30,10 @@ interfaces (TUIs) on the web. Start with
   tools. Note: its docs/component-inventory tools are React-only for now
   (manifests aren't generated for web-components setups), so don't rely on
   those.
+- Keep comments terse. A comment earns its lines only by stating a
+  non-obvious constraint or decision; one tight sentence usually suffices.
+  No restating what the code does, no narrating history, no multi-sentence
+  essays where a pointer to a spec would do.
 - No diminutives or ad-hoc abbreviations in identifiers (`cumAuto`, `btnLbl`,
   `usrCfg`, `idx` in non-loop contexts, …). Spell it out
   (`cumulativeAutoOffset`, `buttonLabel`, `userConfig`, `index`).
