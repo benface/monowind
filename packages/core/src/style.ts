@@ -232,6 +232,17 @@ export function readCellStyle(
     latticeBorder: null,
     ruleX: display === "flex" || display === "grid" ? readGapRule(cs, "x") : null,
     ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y") : null,
+    ruleBreak: readKeyword(cs, "--mw-rule-break", ["none", "intersection"] as const, "normal"),
+    ruleInset: Math.max(
+      0,
+      roundHalfAwayFromZero(parseFloat(cs.getPropertyValue("--mw-rule-inset")) || 0),
+    ),
+    ruleVisibilityItems: readKeyword(
+      cs,
+      "--mw-rule-visibility-items",
+      ["all", "around", "between"] as const,
+      "normal",
+    ),
   };
   applyBorderCollapse(style, cs);
   return style;
@@ -337,6 +348,16 @@ function warnAuthoredFontSize(
 /** Gap rules from the `--mw-rule-*` mirrors (specs/gap-decorations.md);
  * registered `inherits: false`, so a container only sees its own.
  * Widths use the border scale (1px = 1 cell), like the utilities. */
+function readKeyword<T extends string, D extends string>(
+  cs: CSSStyleDeclaration,
+  property: string,
+  values: readonly T[],
+  fallback: D,
+): T | D {
+  const value = cs.getPropertyValue(property).trim() as T;
+  return values.includes(value) ? value : fallback;
+}
+
 function readGapRule(cs: CSSStyleDeclaration, axis: "x" | "y"): GapRule | null {
   const width = roundHalfAwayFromZero(
     parseFloat(cs.getPropertyValue(`--mw-rule-${axis}-width`)) || 0,

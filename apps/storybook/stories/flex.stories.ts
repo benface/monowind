@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import type { MonoWindElement } from "monowind";
 import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
@@ -182,23 +183,47 @@ export const Column: StoryObj = {
 export const GapDecorations: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div
-        class="flex border border-double border-neutral-500 rule-double rule-neutral-500 rule-x"
-        data-test="row"
-      >
-        <div class="grow px-1">files</div>
-        <div class="grow px-1">edit</div>
-        <div class="grow px-1">view</div>
-      </div>
-      <div class="mt-1 flex flex-col rule-dashed rule-neutral-500 rule-y" data-test="column">
-        <div>first entry</div>
-        <div>second entry</div>
-        <div>third entry</div>
+      <div class="flex flex-col gap-2">
+        <div
+          class="flex border border-double border-neutral-500 rule rule-double rule-neutral-500"
+          data-test="row"
+        >
+          <div class="grow px-1">files</div>
+          <div class="grow px-1">edit</div>
+          <div class="grow px-1">view</div>
+        </div>
+        <div class="flex flex-col rule-dashed rule-neutral-500 rule-y" data-test="column">
+          <div>first entry</div>
+          <div>second entry</div>
+          <div>third entry</div>
+        </div>
+        <div class="flex max-w-12 flex-wrap gap-1 rule rule-cyan-400">
+          <div>rule</div>
+          <div>break</div>
+          <div>normal</div>
+        </div>
+        <div class="flex max-w-12 flex-wrap gap-1 rule rule-cyan-400 rule-break-intersection">
+          <div>rule</div>
+          <div>break</div>
+          <div>intersection</div>
+        </div>
+        <div class="flex items-start gap-5 rule-fuchsia-400 rule-inset-1 rule-x">
+          <div class="flex-1">
+            Insets: rule-inset-1 retracts each rule one cell from both ends of its band — see the
+            top and bottom of the verticals between these columns.
+          </div>
+          <div class="flex-1">
+            The middle column carries enough text to wrap onto several lines at a medium viewport
+            width, giving the rules some height.
+          </div>
+          <div class="flex-1">Last column with almost no text.</div>
+        </div>
       </div>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
     await expectBrowserRowsToMatchEngine(canvasElement);
+    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
     // `rule-x` with no gap floors the gap at the rule width: adjacent
     // items sit exactly one cell apart, the rule cell.
     const row = canvasElement.querySelector<HTMLElement>('[data-test="row"]')!;
@@ -208,5 +233,19 @@ export const GapDecorations: StoryObj = {
     const column = canvasElement.querySelector<HTMLElement>('[data-test="column"]')!;
     const [c, d] = Array.from(column.querySelectorAll<HTMLElement>(":scope > div"));
     expect(cellsOf(d!, "--mw-y")).toBe(cellsOf(c!, "--mw-y") + cellsOf(c!, "--mw-h") + 1);
+    // Flex's slice of the segment features (specs/gap-decorations.md
+    // "Segments"; `rule-visibility-items` is grid/multicol-only):
+    // normal (= none in flex): the row rule runs through the line-1
+    // column gap, teeing the vertical that ends there.
+    const lines = host.toPlainText().split("\n");
+    const lineWith = (text: string) => lines.findIndex((line) => line.includes(text));
+    expect(lines[lineWith("normal") - 1]).toContain("┴");
+    // intersection: a hole where the line-1 column gap crosses.
+    expect(lines[lineWith("intersection") - 1]).toMatch(/─+ ─+/);
+    // inset: the verticals between the columns start one row down and
+    // stop one row up — the first text row has no rule glyph.
+    const firstRow = lineWith("Insets:");
+    expect(lines[firstRow]).not.toContain("│");
+    expect(lines[firstRow + 1]).toContain("│");
   },
 };

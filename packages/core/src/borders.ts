@@ -1,4 +1,6 @@
 import type {
+  RuleBreak,
+  RuleVisibilityItems,
   BorderRun,
   BorderStyle,
   CellStyle,
@@ -269,6 +271,66 @@ export interface RuleSegment {
   end: number;
 }
 
+/** One cross-axis strip of a gap band: the cells beside a crossing
+ * track, `[start, end)` along the band, with what borders it. */
+export interface GapStrip {
+  start: number;
+  end: number;
+  /** An item spans ACROSS the gap here — the gap doesn't exist. */
+  spanned: boolean;
+  /** The cells on either side of the gap hold items. */
+  beforeOccupied: boolean;
+  afterOccupied: boolean;
+}
+
+interface GapSegment {
+  start: number;
+  end: number;
+}
+
+/**
+ * Split one gap band into painted segments (specs/gap-decorations.md
+ * "Segments", probed in Chromium 151): track strips kept per spanning
+ * occupancy and rule-visibility-items, crossing-gap strips joined per
+ * rule-break, contiguous runs merged, endpoints retracted by the inset.
+ */
+export function ruleBandSegments(
+  strips: GapStrip[],
+  ruleBreak: RuleBreak,
+  visibility: RuleVisibilityItems,
+  inset: number,
+): GapSegment[] {
+  const covered = strips.map((strip) => {
+    if (strip.spanned) return false;
+    if (visibility === "between") return strip.beforeOccupied && strip.afterOccupied;
+    if (visibility === "around") return strip.beforeOccupied || strip.afterOccupied;
+    return true; // all — and grid's normal
+  });
+  const pieces: { start: number; end: number; covered: boolean }[] = [];
+  for (let i = 0; i < strips.length; i++) {
+    pieces.push({ start: strips[i]!.start, end: strips[i]!.end, covered: covered[i]! });
+    if (i + 1 < strips.length) {
+      const joined =
+        ruleBreak === "intersection"
+          ? false
+          : ruleBreak === "none"
+            ? covered[i]! || covered[i + 1]!
+            : covered[i]! && covered[i + 1]!;
+      pieces.push({ start: strips[i]!.end, end: strips[i + 1]!.start, covered: joined });
+    }
+  }
+  const segments: GapSegment[] = [];
+  for (const piece of pieces) {
+    if (!piece.covered) continue;
+    const last = segments[segments.length - 1];
+    if (last && last.end === piece.start) last.end = piece.end;
+    else segments.push({ start: piece.start, end: piece.end });
+  }
+  return segments
+    .map((segment) => ({ start: segment.start + inset, end: segment.end - inset }))
+    .filter((segment) => segment.end > segment.start);
+}
+
 export interface GapRuleContext {
   ruleX: GapRule | null;
   ruleY: GapRule | null;
@@ -306,17 +368,17 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
   /** Does a vertical rule cover column `x` at row `y`? */
   const verticalArm = (x: number, y: number): boolean =>
     vLines.some((l) => x >= l.line && x < l.line + vWidth && y >= l.start && y < l.end);
-  /** Is row `y` inside a horizontal line? (Those cells belong to the
-   * horizontal pass, which paints the junctions — no double glyphs.) */
-  const insideHorizontal = (y: number): boolean =>
-    hLines.some((l) => y >= l.line && y < l.line + hWidth);
+  /** Is the cell inside a horizontal segment? (Those cells belong to
+   * the horizontal pass, which paints the junctions — no double glyphs.) */
+  const insideHorizontal = (x: number, y: number): boolean =>
+    hLines.some((l) => y >= l.line && y < l.line + hWidth && x >= l.start && x < l.end);
 
   if (ctx.ruleX) {
     const glyph = lineGlyph(ctx.ruleX.style, "v");
     for (const line of vLines) {
       for (let t = 0; t < vWidth; t++)
         for (let y = line.start; y < line.end; y++) {
-          if (insideHorizontal(y)) continue;
+          if (insideHorizontal(line.line + t, y)) continue;
           out.push({
             glyph,
             x: originX + line.line + t,

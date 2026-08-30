@@ -132,7 +132,7 @@ export const PercentColumns: StoryObj = {
 export const CaptionAndAlignment: StoryObj = {
   render: () => html`
     <mono-wind>
-      <table data-test="table">
+      <table>
         <caption>
           Quarterly totals
         </caption>
@@ -171,7 +171,7 @@ export const CaptionAndAlignment: StoryObj = {
 export const AttributesAndGroups: StoryObj = {
   render: () => html`
     <mono-wind>
-      <table data-test="table">
+      <table>
         <colgroup>
           <col class="w-20" />
           <col span="2" />
@@ -237,7 +237,7 @@ export const AttributesAndGroups: StoryObj = {
 export const FullHeightChildren: StoryObj = {
   render: () => html`
     <mono-wind>
-      <table data-test="table">
+      <table>
         <tbody>
           <tr>
             <td class="border px-1">

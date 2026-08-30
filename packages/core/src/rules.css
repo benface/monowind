@@ -98,3 +98,48 @@
   --mw-rule-x-style: double;
   --mw-rule-y-style: double;
 }
+
+@property --mw-rule-break {
+  syntax: "none | normal | intersection";
+  inherits: false;
+  initial-value: normal;
+}
+@property --mw-rule-inset {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --mw-rule-visibility-items {
+  syntax: "normal | all | around | between";
+  inherits: false;
+  initial-value: normal;
+}
+
+@utility rule-break-none {
+  rule-break: none;
+  --mw-rule-break: none;
+}
+@utility rule-break-normal {
+  rule-break: normal;
+  --mw-rule-break: normal;
+}
+@utility rule-break-intersection {
+  rule-break: intersection;
+  --mw-rule-break: intersection;
+}
+@utility rule-inset-* {
+  rule-inset: calc(--value(integer) * 1px);
+  --mw-rule-inset: calc(--value(integer) * 1px);
+}
+@utility rule-visibility-all {
+  rule-visibility-items: all;
+  --mw-rule-visibility-items: all;
+}
+@utility rule-visibility-around {
+  rule-visibility-items: around;
+  --mw-rule-visibility-items: around;
+}
+@utility rule-visibility-between {
+  rule-visibility-items: between;
+  --mw-rule-visibility-items: between;
+}

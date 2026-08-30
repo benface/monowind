@@ -81,4 +81,5 @@ pnpm --filter @monowind/example-html dev       # CDN mode: one script tag
 pnpm --filter @monowind/example-tailwind dev   # your own Tailwind v4 build
 pnpm --filter @monowind/example-vite dev       # standalone: @monowind/vite, zero Tailwind setup
 pnpm --filter @monowind/example-react dev      # React 19 + @monowind/vite
+pnpm --filter @monowind/example-solid dev      # Solid 2.0 (RC) + @monowind/vite
 ```

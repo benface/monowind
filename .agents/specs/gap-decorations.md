@@ -21,17 +21,19 @@ run, junctioned into surrounding borders with the table tee machinery.
 Named after the `gap-x`/`gap-y` axis convention (`rule-x` decorates
 column gaps — vertical lines — like `gap-x` sizes them):
 
-| class                                                        | effect                                                  |
-| ------------------------------------------------------------ | ------------------------------------------------------- |
-| `rule-x`, `rule-x-<n>`                                       | column-rule width 1px / `<n>` px                        |
-| `rule-y`, `rule-y-<n>`                                       | row-rule width 1px / `<n>` px                           |
-| `rule`, `rule-<n>`                                           | both axes                                               |
-| `rule-solid` / `rule-dashed` / `rule-dotted` / `rule-double` | style, both axes                                        |
-| `rule-<color>`                                               | color, both axes (default `currentColor`, like borders) |
+| class                                                                        | effect                                                                     |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `rule-x`, `rule-x-<n>`                                                       | column-rule width 1px / `<n>` px                                           |
+| `rule-y`, `rule-y-<n>`                                                       | row-rule width 1px / `<n>` px                                              |
+| `rule`, `rule-<n>`                                                           | both axes                                                                  |
+| `rule-solid` / `rule-dashed` / `rule-dotted` / `rule-double`                 | style, both axes                                                           |
+| `rule-<color>`                                                               | color, both axes (default `currentColor`, like borders)                    |
+| `rule-break-none` / `rule-break-normal` / `rule-break-intersection`          | where segments break at gap intersections (both axes)                      |
+| `rule-inset-<n>`                                                             | retract every segment endpoint by `<n>` px (both axes, all endpoint kinds) |
+| `rule-visibility-all` / `rule-visibility-around` / `rule-visibility-between` | `rule-visibility-items`: which segments paint next to empty grid areas     |
 
-Widths quantize like borders (1px = 1 cell). Per-axis style/color
-variants, `rule-outset`, and `rule-break` are deferred until a need
-shows up.
+Widths and insets quantize like borders (1px = 1 cell). Per-axis
+style/color/break/inset variants are deferred until a need shows up.
 
 ## Custom-property contract
 
@@ -119,14 +121,47 @@ rule that reaches the content edge through zero padding tees into the
 container's own innermost border ring (`┬ ┴ ├ ┤`) — the shared
 junction-glyph machinery in both cases.
 
+### Segments (rule-break, rule-inset, rule-visibility-items)
+
+A grid gap band divides into STRIPS along its length: one per crossing
+track (the cells beside it), one per crossing gap. Coverage (probed in
+Chromium 151, the only engine shipping css-gaps):
+
+- A track strip is dropped when an item spans ACROSS the gap there
+  (the gap doesn't exist inside a spanning item), or when
+  `rule-visibility-items` drops it: `between` needs both adjacent cells
+  occupied, `around` at least one, `all` (and grid's `normal`) always
+  paints. (`normal` means `between` only in multicol, which monowind
+  doesn't have.)
+- A crossing-gap strip is covered per `rule-break`: `normal` (initial)
+  iff BOTH neighboring track strips are covered (probed: a rule stops
+  flush at a T intersection, e.g. against a spanning item);
+  `intersection` never (each cell strip is its own segment);
+  `none` iff at least one neighbor is covered (probed: the rule runs
+  through the crossing strip up to a spanning item's edge).
+- Consecutive covered strips merge into segments; `rule-inset` then
+  retracts each segment endpoint by its cell count (cap and junction
+  endpoints alike — the per-endpoint longhands are deviation 2). An
+  emptied segment disappears.
+
+Flex containers: `normal` behaves as `none` (continuous bands — no
+intersection breaks by default) and `rule-visibility-items` is scoped
+to grid/multicol, per css-gaps. Explicit `rule-break: intersection`
+breaks a wrapped container's row-gap bands at the union of the two
+adjacent lines' column gaps (probed in Chromium: a T from either side
+counts); the per-line column bands already end flush at their line.
+`rule-inset` retracts every band's endpoints.
+
 ## Deviations from css-gaps-1
 
 1. Rules take layout space: the used gap floors at the rule width (in
    CSS rules never affect layout — a rule wider than its gap overflows
    the items, one with no gap is invisible). Same principle as borders
    occupying whole cells: ink needs cells.
-2. `rule-outset`, `rule-break`, `rule-paint-order`, and repeat()/list
-   values are unsupported until needed — grid rules paint straight
-   through spanning items (css-gaps' default breaks around them).
+2. `rule-inset` is one uniform value: the per-axis and per-endpoint
+   longhands (`column-rule-inset-cap-start`, …), `overlap-join`,
+   percentages, and negative insets are unsupported until needed. Same
+   for per-axis `rule-break`/`rule-visibility-items` and repeat()/list
+   values.
 3. Everything in `cell-model.md` (quantization, glyph fallbacks)
    applies.

@@ -131,7 +131,8 @@ line-height (leading-*) → rows per wrapped line; letter-spacing (tracking-*)
 position: static | relative | absolute (+ fixed → host, sticky → relative)
 top/right/bottom/left, inset-*                 (per specs/positioning.md,
                                                 incl. inline relative shifts)
---mw-rule-* mirrors (gap-decoration rules; specs/gap-decorations.md)
+--mw-rule-* mirrors (gap-decoration rules incl. rule-break, rule-inset,
+  rule-visibility-items segments; specs/gap-decorations.md)
 text-align: start | end honored (plain text mirrors the browser); center |
   justify blocked back to start (off-grid)
 z-index (positioned + flex/grid items, per CSS) → browser stacking and
@@ -177,6 +178,14 @@ Scrolling (including proper `position: sticky`); parent–child margin
 collapsing; transforms (see architecture open questions); selects and
 textareas; Unicode display-width; bidi/vertical text; background patterns;
 broader Tailwind property coverage; virtualization.
+
+(Two hardenings shipped 2026-08-30: a queued layout frame no longer runs
+on a disconnected host — computed styles on a detached tree read as
+empty strings, misclassifying every element; this was the racy "direct
+text" warning in Storybook test runs (teardown outpacing the rAF). And a
+shared <head> watcher in element.ts relayouts hosts when a stylesheet
+lands after layout — vite dev injection, the CDN's async in-browser
+Tailwind compiles, HMR; still-loading <link>s get load listeners.)
 
 ### Never planned
 
@@ -384,9 +393,11 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
   (byte-stable across machines; JetBrains Mono self-hosted in
   `assets/fonts/` so glyph rendering is pinned). CI runs both suites
   (`.github/workflows/ci.yml`).
-- Example smoke tests: `apps/example-html` (CDN mode) and
-  `apps/example-tailwind` (native mode) each boot and assert layout +
-  Tailwind compilation.
+- Example smoke tests: every `apps/example-*` app (CDN, native
+  Tailwind, standalone Vite, React 19, Solid 2.0 RC) boots and asserts
+  layout + Tailwind compilation; the framework ones also assert the
+  state → mutation → relayout ownership loop. (Solid pins exact RC
+  versions — relax to ranges when 2.0 goes stable.)
 
 - **Unit**: style interpretation (mocked reader), intrinsic measurement inputs,
   block/flex math, integer rounding + remainder distribution, min/max, border

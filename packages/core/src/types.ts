@@ -204,6 +204,14 @@ export interface GapRule {
   color: string | undefined;
 }
 
+/** Where rule segments break at gap intersections (css-gaps-1
+ * rule-break; specs/gap-decorations.md "Segments"). */
+export type RuleBreak = "none" | "normal" | "intersection";
+
+/** Which segments paint next to empty grid areas (css-gaps-1
+ * rule-visibility-items; `normal` acts as `all` in grid). */
+export type RuleVisibilityItems = "normal" | "all" | "around" | "between";
+
 /** A collapsed table participant's authored border, moved out of
  * `CellStyle.border` at read time (`border-collapse` inherits, so every
  * internal element knows): geometry and painting then treat the element
@@ -360,6 +368,11 @@ export interface CellStyle {
    * rule width (deviation: rules take layout space — ink needs cells). */
   ruleX: GapRule | null;
   ruleY: GapRule | null;
+  ruleBreak: RuleBreak;
+  /** Cells retracted from every rule-segment endpoint (rule-inset,
+   * quantized like border widths). */
+  ruleInset: number;
+  ruleVisibilityItems: RuleVisibilityItems;
 }
 
 export interface LayoutNode {
@@ -551,6 +564,9 @@ export function defaultCellStyle(): CellStyle {
     latticeBorder: null,
     ruleX: null,
     ruleY: null,
+    ruleBreak: "normal",
+    ruleInset: 0,
+    ruleVisibilityItems: "normal",
   };
 }
 

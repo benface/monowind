@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import type { MonoWindElement } from "monowind";
 import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
@@ -360,13 +361,66 @@ export const Subgrid: StoryObj = {
 export const GapDecorations: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="grid grid-cols-3 gap-1 rule rule-cyan-400" data-test="rules">
-        <div class="px-1">one</div>
-        <div class="px-1">two</div>
-        <div class="px-1">three</div>
-        <div class="px-1">four</div>
-        <div class="px-1">five</div>
-        <div class="px-1">six</div>
+      <div class="flex flex-col gap-2">
+        <div class="grid grid-cols-3 gap-1 rule rule-cyan-400" data-test="rules">
+          <div class="px-1">one</div>
+          <div class="px-1">two</div>
+          <div class="px-1">three</div>
+          <div class="px-1">four</div>
+          <div class="px-1">five</div>
+          <div class="px-1">six</div>
+        </div>
+        <div
+          class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-cyan-400"
+          data-test="span-break"
+        >
+          <div class="px-1">rule</div>
+          <div class="px-1">break</div>
+          <div class="col-span-2 px-1">normal (default)</div>
+        </div>
+        <div
+          class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-cyan-400 rule-break-intersection"
+          data-test="span-break"
+        >
+          <div class="px-1">rule</div>
+          <div class="px-1">break</div>
+          <div class="col-span-2 px-1">intersection</div>
+        </div>
+        <div
+          class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-cyan-400 rule-break-none"
+          data-test="span-break"
+        >
+          <div class="px-1">rule</div>
+          <div class="px-1">break</div>
+          <div class="col-span-2 px-1">none</div>
+        </div>
+        <div class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-fuchsia-400 rule-inset-1">
+          <div class="px-1">rule</div>
+          <div class="px-1">inset</div>
+          <div class="px-1">1</div>
+        </div>
+        <div class="grid w-max auto-rows-1 grid-cols-[auto_auto] gap-1 rule rule-emerald-500">
+          <div class="px-1">rule</div>
+          <div class="px-1">visibility</div>
+          <div class="px-1">all</div>
+          <div class="row-start-3 px-1">(empty -&gt;)</div>
+        </div>
+        <div
+          class="grid w-max auto-rows-1 grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-visibility-around"
+        >
+          <div class="px-1">rule</div>
+          <div class="px-1">visibility</div>
+          <div class="px-1">around</div>
+          <div class="row-start-3 px-1">(empty -&gt;)</div>
+        </div>
+        <div
+          class="grid w-max auto-rows-1 grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-visibility-between"
+        >
+          <div class="px-1">rule</div>
+          <div class="px-1">visibility</div>
+          <div class="px-1">between</div>
+          <div class="row-start-3 px-1">(empty -&gt;)</div>
+        </div>
       </div>
     </mono-wind>
   `,
@@ -391,5 +445,32 @@ export const GapDecorations: StoryObj = {
       (span) => getComputedStyle(span).color === expected,
     );
     expect(colored).toBe(true);
+    // Segment features (specs/gap-decorations.md "Segments"), probed
+    // against Chromium's native css-gaps rendering.
+    const lines = (host as MonoWindElement).toPlainText().split("\n");
+    const lineWith = (text: string) => lines.findIndex((line) => line.includes(text));
+    // Each card's gap row (above its third item) shows its break mode:
+    // normal stops the vertical flush at the spanning item's T (┴);
+    // intersection leaves a hole in the row rule at the crossing;
+    // none runs the vertical through the crossing (┼).
+    expect(lines[lineWith("normal (default)") - 1]).toContain("┴");
+    expect(lines[lineWith("intersection") - 1]).toMatch(/─+ ─+/);
+    expect(lines[lineWith("none") - 1]).toContain("┼");
+    // Inset retracts both rules off the item rows into the gap row,
+    // where they still cross.
+    expect(lines[lineWith("inset")]).not.toContain("│");
+    expect(lines[lineWith("inset") + 1]).toContain("┼");
+    // Visibility (each card's rows 2-3 leave column 2 empty; the arrow
+    // item points at the empty cell): the default (= `all`) paints the
+    // full lattice, ┼ included, even between two empty cells; `around`
+    // needs one occupied side, so its row rule stops at the vertical
+    // (no ┼); `between` needs both sides, dropping the vertical below
+    // row 1 entirely.
+    expect(lines[lineWith("all") + 1]).toContain("┼");
+    expect(lines[lineWith("around") + 1]).toContain("│");
+    expect(lines[lineWith("around") + 1]).not.toContain("┼");
+    expect(lines[lineWith("between")]).not.toContain("│");
+    expect(lines[lineWith("between") + 1]).not.toContain("│");
+    expect(lines[lineWith("between") + 1]).toContain("─");
   },
 };

@@ -1,6 +1,6 @@
 import { percentToCells } from "./metrics.ts";
-import { collectGapRuleRuns } from "./borders.ts";
-import type { RuleSegment } from "./borders.ts";
+import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
+import type { GapStrip, RuleSegment } from "./borders.ts";
 import {
   clampSize,
   intrinsicOuterWidth,
@@ -14,6 +14,64 @@ import {
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
 import type { CellStyle, Insets, LayoutNode, NullableInsets } from "./types.ts";
+
+interface FlexLine {
+  row: { node: LayoutNode }[];
+}
+
+/** Column-gap x-ranges of one line: the space between adjacent item
+ * rects in visual order (whatever gap, justify, and margins produced). */
+function lineGapRanges(line: FlexLine, originX: number): { start: number; end: number }[] {
+  const rects = line.row.map((item) => item.node.localRect).sort((a, b) => a.x - b.x);
+  const ranges: { start: number; end: number }[] = [];
+  for (let i = 1; i < rects.length; i++) {
+    const start = rects[i - 1]!.x + rects[i - 1]!.width - originX;
+    const end = rects[i]!.x - originX;
+    if (end > start) ranges.push({ start, end });
+  }
+  return ranges;
+}
+
+/** Segments of the row-gap band above line `r`: under `rule-break:
+ * intersection` the band breaks at the union of the two adjacent lines'
+ * column gaps (probed in Chromium — a T from either side counts);
+ * otherwise one full-width segment. */
+function rowBandSegments(
+  node: LayoutNode,
+  lines: FlexLine[],
+  r: number,
+  originX: number,
+  innerWidth: number,
+): { start: number; end: number }[] {
+  if (node.style.ruleBreak !== "intersection") return [{ start: 0, end: innerWidth }];
+  const crossings = [lines[r - 1]!, lines[r]!]
+    .flatMap((line) => lineGapRanges(line, originX))
+    .sort((a, b) => a.start - b.start);
+  // Item strips (the complement of the merged crossings) feed the shared
+  // segmenter; every strip is plain occupied track.
+  const occupiedStrip = (start: number, end: number): GapStrip => ({
+    start,
+    end,
+    spanned: false,
+    beforeOccupied: true,
+    afterOccupied: true,
+  });
+  const strips: GapStrip[] = [];
+  let cursor = 0;
+  for (const crossing of crossings) {
+    if (crossing.start > cursor) strips.push(occupiedStrip(cursor, crossing.start));
+    cursor = Math.max(cursor, crossing.end);
+  }
+  if (cursor < innerWidth) strips.push(occupiedStrip(cursor, innerWidth));
+  return ruleBandSegments(strips, "intersection", "all", 0);
+}
+
+function insetSegments(segments: RuleSegment[], inset: number): RuleSegment[] {
+  if (inset <= 0) return segments;
+  return segments
+    .map((segment) => ({ ...segment, start: segment.start + inset, end: segment.end - inset }))
+    .filter((segment) => segment.end > segment.start);
+}
 
 /**
  * Flexbox (specs/flex.md): row and column algorithms, CSS §9.7 flexible
@@ -245,29 +303,36 @@ export function layoutFlexRow(
     const horizontal: RuleSegment[] = [];
     for (let r = 0; r < lines.length; r++) {
       const top = lineOffsets[r]! + r * gapY;
-      const rects = lines[r]!.row.map((item) => item.node.localRect).sort((a, b) => a.x - b.x);
-      for (let i = 1; i < rects.length; i++) {
-        const bandStart = rects[i - 1]!.x + rects[i - 1]!.width - originX;
-        const bandSize = rects[i]!.x - originX - bandStart;
-        if (bandSize > 0)
-          vertical.push({ bandStart, bandSize, start: top, end: top + rowHeights[r]! });
+      for (const gap of lineGapRanges(lines[r]!, originX)) {
+        vertical.push({
+          bandStart: gap.start,
+          bandSize: gap.end - gap.start,
+          start: top,
+          end: top + rowHeights[r]!,
+        });
       }
       if (r > 0) {
         const prevBottom = lineOffsets[r - 1]! + (r - 1) * gapY + rowHeights[r - 1]!;
-        if (top > prevBottom)
-          horizontal.push({
-            bandStart: prevBottom,
-            bandSize: top - prevBottom,
-            start: 0,
-            end: innerWidth,
-          });
+        if (top > prevBottom) {
+          for (const segment of rowBandSegments(node, lines, r, originX, innerWidth)) {
+            horizontal.push({
+              bandStart: prevBottom,
+              bandSize: top - prevBottom,
+              start: segment.start,
+              end: segment.end,
+            });
+          }
+        }
       }
     }
+    // `normal` behaves as `none` in flex and visibility-items is
+    // grid/multicol-only (css-gaps), so beyond intersection breaks the
+    // bands only honor rule-inset (specs/gap-decorations.md "Segments").
     node.decorationRuns = collectGapRuleRuns({
       ruleX: node.style.ruleX,
       ruleY: node.style.ruleY,
-      vertical,
-      horizontal,
+      vertical: insetSegments(vertical, node.style.ruleInset),
+      horizontal: insetSegments(horizontal, node.style.ruleInset),
       contentWidth: innerWidth,
       contentHeight,
       border,
@@ -468,7 +533,7 @@ export function layoutFlexColumn(
   const contentHeight = finiteInner ? Math.max(innerHeight, totalOccupied) : totalOccupied;
 
   // Gap rules: horizontal bands between stacked items, full content
-  // width (the single column's cross extent).
+  // width (the single column's cross extent), retracted by rule-inset.
   if (node.style.ruleY && items.length > 1) {
     const horizontal: RuleSegment[] = [];
     const rects = items
@@ -484,7 +549,7 @@ export function layoutFlexColumn(
       ruleX: null,
       ruleY: node.style.ruleY,
       vertical: [],
-      horizontal,
+      horizontal: insetSegments(horizontal, node.style.ruleInset),
       contentWidth: innerWidth,
       contentHeight,
       border,

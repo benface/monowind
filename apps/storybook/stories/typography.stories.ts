@@ -101,7 +101,7 @@ export const Preformatted: StoryObj = {
 export const InlineElements: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-40 border border-neutral-500 px-2 py-1" data-test="run">
+      <div class="max-w-40 border border-neutral-500 px-2 py-1">
         Inline elements like <b class="text-yellow-400">bold text</b>,
         <i class="text-cyan-400">italic text</i>, and
         <a href="#" class="text-blue-400 underline">links (click me)</a> ride along in the text run.

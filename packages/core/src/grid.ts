@@ -1,4 +1,5 @@
-import { collectGapRuleRuns } from "./borders.ts";
+import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
+import type { GapStrip } from "./borders.ts";
 import type { RuleSegment } from "./borders.ts";
 import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack } from "./types.ts";
@@ -242,34 +243,88 @@ export function layoutGrid(
 
   // Gap rules (specs/gap-decorations.md): gutter bands between adjacent
   // tracks (collapsed auto-fit gutters have no width and drop out),
-  // spanning the grid's extent in the other axis. Rules paint through
-  // spanning items — `rule-break` is unsupported (spec deviation).
+  // segmented per placement occupancy, rule-break, rule-visibility-items,
+  // and rule-inset (see the spec's "Segments" section).
   if (style.ruleX || style.ruleY) {
-    const gridBands = (positions: number[], sizes: number[]): RuleSegment[] => {
+    const colCount = colSizing.sizes.length;
+    const rowCount = rowSizing.sizes.length;
+    // occupied[c][r]: a cell holds (part of) an item. crossesCol[g][r]:
+    // an item spans across column-gap g (between columns g and g+1)
+    // at row r — the gap doesn't exist there; crossesRow likewise.
+    const occupied = Array.from({ length: colCount }, () =>
+      Array.from({ length: rowCount }, () => false),
+    );
+    const crossesCol = Array.from({ length: Math.max(0, colCount - 1) }, () =>
+      Array.from({ length: rowCount }, () => false),
+    );
+    const crossesRow = Array.from({ length: Math.max(0, rowCount - 1) }, () =>
+      Array.from({ length: colCount }, () => false),
+    );
+    for (const p of placed.items) {
+      for (let c = p.col.start; c < p.col.start + p.col.span && c < colCount; c++) {
+        for (let r = p.row.start; r < p.row.start + p.row.span && r < rowCount; r++) {
+          occupied[c]![r] = true;
+          if (c + 1 < p.col.start + p.col.span && c < colCount - 1) crossesCol[c]![r] = true;
+          if (r + 1 < p.row.start + p.row.span && r < rowCount - 1) crossesRow[r]![c] = true;
+        }
+      }
+    }
+    const strips = (
+      gap: number,
+      positions: number[],
+      sizes: number[],
+      crosses: boolean[][],
+      before: (t: number) => boolean,
+      after: (t: number) => boolean,
+    ): GapStrip[] =>
+      positions.map((position, t) => ({
+        start: position,
+        end: position + sizes[t]!,
+        spanned: crosses[gap]?.[t] ?? false,
+        beforeOccupied: before(t),
+        afterOccupied: after(t),
+      }));
+    const bandSegments = (
+      positions: number[],
+      sizes: number[],
+      stripsFor: (gap: number) => GapStrip[],
+    ): RuleSegment[] => {
       const bands: RuleSegment[] = [];
       for (let i = 1; i < positions.length; i++) {
         const bandStart = positions[i - 1]! + sizes[i - 1]!;
         const bandSize = positions[i]! - bandStart;
-        if (bandSize > 0) bands.push({ bandStart, bandSize, start: 0, end: 0 });
+        if (bandSize <= 0) continue;
+        for (const segment of ruleBandSegments(
+          stripsFor(i - 1),
+          style.ruleBreak,
+          style.ruleVisibilityItems,
+          style.ruleInset,
+        )) {
+          bands.push({ bandStart, bandSize, start: segment.start, end: segment.end });
+        }
       }
       return bands;
     };
-    const extent = (positions: number[], sizes: number[]): [number, number] =>
-      positions.length === 0
-        ? [0, 0]
-        : [positions[0]!, positions[positions.length - 1]! + sizes[sizes.length - 1]!];
-    const [rowStart, rowEnd] = extent(rowPos, rowSizing.sizes);
-    const [colStart, colEnd] = extent(colPos, colSizing.sizes);
-    const vertical = gridBands(colPos, colSizing.sizes).map((band) => ({
-      ...band,
-      start: rowStart,
-      end: rowEnd,
-    }));
-    const horizontal = gridBands(rowPos, rowSizing.sizes).map((band) => ({
-      ...band,
-      start: colStart,
-      end: colEnd,
-    }));
+    const vertical = bandSegments(colPos, colSizing.sizes, (gap) =>
+      strips(
+        gap,
+        rowPos,
+        rowSizing.sizes,
+        crossesCol,
+        (r) => occupied[gap]?.[r] ?? false,
+        (r) => occupied[gap + 1]?.[r] ?? false,
+      ),
+    );
+    const horizontal = bandSegments(rowPos, rowSizing.sizes, (gap) =>
+      strips(
+        gap,
+        colPos,
+        colSizing.sizes,
+        crossesRow,
+        (c) => occupied[c]?.[gap] ?? false,
+        (c) => occupied[c]?.[gap + 1] ?? false,
+      ),
+    );
     node.decorationRuns = collectGapRuleRuns({
       ruleX: style.ruleX,
       ruleY: style.ruleY,

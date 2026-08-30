@@ -10,6 +10,8 @@ export default defineConfig({
   ],
   test: {
     name: "storybook",
+    // Runs in the browser page; silences known console noise (see file).
+    setupFiles: [path.join(import.meta.dirname, ".storybook/vitest.setup.ts")],
     // Generous: three browsers share a loaded CI runner's CPU, and slow
     // tails have crossed 30s.
     testTimeout: 60_000,

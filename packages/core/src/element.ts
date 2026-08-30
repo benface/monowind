@@ -42,6 +42,52 @@ const HTMLElementBase = (
 export class MonoWindElement extends HTMLElementBase {
   static observedAttributes = ["plain-text"];
 
+  // Stylesheets can apply after a host's first layout (vite dev
+  // injection, the CDN's in-browser Tailwind compile, HMR) — a pure
+  // <head> mutation no per-host observer sees, which would otherwise
+  // leave UA-styled geometry until an unrelated trigger. One shared
+  // watcher relayouts every connected host on any head change (rare, and
+  // relayout coalesces per frame); a still-loading <link> applies its CSS
+  // at load time, so those get a one-shot listener too.
+  static #headHosts = new Set<MonoWindElement>();
+  static #headWatcher: MutationObserver | null = null;
+
+  static #onHeadStylesChanged = (): void => {
+    for (const host of MonoWindElement.#headHosts) host.#scheduleLayout();
+  };
+
+  static #watchLoadingLink(node: Node): void {
+    if (node instanceof HTMLLinkElement && node.rel === "stylesheet" && !node.sheet) {
+      node.addEventListener("load", MonoWindElement.#onHeadStylesChanged, { once: true });
+    }
+  }
+
+  static #watchHead(host: MonoWindElement): void {
+    MonoWindElement.#headHosts.add(host);
+    if (MonoWindElement.#headWatcher) return;
+    // Stylesheets already in flight when the first host connects apply
+    // without any head mutation — catch their loads too.
+    for (const link of document.querySelectorAll("link[rel=stylesheet]")) {
+      MonoWindElement.#watchLoadingLink(link);
+    }
+    const watcher = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) MonoWindElement.#watchLoadingLink(node);
+      }
+      MonoWindElement.#onHeadStylesChanged();
+    });
+    watcher.observe(document.head, { childList: true, subtree: true, characterData: true });
+    MonoWindElement.#headWatcher = watcher;
+  }
+
+  static #unwatchHead(host: MonoWindElement): void {
+    MonoWindElement.#headHosts.delete(host);
+    if (MonoWindElement.#headHosts.size === 0) {
+      MonoWindElement.#headWatcher?.disconnect();
+      MonoWindElement.#headWatcher = null;
+    }
+  }
+
   #shadow: ShadowRoot;
   #decorations: HTMLElement;
   #plainText: HTMLElement;
@@ -110,6 +156,7 @@ export class MonoWindElement extends HTMLElementBase {
     });
     document.fonts?.addEventListener("loadingdone", this.#onFontsLoaded);
 
+    MonoWindElement.#watchHead(this);
     this.#scheduleLayout();
   }
 
@@ -119,6 +166,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#resizeObserver = null;
     this.#mutationObserver = null;
     document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
+    MonoWindElement.#unwatchHead(this);
   }
 
   attributeChangedCallback(): void {
@@ -193,6 +241,11 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #performLayout(): void {
+    // A queued frame can outlive the host's removal (story/app teardown,
+    // SPA navigation): computed styles on a detached tree read as empty
+    // strings, which would misclassify every element and misfire author
+    // warnings. Reconnection schedules a fresh layout.
+    if (!this.isConnected) return;
     // The write phase is bracketed by the `measuring` attribute (gates the
     // companion stylesheet so reads see authored values). Everything the
     // engine writes to the light DOM — geometry vars, data-mw-* attributes

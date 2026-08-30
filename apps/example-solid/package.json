@@ -1,0 +1,24 @@
+{
+  "name": "@monowind/example-solid",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node smoke.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/web": "2.0.0-rc.4",
+    "solid-js": "2.0.0-rc.4"
+  },
+  "devDependencies": {
+    "@monowind/vite": "workspace:*",
+    "@solidjs/vite-plugin": "3.0.0-next.36",
+    "playwright": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
