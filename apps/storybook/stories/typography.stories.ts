@@ -1,7 +1,11 @@
 import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
+import {
+  expectBrowserLineBreaksToMatchEngine,
+  expectBrowserRowsToMatchEngine,
+  isFirefox,
+} from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Typography",
@@ -17,7 +21,43 @@ export const Wrapping: StoryObj = {
       </div>
     </mono-wind>
   `,
-  play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
+  play: async ({ canvasElement }) => {
+    await expectBrowserRowsToMatchEngine(canvasElement);
+    await expectBrowserLineBreaksToMatchEngine(canvasElement);
+  },
+};
+
+// Hyphen-run break torture cases (specs/cell-model.md): a word-initial
+// run glues to what follows (UAX #14 LB20a), every other run breaks
+// after — digits included. Each box is exactly wide enough to force the
+// wrap whose break position the play asserts per character. Test-only:
+// in Firefox (breaks BEFORE hyphens, documented divergence) the
+// hyphenated leaves are skipped and may visually overflow their boxes.
+export const HyphenBreaks: StoryObj = {
+  tags: ["!dev"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-wrap items-start gap-2">
+        <div class="w-5">-top-1</div>
+        <div class="w-6">2026-08</div>
+        <div class="w-6">mx-auto</div>
+        <div class="w-6">well--known</div>
+        <div class="w-4">a-1b-2</div>
+        <div class="w-3">x--y</div>
+        <div class="w-4">-5 plus</div>
+        <div class="w-4">e-mail</div>
+        <div class="w-2">${"a\u00a0b"}</div>
+        <div class="w-min">-top-1</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await expectBrowserLineBreaksToMatchEngine(canvasElement);
+    // Line counts too (min-content drift shows up as box height, not
+    // break position) — except Firefox, where its earlier hyphen breaks
+    // can produce a different count ("well--known" needs 3 lines).
+    if (!isFirefox) await expectBrowserRowsToMatchEngine(canvasElement);
+  },
 };
 
 export const Truncating: StoryObj = {
@@ -42,7 +82,7 @@ export const HardBreaks: StoryObj = {
 
 // Interpolated so no formatter ever reflows the whitespace-sensitive
 // content (tabs and newlines included).
-const asciiArt =
+const indentedMarkup =
   "<mono-wind>\n  spaces   survive\n    and so does\n      indentation\n</mono-wind>";
 const tabbedColumns = "name\tqty\nfoobar\t1\nbuzz\t12\ntabs land on tab stops";
 
@@ -50,7 +90,7 @@ export const Preformatted: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-col gap-1">
-        <pre class="border border-neutral-500 px-2 py-1">${asciiArt}</pre>
+        <pre class="border border-neutral-500 px-2 py-1">${indentedMarkup}</pre>
         <div class="border border-emerald-400 px-2 py-1 whitespace-pre">${tabbedColumns}</div>
       </div>
     </mono-wind>

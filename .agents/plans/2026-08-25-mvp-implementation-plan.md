@@ -132,13 +132,17 @@ position: static | relative | absolute (+ fixed → host, sticky → relative)
 top/right/bottom/left, inset-*                 (per specs/positioning.md,
                                                 incl. inline relative shifts)
 --mw-rule-* mirrors (gap-decoration rules; specs/gap-decorations.md)
-text-align: start | end honored (ASCII mirrors the browser); center |
+text-align: start | end honored (plain text mirrors the browser); center |
   justify blocked back to start (off-grid)
 z-index (positioned + flex/grid items, per CSS) → browser stacking and
-  decoration/ASCII paint order
+  decoration/plain-text paint order
 table-layout, border-collapse (lattice) | separate + border-spacing,
   caption-side, vertical-align on cells (align-* scan + valign/align
   attributes), colspan/rowspan/span attributes  (specs/table.md)
+plain-text mode: `<mono-wind plain-text>` swaps the layered render for a
+  selectable colored `<pre>` mirror (copy yields the pure text);
+  `host.toPlainText()` exports the uncolored text; Storybook toolbar
+  toggles the mode globally (plain text is the default there)
 
 # Specified but NOT implemented yet (their milestones):
 aspect-ratio                                   (needs cell-metric ratio; spec TBD)
@@ -198,7 +202,7 @@ packages/core/
 │   ├── borders.ts            # border-run collection + glyph sets (pure, shared)
 │   ├── warn.ts               # one-time developer warnings (silent deviations)
 │   ├── render.ts             # writes geometry vars, paints border decorations (DOM)
-│   ├── ascii.ts              # renders a laid-out tree as ASCII art (goldens + debug/AX)
+│   ├── plain-text.ts         # renders a laid-out tree as plain text (goldens + debug/AX + plain-text mode)
 │   ├── cdn.ts                # CDN entry: engine + companion CSS + @tailwindcss/browser
 │   └── index.ts              # public exports
 └── test/                     # vitest unit + golden + integration tests
@@ -366,7 +370,7 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
 **Status (2026-08-26): all four layers below are implemented.**
 
 - Unit + golden: `packages/core/test/` (Vitest, headless) — layout math,
-  rounding, wrap, and `renderAscii` golden outputs (the ASCII renderer is
+  rounding, wrap, and `renderPlainText` golden outputs (the plain-text renderer is
   also exported as a debugging/agent tool).
 - Story tests: every story in `apps/storybook` runs as a Vitest
   browser-mode test via `@storybook/addon-vitest` (part of `pnpm check`),

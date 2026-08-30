@@ -158,7 +158,7 @@ function positionElement(node: LayoutNode): void {
 function paintDecorations(layer: HTMLElement, runs: BorderRun[]): void {
   layer.replaceChildren();
   // Later runs win per cell (junction tees over border edges, lattice
-  // crossings) — the same overwrite semantics as renderAscii's grid;
+  // crossings) — the same overwrite semantics as renderPlainText's grid;
   // overlapping glyph spans would BOTH paint (visible under mismatched
   // ink, e.g. `╦` over `═`).
   const cells = new Map<string, { x: number; y: number; glyph: string; color?: string }>();

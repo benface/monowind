@@ -195,7 +195,9 @@ export const Alignment: StoryObj = {
           <div class="border border-cyan-400 px-1">in</div>
           <div class="justify-self-end border border-yellow-400 px-1">justify-self-end</div>
         </div>
-        <div class="grid h-8 grid-cols-2 content-between gap-x-1 border border-neutral-500 px-1">
+        <div
+          class="grid min-h-10 grid-cols-2 content-between justify-items-center gap-x-1 border border-neutral-500 px-1"
+        >
           <div class="border border-emerald-400 px-1">content</div>
           <div class="border border-emerald-400 px-1">between</div>
           <div class="border border-emerald-400 px-1">spreads</div>

@@ -100,17 +100,16 @@ elements and flex/grid items; inert on static block-flow children (the
 engine gates the browser side through `--mw-z`, since absolutization
 would otherwise activate it everywhere). The renderers walk children in
 the same order (stable effective-z sort, document-order ties) so
-decoration glyphs and `renderAscii` agree with the browser at
+decoration glyphs and `renderPlainText` agree with the browser at
 overlaps — a simplified model: no stacking contexts, and a negative
 `z-*` still paints over its parent's own glyphs. Relative/absolute
 elements may overlap anything; `overflow` clipping applies natively.
 
-## ASCII renderer
+## Plain-text renderer
 
-`renderAscii` applies relative offsets and absolute placement (they're
-plain rect math). **Deviation**: inline relative shifts are not
-represented (the leaf text model doesn't track which glyphs belong to
-which inline element); visual tests cover them.
+`renderPlainText` applies relative offsets and absolute placement
+(plain rect math), and inline relative shifts too: the run records each
+character's inline element, so its whole-cell insets move the glyphs.
 
 ## Deviations from CSS (summary)
 
@@ -120,5 +119,4 @@ which inline element); visual tests cover them.
 4. An out-of-flow element extracted from a text run takes its leaf's
    content-box origin as its static position, not CSS's hypothetical
    inline position.
-5. Inline relative shifts don't appear in `renderAscii` output.
-6. All cell-model deviations (integer rounding, etc.) apply.
+5. All cell-model deviations (integer rounding, etc.) apply.

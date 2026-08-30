@@ -1,2 +1,3 @@
 export { MonoWindElement, defineMonoWind } from "./element.ts";
-export { renderAscii } from "./ascii.ts";
+export { renderPlainText } from "./plain-text.ts";
+export { wrapLines } from "./wrap.ts";

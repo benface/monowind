@@ -1,5 +1,5 @@
 import { addons } from "storybook/preview-api";
-import { UPDATE_GLOBALS } from "storybook/internal/core-events";
+import { GLOBALS_UPDATED, STORY_RENDERED, UPDATE_GLOBALS } from "storybook/internal/core-events";
 import type { Preview } from "@storybook/web-components-vite";
 import { defineMonoWind } from "monowind";
 import "./styles.css";
@@ -45,9 +45,57 @@ addons.getChannel().on(UPDATE_GLOBALS, ({ globals }: { globals: Record<string, u
   const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
   if (value !== undefined) applyTheme(value);
 });
+// Boot: nothing emits an event for the initial value (the addon only
+// paints the canvas), so dark-system users otherwise start half-themed.
+applyTheme(systemTheme);
+
+// The plain-text toggle, via the channel like the theme (a decorator
+// would also need a hook for re-applying after story navigation).
+// Starts true to match initialGlobals (the boot value emits no event).
+let plainTextOn = true;
+function applyPlainText(): void {
+  for (const host of document.querySelectorAll("mono-wind")) {
+    if (plainTextOn) host.setAttribute("plain-text", "");
+    else host.removeAttribute("plain-text");
+  }
+}
+// GLOBALS_UPDATED also covers values restored from the URL/session at
+// load, which UPDATE_GLOBALS (user edits only) never sees.
+addons.getChannel().on(GLOBALS_UPDATED, ({ globals }: { globals: Record<string, unknown> }) => {
+  const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
+  if (value !== undefined) applyTheme(value);
+  if (globals.plainText !== undefined) {
+    plainTextOn = globals.plainText === "plain-text";
+    applyPlainText();
+  }
+});
+addons.getChannel().on(STORY_RENDERED, () => {
+  // The event can precede the new canvas's paint; apply a frame later.
+  requestAnimationFrame(applyPlainText);
+});
 
 const preview: Preview = {
+  globalTypes: {
+    plainText: {
+      description: "Render every <mono-wind> as selectable plain text",
+      toolbar: {
+        title: "Plain text",
+        icon: "paragraph",
+        items: [
+          { value: "layered", title: "Layered rendering" },
+          { value: "plain-text", title: "Plain text (copyable)" },
+        ],
+        dynamicTitle: true,
+      },
+    },
+  },
   parameters: {
+    // Read-only story source (our lit templates are the plain markup) in
+    // an addon panel beside the canvas. Controls/Actions panels are
+    // hidden: no story uses args.
+    docs: { codePanel: true },
+    controls: { disable: true },
+    actions: { disable: true },
     layout: "padded",
     backgrounds: {
       options: Object.fromEntries(
@@ -57,15 +105,8 @@ const preview: Preview = {
   },
   initialGlobals: {
     backgrounds: { value: systemTheme },
+    plainText: "plain-text",
   },
-  decorators: [
-    // Initial render (and restored globals): the event above hasn't fired,
-    // so sync the theme from the story context here.
-    (story, context) => {
-      applyTheme(context.globals.backgrounds?.value ?? systemTheme);
-      return story();
-    },
-  ],
 };
 
 export default preview;

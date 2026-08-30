@@ -5,9 +5,11 @@
  * character occupies — 1 by default, `1 + tracking` for letter-spaced text;
  * see specs/cell-model.md). Words are runs of non-whitespace; whitespace
  * runs collapse to single spaces between fitting words. Browsers also treat
- * a hyphen inside a word as a break opportunity (break after `-`, no hyphen
- * added) — except before a digit, per UAX #14 (`2026-08` doesn't break) —
- * so words are further split into breakable segments. A segment wider than
+ * a hyphen inside a word as a break opportunity (break after `-`, no
+ * hyphen added) — except a word-INITIAL hyphen run (UAX #14 LB20a;
+ * `-top-1` wraps `-top-` │ `1`, probed in Chromium/WebKit; Firefox's
+ * own model differs and is a documented divergence) — so words are
+ * further split into breakable segments. A segment wider than
  * `width` breaks at cell boundaries. `\n` in the input is a HARD line break
  * — the wrap restarts on a new line (the source of these is `<br>`
  * elements, converted to `\n` by the tree builder). A blank hard line still
@@ -111,9 +113,8 @@ export function longestSegmentAdvance(text: string, options: WrapOptions = {}): 
 
 /**
  * Split a word at its internal break opportunities: after each hyphen run,
- * unless the next character is a digit (UAX #14: no break between a hyphen
- * and a following number). `"mx-auto"` → `["mx-", "auto"]`;
- * `"2026-08"` → `["2026-08"]`.
+ * except a word-initial run (UAX #14 LB20a). `"mx-auto"` →
+ * `["mx-", "auto"]`; `"-top-1"` → `["-top-", "1"]`.
  */
 export function breakableSegments(word: string): string[] {
   return breakableSegmentRanges(word, 0, word.length).map((r) => word.slice(r.start, r.end));
@@ -159,9 +160,11 @@ function breakableSegmentRanges(text: string, start: number, end: number): LineS
       continue;
     }
     if (text[i] !== "-") continue;
+    // Word-initial runs aren't break opportunities (see file header).
+    const wordInitial = i === start;
     while (i + 1 < end && text[i + 1] === "-") i++;
     const next = i + 1;
-    if (next < end && !/[0-9]/.test(text[next]!)) {
+    if (!wordInitial && next < end) {
       segments.push({ start: segmentStart, end: next });
       segmentStart = next;
     }

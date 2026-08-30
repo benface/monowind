@@ -329,7 +329,7 @@ export const FixedLayout: StoryObj = {
             </tr>
           </tbody>
         </table>
-        <table class="w-64 table-fixed" data-test="table">
+        <table class="w-64 max-w-full table-fixed" data-test="table">
           <tbody>
             <tr>
               <td class="border px-1">this cell has much longer content than its sibling</td>

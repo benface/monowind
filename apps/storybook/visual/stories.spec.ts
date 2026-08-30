@@ -23,7 +23,9 @@ const stories = Object.values(index.entries).filter(
 
 for (const story of stories) {
   test(story.id, async ({ page }) => {
-    await page.goto(`/iframe.html?id=${story.id}&viewMode=story`);
+    // Pin the layered render: plain text is the toolbar default, but the
+    // goldens guard the decoration/geometry pipeline browsers actually paint.
+    await page.goto(`/iframe.html?id=${story.id}&viewMode=story&globals=plainText:layered`);
     // Wait for every <mono-wind> to finish its first layout, then for fonts
     // (a late font load triggers a relayout), then one more settle frame.
     await page.waitForFunction(() => {

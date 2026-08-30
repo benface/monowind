@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderAscii } from "../src/ascii.ts";
+import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD } from "../src/wrap.ts";
@@ -242,7 +242,7 @@ describe("atomic inline box vertical-align", () => {
   it("drops the line's text to a bottom-aligned box's last row", () => {
     const node = buildTree(el(`<div>lo ${box("bottom")} fi</div>`), 16)!;
     layoutRoot(node, 20);
-    expect(renderAscii(node)).toBe(["", "", "lo   fi"].join("\n"));
+    expect(renderPlainText(node)).toBe(["", "", "lo   fi"].join("\n"));
   });
 
   it("keeps text on the first row for top (and off-grid values); middle warns once", () => {
@@ -251,7 +251,7 @@ describe("atomic inline box vertical-align", () => {
       for (const align of ["top", "middle", "baseline"]) {
         const node = buildTree(el(`<div>lo ${box(align)} fi</div>`), 16)!;
         layoutRoot(node, 20);
-        expect(renderAscii(node), align).toBe(["lo   fi", "", ""].join("\n"));
+        expect(renderPlainText(node), align).toBe(["lo   fi", "", ""].join("\n"));
       }
       expect(warn).toHaveBeenCalledOnce();
     } finally {
@@ -267,7 +267,7 @@ describe("text-align end", () => {
       16,
     )!;
     layoutRoot(node, 10);
-    expect(renderAscii(node)).toBe(["  hi there", "     world"].join("\n"));
+    expect(renderPlainText(node)).toBe(["  hi there", "     world"].join("\n"));
   });
 
   it("keeps overflowing nowrap lines at start", () => {
@@ -278,6 +278,6 @@ describe("text-align end", () => {
       16,
     )!;
     layoutRoot(node, 10);
-    expect(renderAscii(node)).toBe("too long");
+    expect(renderPlainText(node)).toBe("too long");
   });
 });

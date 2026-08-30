@@ -181,7 +181,7 @@ export function layoutNode(
       // bare text centers/ends it by folding the leftover into the
       // engine-owned padding. The browser's own (fractional, off-grid)
       // anonymous-item alignment is reset in styles.css; padding places
-      // the text instead, so browser, ASCII, and decorations agree.
+      // the text instead, so browser, plain text, and decorations agree.
       // Symmetry of the wrap is preserved: the padded content box is
       // exactly the widest line, and greedy wrap breaks identically there
       // (every line fits, and every overflow still overflows).

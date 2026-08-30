@@ -5,7 +5,7 @@ import { buildTree } from "../src/tree.ts";
 
 /** DOM renderer (happy-dom): decoration cells are deduped — later runs
  * (junction tees) replace earlier glyphs (border edges) instead of
- * stacking spans in one cell, matching renderAscii's overwrite. */
+ * stacking spans in one cell, matching renderPlainText's overwrite. */
 it("paints one span per cell, junctions replacing border glyphs", () => {
   const host = document.createElement("div");
   host.innerHTML = `<div style="display: flex; width: 28px; border: 1px solid; --mw-rule-x-width: 1px"><div>aa</div><div>bb</div></div>`;

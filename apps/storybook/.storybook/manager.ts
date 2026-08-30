@@ -12,4 +12,7 @@ const base = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches
 
 addons.setConfig({
   theme: { ...base, brandTitle: "monowind" },
+  // Tab order in the addons panel isn't configurable (registration
+  // order), but the default-selected tab is: land on Code.
+  selectedPanel: "storybook/docs/panel",
 });

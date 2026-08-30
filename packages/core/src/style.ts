@@ -212,6 +212,9 @@ export function readCellStyle(
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     color: cs.color,
+    fontWeight: cs.fontWeight,
+    fontStyle: cs.fontStyle,
+    textDecorationLine: cs.textDecorationLine,
     backgroundColor: cs.backgroundColor === "rgba(0, 0, 0, 0)" ? undefined : cs.backgroundColor,
     borderColor: {
       top: cs.borderTopColor,

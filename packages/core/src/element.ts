@@ -1,3 +1,4 @@
+import { renderPlainText, renderPlainTextSegments } from "./plain-text.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
@@ -14,14 +15,23 @@ const SHADOW_TEMPLATE = `
    * that state so an authored 'invisible' on the host stays intact. */
   :host([data-mw-dropped-text]) #viewport { visibility: visible; }
   #decorations { position: absolute; inset: 0; pointer-events: none; user-select: none; white-space: pre; }
+  /* Plain-text mode (the plain-text attribute): a selectable text mirror of the
+   * whole render replaces the layered output — the slotted content keeps
+   * driving layout invisibly underneath (and stays inert), decorations
+   * hide, and one selection copies the art, whitespace included. */
+  #plain-text { display: none; position: absolute; inset: 0; margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; }
+  :host([plain-text]) #plain-text { display: block; }
+  :host([plain-text]) #decorations { display: none; }
+  :host([plain-text]) slot { visibility: hidden; }
 </style>
 <div id="viewport">
   <div id="decorations" aria-hidden="true"></div>
+  <pre id="plain-text"></pre>
   <slot></slot>
 </div>
 `;
 
-// Import-safe outside the browser (SSR, Node scripts using renderAscii):
+// Import-safe outside the browser (SSR, Node scripts using renderPlainText):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
 // at IMPORT time. Substitute an inert base — the class is only instantiated
 // by the browser after defineMonoWind(), which no-ops without a DOM.
@@ -30,19 +40,24 @@ const HTMLElementBase = (
 ) as typeof HTMLElement;
 
 export class MonoWindElement extends HTMLElementBase {
+  static observedAttributes = ["plain-text"];
+
   #shadow: ShadowRoot;
   #decorations: HTMLElement;
+  #plainText: HTMLElement;
   #probe: HTMLElement;
   #resizeObserver: ResizeObserver | null = null;
   #mutationObserver: MutationObserver | null = null;
   #layoutPending = false;
   #cellMetrics: CellMetrics | null = null;
+  #lastLayout: LayoutNode | null = null;
 
   constructor() {
     super();
     this.#shadow = this.attachShadow({ mode: "open" });
     this.#shadow.innerHTML = SHADOW_TEMPLATE;
     this.#decorations = this.#shadow.getElementById("decorations") as HTMLElement;
+    this.#plainText = this.#shadow.getElementById("plain-text") as HTMLElement;
     // Cell-metrics probe (see measureCellMetrics): persistent, hidden but
     // measurable, inheriting the host's font/line-height/letter-spacing.
     // It lives in the LIGHT DOM so it is font-matched in exactly the same
@@ -104,6 +119,55 @@ export class MonoWindElement extends HTMLElementBase {
     this.#resizeObserver = null;
     this.#mutationObserver = null;
     document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
+  }
+
+  attributeChangedCallback(): void {
+    this.#scheduleLayout();
+  }
+
+  /** The current render as plain text — the same deterministic mirror
+   * the golden tests diff (borders as box-drawing glyphs, text on its
+   * grid rows, interior whitespace real, row ends trimmed). Flushes a
+   * pending layout so the snapshot is current; empty before the first
+   * layout or when the host has no laid-out content. */
+  toPlainText(): string {
+    // The already-queued rAF will re-run the layout; that's idempotent.
+    if (this.#layoutPending) this.#performLayout();
+    return this.#lastLayout ? renderPlainText(this.#lastLayout) : "";
+  }
+
+  /** Colored spans, one per same-colored run — the copied text is still
+   * exactly `renderPlainText` (spans don't affect the clipboard). */
+  #renderPlainTextMirror(root: LayoutNode): void {
+    if (!this.hasAttribute("plain-text")) {
+      this.#plainText.textContent = "";
+      return;
+    }
+    const rows = renderPlainTextSegments(root);
+    const fragment = document.createDocumentFragment();
+    rows.forEach((segments, index) => {
+      if (index > 0) fragment.appendChild(document.createTextNode("\n"));
+      for (const segment of segments) {
+        const styled =
+          segment.color !== undefined ||
+          segment.fontWeight !== undefined ||
+          segment.fontStyle !== undefined ||
+          segment.textDecorationLine !== undefined;
+        if (!styled) {
+          fragment.appendChild(document.createTextNode(segment.text));
+          continue;
+        }
+        const span = document.createElement("span");
+        if (segment.color !== undefined) span.style.color = segment.color;
+        if (segment.fontWeight !== undefined) span.style.fontWeight = segment.fontWeight;
+        if (segment.fontStyle !== undefined) span.style.fontStyle = segment.fontStyle;
+        if (segment.textDecorationLine !== undefined)
+          span.style.textDecoration = segment.textDecorationLine;
+        span.textContent = segment.text;
+        fragment.appendChild(span);
+      }
+    });
+    this.#plainText.replaceChildren(fragment);
   }
 
   #onFontsLoaded = (): void => {
@@ -197,6 +261,8 @@ export class MonoWindElement extends HTMLElementBase {
       }
       if (childNodes.length === 0) {
         this.#decorations.replaceChildren();
+        this.#plainText.textContent = "";
+        this.#lastLayout = null;
         this.setAttribute("data-mw-ready", "");
         return;
       }
@@ -218,6 +284,8 @@ export class MonoWindElement extends HTMLElementBase {
       // (5) Write geometry + paint decorations. Do this before clearing the
       // measuring attribute so the browser only paints the final state.
       render(virtualRoot, this.#decorations);
+      this.#lastLayout = virtualRoot;
+      this.#renderPlainTextMirror(virtualRoot);
 
       // (6) Size the host to match content rows (content-driven height).
       // Under border-box (Tailwind's preflight default) the height must

@@ -1,4 +1,23 @@
 import { expect, waitFor } from "storybook/test";
+import { wrapLines } from "monowind";
+
+/** Firefox breaks BEFORE hyphens (documented divergence, cell-model.md);
+ * hyphen-sensitive assertions gate on this. */
+export const isFirefox = navigator.userAgent.includes("Firefox");
+
+async function textLeaves(host: Element): Promise<HTMLElement[]> {
+  // Generous timeout: three browser instances share the CPU (worse on CI
+  // runners), so a rAF-driven relayout can easily outrun waitFor's
+  // default 1s under load.
+  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+  const leaves = Array.from(host.querySelectorAll<HTMLElement>("[data-mw-laid-out]")).filter(
+    (el) =>
+      el.textContent!.trim() !== "" &&
+      !el.querySelector("[data-mw-laid-out], [data-mw-inline-box]"),
+  );
+  expect(leaves.length).toBeGreaterThan(0);
+  return leaves;
+}
 
 /** Assert that the browser painted every laid-out leaf's text on exactly
  * the rows the engine allocated — the wrap models must agree in every
@@ -11,16 +30,7 @@ export async function expectBrowserRowsToMatchEngine(
   { allowStretchedLeaves = false }: { allowStretchedLeaves?: boolean } = {},
 ): Promise<void> {
   const host = canvasElement.querySelector("mono-wind")!;
-  // Generous timeouts throughout: three browser instances share the CPU
-  // (worse on CI runners), so a rAF-driven relayout can easily outrun
-  // waitFor's default 1s under load.
-  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-  const leaves = Array.from(host.querySelectorAll<HTMLElement>("[data-mw-laid-out]")).filter(
-    (el) =>
-      el.textContent!.trim() !== "" &&
-      !el.querySelector("[data-mw-laid-out], [data-mw-inline-box]"),
-  );
-  expect(leaves.length).toBeGreaterThan(0);
+  const leaves = await textLeaves(host);
   const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
   const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
   for (const el of leaves) {
@@ -74,4 +84,57 @@ export async function expectBrowserRowsToMatchEngine(
       }
     }
   }
+}
+
+/** Assert the browser broke each leaf's lines at the exact character
+ * positions the engine's wrap model predicts (specs/cell-model.md) —
+ * `expectBrowserRowsToMatchEngine` only compares line COUNTS, which
+ * can't see a break landing on the wrong side of a hyphen. Applies to
+ * simple leaves (element children, letter spacing, and non-normal
+ * white-space are skipped: their run text isn't recoverable from bare
+ * textContent). Collapsible spaces are stripped from both sides of the
+ * comparison — rects for a space at a soft break are unreliable — so
+ * breaks are compared through the non-space character sequence (NBSP
+ * counts as a character). In Firefox, hyphenated leaves are skipped:
+ * it breaks BEFORE hyphens (documented divergence, cell-model.md). */
+export async function expectBrowserLineBreaksToMatchEngine(
+  canvasElement: HTMLElement,
+): Promise<void> {
+  const host = canvasElement.querySelector("mono-wind")!;
+  const leaves = await textLeaves(host);
+  const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+  let checked = 0;
+  for (const el of leaves) {
+    const computed = getComputedStyle(el);
+    if (el.childElementCount > 0 || computed.whiteSpace !== "normal") continue;
+    if (computed.letterSpacing !== "normal" && parseFloat(computed.letterSpacing) !== 0) continue;
+    const text = el.textContent!.replace(/[ \t\r\n\f]+/g, " ").trim();
+    if (isFirefox && text.includes("-")) continue;
+    const cells = (name: string) => Number(el.style.getPropertyValue(name));
+    const contentWidth =
+      cells("--mw-w") - cells("--mw-bl") - cells("--mw-br") - cells("--mw-pl") - cells("--mw-pr");
+    const engineLines = wrapLines(text, contentWidth).map((line) => line.replaceAll(" ", ""));
+    // Rebuild the browser's lines character by character: each glyph's
+    // rect centre picks its row, rows in top-to-bottom order are lines.
+    const top = el.getBoundingClientRect().top;
+    const rows = new Map<number, string>();
+    const range = document.createRange();
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const data = (node as Text).data;
+      for (let i = 0; i < data.length; i++) {
+        if (/[ \t\r\n\f]/.test(data[i]!)) continue;
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const rect = range.getBoundingClientRect();
+        const row = Math.floor((rect.top + rect.height / 2 - top) / cellHeight);
+        rows.set(row, (rows.get(row) ?? "") + data[i]!);
+      }
+    }
+    const browserLines = [...rows.keys()].sort((a, b) => a - b).map((row) => rows.get(row)!);
+    expect(browserLines, `"${text}" break positions`).toEqual(engineLines);
+    checked++;
+  }
+  // Firefox can skip every hyphenated leaf; a story with none must check.
+  if (!isFirefox) expect(checked).toBeGreaterThan(0);
 }

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderAscii } from "../src/ascii.ts";
+import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
 import type { LayoutNode } from "../src/types.ts";
 
 /**
- * Table layout tests (specs/table.md), DOM → ASCII end to end: happy-dom
+ * Table layout tests (specs/table.md), DOM → plain text end to end: happy-dom
  * parses real table markup (auto-inserting <tbody>, inheriting
- * border-collapse), the tag fallback supplies the roles, and the ASCII
+ * border-collapse), the tag fallback supplies the roles, and the plain-text
  * renderer exposes the lattice. Root font size 16 → 1 cell = 4px.
  */
 
@@ -18,17 +18,17 @@ function build(html: string): LayoutNode {
   return buildTree(host.firstElementChild!, 16)!;
 }
 
-function ascii(html: string, availableWidth = 60): string {
+function plainText(html: string, availableWidth = 60): string {
   const node = build(html);
   layoutRoot(node, availableWidth);
-  return renderAscii(node);
+  return renderPlainText(node);
 }
 
 const CELL_BORDER = "border: 1px solid";
 
 describe("collapsed borders", () => {
   it("renders adjacent cells as a shared lattice with tee junctions", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td style="${CELL_BORDER}">hello</td><td style="${CELL_BORDER}">hello</td></tr>
       </table>`,
@@ -37,7 +37,7 @@ describe("collapsed borders", () => {
   });
 
   it("renders a 2×2 grid with a full cross junction", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td style="${CELL_BORDER}">aa</td><td style="${CELL_BORDER}">bb</td></tr>
         <tr><td style="${CELL_BORDER}">cc</td><td style="${CELL_BORDER}">dd</td></tr>
@@ -47,7 +47,7 @@ describe("collapsed borders", () => {
   });
 
   it("suppresses lattice segments through a colspan and tees around it", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td colspan="2" style="${CELL_BORDER}">wide</td></tr>
         <tr><td style="${CELL_BORDER}">aa</td><td style="${CELL_BORDER}">bb</td></tr>
@@ -57,7 +57,7 @@ describe("collapsed borders", () => {
   });
 
   it("row side borders (border-l/r on tr) draw at the table's edge lines", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr style="border-left: 1px solid; border-right: 1px solid"><td>aa</td></tr>
       </table>`,
@@ -66,7 +66,7 @@ describe("collapsed borders", () => {
   });
 
   it("row borders (border-b on tr) draw full-width lines, cells win conflicts", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr style="border-bottom: 1px solid"><td>aa</td><td>bb</td></tr>
         <tr><td>cc</td><td>dd</td></tr>
@@ -76,7 +76,7 @@ describe("collapsed borders", () => {
   });
 
   it("border-hidden suppresses the shared segment, beating the neighbor", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td style="border: 1px solid; border-right-style: hidden">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
@@ -86,7 +86,7 @@ describe("collapsed borders", () => {
   });
 
   it("double borders win over solid and use the double junction set", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td style="border: 3px double">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
@@ -101,7 +101,7 @@ describe("collapsed borders", () => {
 
 describe("separate borders", () => {
   it("gives every cell its own ring, spaced by border-spacing", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-spacing: 4px">
         <tr><td style="${CELL_BORDER}">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
@@ -110,7 +110,7 @@ describe("separate borders", () => {
   });
 
   it("zero spacing renders rings back to back", () => {
-    const art = ascii(
+    const art = plainText(
       `<table><tr><td style="${CELL_BORDER}">aa</td><td style="${CELL_BORDER}">bb</td></tr></table>`,
     );
     expect(art).toBe(["┌──┐┌──┐", "│aa││bb│", "└──┘└──┘"].join("\n"));
@@ -127,7 +127,7 @@ describe("column sizing", () => {
   });
 
   it("wraps cell text when a fixed cell width caps the column", () => {
-    const art = ascii(`<table><tr><td style="width: 12px">aa bb</td></tr></table>`);
+    const art = plainText(`<table><tr><td style="width: 12px">aa bb</td></tr></table>`);
     expect(art).toBe(["aa", "bb"].join("\n"));
   });
 
@@ -192,12 +192,12 @@ describe("column sizing", () => {
 
 describe("rows and spans", () => {
   it("sizes rows to their tallest cell; short cells center via UA vertical-align", () => {
-    const art = ascii(`<table><tr><td>a<br>b<br>c</td><td>x</td></tr></table>`);
+    const art = plainText(`<table><tr><td>a<br>b<br>c</td><td>x</td></tr></table>`);
     expect(art).toBe(["a", "bx", "c"].join("\n"));
   });
 
   it("aligns cells top and bottom via inline vertical-align", () => {
-    const art = ascii(
+    const art = plainText(
       `<table><tr><td>a<br>b<br>c</td><td style="vertical-align: top">t</td><td style="vertical-align: bottom">z</td></tr></table>`,
     );
     expect(art).toBe(["at", "b", "c z"].join("\n"));
@@ -273,7 +273,7 @@ describe("percent heights and legacy attributes", () => {
   });
 
   it("centers content in a cell made tall by its own explicit height", () => {
-    const art = ascii(`<table><tr><td style="height: 12px">x</td></tr></table>`);
+    const art = plainText(`<table><tr><td style="height: 12px">x</td></tr></table>`);
     expect(art).toBe(["", "x", ""].join("\n"));
   });
 
@@ -287,7 +287,7 @@ describe("percent heights and legacy attributes", () => {
   });
 
   it("honors the legacy valign attribute and blocks align=center", () => {
-    const art = ascii(`<table><tr><td>a<br>b<br>c</td><td valign="bottom">z</td></tr></table>`);
+    const art = plainText(`<table><tr><td>a<br>b<br>c</td><td valign="bottom">z</td></tr></table>`);
     expect(art).toBe(["a", "b", "cz"].join("\n"));
     const node = build(`<table><tr><td align="center">x</td></tr></table>`);
     const cell = node.children[0]!.children[0]!.children[0]!;
@@ -297,7 +297,7 @@ describe("percent heights and legacy attributes", () => {
 
 describe("integration", () => {
   it("lays out nested tables (a table inside a cell)", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse"><tr><td style="border: 1px solid">
         <table><tr><td>in</td><td>ner</td></tr></table>
       </td><td style="border: 1px solid">out</td></tr></table>`,
@@ -324,7 +324,7 @@ describe("integration", () => {
 
 describe("out-of-flow and container cells", () => {
   it("shifts a container cell's block children for vertical-align", () => {
-    const art = ascii(
+    const art = plainText(
       `<table><tr><td>a<br>b<br>c</td><td><div>x</div><div>y</div></td></tr></table>`,
     );
     // The container cell's two blocks center as a unit (UA middle;
@@ -355,7 +355,7 @@ describe("out-of-flow and container cells", () => {
 
 describe("structure", () => {
   it("renders thead first and tfoot last regardless of DOM order", () => {
-    const art = ascii(
+    const art = plainText(
       `<table>
         <tfoot><tr><td>foot</td></tr></tfoot>
         <thead><tr><td>head</td></tr></thead>
@@ -366,11 +366,11 @@ describe("structure", () => {
   });
 
   it("places a caption above (default) or below the grid", () => {
-    expect(ascii(`<table><caption>cap</caption><tr><td>body</td></tr></table>`)).toBe(
+    expect(plainText(`<table><caption>cap</caption><tr><td>body</td></tr></table>`)).toBe(
       ["cap", "body"].join("\n"),
     );
     expect(
-      ascii(
+      plainText(
         `<table style="caption-side: bottom"><caption>cap</caption><tr><td>body</td></tr></table>`,
       ),
     ).toBe(["body", "cap"].join("\n"));
@@ -393,7 +393,7 @@ describe("structure", () => {
       document.body.appendChild(table);
       const node = buildTree(table, 16)!;
       layoutRoot(node, 60);
-      expect(renderAscii(node)).toBe("ok");
+      expect(renderPlainText(node)).toBe("ok");
       expect(warn).toHaveBeenCalledOnce();
       expect(node.children[0]!.tableHidden).toBe(true);
     } finally {
@@ -402,7 +402,7 @@ describe("structure", () => {
   });
 
   it("skips blocked columns when placing cells after a rowspan", () => {
-    const art = ascii(
+    const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td rowspan="2" style="${CELL_BORDER}">s</td><td style="${CELL_BORDER}">a</td></tr>
         <tr><td style="${CELL_BORDER}">b</td></tr>

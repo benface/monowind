@@ -8,7 +8,6 @@ import {
   layoutNode,
   minContentOuterWidth,
   resolveGap,
-  resolveLength,
   resolveLimit,
   resolveMargin,
   resolveSizeAgainst,

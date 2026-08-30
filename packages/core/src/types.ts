@@ -310,7 +310,7 @@ export interface CellStyle {
    * floor((letter-spacing − root letter-spacing) ÷ 0.025em)). */
   tracking: number;
   /** Paint-only: with `nowrap` + clipping, the browser draws the ellipsis.
-   * The engine only needs it for the ASCII renderer's mirror of that. */
+   * The engine only needs it for the plain-text renderer's mirror of that. */
   textOverflow: TextOverflow;
   /**
    * Paint-only colors, reserved for the visual-system milestone. `color` will
@@ -321,12 +321,17 @@ export interface CellStyle {
    */
   color: string | undefined;
   backgroundColor: string | undefined;
+  /** Paint-only text styling, passed through to the browser and
+   * mirrored per-segment by the plain-text mode's spans. */
+  fontWeight: string;
+  fontStyle: string;
+  textDecorationLine: string;
   /** True when text-align is center/justify — forced back to `start` since
    * per-line centering can't be snapped to whole cells. See cell-model spec. */
   textAlignBlocked: boolean;
   /** Computed text-align, normalized LTR (`right`/`end` → `end`, all else
    * `start`). On-grid: line offsets are whole cells. Browser paints its
-   * own alignment; `renderAscii` mirrors it per line. */
+   * own alignment; `renderPlainText` mirrors it per line. */
   textAlign: "start" | "end";
   tableRole: TableRole;
   tableLayout: "auto" | "fixed";
@@ -346,7 +351,7 @@ export interface CellStyle {
   verticalAlign: "start" | "center" | "end";
   /** Authored `z-index` (`null` = auto). Browser stacking is native;
    * the renderers walk children in this order (stable, document-order
-   * ties) so decorations and ASCII agree with it at overlaps. */
+   * ties) so decorations and plain text agree with it at overlaps. */
   zIndex: number | null;
   /** Set on collapsed-table participants; null everywhere else. */
   latticeBorder: LatticeBorder | null;
@@ -403,7 +408,18 @@ export interface LayoutNode {
     padLeft: number;
     padRight: number;
     insets: PerSide<number | null> | null;
+    /** Paint-only text styling for the plain-text mode (the browser
+     * renders the real element). */
+    color: string | undefined;
+    fontWeight: string;
+    fontStyle: string;
+    textDecorationLine: string;
   }[];
+  /** Per-character index into `inlineElements` (-1 = direct leaf text);
+   * present only when the run contains inline elements. Plain-text
+   * rendering maps colors, font styling, and relative inset shifts from
+   * it. */
+  charInline?: number[];
   /** True on an atomic inline-level box (`inline-flex`/`inline-block`/
    * `inline-grid`) riding its parent leaf's text run as a single
    * unbreakable unit: the leaf's run holds an OBJECT REPLACEMENT
@@ -518,6 +534,9 @@ export function defaultCellStyle(): CellStyle {
     textOverflow: "clip",
     color: undefined,
     backgroundColor: undefined,
+    fontWeight: "400",
+    fontStyle: "normal",
+    textDecorationLine: "none",
     borderColor: { top: undefined, right: undefined, bottom: undefined, left: undefined },
     textAlignBlocked: false,
     textAlign: "start",

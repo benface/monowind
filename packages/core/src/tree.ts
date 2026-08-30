@@ -78,7 +78,10 @@ export function buildTree(
       resolvedPadding: zeroInsets(),
     };
     if (run.advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = run.advances;
-    if (run.inlineElements.length > 0) node.inlineElements = run.inlineElements;
+    if (run.inlineElements.length > 0) {
+      node.inlineElements = run.inlineElements;
+      node.charInline = run.chars.map((_, i) => run.inlineIndex[i] ?? -1);
+    }
     return node;
   }
 
@@ -176,6 +179,8 @@ interface LeafRun {
   chars: string[];
   /** Cells each character occupies: `1 + tracking` of its innermost element. */
   advances: number[];
+  /** Per character: index into `inlineElements` (-1 = direct leaf text). */
+  inlineIndex: number[];
   inlineElements: NonNullable<LayoutNode["inlineElements"]>;
   /** Atomic inline boxes, in run order — each corresponds to one U+FFFC
    * marker in `chars` (layout resolves the marker's advance to the box's
@@ -211,7 +216,7 @@ interface RunContext {
  * survive as authored and tabs expand to tab stops (see RunContext).
  */
 function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun {
-  const run: LeafRun = { chars: [], advances: [], inlineElements: [], boxes: [] };
+  const run: LeafRun = { chars: [], advances: [], inlineIndex: [], inlineElements: [], boxes: [] };
   collectRun(el, tracking, ctx, run);
   if (ctx.preserve) {
     // Browsers give a final newline in `pre` content no line box of its
@@ -220,6 +225,7 @@ function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun
     if (run.chars[run.chars.length - 1] === "\n") {
       run.chars.pop();
       run.advances.pop();
+      run.inlineIndex.pop();
     }
     return run;
   }
@@ -311,12 +317,22 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
         padLeft,
         padRight,
         insets: cs.position === "static" ? null : inlineInsets(cs, ctx.rootFontSizePx),
+        color: cs.color,
+        fontWeight: cs.fontWeight,
+        fontStyle: cs.fontStyle,
+        textDecorationLine: cs.textDecorationLine,
       });
+      const inlineIndex = run.inlineElements.length - 1;
       for (let i = 0; i < padLeft; i++) {
         run.chars.push(INLINE_PAD);
         run.advances.push(1);
       }
+      const start = run.chars.length;
       collectRun(child, childTracking, ctx, run);
+      // Chars the recursion added belong to this element unless a deeper
+      // one claimed them first.
+      for (let i = start; i < run.chars.length; i++)
+        if (run.inlineIndex[i] === undefined) run.inlineIndex[i] = inlineIndex;
       for (let i = 0; i < padRight; i++) {
         run.chars.push(INLINE_PAD);
         run.advances.push(1);
@@ -354,6 +370,7 @@ function inlineInsets(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<
 function normalizeRun(run: LeafRun): LeafRun {
   const chars: string[] = [];
   const advances: number[] = [];
+  const inlineIndex: number[] = [];
   const lineStart = () => {
     let i = chars.length;
     while (i > 0 && chars[i - 1] !== "\n") i--;
@@ -363,6 +380,7 @@ function normalizeRun(run: LeafRun): LeafRun {
     while (chars.length > lineStart() && chars[chars.length - 1] === " ") {
       chars.pop();
       advances.pop();
+      inlineIndex.pop();
     }
   };
   for (let i = 0; i < run.chars.length; i++) {
@@ -382,18 +400,21 @@ function normalizeRun(run: LeafRun): LeafRun {
     }
     chars.push(ch);
     advances.push(run.advances[i]!);
+    inlineIndex.push(run.inlineIndex[i] ?? -1);
   }
   trimLineEnd();
   // Drop leading/trailing blank hard lines (source formatting), like trim().
   while (chars[0] === "\n") {
     chars.shift();
     advances.shift();
+    inlineIndex.shift();
   }
   while (chars[chars.length - 1] === "\n") {
     chars.pop();
     advances.pop();
+    inlineIndex.pop();
   }
-  return { chars, advances, inlineElements: run.inlineElements, boxes: run.boxes };
+  return { chars, advances, inlineIndex, inlineElements: run.inlineElements, boxes: run.boxes };
 }
 
 function longestLineAdvance(text: string, advances: number[], tracking: number): number {

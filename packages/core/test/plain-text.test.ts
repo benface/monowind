@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { renderAscii } from "../src/ascii.ts";
+import { renderPlainText, renderPlainTextSegments } from "../src/plain-text.ts";
 import { collectBorderRuns } from "../src/borders.ts";
 import type { BorderRun } from "../src/borders.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
 import { makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
@@ -13,12 +14,12 @@ import type { LayoutNode } from "../src/types.ts";
  * placement end-to-end, deterministically, with no DOM or fonts involved.
  */
 
-function ascii(root: LayoutNode, availableWidth: number): string {
+function plainText(root: LayoutNode, availableWidth: number): string {
   layoutRoot(root, availableWidth);
-  return renderAscii(root);
+  return renderPlainText(root);
 }
 
-describe("renderAscii golden outputs", () => {
+describe("renderPlainText golden outputs", () => {
   it("renders the motivating example: bordered flex row, justify-between, items-center", () => {
     const container = makeNode({
       style: {
@@ -34,7 +35,7 @@ describe("renderAscii golden outputs", () => {
     });
     const root = makeNode({ children: [container] });
 
-    expect(ascii(root, 40)).toBe(
+    expect(plainText(root, 40)).toBe(
       [
         `┌${"─".repeat(38)}┐`,
         `│${" ".repeat(38)}│`,
@@ -59,7 +60,7 @@ describe("renderAscii golden outputs", () => {
     const root = makeNode({ children: [box] });
 
     // Inner content width 8: "hello wonderful world" → "hello w…", one row.
-    expect(ascii(root, 12)).toBe(["┌──────────┐", "│ hello w… │", "└──────────┘"].join("\n"));
+    expect(plainText(root, 12)).toBe(["┌──────────┐", "│ hello w… │", "└──────────┘"].join("\n"));
   });
 
   it("renders clipped nowrap text without an ellipsis when text-overflow is clip", () => {
@@ -73,7 +74,7 @@ describe("renderAscii golden outputs", () => {
     });
     const root = makeNode({ children: [box] });
 
-    expect(ascii(root, 8)).toBe(["┌──────┐", "│hello │", "└──────┘"].join("\n"));
+    expect(plainText(root, 8)).toBe(["┌──────┐", "│hello │", "└──────┘"].join("\n"));
   });
 
   it("renders wrapped text inside a padded border", () => {
@@ -86,7 +87,7 @@ describe("renderAscii golden outputs", () => {
     });
     const root = makeNode({ children: [box] });
 
-    expect(ascii(root, 12)).toBe(
+    expect(plainText(root, 12)).toBe(
       ["┌──────────┐", "│ hello    │", "│ world    │", "└──────────┘"].join("\n"),
     );
   });
@@ -101,7 +102,7 @@ describe("renderAscii golden outputs", () => {
     });
     const root = makeNode({ children: [box] });
 
-    expect(ascii(root, 10)).toBe(
+    expect(plainText(root, 10)).toBe(
       ["╔════════╗", "║╔══════╗║", "║║hi    ║║", "║╚══════╝║", "╚════════╝"].join("\n"),
     );
   });
@@ -118,7 +119,7 @@ describe("renderAscii golden outputs", () => {
 
     // Top edge double, bottom dashed, sides solid; mixed-style corners fall
     // back to the light set (no mixed junction glyphs in Unicode).
-    expect(ascii(root, 6)).toBe(["┌════┐", "│hi  │", "└╌╌╌╌┘"].join("\n"));
+    expect(plainText(root, 6)).toBe(["┌════┐", "│hi  │", "└╌╌╌╌┘"].join("\n"));
   });
 
   it("emits per-side border colors on the runs", () => {
@@ -162,7 +163,7 @@ describe("renderAscii golden outputs", () => {
 
     // Badge hangs one cell outside the top-right corner; the root grid clips
     // the part that exceeds it — here it lands exactly on the corner cell.
-    expect(ascii(root, 8)).toBe(["┌──────★", "│ hi   │", "└──────┘"].join("\n"));
+    expect(plainText(root, 8)).toBe(["┌──────★", "│ hi   │", "└──────┘"].join("\n"));
   });
 
   it("renders tracked text with gap cells and leading with gap rows", () => {
@@ -171,7 +172,7 @@ describe("renderAscii golden outputs", () => {
     const box = makeNode({ style: { maxWidth: 6 }, children: [leaf] });
     const root = makeNode({ children: [box] });
 
-    expect(ascii(root, 6)).toBe(["a b", "", "c d"].join("\n"));
+    expect(plainText(root, 6)).toBe(["a b", "", "c d"].join("\n"));
   });
 
   it("renders a flex column with gap", () => {
@@ -181,14 +182,14 @@ describe("renderAscii golden outputs", () => {
     });
     const root = makeNode({ children: [container] });
 
-    expect(ascii(root, 10)).toBe(["one", "", "two"].join("\n"));
+    expect(plainText(root, 10)).toBe(["one", "", "two"].join("\n"));
   });
 
   it("renders hard line breaks", () => {
     const leaf = makeNode({ text: "a\nbb" });
     const root = makeNode({ children: [leaf] });
 
-    expect(ascii(root, 5)).toBe(["a", "bb"].join("\n"));
+    expect(plainText(root, 5)).toBe(["a", "bb"].join("\n"));
   });
 });
 
@@ -202,13 +203,16 @@ describe("wrapLines", () => {
     expect(wrapLines("   ", 10)).toEqual([]);
   });
 
-  it("breaks after hyphens like the browser, except before digits", () => {
+  it("breaks after hyphens like the browser, except word-initial runs", () => {
     expect(wrapLines("mx-auto", 6)).toEqual(["mx-", "auto"]);
     expect(wrapLines("mx-auto", 7)).toEqual(["mx-auto"]);
     // Hyphen segment fills the current line when it fits.
     expect(wrapLines("aa mx-auto", 6)).toEqual(["aa mx-", "auto"]);
-    // No break between a hyphen and a following digit (UAX #14).
-    expect(wrapLines("2026-08", 6)).toEqual(["2026-0", "8"]);
+    // Digits don't suppress the break (Chromium/WebKit; not full UAX #14).
+    expect(wrapLines("2026-08", 6)).toEqual(["2026-", "08"]);
+    // A word-initial hyphen run glues to what follows (UAX #14 LB20a).
+    expect(wrapLines("-top-1", 5)).toEqual(["-top-", "1"]);
+    expect(wrapLines("-5 plus", 4)).toEqual(["-5", "plus"]);
     // Consecutive hyphens break as one run.
     expect(wrapLines("well--known", 6)).toEqual(["well--", "known"]);
   });
@@ -229,6 +233,58 @@ describe("inline padding rendering", () => {
     const leaf = makeNode({ text: `a${INLINE_PAD}b`, intrinsicWidth: 3 });
     const root = makeNode({ children: [leaf] });
     layoutRoot(root, 3);
-    expect(renderAscii(root)).toBe("a b");
+    expect(renderPlainText(root)).toBe("a b");
+  });
+});
+
+describe("renderPlainTextSegments", () => {
+  it("splits rows into same-colored runs whose text joins back to the plain render", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 24px; border: 1px solid; border-color: cyan; color: red">hi</div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 6);
+    const rows = renderPlainTextSegments(node);
+    expect(rows.map((row) => row.map((s) => s.text).join("")).join("\n")).toBe(
+      renderPlainText(node),
+    );
+    expect(rows[0]![0]).toEqual({ text: "┌────┐", color: "cyan" });
+    expect(rows[1]!.map((s) => [s.text, s.color])).toEqual([
+      ["│", "cyan"],
+      ["hi", "red"],
+      ["  ", undefined],
+      ["│", "cyan"],
+    ]);
+  });
+});
+
+describe("inline fidelity in segments", () => {
+  it("keeps underline through an inline run's inner spaces", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 60px"><span style="text-decoration-line: underline">click me</span></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 15);
+    const rows = renderPlainTextSegments(node);
+    expect(rows[0]).toEqual([{ text: "click me", textDecorationLine: "underline" }]);
+  });
+
+  it("maps inline descendants' color/weight and relative insets per character", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="height: 8px"><div style="width: 40px">ab <b style="color: red; font-weight: 700">cd</b> <span style="position: relative; top: 4px; color: blue">ef</span></div></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 10);
+    const rows = renderPlainTextSegments(node);
+    // Row 0: leaf text bare, "cd" red + bold (spaces always unstyled);
+    // "ef" shifted down one row by `top: 4px`, keeping its color.
+    expect(rows[0]!.map((s) => [s.text, s.color, s.fontWeight])).toEqual([
+      ["ab ", undefined, undefined],
+      ["cd", "red", "700"],
+    ]);
+    expect(rows[1]!.map((s) => [s.text, s.color])).toEqual([
+      ["      ", undefined],
+      ["ef", "blue"],
+    ]);
   });
 });

@@ -168,7 +168,7 @@ function effectiveZIndex(child: LayoutNode, parent: LayoutNode): number {
 
 /** Children in paint order: stable-sorted by effective z-index,
  * document order breaking ties — mirrored by both renderers so
- * decorations and ASCII agree with browser stacking at overlaps (a
+ * decorations and plain text agree with browser stacking at overlaps (a
  * simplified model: no stacking contexts, negative z still paints over
  * the parent's own glyphs). */
 export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {

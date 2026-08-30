@@ -224,8 +224,10 @@ text extraction, exactly like the browser under `white-space: normal`. Only
 (the browser strips it at line edges too).
 
 **Hyphen break opportunities**: like the browser, the wrap model can break
-a word after a hyphen run (`mx-auto` → `mx-` / `auto`), except before a
-digit (UAX #14: `2026-08` doesn't break). Segments longer than the width
+a word after a hyphen run (`mx-auto` → `mx-` / `auto`), except a
+word-initial run (UAX #14 LB20a: `-top-1` → `-top-` / `1`, never `-` /
+`top-1`; probed — Chromium and WebKit agree, Firefox instead breaks
+BEFORE hyphens and is a documented divergence). Segments longer than the width
 break at cell boundaries (`overflow-wrap: anywhere`). Exotic UAX #14 line
 breaking (em dashes, CJK, soft hyphens, …) is not modeled — a deviation.
 
@@ -265,7 +267,7 @@ dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
 `(container_width − line_length) × cell_width`, always a whole number of
 cells since character width equals cell width in monospace. The engine
 reads the computed value (normalized LTR: `right`/`end` → end) so
-`renderAscii` mirrors the browser's per-line offsets; a line at or over
+`renderPlainText` mirrors the browser's per-line offsets; a line at or over
 the content width stays at start, matching truncation.
 
 `text-align: center` and `justify` produce fractional per-line offsets when
@@ -326,7 +328,7 @@ itself. The ellipsis lands on-grid (U+2026 is one monospace glyph; the clip
 edge is the content edge, always a whole cell). For a nowrap element that
 also clips, the companion stylesheet uses `overflow: hidden` rather than
 the usual normalized `clip`, because `text-overflow` requires the box to be
-a scroll container in some engines. The ASCII renderer mirrors truncation:
+a scroll container in some engines. The plain-text renderer mirrors truncation:
 a clipped nowrap line is cut at the content width, with `…` in the last
 visible cell when `text-overflow: ellipsis` is set.
 
