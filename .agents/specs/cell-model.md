@@ -358,8 +358,8 @@ visible cell when `text-overflow: ellipsis` is set.
    slightly into adjacent rows. That's standard CSS at line-height 1
    (`text-box-trim`/`text-box-edge` can't fix it: Chromium ignores it on
    inlines, WebKit trims to cap-height — below the row — and Firefox
-   doesn't ship it). Cell-aligned backgrounds arrive with the
-   visual-system milestone via the VERIFIED gradient clamp — solid-color
+   doesn't ship it). Cell-aligned backgrounds arrive with
+   Milestone 6 (unified render) via the VERIFIED gradient clamp — solid-color
    `background-image: linear-gradient(<color> 0 0); background-size:
 100% 1em; background-position: center; background-repeat: no-repeat`
    paints exactly the line box in all three engines (half-leading is

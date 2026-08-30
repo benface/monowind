@@ -29,9 +29,11 @@ forms, and accessibility semantics stay fully intact.
 > **Status: early development.** Block, flex, grid (subgrid and named
 > areas included), and table layout (collapsed borders as shared
 > box-drawing lattices), gap decorations (`rule-*` separators with
-> junction glyphs), text wrap, and margins work; native-interaction
-> polish and the visual system are next. Design docs live in
-> [.agents/architecture](.agents/architecture),
+> junction glyphs), text wrap, and margins work; a `<mono-wind plain-text>`
+> attribute renders a selectable text mirror. The unified-render
+> initiative — one cell-precise renderer that stays fully interactive,
+> plus backgrounds that clear decorations — is what's next. Design
+> docs live in [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
 ## Structure

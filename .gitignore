@@ -16,3 +16,6 @@ packages/*/LICENSE
 
 # Local Netlify folder
 .netlify
+
+# husky auto-generated init dir
+.husky/_/

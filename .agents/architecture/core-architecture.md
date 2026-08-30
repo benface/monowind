@@ -1,6 +1,6 @@
 # monowind — core architecture
 
-Status: living document — Milestones 1+2 implemented (last updated 2026-08-26)
+Status: living document — Milestones 1–5 implemented; Milestone 6 (unified render) planned (last updated 2026-08-30)
 
 ## What monowind is
 
@@ -92,6 +92,13 @@ normative for the engine and its tests.
 Native interactive elements stay native: normalized visually (no browser chrome)
 but retaining tab order, focus, caret, selection, clipboard, form behavior, and
 ARIA semantics. Relayout must never recreate or blur a focused control.
+
+> **Revision incoming (Milestone 6, unified render initiative —
+> `../plans/2026-08-30-unified-render-initiative.md`):** the two-layer
+> split collapses into one cell-precise shadow-side grid that carries
+> both decoration AND text glyphs. The light DOM stays framework-owned
+> but its text goes `color: transparent` — events, ARIA, focus, and
+> selection still work. This D3 section rewrites when Phase 2 lands.
 
 ### D4. Framework-agnostic via a Web Component
 
@@ -223,25 +230,15 @@ dominant.
 
 ## Open questions
 
-- **Dynamic style-change detection**: no observer fires when `:hover` /
-  `:focus-visible` / animations change computed style. Leading option: the
-  CSS-transition-event trick used by
-  [style-observer](https://github.com/leaverou/style-observer) — install
-  near-zero-duration transitions (`allow-discrete` for non-animatable
-  properties) on the layout-affecting properties and listen for
-  `transitionstart`/`transitionrun`, which do fire on pseudo-class-driven
-  changes. Implement it natively in the engine, specialized to our fixed
-  property set (~30 lines, via the companion stylesheet we already own) rather
-  than bundling the library. Caveat to resolve: author-defined `transition`
-  declarations on the same elements fight ours — rare for layout properties in a
-  TUI, but needs a documented stance. Second caveat: **feedback loop** — the
-  engine itself writes `width`/`height` via its geometry rules, so observing
-  those properties would fire transition events on our own writes and relayout
-  forever. Either observe only never-written properties (padding, gap, flex-*,
-  display, border-width — missing hover-driven _sizing_), or suppress events
-  during/immediately after the write phase. Alternatives if it proves fragile:
-  relayout on pointer/focus events, or constrain dynamic states to paint-only
-  properties. Needs a decision before the visual-system milestone.
+- **Dynamic style-change detection** — DECIDED 2026-08-30, ships in
+  Milestone 6, Phase 3. Instead of the CSS-transition-event trick
+  (which risks a feedback loop with our own geometry writes), the
+  engine attaches host-level `pointerover`/`pointerleave` +
+  `focusin`/`focusout` + `input`/`change` listeners, event-delegated
+  to laid-out elements; each fires a scoped relayout. No
+  computed-style polling, no observation of properties we write —
+  the trigger is the state change itself. Full spec:
+  `../plans/2026-08-30-unified-render-initiative.md` (Phase 3).
 - **Transforms**: `translate-y-1` etc. would shift content off-grid (browser
   applies raw px). Likely answer: rescale the standalone `translate` property to
   cells the way insets are handled; neutralize matrix `transform`s. Needs
@@ -249,14 +246,12 @@ dominant.
 - **Heavy border style exposure**: no CSS `border-style` keyword maps to heavy
   glyphs (`double` claims `═`); likely a monowind-specific opt-in via an owned
   custom property. See `../specs/cell-model.md`.
-- **npm naming**: `monowind` verified unclaimed on npm and the `@monowind` org
-  reserved (2026-08-25); a `monowind@0.0.0` placeholder publish is prepared and
-  pending (`npm login` required).
 - **Cell aspect ratio / font metrics**: measure the actual font (not `1ch`
   assumptions), re-measure on `document.fonts.ready`; whether to recommend/bundle a
   known-good monospace font.
-- **Unicode display width**: MVP is single-column-glyph only (documented); real
-  width algorithm (East Asian wide, emoji, combining marks) deferred.
+- **Unicode display width**: single-column-glyph only for now
+  (documented deviation); real width algorithm (East Asian wide,
+  emoji, combining marks) lands in Milestone 9.
 - **Scrolling**: decision is native pixel scrolling inside the gridded viewport
   (content on-grid, scroll offset not) — keeps momentum, a11y, find-in-page. CSS
   scroll-snap approximation or an opt-in JS row-scroll mode may come much later.
@@ -267,4 +262,4 @@ dominant.
   layout is prior art for D2.
 - Tailwind v4 — CSS-first config, `@tailwindcss/browser` Play CDN.
 - The original implementation plan (pre-`monowind` naming) lives in
-  `../plans/2026-08-25-mvp-implementation-plan.md`, amended per D1.
+  `../plans/2026-08-25-implementation-plan.md`, amended per D1.

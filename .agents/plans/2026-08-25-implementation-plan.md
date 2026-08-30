@@ -1,4 +1,4 @@
-# monowind MVP — implementation plan
+# monowind implementation plan
 
 Adapted from the original pre-`monowind` plan (drafted with ChatGPT), amended to
 match the decisions in `../architecture/core-architecture.md` — chiefly **D1: the
@@ -101,7 +101,7 @@ interface Rect {
 Fractional flexible space distributes remainder cells deterministically in
 document order (documented, tested).
 
-## MVP scope
+## Scope
 
 ### Supported computed-style inputs
 
@@ -166,7 +166,7 @@ for browser-rendered content — but NOT for engine-painted decoration
 glyphs, whose colors are baked at layout time from computed styles: a
 theme flip outside the host subtree leaves them stale until something
 retriggers layout (Storybook's preview nudges hosts on its background
-toggle; the real fix belongs to the dynamic-style question).
+toggle; the real fix lands in Milestone 6's dynamic-state relayout).
 
 ### Native content
 
@@ -235,7 +235,7 @@ authoritative definitions. Summary:
   items/self, width/height (`Size = cells | percent | auto`), min/max, padding
   (`Insets`), margin (`NullableInsets` — `null` = `auto`), gapX/gapY, border
   (`Insets`), borderStyle, borderColor, overflow (`visible | clip`), and
-  paint-only color/backgroundColor reserved for the visual-system milestone.
+  paint-only color/backgroundColor reserved for Milestone 6 (unified render).
   `position/insets/grid` fields aren't in yet — they land at their
   milestones.
 
@@ -260,13 +260,13 @@ All pre-paint — no visible flash. Never toggle `display: none` for measurement
 ## Element positioning
 
 ```css
-mono-wind [data-mw-layout] {
+mono-wind [data-mw-laid-out] {
   position: absolute;
   box-sizing: border-box;
-  left: calc(var(--mw-x) * var(--mw-cell-width));
-  top: calc(var(--mw-y) * var(--mw-cell-height));
-  width: calc(var(--mw-w) * var(--mw-cell-width));
-  height: calc(var(--mw-h) * var(--mw-cell-height));
+  left: calc(var(--mw-x) * var(--mw-cw));
+  top: calc(var(--mw-y) * var(--mw-ch));
+  width: calc(var(--mw-w) * var(--mw-cw));
+  height: calc(var(--mw-h) * var(--mw-ch));
 }
 ```
 
@@ -297,7 +297,7 @@ typography changes.
 
 ## Layout strategy (build order)
 
-Done (working in MVP):
+Done:
 
 1. Text intrinsic measurement (`text.length` cells; single-column glyphs only)
 2. Block layout with adjacent-sibling margin collapsing
@@ -305,13 +305,22 @@ Done (working in MVP):
 4. Padding, min-height/min-width, alignment (justify/align-items/self)
 5. Positioning and insets, including inline relative shifts
    (`specs/positioning.md`)
+6. Grid layout (against `specs/grid.md`) — full §11 track sizing,
+   placement (incl. dense, spans, named lines, `grid-template-areas`,
+   subgrid), auto-fill/fit, min()/max() breadths, §10.1 grid-area
+   containing block for absolute children
+7. Table layout (against `specs/table.md`) — auto + fixed with percent
+   inflation, colspan/rowspan, row-group reordering, captions,
+   `border-collapse` as a shared junction-glyph lattice,
+   `border-separate` + spacing, `vertical-align` via class scan
+8. Gap decorations (against `specs/gap-decorations.md`) — rules,
+   segments (`rule-break`/`rule-inset`/`rule-visibility-items`),
+   `overlap-join`
 
 Still to do (later milestones):
 
-6. Intrinsic size for native controls (input widths, etc.)
-7. Overflow clipping / scrolling (incl. proper `position: sticky`)
-8. Grid layout (against `specs/grid.md`)
-9. Table layout (against `specs/table.md` — the milestone after grid)
+9. Intrinsic size for native controls (input widths, etc.)
+10. Overflow clipping / scrolling (incl. proper `position: sticky`)
 
 ## Native interactive elements
 
@@ -351,8 +360,10 @@ framing, other non-semantic glyphs.
 Current shape (`packages/core/src/render.ts`): `BorderRun { glyph, x, y, length, color }`
 — each edge of each ring is emitted as one run, painted as a `<span>` with
 `text-content = glyph.repeat(length)`. Multi-cell borders paint as concentric
-rings (`border-2`, `border-3`, …), same style per ring. Border intersections
-(`├ ┤ ┬ ┴ ┼`) and merged nested borders are visual-system milestone work.
+rings (`border-2`, `border-3`, …), same style per ring. Border intersections (`├ ┤ ┬ ┴ ┼`) are handled by the table lattice and
+gap-decoration junctions (Milestones 4 and 5); the whole decoration
+renderer is superseded by Milestone 6, which folds decoration glyphs
+into a single cell-precise render alongside text.
 
 ## Observation and scheduling
 
@@ -399,55 +410,36 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
   state → mutation → relayout ownership loop. (Solid pins exact RC
   versions — relax to ranges when 2.0 goes stable.)
 
-- **Unit**: style interpretation (mocked reader), intrinsic measurement inputs,
-  block/flex math, integer rounding + remainder distribution, min/max, border
-  edge-bit mapping.
-- **Golden output**: `renderDecorations(layout)` compared against ASCII-art
-  strings.
-- **Browser (Playwright)**: responsive resize, real font metrics, DPR variations,
-  hit targets, keyboard nav, focus/caret/selection preservation, React controlled
-  inputs and reconciliation, dynamic children, SSR hydration, accessibility tree,
-  decoration alignment. Plus a Typed OM availability matrix (Chromium / WebKit /
-  Gecko).
-
 ## Milestones
 
-1. **Static proof of concept** — element registered, measured grid, text-only
-   blocks, one border style, resize re-render; motivating example with static
-   text. _Includes the load-bearing spike: measure/write cycle + Typed OM reads
-   proven against real Tailwind v4 output._
-2. **Flexbox MVP** — row/column, padding/gaps/margins, fixed/min/max
-   dimensions, grow/shrink, wrap, justification/alignment, deterministic
-   rounding, nesting. _Implemented; normative spec extracted afterwards into
-   `specs/flex.md` (the spec-first rule slipped here — hold the line for
-   grid: write `specs/grid.md` BEFORE implementing Milestone 3)._
-3. **Grid + positioning** — cell-based `grid-template-columns/rows`, gap,
-   placement subset (write `specs/grid.md` first); plus `position`
-   (static/relative/absolute; fixed → host-anchored, sticky → relative for
-   now) and inset utilities per `specs/positioning.md`. _Core implemented
-   2026-08 (placement incl. dense, §11 track sizing, auto-fill/fit,
-   min()/max() breadths, alignment), then the §10.1 grid-area containing
-   block for absolute children, named lines + `grid-template-areas`, and
-   subgrid — the grid milestone is functionally complete; remaining
-   grid deviations are listed in `specs/grid.md`. Inline-fidelity batch
-   also landed: quantized
-   horizontal padding on inline elements and `white-space: pre`
-   preservation (see cell-model deviations 5 and 8). Still-deferred
-   deviations ranked by expected hit-rate: Unicode width (Milestone 7),
-   `calc()` in track lists, `text-center` (fundamental — fractional
-   per-line offsets). Authored descendant `font-size` now warns once
-   (class + inline-style scan in `readCellStyle`). Reader-overhaul idea
-   investigated and REJECTED: reading styles under a `display: none`
-   ancestor returns computed values for everything (probed — `50%`,
-   `auto`, percent insets, full grid templates, no Typed OM needed) and
-   could have deleted the degrid trick and every used-value-trap class
-   scan — but a synchronous hide/read/restore destroys the user's text
-   selection in Firefox (probed; the very engine it would serve — focus
-   survives, Chromium/WebKit keep selection), restarts CSS
-   animations/transitions in content, and costs a per-pass layout-tree
-   rebuild vs Typed OM's zero-layout reads. The real simplification
-   event is dropping Firefox pre-157 support, which deletes the
-   fallback scans and converges on the single Typed OM path for free._ 4. **Tables** — DONE (`table.ts`, spec'd first in `specs/table.md`):
+1. **Static proof of concept** — DONE: element registered, measured
+   grid, text-only blocks, one border style, resize re-render;
+   motivating example with static text. Included the load-bearing
+   spike (measure/write cycle + Typed OM reads proven against real
+   Tailwind v4 output).
+2. **Flexbox** — DONE (`specs/flex.md`, spec extracted after the
+   implementation — the spec-first rule slipped here; held the line
+   for grid onwards): row/column, padding/gaps/margins, fixed/min/max
+   dimensions, grow/shrink, wrap, justification/alignment,
+   deterministic rounding, nesting.
+3. **Grid + positioning** — DONE (`specs/grid.md`, `specs/positioning.md`):
+   cell-based `grid-template-columns/rows`, gap, placement (incl. dense,
+   spans, named lines, `grid-template-areas`, subgrid), auto-fill/fit,
+   min()/max() breadths, §11 track sizing, §10.1 grid-area containing
+   block for absolute children, `position: static | relative | absolute`
+   (fixed → host-anchored, sticky → relative for now), inset utilities.
+   Also inline-fidelity batch: quantized horizontal padding on inline
+   elements and `white-space: pre` preservation (cell-model deviations
+   5 and 8). Still-deferred grid deviations (per priority): Unicode
+   width (Milestone 9), `calc()` in track lists, `text-center` (off-grid
+   fractional per-line offsets). Descendant `font-size` warns once
+   (class + inline-style scan in `readCellStyle`). Investigated and
+   REJECTED as a reader overhaul: `display:none`-ancestor reads work
+   (probed, no Typed OM needed) but kill Firefox text selection,
+   restart CSS animations, and cost a per-pass tree rebuild vs Typed
+   OM's zero-layout reads; the real simplification is dropping Firefox
+   pre-157 support.
+4. **Tables** — DONE (`table.ts`, spec'd first in `specs/table.md`):
    automatic + fixed layout with percent inflation, colspan/rowspan
    (`rowspan="0"` included), row-group reordering, captions,
    `border-collapse` as a shared junction-glyph lattice (`├ ┼ ┤`) and
@@ -457,47 +449,58 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    fallback, percent width utilities (`w-1/2`, `w-full`, `w-[N%]`) in
    the no-Typed-OM class-scan fallback, and a companion reset for the
    UA's `th`/`caption` centering.
-   4.5. **Gap decorations** — DONE (`specs/gap-decorations.md`, spec'd
+5. **Gap decorations** — DONE (`specs/gap-decorations.md`, spec'd
    first): `rule-*` utilities in `rules.css` mirroring css-gaps-1 into
    `--mw-*` props (read everywhere; real properties neutralized on
    laid-out containers), gap flooring, glyph rules with crossings and
    border tees in flex and grid. Rode along: `text-align: end` in the
-   engine/ASCII (was browser-only), percent table row/cell heights
+   engine/plain-text (was browser-only), percent table row/cell heights
    against a definite table height (probed), headless coverage tooling
    (`pnpm test:coverage`, 96% lines; browser-only modules covered by
-   the story suite).
-4. **Native interaction** — links, buttons, inputs, focus states,
-   keyboard/pointer, forms; React example + integration tests.
-5. **Visual system** — colors, border styles/widths per the cell-model glyph
-   mapping, intersections, control framing, theme variables, public parts;
-   hover/focus/selected/disabled states (requires settling the
-   dynamic-style-detection question).
-6. **Production hardening** — wrapping/clipping, Unicode width (two
-   distinct problems: legitimately wide characters — CJK, emoji — get
-   wcwidth-style 2-cell counting that browsers agree with; glyphs MISSING
-   from the font render with unpredictable fallback advances that no
-   counting rule can model — that lands as font-coverage guidance and
-   possibly a dev-mode width-mismatch warning, not a fix), nested border
-   merging (touching perpendicular borders can junction automatically —
-   pure glyph selection atop the table lattice machinery; parallel
-   doubled borders stay two lines, as in CSS),
-   scrolling (including proper `position: sticky`, which behaves
-   as `relative` until then), performance, incremental layout where
-   justified, a11y audit.
-7. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
+   the story suite). Then, 2026-08-30: `rule-break`, `rule-inset`
+   (including `overlap-join`), and `rule-visibility-items` — Chromium-
+   probed segment semantics, with wrapped-flex intersection breaks.
+6. **Unified render** — collapses the previously-separate "Native
+   interaction" and "Visual system" milestones into a single
+   architectural reshape: retire the layered/plain-text split into one
+   cell-precise renderer with a live light DOM (interactive elements,
+   ARIA, focus), a `select="text"|"grid"` prop for selection copy
+   semantics, backgrounds that clear underlying decoration glyphs, and
+   dynamic-state relayout (`:hover`/`:focus`). Broken into six phases
+   (Phase 1: `select` prop plumbing, Phase 2: unified renderer, Phase 3:
+   dynamic-state relayout, Phase 4: backgrounds occlude, Phase 5:
+   `bg-clear`, Phase 6: interactive semantics) in
+   `2026-08-30-unified-render-initiative.md`.
+7. **Playground** — a Tailwind Play-style in-browser editor
    (`apps/play` → play.monowind.benface.com): live HTML editing rendered
    through `<mono-wind>`, shareable URLs. The CDN bundle (engine +
    `@tailwindcss/browser`) is already exactly the required runtime, so this
    is mostly editor UI.
-8. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
-   doesn't need JS. Requires (a) a bundled reference monospace font with
-   known metrics so cell width is deterministic on the server, (b) a fixed
-   set of breakpoints emitted as `@media` blocks with per-breakpoint
-   `--mw-*` custom-property values, (c) client hydration that re-lays out
-   only when the user's actual metrics or viewport fall outside the assumed
-   set. Trivial SSR (emit DOM, let the client engine lay it out on
-   hydration, keep `visibility: hidden` until then) works today with no
-   engine changes.
+8. **Scrolling and sticky positioning** — `overflow: scroll` / `auto`,
+   proper `position: sticky` (behaves as `relative` until then), and
+   the geometry that goes with them (scrollbars in the cell model,
+   viewport clipping vs content bounds).
+9. **Unicode width** — two distinct problems: legitimately wide
+   characters (CJK, emoji) get wcwidth-style 2-cell counting that all
+   browsers agree with; glyphs MISSING from the font render with
+   unpredictable fallback advances that no counting rule can model —
+   that lands as font-coverage guidance and possibly a dev-mode
+   width-mismatch warning, not a fix. Documented deviation until then.
+10. **Performance, bundle size, and a11y audit** — measure real apps
+    and add incremental relayout where justified; audit and shrink the
+    published bundle (engine + companion CSS, and the CDN's IIFE
+    including `@tailwindcss/browser`) with a real target (first-load
+    kilobytes and gzipped payload); run a full screen-reader/keyboard
+    audit against the unified render (M6).
+11. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
+    doesn't need JS. Requires (a) a bundled reference monospace font with
+    known metrics so cell width is deterministic on the server, (b) a fixed
+    set of breakpoints emitted as `@media` blocks with per-breakpoint
+    `--mw-*` custom-property values, (c) client hydration that re-lays out
+    only when the user's actual metrics or viewport fall outside the assumed
+    set. Trivial SSR (emit DOM, let the client engine lay it out on
+    hydration, keep `visibility: hidden` until then) works today with no
+    engine changes.
 
 ## Key technical risks
 
@@ -507,9 +510,12 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
   doc.
 - **Dynamic style detection**: `:hover`/animation-driven computed-style changes
   have no observer; the transition-event trick also risks a feedback loop with
-  our own geometry writes. Needs decision by the visual-system milestone.
-- **Unicode width**: string length ≠ column width. MVP supports single-column
-  glyphs only; document it.
+  our own geometry writes. Resolved 2026-08-30 in the unified-render
+  initiative (Phase 3): host-level event-delegated `pointerover`/`focusin`
+  listeners schedule a scoped relayout — no computed-style polling, no
+  feedback-loop risk since the trigger is the state change itself.
+- **Unicode width**: string length ≠ column width. Single-column glyphs
+  only for now; Unicode width lands in Milestone 9. Documented deviation.
 - **Font consistency**: not every "monospace" font renders all glyphs at one
   width. Measure the real font; test box-drawing fallback glyphs; consider
   recommending/bundling a known-good font.
@@ -521,35 +527,21 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
 - **Visual vs DOM order**: flex justification is safe; avoid/constrain future
   reordering utilities.
 
-## Definition of MVP completion
+## MVP completion (historical)
 
-- Motivating example renders accurately at multiple viewport widths.
-- Resize relayout stable and visibly aligned.
-- Nested row/column flex in integer cells; basic grid templates in integer
-  cells.
-- Native link, button, and controlled React input fully interactive; focus,
-  caret, selection survive resizing.
-- React owns and reconciles the original DOM without warnings.
-- Decoration absent from the accessibility tree.
-- Style interpretation, layout, and border painting deterministically tested.
-- Works in plain HTML with one module import + one stylesheet import (plus the
-  user's Tailwind setup, in native mode).
+Original MVP acceptance list, all satisfied by the 2026-08-27 v0.1.0
+release: motivating example renders accurately at multiple viewport
+widths; resize relayout is stable and cell-aligned; nested flex and
+basic grid templates work in integer cells; native link, button, and
+controlled React input are fully interactive with focus/caret/selection
+preserved across resizes; React owns the original DOM without
+warnings; decoration is absent from the accessibility tree; style
+interpretation, layout, and border painting are deterministically
+tested; a plain-HTML setup works with one module import + one
+stylesheet import (plus the consumer's Tailwind setup in native mode).
 
-## First implementation slice
-
-Smallest vertical slice before broadening:
-
-1. Register the element; measure cell size.
-2. **Spike the measure/write cycle**: read `display`, `justify-content`,
-   `align-items`, `min-height`, `padding`, border presence from real Tailwind v4
-   output via Typed OM (with the `measuring`-attribute toggle).
-3. Build the layout tree from the light DOM.
-4. Compute parent-relative integer rects.
-5. Position the original nodes.
-6. Paint the border in the decoration layer.
-7. Relayout via `ResizeObserver`.
-8. Add a button; verify native interaction.
-9. Render the same example from React; verify state/focus retention.
-
-Only then expand into more properties, border intersections, input framing, and
-Unicode handling.
+The MVP's first implementation slice — register element → measure
+cell size → spike the measure/write cycle → build tree → compute
+integer rects → position light DOM → paint borders → observe resize →
+verify native button → verify React — is git history now; see the
+first month of commits.
