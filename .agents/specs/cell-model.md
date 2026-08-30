@@ -263,7 +263,10 @@ dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
 
 `text-align: left | right | start | end` are on-grid: each line's offset is
 `(container_width − line_length) × cell_width`, always a whole number of
-cells since character width equals cell width in monospace.
+cells since character width equals cell width in monospace. The engine
+reads the computed value (normalized LTR: `right`/`end` → end) so
+`renderAscii` mirrors the browser's per-line offsets; a line at or over
+the content width stays at start, matching truncation.
 
 `text-align: center` and `justify` produce fractional per-line offsets when
 `(container_width − line_length)` is odd (center) or when inter-word spacing

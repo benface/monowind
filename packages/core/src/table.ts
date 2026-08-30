@@ -1,4 +1,5 @@
 import { junctionGlyph, lineGlyph } from "./borders.ts";
+import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
 import {
@@ -702,17 +703,39 @@ export function layoutTable(
     naturalHeights.set(cell, cell.node.localRect.height);
   }
 
-  // Row heights: fixed row heights floor, single-span cells raise,
-  // spanning cells distribute ascending-span (equal shares), extra
-  // definite height spreads equally (specs/table.md).
+  // Row heights: fixed (and, against a definite table height, percent —
+  // probed: all engines pin such rows and give the leftover to the
+  // others) row heights floor, single-span cells raise, spanning cells
+  // distribute ascending-span (equal shares), extra definite height
+  // spreads equally over the non-percent rows (specs/table.md).
+  const chromeY = chrome.collapsed
+    ? chrome.hLines.reduce((a, b) => a + b, 0)
+    : (R + 1) * chrome.spacingY;
+  const rowBasis =
+    definiteInnerHeight === undefined
+      ? undefined
+      : Math.max(0, definiteInnerHeight - captionHeight - chromeY);
+  const percentFloor = (size: LayoutNode["style"]["height"]): number =>
+    size !== undefined && size.kind === "percent" && rowBasis !== undefined
+      ? percentToCells(size.value, rowBasis)
+      : 0;
   const rowHeights = Array.from({ length: R }, () => 0);
+  const percentRows = Array.from({ length: R }, () => false);
   for (let r = 0; r < R; r++) {
     const h = structure.rows[r]!.style.height;
     if (h !== undefined && h.kind === "cells") rowHeights[r] = h.value;
+    const floor = percentFloor(h);
+    if (floor > 0) {
+      rowHeights[r] = Math.max(rowHeights[r]!, floor);
+      percentRows[r] = true;
+    }
   }
   for (const cell of structure.cells)
-    if (cell.rowSpan === 1)
-      rowHeights[cell.row] = Math.max(rowHeights[cell.row]!, naturalHeights.get(cell)!);
+    if (cell.rowSpan === 1) {
+      const floor = percentFloor(cell.node.style.height);
+      if (floor > 0) percentRows[cell.row] = true;
+      rowHeights[cell.row] = Math.max(rowHeights[cell.row]!, naturalHeights.get(cell)!, floor);
+    }
   const rowSpanning = structure.cells
     .filter((cell) => cell.rowSpan > 1)
     .sort((a, b) => a.rowSpan - b.rowSpan);
@@ -729,18 +752,20 @@ export function layoutTable(
     );
     for (let r = cell.row; r < r1; r++) rowHeights[r]! += shares[r - cell.row]!;
   }
-  const chromeY = chrome.collapsed
-    ? chrome.hLines.reduce((a, b) => a + b, 0)
-    : (R + 1) * chrome.spacingY;
   if (definiteInnerHeight !== undefined && R > 0) {
     const extra =
       definiteInnerHeight - captionHeight - chromeY - rowHeights.reduce((a, b) => a + b, 0);
     if (extra > 0) {
+      // Percent rows are pinned at their share; the rest split the
+      // leftover (equally — deviation 5).
+      const receivers: number[] = [];
+      for (let r = 0; r < R; r++) if (!percentRows[r]) receivers.push(r);
+      const targets = receivers.length > 0 ? receivers : Array.from({ length: R }, (_, r) => r);
       const shares = distributeInteger(
-        Array.from({ length: R }, () => 1),
+        targets.map(() => 1),
         extra,
       );
-      for (let r = 0; r < R; r++) rowHeights[r]! += shares[r]!;
+      targets.forEach((r, i) => (rowHeights[r]! += shares[i]!));
     }
   }
 
@@ -842,7 +867,6 @@ export function layoutTable(
       contentLeft,
       contentTop,
     );
-  else delete node.decorationRuns;
 
   // A top caption is already inside gridBottom (via gridTop).
   return node.style.captionSide === "bottom" ? gridBottom + captionHeight : gridBottom;

@@ -1,10 +1,13 @@
 import { percentToCells } from "./metrics.ts";
+import { collectGapRuleRuns } from "./borders.ts";
+import type { RuleSegment } from "./borders.ts";
 import {
   clampSize,
   intrinsicOuterWidth,
   isOutOfFlow,
   layoutNode,
   minContentOuterWidth,
+  resolveGap,
   resolveLength,
   resolveLimit,
   resolveMargin,
@@ -28,8 +31,8 @@ export function layoutFlexRow(
   padding: Insets,
   cache: IntrinsicCache,
 ): number {
-  const gapX = resolveLength(node.style.gapX, innerWidth);
-  const gapY = resolveLength(node.style.gapY, innerHeight);
+  const gapX = resolveGap(node.style, "x", innerWidth);
+  const gapY = resolveGap(node.style, "y", innerHeight);
   const items = flexOrderedChildren(node).map((child) => {
     const margin = resolveMargin(child.style.margin, innerWidth);
     return {
@@ -233,6 +236,48 @@ export function layoutFlexRow(
   const contentHeight = Number.isFinite(innerHeight)
     ? Math.max(innerHeight, totalOccupied)
     : totalOccupied;
+
+  // Gap rules (specs/gap-decorations.md): vertical bands between the
+  // items of each line (visual order — the space between adjacent
+  // rects, whatever justify/margins/reverse produced it), horizontal
+  // bands between lines, full content width.
+  if (node.style.ruleX || node.style.ruleY) {
+    const vertical: RuleSegment[] = [];
+    const horizontal: RuleSegment[] = [];
+    for (let r = 0; r < lines.length; r++) {
+      const top = lineOffsets[r]! + r * gapY;
+      const rects = lines[r]!.row.map((item) => item.node.localRect).sort((a, b) => a.x - b.x);
+      for (let i = 1; i < rects.length; i++) {
+        const bandStart = rects[i - 1]!.x + rects[i - 1]!.width - originX;
+        const bandSize = rects[i]!.x - originX - bandStart;
+        if (bandSize > 0)
+          vertical.push({ bandStart, bandSize, start: top, end: top + rowHeights[r]! });
+      }
+      if (r > 0) {
+        const prevBottom = lineOffsets[r - 1]! + (r - 1) * gapY + rowHeights[r - 1]!;
+        if (top > prevBottom)
+          horizontal.push({
+            bandStart: prevBottom,
+            bandSize: top - prevBottom,
+            start: 0,
+            end: innerWidth,
+          });
+      }
+    }
+    node.decorationRuns = collectGapRuleRuns({
+      ruleX: node.style.ruleX,
+      ruleY: node.style.ruleY,
+      vertical,
+      horizontal,
+      contentWidth: innerWidth,
+      contentHeight,
+      border,
+      borderStyle: node.style.borderStyle,
+      borderColor: node.style.borderColor,
+      padding,
+    });
+  }
+
   recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
   return contentHeight;
 }
@@ -269,7 +314,7 @@ export function layoutFlexColumn(
   padding: Insets,
   cache: IntrinsicCache,
 ): number {
-  const gapY = resolveLength(node.style.gapY, innerHeight);
+  const gapY = resolveGap(node.style, "y", innerHeight);
 
   const items = flexOrderedChildren(node).map((child) => {
     const margin = resolveMargin(child.style.margin, innerWidth);
@@ -422,6 +467,34 @@ export function layoutFlexColumn(
 
   const totalOccupied = totalUsed + totalGap + fixedMarginTotal;
   const contentHeight = finiteInner ? Math.max(innerHeight, totalOccupied) : totalOccupied;
+
+  // Gap rules: horizontal bands between stacked items, full content
+  // width (the single column's cross extent).
+  if (node.style.ruleY && items.length > 1) {
+    const horizontal: RuleSegment[] = [];
+    const rects = items
+      .map((item) => item.node.localRect)
+      .slice()
+      .sort((a, b) => a.y - b.y);
+    for (let i = 1; i < rects.length; i++) {
+      const bandStart = rects[i - 1]!.y + rects[i - 1]!.height - originY;
+      const bandSize = rects[i]!.y - originY - bandStart;
+      if (bandSize > 0) horizontal.push({ bandStart, bandSize, start: 0, end: innerWidth });
+    }
+    node.decorationRuns = collectGapRuleRuns({
+      ruleX: null,
+      ruleY: node.style.ruleY,
+      vertical: [],
+      horizontal,
+      contentWidth: innerWidth,
+      contentHeight,
+      border,
+      borderStyle: node.style.borderStyle,
+      borderColor: node.style.borderColor,
+      padding,
+    });
+  }
+
   recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
   return contentHeight;
 }

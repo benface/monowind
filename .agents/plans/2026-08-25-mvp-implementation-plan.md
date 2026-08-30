@@ -131,6 +131,11 @@ line-height (leading-*) → rows per wrapped line; letter-spacing (tracking-*)
 position: static | relative | absolute (+ fixed → host, sticky → relative)
 top/right/bottom/left, inset-*                 (per specs/positioning.md,
                                                 incl. inline relative shifts)
+--mw-rule-* mirrors (gap-decoration rules; specs/gap-decorations.md)
+text-align: start | end honored (ASCII mirrors the browser); center |
+  justify blocked back to start (off-grid)
+z-index (positioned + flex/grid items, per CSS) → browser stacking and
+  decoration/ASCII paint order
 table-layout, border-collapse (lattice) | separate + border-spacing,
   caption-side, vertical-align on cells (align-* scan + valign/align
   attributes), colspan/rowspan/span attributes  (specs/table.md)
@@ -151,7 +156,12 @@ Every variant (`lg:`, arbitrary variants, `group-*`…) _resolves_ for free,
 since the browser applies the cascade before we read. But _changes_ in dynamic
 state (`hover:`, `focus:`, animations) on layout-affecting properties still
 need change detection — see the dynamic-style question in the architecture doc.
-Paint-only dynamic variants (colors) work with no engine involvement.
+Paint-only dynamic variants (colors) work with no engine involvement
+for browser-rendered content — but NOT for engine-painted decoration
+glyphs, whose colors are baked at layout time from computed styles: a
+theme flip outside the host subtree leaves them stale until something
+retriggers layout (Storybook's preview nudges hosts on its background
+toggle; the real fix belongs to the dynamic-style question).
 
 ### Native content
 
@@ -422,8 +432,7 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    animations/transitions in content, and costs a per-pass layout-tree
    rebuild vs Typed OM's zero-layout reads. The real simplification
    event is dropping Firefox pre-157 support, which deletes the
-   fallback scans and converges on the single Typed OM path for free._
-4. **Tables** — DONE (`table.ts`, spec'd first in `specs/table.md`):
+   fallback scans and converges on the single Typed OM path for free._ 4. **Tables** — DONE (`table.ts`, spec'd first in `specs/table.md`):
    automatic + fixed layout with percent inflation, colspan/rowspan
    (`rowspan="0"` included), row-group reordering, captions,
    `border-collapse` as a shared junction-glyph lattice (`├ ┼ ┤`) and
@@ -433,13 +442,22 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    fallback, percent width utilities (`w-1/2`, `w-full`, `w-[N%]`) in
    the no-Typed-OM class-scan fallback, and a companion reset for the
    UA's `th`/`caption` centering.
-5. **Native interaction** — links, buttons, inputs, focus states,
+   4.5. **Gap decorations** — DONE (`specs/gap-decorations.md`, spec'd
+   first): `rule-*` utilities in `rules.css` mirroring css-gaps-1 into
+   `--mw-*` props (read everywhere; real properties neutralized on
+   laid-out containers), gap flooring, glyph rules with crossings and
+   border tees in flex and grid. Rode along: `text-align: end` in the
+   engine/ASCII (was browser-only), percent table row/cell heights
+   against a definite table height (probed), headless coverage tooling
+   (`pnpm test:coverage`, 96% lines; browser-only modules covered by
+   the story suite).
+4. **Native interaction** — links, buttons, inputs, focus states,
    keyboard/pointer, forms; React example + integration tests.
-6. **Visual system** — colors, border styles/widths per the cell-model glyph
+5. **Visual system** — colors, border styles/widths per the cell-model glyph
    mapping, intersections, control framing, theme variables, public parts;
    hover/focus/selected/disabled states (requires settling the
    dynamic-style-detection question).
-7. **Production hardening** — wrapping/clipping, Unicode width (two
+6. **Production hardening** — wrapping/clipping, Unicode width (two
    distinct problems: legitimately wide characters — CJK, emoji — get
    wcwidth-style 2-cell counting that browsers agree with; glyphs MISSING
    from the font render with unpredictable fallback advances that no
@@ -447,18 +465,16 @@ writes (owned `data-*` and custom properties) to prevent feedback loops.
    possibly a dev-mode width-mismatch warning, not a fix), nested border
    merging (touching perpendicular borders can junction automatically —
    pure glyph selection atop the table lattice machinery; parallel
-   doubled borders stay two lines, as in CSS) and CSS gap decorations
-   (`specs/gap-decorations.md` — `rule-*` utilities mirroring
-   css-gaps-1 into `--mw-*` props until browser support is universal),
+   doubled borders stay two lines, as in CSS),
    scrolling (including proper `position: sticky`, which behaves
    as `relative` until then), performance, incremental layout where
    justified, a11y audit.
-8. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
+7. **Playground (post-MVP)** — a Tailwind Play-style in-browser editor
    (`apps/play` → play.monowind.benface.com): live HTML editing rendered
    through `<mono-wind>`, shareable URLs. The CDN bundle (engine +
    `@tailwindcss/browser`) is already exactly the required runtime, so this
    is mostly editor UI.
-9. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
+8. **Server-side rendering (post-MVP)** — pre-laid-out output so first paint
    doesn't need JS. Requires (a) a bundled reference monospace font with
    known metrics so cell width is deterministic on the server, (b) a fixed
    set of breakpoints emitted as `@media` blocks with per-breakpoint

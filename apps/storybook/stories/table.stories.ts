@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
-  title: "Features/Table",
+  title: "Features / Table",
 };
 export default meta;
 
@@ -55,17 +55,17 @@ export const Spans: StoryObj = {
       <table data-test="table">
         <tbody>
           <tr>
-            <td colspan="2" class="border px-1">span two</td>
-            <td rowspan="2" class="border px-1">tall</td>
+            <td colspan="2" class="border border-double px-1">span two</td>
+            <td rowspan="2" class="border border-double px-1">tall</td>
           </tr>
           <tr>
-            <td class="border px-1">a</td>
-            <td class="border px-1">b</td>
+            <td class="border border-double px-1">a</td>
+            <td class="border border-double px-1">b</td>
           </tr>
           <tr>
-            <td class="border px-1">c</td>
-            <td class="border px-1">d</td>
-            <td class="border px-1">e</td>
+            <td class="border border-double px-1">c</td>
+            <td class="border border-double px-1">d</td>
+            <td class="border border-double px-1">e</td>
           </tr>
         </tbody>
       </table>

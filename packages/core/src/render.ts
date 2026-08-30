@@ -1,4 +1,4 @@
-import { collectBorderRuns } from "./borders.ts";
+import { collectBorderRuns, paintOrderedChildren, zIndexApplies } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
 import type { LayoutNode, PerSide } from "./types.ts";
 
@@ -69,7 +69,14 @@ function walk(
       borderRuns.push({ ...run, x: absX + run.x, y: absY + run.y });
   }
 
-  for (const child of node.children) {
+  for (const child of paintOrderedChildren(node)) {
+    // Absolutization would otherwise activate z-index on static block
+    // children too (CSS keeps it inert there): the companion reads
+    // `--mw-z`, written only where CSS applies it.
+    const el = child.source as HTMLElement;
+    if (child.style.zIndex !== null && zIndexApplies(child, node) && !child.inlineBox)
+      el.style.setProperty("--mw-z", String(child.style.zIndex));
+    else el.style.removeProperty("--mw-z");
     walk(child, absX, absY, borderRuns, false, inlineInsetElements);
   }
 }
@@ -150,28 +157,42 @@ function positionElement(node: LayoutNode): void {
 
 function paintDecorations(layer: HTMLElement, runs: BorderRun[]): void {
   layer.replaceChildren();
-  for (const run of runs) {
-    // One span PER CELL, not per run: box-drawing glyphs may come from a
-    // fallback font with a different advance width than the measured cell
-    // (e.g. Google Fonts subsets that omit box-drawing characters), so a
-    // multi-glyph run would drift off the grid. Positioning every glyph
-    // from the grid keeps borders aligned regardless of which font supplies
-    // the glyph. Revisit as a perf optimization once we can detect that the
-    // active font covers the glyphs (or when painting to canvas).
+  // Later runs win per cell (junction tees over border edges, lattice
+  // crossings) — the same overwrite semantics as renderAscii's grid;
+  // overlapping glyph spans would BOTH paint (visible under mismatched
+  // ink, e.g. `╦` over `═`).
+  const cells = new Map<string, { x: number; y: number; glyph: string; color?: string }>();
+  for (const run of runs)
     for (let i = 0; i < run.length; i++) {
-      const span = document.createElement("span");
-      span.setAttribute("aria-hidden", "true");
-      span.style.position = "absolute";
-      span.style.left = `calc(${run.x + i} * var(--mw-cw))`;
-      span.style.top = `calc(${run.y} * var(--mw-ch))`;
-      span.style.font = "inherit";
-      span.style.lineHeight = "inherit";
-      span.style.whiteSpace = "pre";
-      span.style.pointerEvents = "none";
-      span.style.userSelect = "none";
-      if (run.color) span.style.color = run.color;
-      span.textContent = run.glyph;
-      layer.appendChild(span);
+      const x = run.x + i;
+      const cell: { x: number; y: number; glyph: string; color?: string } = {
+        x,
+        y: run.y,
+        glyph: run.glyph,
+      };
+      if (run.color) cell.color = run.color;
+      cells.set(`${x},${run.y}`, cell);
     }
+  // One span PER CELL, not per run: box-drawing glyphs may come from a
+  // fallback font with a different advance width than the measured cell
+  // (e.g. Google Fonts subsets that omit box-drawing characters), so a
+  // multi-glyph run would drift off the grid. Positioning every glyph
+  // from the grid keeps borders aligned regardless of which font supplies
+  // the glyph. Revisit as a perf optimization once we can detect that the
+  // active font covers the glyphs (or when painting to canvas).
+  for (const cell of cells.values()) {
+    const span = document.createElement("span");
+    span.setAttribute("aria-hidden", "true");
+    span.style.position = "absolute";
+    span.style.left = `calc(${cell.x} * var(--mw-cw))`;
+    span.style.top = `calc(${cell.y} * var(--mw-ch))`;
+    span.style.font = "inherit";
+    span.style.lineHeight = "inherit";
+    span.style.whiteSpace = "pre";
+    span.style.pointerEvents = "none";
+    span.style.userSelect = "none";
+    if (cell.color) span.style.color = cell.color;
+    span.textContent = cell.glyph;
+    layer.appendChild(span);
   }
 }

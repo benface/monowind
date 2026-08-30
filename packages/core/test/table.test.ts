@@ -225,6 +225,31 @@ describe("rows and spans", () => {
     expect(cell.localRect.height).toBe(3);
   });
 
+  it("pins percent rows against a definite table height, rest to the others (probed)", () => {
+    const node = build(
+      `<table style="height: 112px"><tr style="height: 50%"><td>a</td></tr><tr><td>b</td></tr></table>`,
+    );
+    layoutRoot(node, 60);
+    const rows = node.children[0]!.children;
+    expect(rows.map((r) => r.localRect.height)).toEqual([14, 14]);
+  });
+
+  it("ignores percent row heights when the table height is auto (probed)", () => {
+    const node = build(`<table><tr style="height: 50%"><td>a</td></tr><tr><td>b</td></tr></table>`);
+    layoutRoot(node, 60);
+    const rows = node.children[0]!.children;
+    expect(rows.map((r) => r.localRect.height)).toEqual([1, 1]);
+  });
+
+  it("lets a percent CELL height floor its row too", () => {
+    const node = build(
+      `<table style="height: 112px"><tr><td style="height: 25%">a</td></tr><tr><td>b</td></tr></table>`,
+    );
+    layoutRoot(node, 60);
+    const rows = node.children[0]!.children;
+    expect(rows.map((r) => r.localRect.height)).toEqual([7, 21]);
+  });
+
   it("distributes extra authored table height equally to rows", () => {
     const node = build(
       `<table style="height: 24px"><tr><td>a</td></tr><tr><td>b</td></tr></table>`,
@@ -294,6 +319,37 @@ describe("integration", () => {
     const node = build(`<table><tr></tr><tr><td>a</td></tr></table>`);
     layoutRoot(node, 60);
     expect(node.localRect).toMatchObject({ width: 1, height: 1 });
+  });
+});
+
+describe("out-of-flow and container cells", () => {
+  it("shifts a container cell's block children for vertical-align", () => {
+    const art = ascii(
+      `<table><tr><td>a<br>b<br>c</td><td><div>x</div><div>y</div></td></tr></table>`,
+    );
+    // The container cell's two blocks center as a unit (UA middle;
+    // delta 1 floors to a 0 offset, so they hug the top).
+    expect(art).toBe(["ax", "by", "c"].join("\n"));
+  });
+
+  it("anchors an abspos child of the table at the content origin", () => {
+    // Imperative: the HTML parser would foster-parent the div out.
+    const table = document.createElement("table");
+    table.setAttribute("style", "position: relative");
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.textContent = "abc";
+    tr.appendChild(td);
+    const abs = document.createElement("div");
+    abs.setAttribute("style", "position: absolute; top: 0; right: 0");
+    abs.textContent = "z";
+    table.append(tr, abs);
+    document.body.appendChild(table);
+    const node = buildTree(table, 16)!;
+    layoutRoot(node, 60);
+    const absNode = node.children.find((c) => c.style.position === "absolute")!;
+    expect(absNode.localRect.x).toBe(2);
+    expect(absNode.localRect.y).toBe(0);
   });
 });
 

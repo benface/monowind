@@ -1,10 +1,14 @@
 import { html } from "lit";
+import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
-  title: "Features/Flex",
+  title: "Features / Flex",
 };
 export default meta;
+
+const cellsOf = (el: HTMLElement, name: string): number => Number(el.style.getPropertyValue(name));
 
 export const JustifyContent: StoryObj = {
   render: () => html`
@@ -173,4 +177,36 @@ export const Column: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+export const GapDecorations: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div
+        class="flex border border-double border-neutral-500 rule-double rule-neutral-500 rule-x"
+        data-test="row"
+      >
+        <div class="grow px-1">files</div>
+        <div class="grow px-1">edit</div>
+        <div class="grow px-1">view</div>
+      </div>
+      <div class="mt-1 flex flex-col rule-dashed rule-neutral-500 rule-y" data-test="column">
+        <div>first entry</div>
+        <div>second entry</div>
+        <div>third entry</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await expectBrowserRowsToMatchEngine(canvasElement);
+    // `rule-x` with no gap floors the gap at the rule width: adjacent
+    // items sit exactly one cell apart, the rule cell.
+    const row = canvasElement.querySelector<HTMLElement>('[data-test="row"]')!;
+    const [a, b] = Array.from(row.querySelectorAll<HTMLElement>(":scope > div"));
+    expect(cellsOf(b!, "--mw-x")).toBe(cellsOf(a!, "--mw-x") + cellsOf(a!, "--mw-w") + 1);
+    // Same in the column, between stacked items.
+    const column = canvasElement.querySelector<HTMLElement>('[data-test="column"]')!;
+    const [c, d] = Array.from(column.querySelectorAll<HTMLElement>(":scope > div"));
+    expect(cellsOf(d!, "--mw-y")).toBe(cellsOf(c!, "--mw-y") + cellsOf(c!, "--mw-h") + 1);
+  },
 };

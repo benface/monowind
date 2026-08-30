@@ -106,6 +106,9 @@ export function layoutNode(
 ): void {
   const style = node.style;
   const forcedHeight = forced?.height;
+  // Fresh per layout: only the pass that runs (table lattice, flex/grid
+  // gap rules) repopulates it.
+  delete node.decorationRuns;
 
   // Width is clamped to min/max BEFORE laying out content — wrapping and
   // child sizing must see the constrained width, not the raw resolved one.
@@ -410,6 +413,15 @@ export function leafLineGeometry(
   return { spans, lineY, textY, totalRows: y };
 }
 
+/** The used gap in an axis: the resolved gap floored at the axis's rule
+ * width (specs/gap-decorations.md deviation 1 — rules take layout
+ * space, so `rule` alone behaves as `gap-1 rule`). */
+export function resolveGap(style: CellStyle, axis: "x" | "y", basis: number | undefined): number {
+  const gap = resolveLength(axis === "x" ? style.gapX : style.gapY, basis);
+  const rule = axis === "x" ? style.ruleX : style.ruleY;
+  return Math.max(gap, rule?.width ?? 0);
+}
+
 /** Resolve a spacing length to cells against its containing-block basis.
  * An indefinite basis (percent gap in an unbounded axis) resolves to 0. */
 export function resolveLength(length: CellLength, basis: number | undefined): number {
@@ -650,7 +662,9 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "flex" && node.style.flexDirection === "row") {
-    const gap = intrinsicCells(node.style.gapX) * Math.max(0, inFlow.length - 1);
+    const gap =
+      Math.max(intrinsicCells(node.style.gapX), node.style.ruleX?.width ?? 0) *
+      Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + intrinsicOuterWidth(c, cache), 0) + gap;
   }
   return inFlow.reduce((max, c) => Math.max(max, intrinsicOuterWidth(c, cache)), 0);
@@ -694,7 +708,9 @@ function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
     node.style.flexDirection === "row" &&
     node.style.flexWrap === "nowrap"
   ) {
-    const gap = intrinsicCells(node.style.gapX) * Math.max(0, inFlow.length - 1);
+    const gap =
+      Math.max(intrinsicCells(node.style.gapX), node.style.ruleX?.width ?? 0) *
+      Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + minContentOuterWidth(c, cache), 0) + gap;
   }
   return inFlow.reduce((max, c) => Math.max(max, minContentOuterWidth(c, cache)), 0);

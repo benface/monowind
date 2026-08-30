@@ -141,8 +141,11 @@ wins (the table overflows, per CSS).
 
 A row's height is the max of its cells' content heights laid out at the
 final column widths (plus each cell's vertical chrome), floored by any
-cell-count `h-*` on the row or its cells (percent heights behave as
-auto). `rowspan` cells contribute like spanning grid items: ascending
+`h-*` on the row or its cells. Percent heights resolve against a
+DEFINITE table height (minus caption and border chrome) and pin their
+rows — the leftover goes to the other rows, and an auto table height
+ignores them; probed: all three engines agree (CSS 2.1 declines to
+define it). `rowspan` cells contribute like spanning grid items: ascending
 span, excess over the spanned rows distributed equally. Authored table height beyond the row sum is distributed equally
 to the rows (CSS leaves this undefined; browsers vary).
 
@@ -245,8 +248,8 @@ are ignored.
    (indefinite-available) contexts percents behave as auto, as in grid.
 4. **`baseline` vertical alignment behaves as `start`** — the flex/grid
    rule, and exact under the single-font-size model (see Cells).
-5. **Extra table height is distributed equally to rows** (undefined in
-   CSS; browsers vary).
+5. **Extra table height is distributed equally to the non-percent
+   rows** (undefined in CSS; browsers vary).
 6. **`empty-cells` and `visibility: collapse`** on rows/columns are not
    supported.
 7. Everything in `cell-model.md` (rounding, integer distribution ties)

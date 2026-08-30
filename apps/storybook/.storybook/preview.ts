@@ -29,6 +29,12 @@ function applyTheme(background: unknown): void {
   document.body.style.color = THEMES[name].text;
   document.body.style.colorScheme = name;
   document.documentElement.classList.toggle("dark", name === "dark");
+  // Engine-painted glyph colors are baked at layout time, and the theme
+  // flips outside the hosts' subtrees — nudge each host so its observer
+  // triggers a fresh layout (see the dynamic-style question in the
+  // architecture doc).
+  for (const host of document.querySelectorAll<HTMLElement>("mono-wind"))
+    host.style.setProperty("--sb-theme", name);
 }
 
 // A toolbar toggle only reaches decorators after Storybook re-renders the

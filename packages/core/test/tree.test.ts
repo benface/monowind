@@ -259,3 +259,25 @@ describe("atomic inline box vertical-align", () => {
     }
   });
 });
+
+describe("text-align end", () => {
+  it("offsets each line to the content box's right edge", () => {
+    const node = buildTree(
+      el(`<div style="width: 40px; text-align: end">hi there world</div>`),
+      16,
+    )!;
+    layoutRoot(node, 10);
+    expect(renderAscii(node)).toBe(["  hi there", "     world"].join("\n"));
+  });
+
+  it("keeps overflowing nowrap lines at start", () => {
+    const node = buildTree(
+      el(
+        `<div style="width: 40px"><div style="width: 16px; text-align: end; white-space: nowrap">too long</div></div>`,
+      ),
+      16,
+    )!;
+    layoutRoot(node, 10);
+    expect(renderAscii(node)).toBe("too long");
+  });
+});

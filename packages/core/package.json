@@ -51,11 +51,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@tailwindcss/browser": "^4.3.3",
-    "happy-dom": "^20.11.13",
+    "@vitest/coverage-v8": "4.1.11",
+    "happy-dom": "^20.11.15",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

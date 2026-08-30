@@ -1,4 +1,4 @@
-import { collectBorderRuns } from "./borders.ts";
+import { collectBorderRuns, paintOrderedChildren } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
 import { leafLineGeometry } from "./layout.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
@@ -76,7 +76,11 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
           ? truncateSpan(node.text, span, contentWidth, node.advances, style)
           : { end: span.end, ellipsis: false };
       // Each character advances by its own cell count (tracking gaps).
-      let x = contentX;
+      // `text-align: end` offsets each line to the content box's right
+      // edge (whole cells; a line at or over the width stays at start,
+      // matching the truncation path).
+      const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
+      let x = contentX + (style.textAlign === "end" ? Math.max(0, contentWidth - lineWidth) : 0);
       for (let k = span.start; k < truncated.end; k++) {
         // U+FFFC marks an embedded inline box (its cells are drawn by the
         // box's own walk); INLINE_PAD marks a blank inline-padding cell —
@@ -90,7 +94,7 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     }
   }
 
-  for (const child of node.children) {
+  for (const child of paintOrderedChildren(node)) {
     walk(child, absX, absY, put);
   }
 }

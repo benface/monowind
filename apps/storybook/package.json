@@ -21,6 +21,7 @@
     "@storybook/web-components-vite": "^10.5.10",
     "@tailwindcss/vite": "^4.3.3",
     "@vitest/browser-playwright": "^4.1.11",
+    "@vitest/coverage-v8": "4.1.11",
     "lit": "^3.3.3",
     "playwright": "^1.62.1",
     "storybook": "^10.5.10",

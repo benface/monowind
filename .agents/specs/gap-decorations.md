@@ -1,10 +1,9 @@
 # Spec: gap decorations (rules)
 
-Status: draft, future work (parked with nested border merging in the
-plan; builds on the table milestone's junction machinery) — the utility
-names and custom-property contract are designed now so classes are
-stable from day one. The normative source is CSS Gaps Level 1 (css-gaps-1), which
-generalizes multicol's `column-rule-*` to flex and grid gaps and adds
+Status: implemented (`rules.css` utilities; engine painting via
+`collectGapRuleRuns` in `borders.ts`, wired into flex and grid). The
+normative source is CSS Gaps Level 1 (css-gaps-1), which generalizes
+multicol's `column-rule-*` to flex and grid gaps and adds
 `row-rule-*`. Shipped unflagged in Chrome/Edge 149 (flagged trial since
 139); no Firefox or WebKit support, and Tailwind has no utilities for
 it.
@@ -47,15 +46,22 @@ already (multicol legacy); `row-rule-*` is written where supported.
 
 The mirrors MUST be registered with `@property { inherits: false }` —
 custom properties inherit by default, and an inherited rule width would
-leak decorations into nested flex/grid containers.
+leak decorations into nested flex/grid containers. The color default
+(`currentColor`, like borders) resolves at READ time against the
+container's computed `color`: a CSS-side default can't work — an
+`initial-value: currentColor` is illegal (not computationally
+independent), and engines disagree on absolutizing `currentColor` in
+registered `<color>` properties (probed: Firefox/WebKit resolve it,
+Chromium keeps the keyword).
 
-Sketch (lives in the core companion `styles.css`: every build-step
-consumer `@import`s it inside their Tailwind entry, where `@utility`
-compiles; plain-CSS consumers drop the unknown at-rule harmlessly and
-`@property` survives as real CSS. The CDN keeps injecting the companion
-as a plain `<style>` — immediate, no compile tick — and injects only
-this block as a second `<style type="text/tailwindcss">`, the kind
-`@tailwindcss/browser` compiles; no consumer-visible difference):
+Excerpt from `rules.css` (imported by the companion `styles.css`, so
+every build-step consumer reaches it via `@import "monowind"` inside
+their Tailwind entry, where `@utility` compiles; plain-CSS consumers
+drop the unknown at-rule harmlessly and `@property` survives as real
+CSS. The CDN keeps injecting the companion as a plain `<style>` —
+immediate, no compile tick — and injects `rules.css` separately as
+`<style type="text/tailwindcss">`, the kind `@tailwindcss/browser`
+compiles; no consumer-visible difference):
 
 ```css
 @property --mw-rule-x-width {
@@ -91,22 +97,27 @@ Width utilities set no style: Tailwind emits utilities alphabetically,
 so `rule-dashed` sorts before `rule-x` and a `solid` there would win
 (probed). The `solid` default lives in the `@property` initial values
 instead — the same reason Tailwind's border width utilities rely on
-preflight's `border-style: solid`. The real `column-rule-style` default
-for native-support browsers is pinned at implementation time (likely a
-companion rule).
+preflight's `border-style: solid`. No native default is needed: the
+companion neutralizes native rule painting on laid-out containers
+outright (see Rendering).
 
 ## Rendering
 
 A rule paints in each gap between adjacent items of the flex/grid
 container, as a run of border glyphs (same style tables from
 `cell-model.md`), centered in the gap (extra cells split like alignment,
-floor on the leading side). The used gap in a ruled axis floors at the
-rule width — `rule` alone behaves as `gap-1 rule` — so a rule always
-has cells to paint in (deviation 1). Where a rule meets the container's
-border or a crossing rule, the junction glyph machinery picks
-tees/crosses.
-Details (span extent, behavior at spanning grid items) follow css-gaps-1
-and are pinned at implementation time.
+floor on the leading side). Flex bands are the actual space between
+adjacent item rects — whatever gap, justify-content, and margins
+produced — per line (row rules between lines span the content width);
+grid bands are the gutters between tracks, spanning the grid's extent.
+Native css-gaps rules are neutralized on laid-out containers (the
+engine paints the glyphs; a supporting browser must not double-paint
+fractional ones). The used gap in a ruled axis floors at the rule
+width — `rule` alone behaves as `gap-1 rule` — so a rule always has
+cells to paint in (deviation 1). Crossing rules junction (`┼`), and a
+rule that reaches the content edge through zero padding tees into the
+container's own innermost border ring (`┬ ┴ ├ ┤`) — the shared
+junction-glyph machinery in both cases.
 
 ## Deviations from css-gaps-1
 
@@ -115,6 +126,7 @@ and are pinned at implementation time.
    the items, one with no gap is invisible). Same principle as borders
    occupying whole cells: ink needs cells.
 2. `rule-outset`, `rule-break`, `rule-paint-order`, and repeat()/list
-   values are unsupported until needed.
+   values are unsupported until needed — grid rules paint straight
+   through spanning items (css-gaps' default breaks around them).
 3. Everything in `cell-model.md` (quantization, glyph fallbacks)
    applies.

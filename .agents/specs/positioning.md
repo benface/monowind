@@ -94,10 +94,16 @@ author's `position: relative` itself intact.
 
 ## Paint order
 
-All laid-out elements are browser-positioned, so stacking is native: DOM
-order by default, `z-*` utilities pass through as paint-only properties
-with no engine involvement. Relative/absolute elements may overlap
-anything; `overflow` clipping applies natively.
+All laid-out elements are browser-positioned; stacking is DOM order by
+default, with `z-*` honored exactly where CSS applies it — positioned
+elements and flex/grid items; inert on static block-flow children (the
+engine gates the browser side through `--mw-z`, since absolutization
+would otherwise activate it everywhere). The renderers walk children in
+the same order (stable effective-z sort, document-order ties) so
+decoration glyphs and `renderAscii` agree with the browser at
+overlaps — a simplified model: no stacking contexts, and a negative
+`z-*` still paints over its parent's own glyphs. Relative/absolute
+elements may overlap anything; `overflow` clipping applies natively.
 
 ## ASCII renderer
 

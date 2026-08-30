@@ -8,7 +8,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
  * window (or use the viewport toolbar) to see these switch.
  */
 const meta: Meta = {
-  title: "Features/Responsive",
+  title: "Features / Responsive",
 };
 export default meta;
 

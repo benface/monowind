@@ -1,3 +1,5 @@
+import { collectGapRuleRuns } from "./borders.ts";
+import type { RuleSegment } from "./borders.ts";
 import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack } from "./types.ts";
 import {
@@ -6,6 +8,7 @@ import {
   isOutOfFlow,
   layoutNode,
   minContentOuterWidth,
+  resolveGap,
   resolveLength,
   resolveLimit,
   resolveMargin,
@@ -55,8 +58,8 @@ export function layoutGrid(
   // simplification). Rows may still be provisional (see LayoutNode.subgrid).
   const inheritedCols = node.subgrid?.cols;
   const inheritedRows = node.subgrid?.rows;
-  const gapX = inheritedCols ? inheritedCols.gap : resolveLength(style.gapX, innerWidth);
-  const gapY = inheritedRows ? inheritedRows.gap : resolveLength(style.gapY, rowAvailable);
+  const gapX = inheritedCols ? inheritedCols.gap : resolveGap(style, "x", innerWidth);
+  const gapY = inheritedRows ? inheritedRows.gap : resolveGap(style, "y", rowAvailable);
 
   const structure = resolveGridStructure(
     node,
@@ -236,6 +239,50 @@ export function layoutGrid(
   const contentHeight = Number.isFinite(innerHeight)
     ? Math.max(innerHeight, contentRows)
     : contentRows;
+
+  // Gap rules (specs/gap-decorations.md): gutter bands between adjacent
+  // tracks (collapsed auto-fit gutters have no width and drop out),
+  // spanning the grid's extent in the other axis. Rules paint through
+  // spanning items — `rule-break` is unsupported (spec deviation).
+  if (style.ruleX || style.ruleY) {
+    const gridBands = (positions: number[], sizes: number[]): RuleSegment[] => {
+      const bands: RuleSegment[] = [];
+      for (let i = 1; i < positions.length; i++) {
+        const bandStart = positions[i - 1]! + sizes[i - 1]!;
+        const bandSize = positions[i]! - bandStart;
+        if (bandSize > 0) bands.push({ bandStart, bandSize, start: 0, end: 0 });
+      }
+      return bands;
+    };
+    const extent = (positions: number[], sizes: number[]): [number, number] =>
+      positions.length === 0
+        ? [0, 0]
+        : [positions[0]!, positions[positions.length - 1]! + sizes[sizes.length - 1]!];
+    const [rowStart, rowEnd] = extent(rowPos, rowSizing.sizes);
+    const [colStart, colEnd] = extent(colPos, colSizing.sizes);
+    const vertical = gridBands(colPos, colSizing.sizes).map((band) => ({
+      ...band,
+      start: rowStart,
+      end: rowEnd,
+    }));
+    const horizontal = gridBands(rowPos, rowSizing.sizes).map((band) => ({
+      ...band,
+      start: colStart,
+      end: colEnd,
+    }));
+    node.decorationRuns = collectGapRuleRuns({
+      ruleX: style.ruleX,
+      ruleY: style.ruleY,
+      vertical,
+      horizontal,
+      contentWidth: innerWidth,
+      contentHeight,
+      border,
+      borderStyle: style.borderStyle,
+      borderColor: style.borderColor,
+      padding,
+    });
+  }
 
   // Out-of-flow children (specs/grid.md §10.1): the child's grid area —
   // its containing block when this container is positioned — plus the
@@ -537,7 +584,7 @@ export function gridIntrinsicInnerWidths(
   const cached = cache.gridIntrinsic.get(node);
   if (cached !== undefined) return cached;
   const style = node.style;
-  const gapX = typeof style.gapX === "number" ? style.gapX : 0;
+  const gapX = Math.max(typeof style.gapX === "number" ? style.gapX : 0, style.ruleX?.width ?? 0);
   const structure = resolveGridStructure(
     node,
     undefined,

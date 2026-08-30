@@ -47,20 +47,31 @@ export async function expectBrowserRowsToMatchEngine(
     } else {
       expect(lines.size, `"${el.textContent!.trim()}" lines`).toBe(engineLines);
     }
-    // Horizontal agreement: the text must start at the element's content
-    // origin (left padding edge). Guards against the browser laying the
-    // text out relative to some OTHER box than the engine's left/top —
-    // e.g. an absolutely positioned grid child's §10.1 grid-area
-    // containing block before styles.css neutralized grid placement.
+    // Horizontal agreement: the text must hug the element's content
+    // origin (left padding edge) — or the right edge for end-aligned
+    // text. Guards against the browser laying the text out relative to
+    // some OTHER box than the engine's — e.g. an absolutely positioned
+    // grid child's §10.1 grid-area containing block before styles.css
+    // neutralized grid placement.
     const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0);
     if (rects.length > 0) {
-      const textLeft = Math.min(...rects.map((r) => r.left));
-      const expectedLeft =
-        el.getBoundingClientRect().left + (cells("--mw-bl") + cells("--mw-pl")) * cellWidth;
-      expect(
-        Math.abs(textLeft - expectedLeft),
-        `"${el.textContent!.trim()}" text start`,
-      ).toBeLessThan(1.5);
+      const box = el.getBoundingClientRect();
+      if (/right|end/.test(getComputedStyle(el).textAlign)) {
+        const textRight = Math.max(...rects.map((r) => r.right));
+        const expectedRight =
+          box.left + (cells("--mw-w") - cells("--mw-br") - cells("--mw-pr")) * cellWidth;
+        expect(
+          Math.abs(textRight - expectedRight),
+          `"${el.textContent!.trim()}" text end`,
+        ).toBeLessThan(1.5);
+      } else {
+        const textLeft = Math.min(...rects.map((r) => r.left));
+        const expectedLeft = box.left + (cells("--mw-bl") + cells("--mw-pl")) * cellWidth;
+        expect(
+          Math.abs(textLeft - expectedLeft),
+          `"${el.textContent!.trim()}" text start`,
+        ).toBeLessThan(1.5);
+      }
     }
   }
 }

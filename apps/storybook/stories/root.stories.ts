@@ -8,7 +8,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
  * property set on it (color, …) becomes the default for the whole component.
  */
 const meta: Meta = {
-  title: "Features/Root Styles",
+  title: "Features / Root Styles",
 };
 export default meta;
 

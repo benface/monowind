@@ -194,6 +194,16 @@ export interface BorderRun {
   color: string | undefined;
 }
 
+/** A gap-decoration rule (specs/gap-decorations.md), from the rule-*
+ * utilities' `--mw-rule-*` mirrors. `color` is always concrete:
+ * currentColor resolves to the container's computed color at read time,
+ * like border colors. */
+export interface GapRule {
+  width: number;
+  style: BorderStyle;
+  color: string | undefined;
+}
+
 /** A collapsed table participant's authored border, moved out of
  * `CellStyle.border` at read time (`border-collapse` inherits, so every
  * internal element knows): geometry and painting then treat the element
@@ -314,6 +324,10 @@ export interface CellStyle {
   /** True when text-align is center/justify — forced back to `start` since
    * per-line centering can't be snapped to whole cells. See cell-model spec. */
   textAlignBlocked: boolean;
+  /** Computed text-align, normalized LTR (`right`/`end` → `end`, all else
+   * `start`). On-grid: line offsets are whole cells. Browser paints its
+   * own alignment; `renderAscii` mirrors it per line. */
+  textAlign: "start" | "end";
   tableRole: TableRole;
   tableLayout: "auto" | "fixed";
   /** True for `border-collapse: collapse` (Tailwind preflight's default
@@ -330,8 +344,17 @@ export interface CellStyle {
    * only `end` (bottom) acts — it drops the line's text to the box's
    * last row (specs/cell-model.md). */
   verticalAlign: "start" | "center" | "end";
+  /** Authored `z-index` (`null` = auto). Browser stacking is native;
+   * the renderers walk children in this order (stable, document-order
+   * ties) so decorations and ASCII agree with it at overlaps. */
+  zIndex: number | null;
   /** Set on collapsed-table participants; null everywhere else. */
   latticeBorder: LatticeBorder | null;
+  /** Gap rules on flex/grid containers (specs/gap-decorations.md);
+   * null when unauthored. The used gap in a ruled axis floors at the
+   * rule width (deviation: rules take layout space — ink needs cells). */
+  ruleX: GapRule | null;
+  ruleY: GapRule | null;
 }
 
 export interface LayoutNode {
@@ -497,6 +520,7 @@ export function defaultCellStyle(): CellStyle {
     backgroundColor: undefined,
     borderColor: { top: undefined, right: undefined, bottom: undefined, left: undefined },
     textAlignBlocked: false,
+    textAlign: "start",
     tableRole: "none",
     tableLayout: "auto",
     borderCollapse: false,
@@ -504,7 +528,10 @@ export function defaultCellStyle(): CellStyle {
     borderSpacingY: 0,
     captionSide: "top",
     verticalAlign: "start",
+    zIndex: null,
     latticeBorder: null,
+    ruleX: null,
+    ruleY: null,
   };
 }
 

@@ -1,4 +1,13 @@
-import type { BorderRun, BorderStyle, CellStyle, PerSide, Rect } from "./types.ts";
+import type {
+  BorderRun,
+  BorderStyle,
+  CellStyle,
+  GapRule,
+  Insets,
+  LayoutNode,
+  PerSide,
+  Rect,
+} from "./types.ts";
 
 export type { BorderRun } from "./types.ts";
 
@@ -143,6 +152,29 @@ function paintRing(
   }
 }
 
+/** Where CSS applies `z-index`: positioned elements and flex/grid
+ * items; inert on static block-flow children. */
+export function zIndexApplies(child: LayoutNode, parent: LayoutNode): boolean {
+  return (
+    child.style.position !== "static" ||
+    parent.style.display === "flex" ||
+    parent.style.display === "grid"
+  );
+}
+
+function effectiveZIndex(child: LayoutNode, parent: LayoutNode): number {
+  return zIndexApplies(child, parent) ? (child.style.zIndex ?? 0) : 0;
+}
+
+/** Children in paint order: stable-sorted by effective z-index,
+ * document order breaking ties — mirrored by both renderers so
+ * decorations and ASCII agree with browser stacking at overlaps (a
+ * simplified model: no stacking contexts, negative z still paints over
+ * the parent's own glyphs). */
+export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
+  return [...node.children].sort((a, b) => effectiveZIndex(a, node) - effectiveZIndex(b, node));
+}
+
 /** A style's straight line glyph, for lattice segments. */
 export function lineGlyph(style: BorderStyle, axis: "h" | "v"): string {
   const glyphs = borderGlyphs(style);
@@ -222,4 +254,192 @@ function borderGlyphs(style: BorderStyle): Glyphs {
   if (style === "dashed") return { ...base, h: "╌", v: "╎" };
   if (style === "dotted") return { ...base, h: "┄", v: "┊" };
   return base;
+}
+
+// ---------------------------------------------------------------------------
+// Gap decorations (specs/gap-decorations.md)
+
+/** One gap band a rule may occupy: `bandStart`/`bandSize` across the
+ * band's axis (x for a vertical rule), `start`/`end` along it. All in
+ * content-box cells. */
+export interface RuleSegment {
+  bandStart: number;
+  bandSize: number;
+  start: number;
+  end: number;
+}
+
+export interface GapRuleContext {
+  ruleX: GapRule | null;
+  ruleY: GapRule | null;
+  /** Column-gap bands (vertical lines) and row-gap bands (horizontal). */
+  vertical: RuleSegment[];
+  horizontal: RuleSegment[];
+  contentWidth: number;
+  contentHeight: number;
+  border: Insets;
+  borderStyle: PerSide<BorderStyle>;
+  borderColor: PerSide<string | undefined>;
+  padding: Insets;
+}
+
+/**
+ * Paint gap rules as node-local glyph runs: each rule centers in its
+ * band (floor on the leading side), crossings get junction glyphs from
+ * their arms, and a rule that reaches the content edge through zero
+ * padding tees into the container's innermost border ring. Mixed styles
+ * fall back to the light set; all-double crossings use the double set.
+ */
+export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
+  const out: BorderRun[] = [];
+  const originX = ctx.border.left + ctx.padding.left;
+  const originY = ctx.border.top + ctx.padding.top;
+  const placed = (rule: GapRule, seg: RuleSegment) => ({
+    line: seg.bandStart + Math.floor((seg.bandSize - rule.width) / 2),
+    start: seg.start,
+    end: seg.end,
+  });
+  const vLines = ctx.ruleX ? ctx.vertical.map((seg) => placed(ctx.ruleX!, seg)) : [];
+  const hLines = ctx.ruleY ? ctx.horizontal.map((seg) => placed(ctx.ruleY!, seg)) : [];
+  const vWidth = ctx.ruleX?.width ?? 0;
+  const hWidth = ctx.ruleY?.width ?? 0;
+  /** Does a vertical rule cover column `x` at row `y`? */
+  const verticalArm = (x: number, y: number): boolean =>
+    vLines.some((l) => x >= l.line && x < l.line + vWidth && y >= l.start && y < l.end);
+  /** Is row `y` inside a horizontal line? (Those cells belong to the
+   * horizontal pass, which paints the junctions — no double glyphs.) */
+  const insideHorizontal = (y: number): boolean =>
+    hLines.some((l) => y >= l.line && y < l.line + hWidth);
+
+  if (ctx.ruleX) {
+    const glyph = lineGlyph(ctx.ruleX.style, "v");
+    for (const line of vLines) {
+      for (let t = 0; t < vWidth; t++)
+        for (let y = line.start; y < line.end; y++) {
+          if (insideHorizontal(y)) continue;
+          out.push({
+            glyph,
+            x: originX + line.line + t,
+            y: originY + y,
+            length: 1,
+            color: ctx.ruleX.color,
+          });
+        }
+      collectRuleBorderTees(ctx, out, "x", line.line, line.start, line.end);
+    }
+  }
+  if (ctx.ruleY) {
+    const allDouble = ctx.ruleY.style === "double" && ctx.ruleX?.style === "double";
+    for (const line of hLines) {
+      for (let t = 0; t < hWidth; t++) {
+        const y = line.line + t;
+        for (let x = line.start; x < line.end; x++) {
+          const through = verticalArm(x, y);
+          const up = through || verticalArm(x, y - 1);
+          const down = through || verticalArm(x, y + 1);
+          out.push({
+            glyph:
+              up || down
+                ? junctionGlyph(
+                    allDouble ? "double" : "solid",
+                    up,
+                    down,
+                    x > line.start,
+                    x < line.end - 1,
+                  )
+                : lineGlyph(ctx.ruleY.style, "h"),
+            x: originX + x,
+            y: originY + y,
+            length: 1,
+            color: ctx.ruleY.color,
+          });
+        }
+      }
+      collectRuleBorderTees(ctx, out, "y", line.line, line.start, line.end);
+    }
+  }
+  return out;
+}
+
+/** Tee a full-extent rule into the container's own innermost border
+ * ring (only through ZERO padding — otherwise they don't touch). */
+function collectRuleBorderTees(
+  ctx: GapRuleContext,
+  out: BorderRun[],
+  axis: "x" | "y",
+  line: number,
+  start: number,
+  end: number,
+): void {
+  const rule = axis === "x" ? ctx.ruleX! : ctx.ruleY!;
+  const originX = ctx.border.left + ctx.padding.left;
+  const originY = ctx.border.top + ctx.padding.top;
+  const nodeWidth = originX + ctx.contentWidth + ctx.padding.right + ctx.border.right;
+  const nodeHeight = originY + ctx.contentHeight + ctx.padding.bottom + ctx.border.bottom;
+  const tee = (
+    x: number,
+    y: number,
+    borderSide: BorderStyle,
+    color: string | undefined,
+    up: boolean,
+    down: boolean,
+    left: boolean,
+    right: boolean,
+  ) => {
+    const style = rule.style === "double" && borderSide === "double" ? "double" : "solid";
+    out.push({ glyph: junctionGlyph(style, up, down, left, right), x, y, length: 1, color });
+  };
+  if (axis === "x") {
+    for (let t = 0; t < rule.width; t++) {
+      const x = originX + line + t;
+      if (start <= 0 && ctx.padding.top === 0 && ctx.border.top > 0)
+        tee(
+          x,
+          ctx.border.top - 1,
+          ctx.borderStyle.top,
+          ctx.borderColor.top,
+          false,
+          true,
+          true,
+          true,
+        );
+      if (end >= ctx.contentHeight && ctx.padding.bottom === 0 && ctx.border.bottom > 0)
+        tee(
+          x,
+          nodeHeight - ctx.border.bottom,
+          ctx.borderStyle.bottom,
+          ctx.borderColor.bottom,
+          true,
+          false,
+          true,
+          true,
+        );
+    }
+  } else {
+    for (let t = 0; t < rule.width; t++) {
+      const y = originY + line + t;
+      if (start <= 0 && ctx.padding.left === 0 && ctx.border.left > 0)
+        tee(
+          ctx.border.left - 1,
+          y,
+          ctx.borderStyle.left,
+          ctx.borderColor.left,
+          true,
+          true,
+          false,
+          true,
+        );
+      if (end >= ctx.contentWidth && ctx.padding.right === 0 && ctx.border.right > 0)
+        tee(
+          nodeWidth - ctx.border.right,
+          y,
+          ctx.borderStyle.right,
+          ctx.borderColor.right,
+          true,
+          true,
+          true,
+          false,
+        );
+    }
+  }
 }

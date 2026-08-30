@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
-  title: "Features/Grid",
+  title: "Features / Grid",
 };
 export default meta;
 
@@ -352,5 +352,42 @@ export const Subgrid: StoryObj = {
     const footers = Array.from(rows.querySelectorAll<HTMLElement>(":scope > div > div:last-child"));
     const ys = new Set(footers.map((el) => cellsOf(el, "--mw-y")));
     expect(ys.size).toBe(1);
+  },
+};
+
+export const GapDecorations: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="grid grid-cols-3 gap-1 rule rule-cyan-400" data-test="rules">
+        <div class="px-1">one</div>
+        <div class="px-1">two</div>
+        <div class="px-1">three</div>
+        <div class="px-1">four</div>
+        <div class="px-1">five</div>
+        <div class="px-1">six</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await expectBrowserRowsToMatchEngine(canvasElement);
+    // Rules paint into the decoration layer as colored glyph spans —
+    // crossings included (the ┼ between the four quadrants).
+    const host = canvasElement.querySelector("mono-wind")!;
+    const decorations = host.shadowRoot!.querySelectorAll("span");
+    const glyphs = Array.from(decorations, (span) => span.textContent).join("");
+    expect(glyphs).toContain("│");
+    expect(glyphs).toContain("─");
+    expect(glyphs).toContain("┼");
+    // Color assertion, reference-resolved (Tailwind v4 colors are oklch):
+    // a span must match the container's own resolved rule-color mirror.
+    const rules = canvasElement.querySelector<HTMLElement>('[data-test="rules"]')!;
+    const reference = document.createElement("div");
+    reference.style.color = getComputedStyle(rules).getPropertyValue("--mw-rule-x-color").trim();
+    canvasElement.appendChild(reference);
+    const expected = getComputedStyle(reference).color;
+    const colored = Array.from(decorations).some(
+      (span) => getComputedStyle(span).color === expected,
+    );
+    expect(colored).toBe(true);
   },
 };

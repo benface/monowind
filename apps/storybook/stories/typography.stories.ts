@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
-  title: "Features/Typography",
+  title: "Features / Typography",
 };
 export default meta;
 
@@ -156,6 +156,7 @@ export const TextAlign: StoryObj = {
       </div>
     </mono-wind>
   `,
+  play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
 };
 
 export const Leading: StoryObj = {

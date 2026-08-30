@@ -8,6 +8,7 @@ import type {
   CellMetrics,
   CellStyle,
   Display,
+  GapRule,
   GridArea,
   GridAreas,
   GridAutoFlow,
@@ -223,7 +224,11 @@ export function readCellStyle(
     // as `-webkit-center`/`-moz-center`. Inherited centering blocks each
     // descendant individually — same net effect as CSS inheritance.
     textAlignBlocked: authoredTextAlignBlocked(el, cs),
+    textAlign: cs.textAlign === "right" || cs.textAlign === "end" ? "end" : "start",
+    zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
+    ruleX: display === "flex" || display === "grid" ? readGapRule(cs, "x") : null,
+    ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y") : null,
   };
   applyBorderCollapse(style, cs);
   return style;
@@ -324,6 +329,25 @@ function warnAuthoredFontSize(
     "font-size inside <mono-wind> is ignored — all text shares the host's cell " +
       "size. Size the <mono-wind> element itself instead.",
   );
+}
+
+/** Gap rules from the `--mw-rule-*` mirrors (specs/gap-decorations.md);
+ * registered `inherits: false`, so a container only sees its own.
+ * Widths use the border scale (1px = 1 cell), like the utilities. */
+function readGapRule(cs: CSSStyleDeclaration, axis: "x" | "y"): GapRule | null {
+  const width = roundHalfAwayFromZero(
+    parseFloat(cs.getPropertyValue(`--mw-rule-${axis}-width`)) || 0,
+  );
+  if (width <= 0) return null;
+  const color = cs.getPropertyValue(`--mw-rule-${axis}-color`).trim();
+  return {
+    width,
+    style: mapBorderStyle(cs.getPropertyValue(`--mw-rule-${axis}-style`).trim()),
+    // Default currentColor, resolved on the CONTAINER (like computed
+    // border colors) — decoration spans would otherwise inherit the
+    // host's color, not the container's.
+    color: color && color !== "currentcolor" && color !== "currentColor" ? color : cs.color,
+  };
 }
 
 function authoredTextAlignBlocked(el: Element, cs: CSSStyleDeclaration): boolean {

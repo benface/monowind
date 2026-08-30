@@ -8,6 +8,10 @@
  * ENGINE owns (geometry, typography locking, alignment/overflow enforcement)
  * stay unlayered with `!important` so no utility can push content off-grid. */
 
+/* Gap-decoration utilities + engine mirrors (specs/gap-decorations.md).
+ * Must precede all rules, per @import syntax. */
+@import "./rules.css";
+
 @layer base {
   mono-wind {
     display: block;
@@ -213,6 +217,16 @@ mono-wind:not([measuring]) [data-mw-inline-box] {
   max-width: none !important;
   max-height: none !important;
   border-width: 0 !important;
+  /* Gap rules are engine-painted glyphs (specs/gap-decorations.md);
+   * css-gaps browsers must not also paint their native (fractional)
+   * rules — e.g. between an emptied grid's explicit tracks. */
+  column-rule-style: none !important;
+  row-rule-style: none !important;
+  /* Authored z-index applies only where CSS says (positioned, flex/grid
+   * items) — absolutization would otherwise activate it everywhere. The
+   * engine writes --mw-z in exactly those cases; without it the calc()
+   * is invalid at computed-value time and z-index falls back to auto. */
+  z-index: calc(var(--mw-z)) !important;
   padding-top: calc((var(--mw-pt, 0) + var(--mw-bt, 0)) * var(--mw-ch, 1px)) !important;
   padding-right: calc(
     max(0, var(--mw-pr, 0) + var(--mw-br, 0) - var(--mw-ls, 0)) * var(--mw-cw, 1px)
