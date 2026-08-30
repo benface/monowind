@@ -263,12 +263,16 @@ function borderGlyphs(style: BorderStyle): Glyphs {
 
 /** One gap band a rule may occupy: `bandStart`/`bandSize` across the
  * band's axis (x for a vertical rule), `start`/`end` along it. All in
- * content-box cells. */
+ * content-box cells. A `half` endpoint is an overlap-join extension
+ * tip: its ink reaches only the end cell's centerline, so meeting
+ * rules connect there (`┘`) instead of crossing past each other. */
 export interface RuleSegment {
   bandStart: number;
   bandSize: number;
   start: number;
   end: number;
+  startHalf?: boolean;
+  endHalf?: boolean;
 }
 
 /** One cross-axis strip of a gap band: the cells beside a crossing
@@ -283,9 +287,11 @@ export interface GapStrip {
   afterOccupied: boolean;
 }
 
-interface GapSegment {
+export interface GapSegment {
   start: number;
   end: number;
+  startHalf?: boolean;
+  endHalf?: boolean;
 }
 
 /**
@@ -298,7 +304,7 @@ export function ruleBandSegments(
   strips: GapStrip[],
   ruleBreak: RuleBreak,
   visibility: RuleVisibilityItems,
-  inset: number,
+  inset: number | "overlap-join",
 ): GapSegment[] {
   const covered = strips.map((strip) => {
     if (strip.spanned) return false;
@@ -325,6 +331,32 @@ export function ruleBandSegments(
     const last = segments[segments.length - 1];
     if (last && last.end === piece.start) last.end = piece.end;
     else segments.push({ start: piece.start, end: piece.end });
+  }
+  if (inset === "overlap-join") {
+    // Junction endpoints extend into the crossing gap to its centerline
+    // (half the gap plus half the crossing rule, probed — Chromium
+    // extends whether or not a crossing rule paints there); segments
+    // that run through a crossing don't end at its boundary, so the
+    // lookups miss them. Cap endpoints stay put, per the spec.
+    const startExtension = new Map<number, number>();
+    const endExtension = new Map<number, number>();
+    for (let i = 0; i + 1 < strips.length; i++) {
+      const crossingStart = strips[i]!.end;
+      const width = strips[i + 1]!.start - crossingStart;
+      if (width <= 0) continue;
+      endExtension.set(crossingStart, crossingStart + Math.ceil(width / 2));
+      startExtension.set(strips[i + 1]!.start, crossingStart + Math.floor(width / 2));
+    }
+    return segments.map((segment) => {
+      const start = startExtension.get(segment.start);
+      const end = endExtension.get(segment.end);
+      return {
+        start: start ?? segment.start,
+        end: end ?? segment.end,
+        startHalf: start !== undefined,
+        endHalf: end !== undefined,
+      };
+    });
   }
   return segments
     .map((segment) => ({ start: segment.start + inset, end: segment.end - inset }))
@@ -360,14 +392,26 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
     line: seg.bandStart + Math.floor((seg.bandSize - rule.width) / 2),
     start: seg.start,
     end: seg.end,
+    startHalf: seg.startHalf === true,
+    endHalf: seg.endHalf === true,
   });
   const vLines = ctx.ruleX ? ctx.vertical.map((seg) => placed(ctx.ruleX!, seg)) : [];
   const hLines = ctx.ruleY ? ctx.horizontal.map((seg) => placed(ctx.ruleY!, seg)) : [];
   const vWidth = ctx.ruleX?.width ?? 0;
   const hWidth = ctx.ruleY?.width ?? 0;
-  /** Does a vertical rule cover column `x` at row `y`? */
-  const verticalArm = (x: number, y: number): boolean =>
-    vLines.some((l) => x >= l.line && x < l.line + vWidth && y >= l.start && y < l.end);
+  /** Junction arms come from INK AT CELL BOUNDARIES over the union of
+   * segments: a segment through boundary `b`, or full-ending exactly
+   * there — a `half` overlap-join tip stops at its cell's centerline
+   * and contributes no arm past it (elbows over crosses). */
+  const inkAtBoundary = (lines: typeof vLines, width: number, across: number, b: number): boolean =>
+    lines.some(
+      (l) =>
+        across >= l.line &&
+        across < l.line + width &&
+        ((l.start < b && l.end > b) ||
+          (l.end === b && !l.endHalf) ||
+          (l.start === b && !l.startHalf)),
+    );
   /** Is the cell inside a horizontal segment? (Those cells belong to
    * the horizontal pass, which paints the junctions — no double glyphs.) */
   const insideHorizontal = (x: number, y: number): boolean =>
@@ -396,9 +440,8 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
       for (let t = 0; t < hWidth; t++) {
         const y = line.line + t;
         for (let x = line.start; x < line.end; x++) {
-          const through = verticalArm(x, y);
-          const up = through || verticalArm(x, y - 1);
-          const down = through || verticalArm(x, y + 1);
+          const up = inkAtBoundary(vLines, vWidth, x, y);
+          const down = inkAtBoundary(vLines, vWidth, x, y + 1);
           out.push({
             glyph:
               up || down
@@ -406,8 +449,8 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
                     allDouble ? "double" : "solid",
                     up,
                     down,
-                    x > line.start,
-                    x < line.end - 1,
+                    inkAtBoundary(hLines, hWidth, y, x),
+                    inkAtBoundary(hLines, hWidth, y, x + 1),
                   )
                 : lineGlyph(ctx.ruleY.style, "h"),
             x: originX + x,

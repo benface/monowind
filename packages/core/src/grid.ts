@@ -300,7 +300,7 @@ export function layoutGrid(
           style.ruleVisibilityItems,
           style.ruleInset,
         )) {
-          bands.push({ bandStart, bandSize, start: segment.start, end: segment.end });
+          bands.push({ bandStart, bandSize, ...segment });
         }
       }
       return bands;

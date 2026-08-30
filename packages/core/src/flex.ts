@@ -1,6 +1,6 @@
 import { percentToCells } from "./metrics.ts";
 import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
-import type { GapStrip, RuleSegment } from "./borders.ts";
+import type { GapSegment, GapStrip, RuleSegment } from "./borders.ts";
 import {
   clampSize,
   intrinsicOuterWidth,
@@ -42,7 +42,7 @@ function rowBandSegments(
   r: number,
   originX: number,
   innerWidth: number,
-): { start: number; end: number }[] {
+): GapSegment[] {
   if (node.style.ruleBreak !== "intersection") return [{ start: 0, end: innerWidth }];
   const crossings = [lines[r - 1]!, lines[r]!]
     .flatMap((line) => lineGapRanges(line, originX))
@@ -63,11 +63,16 @@ function rowBandSegments(
     cursor = Math.max(cursor, crossing.end);
   }
   if (cursor < innerWidth) strips.push(occupiedStrip(cursor, innerWidth));
-  return ruleBandSegments(strips, "intersection", "all", 0);
+  return ruleBandSegments(
+    strips,
+    "intersection",
+    "all",
+    node.style.ruleInset === "overlap-join" ? "overlap-join" : 0,
+  );
 }
 
-function insetSegments(segments: RuleSegment[], inset: number): RuleSegment[] {
-  if (inset <= 0) return segments;
+function insetSegments(segments: RuleSegment[], inset: number | "overlap-join"): RuleSegment[] {
+  if (typeof inset !== "number" || inset <= 0) return segments;
   return segments
     .map((segment) => ({ ...segment, start: segment.start + inset, end: segment.end - inset }))
     .filter((segment) => segment.end > segment.start);
@@ -315,12 +320,7 @@ export function layoutFlexRow(
         const prevBottom = lineOffsets[r - 1]! + (r - 1) * gapY + rowHeights[r - 1]!;
         if (top > prevBottom) {
           for (const segment of rowBandSegments(node, lines, r, originX, innerWidth)) {
-            horizontal.push({
-              bandStart: prevBottom,
-              bandSize: top - prevBottom,
-              start: segment.start,
-              end: segment.end,
-            });
+            horizontal.push({ bandStart: prevBottom, bandSize: top - prevBottom, ...segment });
           }
         }
       }

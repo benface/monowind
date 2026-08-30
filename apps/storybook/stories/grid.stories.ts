@@ -399,14 +399,14 @@ export const GapDecorations: StoryObj = {
           <div class="px-1">inset</div>
           <div class="px-1">1</div>
         </div>
-        <div class="grid w-max auto-rows-1 grid-cols-[auto_auto] gap-1 rule rule-emerald-500">
+        <div class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-emerald-500">
           <div class="px-1">rule</div>
           <div class="px-1">visibility</div>
           <div class="px-1">all</div>
           <div class="row-start-3 px-1">(empty -&gt;)</div>
         </div>
         <div
-          class="grid w-max auto-rows-1 grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-visibility-around"
+          class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-visibility-around"
         >
           <div class="px-1">rule</div>
           <div class="px-1">visibility</div>
@@ -414,12 +414,20 @@ export const GapDecorations: StoryObj = {
           <div class="row-start-3 px-1">(empty -&gt;)</div>
         </div>
         <div
-          class="grid w-max auto-rows-1 grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-visibility-between"
+          class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-visibility-between"
         >
           <div class="px-1">rule</div>
           <div class="px-1">visibility</div>
           <div class="px-1">between</div>
           <div class="row-start-3 px-1">(empty -&gt;)</div>
+        </div>
+        <div
+          class="grid w-max grid-cols-[auto_auto] gap-1 rule rule-emerald-500 rule-inset-overlap-join rule-visibility-between"
+        >
+          <div class="px-1">same as above</div>
+          <div class="px-1">but with</div>
+          <div class="px-1">rule-inset</div>
+          <div class="row-start-3 px-1">overlap-join</div>
         </div>
       </div>
     </mono-wind>
@@ -472,5 +480,10 @@ export const GapDecorations: StoryObj = {
     expect(lines[lineWith("between")]).not.toContain("│");
     expect(lines[lineWith("between") + 1]).not.toContain("│");
     expect(lines[lineWith("between") + 1]).toContain("─");
+    // overlap-join: the between-cut ends extend into the junction and
+    // meet in an elbow where the vertical stops; further down there is
+    // no vertical left, so that row rule stays a plain dash run.
+    expect(lines[lineWith("rule-inset") - 1]).toContain("┘");
+    expect(lines[lineWith("overlap-join") - 1]).not.toContain("┘");
   },
 };

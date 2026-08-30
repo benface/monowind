@@ -30,6 +30,7 @@ column gaps — vertical lines — like `gap-x` sizes them):
 | `rule-<color>`                                                               | color, both axes (default `currentColor`, like borders)                    |
 | `rule-break-none` / `rule-break-normal` / `rule-break-intersection`          | where segments break at gap intersections (both axes)                      |
 | `rule-inset-<n>`                                                             | retract every segment endpoint by `<n>` px (both axes, all endpoint kinds) |
+| `rule-inset-overlap-join`                                                    | extend junction endpoints into the crossing gap so meeting rules connect   |
 | `rule-visibility-all` / `rule-visibility-around` / `rule-visibility-between` | `rule-visibility-items`: which segments paint next to empty grid areas     |
 
 Widths and insets quantize like borders (1px = 1 cell). Per-axis
@@ -142,7 +143,13 @@ Chromium 151, the only engine shipping css-gaps):
 - Consecutive covered strips merge into segments; `rule-inset` then
   retracts each segment endpoint by its cell count (cap and junction
   endpoints alike — the per-endpoint longhands are deviation 2). An
-  emptied segment disappears.
+  emptied segment disappears. `rule-inset: overlap-join` instead
+  extends each endpoint that abuts a crossing gap to the crossing's
+  centerline cell (probed: Chromium extends by half the gap plus half
+  the crossing rule, and does so whether or not a crossing rule paints
+  there), so meeting rules connect — an elbow (`┘`) where two ends
+  meet, a cross (`┼`) where intersection-broken segments rejoin. Cap
+  endpoints stay put, per the spec.
 
 Flex containers: `normal` behaves as `none` (continuous bands — no
 intersection breaks by default) and `rule-visibility-items` is scoped
@@ -159,9 +166,10 @@ counts); the per-line column bands already end flush at their line.
    the items, one with no gap is invisible). Same principle as borders
    occupying whole cells: ink needs cells.
 2. `rule-inset` is one uniform value: the per-axis and per-endpoint
-   longhands (`column-rule-inset-cap-start`, …), `overlap-join`,
-   percentages, and negative insets are unsupported until needed. Same
-   for per-axis `rule-break`/`rule-visibility-items` and repeat()/list
-   values.
+   longhands (`column-rule-inset-cap-start`, …), percentages, and
+   negative insets are unsupported until needed. Same for per-axis
+   `rule-break`/`rule-visibility-items` and repeat()/list values. On
+   flex, `overlap-join` applies to the row-gap bands only (the per-line
+   column bands already end flush at their line).
 3. Everything in `cell-model.md` (quantization, glyph fallbacks)
    applies.

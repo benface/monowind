@@ -370,8 +370,10 @@ export interface CellStyle {
   ruleY: GapRule | null;
   ruleBreak: RuleBreak;
   /** Cells retracted from every rule-segment endpoint (rule-inset,
-   * quantized like border widths). */
-  ruleInset: number;
+   * quantized like border widths) — or `overlap-join`, which instead
+   * extends junction endpoints into the crossing gap so meeting rules
+   * connect. */
+  ruleInset: number | "overlap-join";
   ruleVisibilityItems: RuleVisibilityItems;
 }
 

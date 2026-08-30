@@ -185,14 +185,14 @@ export const GapDecorations: StoryObj = {
     <mono-wind>
       <div class="flex flex-col gap-2">
         <div
-          class="flex border border-double border-neutral-500 rule rule-double rule-neutral-500"
+          class="flex border border-double border-neutral-500 rule rule-neutral-500 rule-double"
           data-test="row"
         >
           <div class="grow px-1">files</div>
           <div class="grow px-1">edit</div>
           <div class="grow px-1">view</div>
         </div>
-        <div class="flex flex-col rule-dashed rule-neutral-500 rule-y" data-test="column">
+        <div class="flex flex-col rule-neutral-500 rule-dashed rule-y" data-test="column">
           <div>first entry</div>
           <div>second entry</div>
           <div>third entry</div>

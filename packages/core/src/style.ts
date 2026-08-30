@@ -233,10 +233,13 @@ export function readCellStyle(
     ruleX: display === "flex" || display === "grid" ? readGapRule(cs, "x") : null,
     ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y") : null,
     ruleBreak: readKeyword(cs, "--mw-rule-break", ["none", "intersection"] as const, "normal"),
-    ruleInset: Math.max(
-      0,
-      roundHalfAwayFromZero(parseFloat(cs.getPropertyValue("--mw-rule-inset")) || 0),
-    ),
+    ruleInset:
+      cs.getPropertyValue("--mw-rule-inset").trim() === "overlap-join"
+        ? "overlap-join"
+        : Math.max(
+            0,
+            roundHalfAwayFromZero(parseFloat(cs.getPropertyValue("--mw-rule-inset")) || 0),
+          ),
     ruleVisibilityItems: readKeyword(
       cs,
       "--mw-rule-visibility-items",

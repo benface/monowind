@@ -39,40 +39,30 @@
   inherits: false;
 }
 
-@utility rule-x {
-  column-rule-width: 1px;
-  --mw-rule-x-width: 1px;
-}
-@utility rule-y {
-  row-rule-width: 1px;
-  --mw-rule-y-width: 1px;
-}
-@utility rule {
-  column-rule-width: 1px;
-  row-rule-width: 1px;
-  --mw-rule-x-width: 1px;
-  --mw-rule-y-width: 1px;
-}
 @utility rule-x-* {
-  column-rule-width: calc(--value(integer) * 1px);
-  --mw-rule-x-width: calc(--value(integer) * 1px);
+  --mw-rule-x-width: calc(--value("0", "2", "3", "4", integer) * 1px);
+  --mw-rule-x-width: --value([*], --default(1px));
+  column-rule-width: var(--mw-rule-x-width);
 }
 @utility rule-y-* {
-  row-rule-width: calc(--value(integer) * 1px);
-  --mw-rule-y-width: calc(--value(integer) * 1px);
+  --mw-rule-y-width: calc(--value("0", "2", "3", "4", integer) * 1px);
+  --mw-rule-y-width: --value([*], --default(1px));
+  row-rule-width: var(--mw-rule-y-width);
 }
-/* Functional both-axes utility: integer values are widths, color values
- * are colors — non-matching declarations drop, Tailwind's border-*
- * disambiguation pattern. */
+/* Functional both-axes utility: integer/length values are widths, color
+ * values are colors — non-matching declarations drop, Tailwind's
+ * border-* disambiguation pattern. */
 @utility rule-* {
-  column-rule-width: calc(--value(integer) * 1px);
-  row-rule-width: calc(--value(integer) * 1px);
-  --mw-rule-x-width: calc(--value(integer) * 1px);
-  --mw-rule-y-width: calc(--value(integer) * 1px);
-  column-rule-color: --value(--color-*, [color]);
-  row-rule-color: --value(--color-*, [color]);
+  --mw-rule-x-width: calc(--value("0", "2", "3", "4", integer) * 1px);
+  --mw-rule-x-width: --value([length], --default(1px));
+  --mw-rule-y-width: calc(--value("0", "2", "3", "4", integer) * 1px);
+  --mw-rule-y-width: --value([length], --default(1px));
+  column-rule-width: var(--mw-rule-x-width);
+  row-rule-width: var(--mw-rule-y-width);
   --mw-rule-x-color: --value(--color-*, [color]);
   --mw-rule-y-color: --value(--color-*, [color]);
+  column-rule-color: var(--mw-rule-x-color);
+  row-rule-color: var(--mw-rule-y-color);
 }
 @utility rule-solid {
   column-rule-style: solid;
@@ -105,7 +95,7 @@
   initial-value: normal;
 }
 @property --mw-rule-inset {
-  syntax: "<length>";
+  syntax: "<length> | overlap-join";
   inherits: false;
   initial-value: 0px;
 }
@@ -128,8 +118,13 @@
   --mw-rule-break: intersection;
 }
 @utility rule-inset-* {
-  rule-inset: calc(--value(integer) * 1px);
-  --mw-rule-inset: calc(--value(integer) * 1px);
+  --mw-rule-inset: calc(--value("0", "1", "2", "3", "4", integer) * 1px);
+  --mw-rule-inset: --value([*]);
+  rule-inset: var(--mw-rule-inset);
+}
+@utility rule-inset-overlap-join {
+  rule-inset: overlap-join;
+  --mw-rule-inset: overlap-join;
 }
 @utility rule-visibility-all {
   rule-visibility-items: all;

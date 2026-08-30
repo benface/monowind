@@ -155,6 +155,40 @@ describe("gap rules", () => {
     expect(plainText(markup("around"))).toBe(["a│b", "", "", "", "c│"].join("\n"));
   });
 
+  it("joins meeting rule ends into an elbow with rule-inset overlap-join", () => {
+    const art = plainText(
+      `<div style="display: grid; grid-template-columns: 8px 8px; column-gap: 4px; row-gap: 4px; --mw-rule-x-width: 1px; --mw-rule-y-width: 1px; --mw-rule-visibility-items: between; --mw-rule-inset: overlap-join">
+        <div>a</div><div>b</div><div>c</div>
+      </div>`,
+    );
+    expect(art).toBe(["a │b", "──┘", "c"].join("\n"));
+  });
+
+  it("rejoins intersection-broken segments with overlap-join", () => {
+    const art = plainText(
+      `<div style="display: grid; grid-template-columns: 8px 8px; column-gap: 4px; row-gap: 4px; --mw-rule-x-width: 1px; --mw-rule-y-width: 1px; --mw-rule-break: intersection; --mw-rule-inset: overlap-join">
+        <div>a</div><div>b</div><div>c</div><div>d</div>
+      </div>`,
+    );
+    expect(art).toBe(["a │b", "──┼──", "c │d"].join("\n"));
+  });
+
+  it("extends into a crossing gap even without a crossing rule", () => {
+    const art = plainText(
+      `<div style="display: grid; grid-template-columns: 8px 8px; column-gap: 4px; row-gap: 4px; --mw-rule-x-width: 1px; --mw-rule-break: intersection; --mw-rule-inset: overlap-join">
+        <div>a</div><div>b</div><div>c</div><div>d</div>
+      </div>`,
+    );
+    expect(art).toBe(["a │b", "  │", "c │d"].join("\n"));
+  });
+
+  it("rejoins intersection-broken flex row rules with overlap-join", () => {
+    const art = plainText(
+      `<div style="display: flex; flex-wrap: wrap; width: 20px; --mw-rule-x-width: 1px; --mw-rule-y-width: 1px; --mw-rule-break: intersection; --mw-rule-inset: overlap-join"><div>aa</div><div>bb</div><div>cccc</div></div>`,
+    );
+    expect(art).toBe(["aa│bb", "──┴──", "cccc"].join("\n"));
+  });
+
   it("retracts flex rule bands by rule-inset", () => {
     const art = plainText(
       `<div style="display: flex; flex-direction: column; width: 20px; --mw-rule-y-width: 1px; --mw-rule-inset: 1px"><div>one</div><div>two</div></div>`,
