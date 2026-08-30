@@ -138,10 +138,10 @@ export const CaptionAndAlignment: StoryObj = {
         </caption>
         <tbody>
           <tr>
-            <td class="border px-1">first line<br />second<br />third</td>
-            <td class="border px-1" data-test="middle">mid</td>
+            <td class="border px-1">line one<br />line two<br /><br /></td>
+            <td class="border px-1" data-test="middle">middle</td>
             <td class="border px-1 align-top" data-test="top">top</td>
-            <td class="border px-1 align-bottom" data-test="bottom">low</td>
+            <td class="border px-1 align-bottom" data-test="bottom">bottom</td>
           </tr>
         </tbody>
       </table>
@@ -159,7 +159,9 @@ export const CaptionAndAlignment: StoryObj = {
     const group = canvasElement.querySelector<HTMLElement>("tbody")!;
     expect(cellsOf(caption, "--mw-y")).toBeLessThan(cellsOf(group, "--mw-y"));
     // All three cells share the row box; alignment lives in the content
-    // padding: top pads nothing, middle centers, bottom pads fully.
+    // padding: top pads nothing, middle centers, bottom pads fully. The
+    // first cell's trailing <br /><br /> makes the row three lines tall
+    // (one blank line — a final <br> adds none, the one before it does).
     expect(cellsOf(middle, "--mw-y")).toBe(cellsOf(top, "--mw-y"));
     expect(cellsOf(bottom, "--mw-y")).toBe(cellsOf(top, "--mw-y"));
     expect(cellsOf(top, "--mw-pt")).toBe(0);

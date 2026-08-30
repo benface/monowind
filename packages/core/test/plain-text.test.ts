@@ -217,6 +217,16 @@ describe("wrapLines", () => {
     expect(wrapLines("well--known", 6)).toEqual(["well--", "known"]);
   });
 
+  it("gives every leading <br> a line and all but the final trailing one", () => {
+    // Probed, all engines: a final \n produces no last line box.
+    expect(wrapLines("a\n", 5)).toEqual(["a"]);
+    expect(wrapLines("a\n\n", 5)).toEqual(["a", ""]);
+    expect(wrapLines("a\n\n\n", 5)).toEqual(["a", "", ""]);
+    expect(wrapLines("\na", 5)).toEqual(["", "a"]);
+    expect(wrapLines("\n", 5)).toEqual([""]);
+    expect(wrapLines("\n\n", 5)).toEqual(["", ""]);
+  });
+
   it("renders an NBSP-only text as one line (trim() would wrongly eat it)", () => {
     expect(wrapLines("\u00a0\u00a0", 10)).toEqual(["\u00a0\u00a0"]);
   });

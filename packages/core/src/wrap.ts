@@ -46,6 +46,14 @@ export function wrapLineCount(text: string, width: number, options: WrapOptions 
   return wrapLineSpans(text, width, options).length;
 }
 
+/** A final `\n` produces no last line box (probed, all engines: `a<br>`
+ * is one line, `a<br><br>` two, `<br>` alone one) — drop the empty span
+ * it would otherwise create. */
+function dropFinalBreakSpan(spans: LineSpan[], text: string): LineSpan[] {
+  if (text.endsWith("\n")) spans.pop();
+  return spans;
+}
+
 /** Split at hard `\n` breaks only (the `white-space: nowrap` line model). */
 export function hardLineSpans(text: string): LineSpan[] {
   const spans: LineSpan[] = [];
@@ -56,13 +64,14 @@ export function hardLineSpans(text: string): LineSpan[] {
       start = i + 1;
     }
   }
-  return spans;
+  return dropFinalBreakSpan(spans, text);
 }
 
 export function wrapLineSpans(text: string, width: number, options: WrapOptions = {}): LineSpan[] {
-  // Empty = nothing but collapsible white space. NOT `trim()`, which would
-  // also eat NBSP — an NBSP-only leaf still renders a line in the browser.
-  if (!/[^ \t\r\n\f]/.test(text)) return [];
+  // Empty = nothing but collapsible white space — but a `\n` is a hard
+  // break (a `<br>`), never collapsible. NOT `trim()`, which would also
+  // eat NBSP — an NBSP-only leaf still renders a line in the browser.
+  if (!/[^ \t\r\f]/.test(text)) return [];
   const spans: LineSpan[] = [];
   let lineStart = 0;
   for (let i = 0; i <= text.length; i++) {
@@ -71,7 +80,7 @@ export function wrapLineSpans(text: string, width: number, options: WrapOptions 
       lineStart = i + 1;
     }
   }
-  return spans;
+  return dropFinalBreakSpan(spans, text);
 }
 
 /** Cells spanned by `text[start, end)`, every character's gap included. */

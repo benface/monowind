@@ -221,7 +221,11 @@ line, and its intrinsic height is the count of hard-broken lines.
 newlines from markup source formatting — collapses to single spaces during
 text extraction, exactly like the browser under `white-space: normal`. Only
 `<br>` produces a hard break. Whitespace around a hard break is stripped
-(the browser strips it at line edges too).
+(the browser strips it at line edges too). A final `<br>` produces no
+last line box, but every other edge `<br>` counts (probed, all engines:
+`a<br>` is one line, `a<br><br>` two, `<br>a` two, a lone `<br>` one) —
+the same rule that gives a final newline in `pre` content no line of
+its own.
 
 **Hyphen break opportunities**: like the browser, the wrap model can break
 a word after a hyphen run (`mx-auto` → `mx-` / `auto`), except a

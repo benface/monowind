@@ -179,6 +179,15 @@ describe("buildTree", () => {
     expect(clean.droppedText).toBeUndefined();
   });
 
+  it("keeps edge <br> line boxes like browsers (final one excepted)", () => {
+    // a<br><br> renders one blank line; <br>a renders a blank first line;
+    // a lone <br> makes the leaf one line tall (probed, all engines).
+    expect(buildTree(el("<div>a<br /><br /></div>"), 16)!.intrinsicHeight).toBe(2);
+    expect(buildTree(el("<div><br />a</div>"), 16)!.intrinsicHeight).toBe(2);
+    expect(buildTree(el("<div><br /></div>"), 16)!.intrinsicHeight).toBe(1);
+    expect(buildTree(el("<div>a<br /></div>"), 16)!.intrinsicHeight).toBe(1);
+  });
+
   it("collapses whitespace across inline-element boundaries", () => {
     const node = buildTree(el("<div>a <span> b </span> c</div>"), 16)!;
     expect(node.text).toBe("a b c");
@@ -211,12 +220,14 @@ describe("inline padding", () => {
 });
 
 describe("white-space: pre", () => {
-  it("preserves spaces and newlines, dropping only a final newline", () => {
+  it("preserves spaces and newlines; the final newline adds no line", () => {
     const node = buildTree(
       el('<div style="white-space: pre">  two  spaces\nsecond line\n</div>'),
       16,
     )!;
-    expect(node.text).toBe("  two  spaces\nsecond line");
+    // The final newline survives in the text; the wrap layer gives it no
+    // line box (dropFinalBreakSpan), so the height stays 2.
+    expect(node.text).toBe("  two  spaces\nsecond line\n");
     expect(node.intrinsicHeight).toBe(2);
     expect(node.intrinsicWidth).toBe(13);
     expect(node.style.whiteSpace).toBe("pre");

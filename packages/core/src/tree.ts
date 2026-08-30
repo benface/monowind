@@ -3,7 +3,13 @@ import { pxToCells } from "./metrics.ts";
 import { readCellStyle, trackingCells } from "./style.ts";
 import { zeroInsets } from "./types.ts";
 import { warnOnce } from "./warn.ts";
-import { eachObjectMarker, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
+import {
+  eachObjectMarker,
+  hardLineSpans,
+  INLINE_PAD,
+  lineAdvance,
+  OBJECT_REPLACEMENT,
+} from "./wrap.ts";
 import type { CellMetrics, LayoutNode, PerSide } from "./types.ts";
 
 /**
@@ -219,14 +225,9 @@ function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun
   const run: LeafRun = { chars: [], advances: [], inlineIndex: [], inlineElements: [], boxes: [] };
   collectRun(el, tracking, ctx, run);
   if (ctx.preserve) {
-    // Browsers give a final newline in `pre` content no line box of its
-    // own — drop exactly one (the HTML parser already ate the one right
+    // A final newline gets no line box of its own — the wrap layer's
+    // dropFinalBreakSpan rule (the HTML parser already ate the one right
     // after the opening tag).
-    if (run.chars[run.chars.length - 1] === "\n") {
-      run.chars.pop();
-      run.advances.pop();
-      run.inlineIndex.pop();
-    }
     return run;
   }
   return normalizeRun(run);
@@ -403,17 +404,9 @@ function normalizeRun(run: LeafRun): LeafRun {
     inlineIndex.push(run.inlineIndex[i] ?? -1);
   }
   trimLineEnd();
-  // Drop leading/trailing blank hard lines (source formatting), like trim().
-  while (chars[0] === "\n") {
-    chars.shift();
-    advances.shift();
-    inlineIndex.shift();
-  }
-  while (chars[chars.length - 1] === "\n") {
-    chars.pop();
-    advances.pop();
-    inlineIndex.pop();
-  }
+  // Edge `\n`s stay: every leading <br> creates a line box and all but
+  // the final trailing one do (probed, all engines) — the wrap layer
+  // drops exactly that last one (dropFinalBreakSpan).
   return { chars, advances, inlineIndex, inlineElements: run.inlineElements, boxes: run.boxes };
 }
 
@@ -430,7 +423,7 @@ function longestLineAdvance(text: string, advances: number[], tracking: number):
 }
 
 function countHardLines(text: string): number {
-  return text.split("\n").length;
+  return hardLineSpans(text).length;
 }
 
 function warnSkippedRunContent(el: Element): void {
