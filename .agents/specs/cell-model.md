@@ -343,6 +343,40 @@ a scroll container in some engines. The plain-text renderer mirrors truncation:
 a clipped nowrap line is cut at the content width, with `…` in the last
 visible cell when `text-overflow: ellipsis` is set.
 
+## Form controls
+
+`<input>`, `<textarea>`, and `<select>` render their value, caret,
+selection, and IME **natively** — the tree builder treats them as empty
+leaves (never descending into a `<select>`'s options), and the light-DOM
+color-transparent lock exempts them so their native ink shows on top of
+the grid's borders and backgrounds. Placeholders (`::placeholder`, and
+`select:invalid` for a required select on its empty option) paint at
+half the themed color.
+
+Intrinsic sizes mirror the native ones:
+
+- `<input>`: the `size` attribute (default 20) in content cells.
+- `<textarea>`: `cols` (default 20) wide; tall enough for
+  `max(rows, wrapped value lines)` — the value is wrapped by the engine
+  against the content width from the PREVIOUS layout (snapshotted by
+  the host before the measuring pass), so the box grows and shrinks
+  with typing and reflow. `field-sizing: content` drops the `rows`
+  floor to 1. A trailing newline shows its empty line (where the caret
+  sits), unlike `<br>`. Line-gap rows from `leading-*` apply as on any
+  leaf. Textareas never scroll (`overflow: clip`; the box always fits
+  the value) and have no resize handle.
+- `<select>`: the longest option label; the SELECTED option's label
+  under `field-sizing: content`.
+
+Relayouts are held while a focused select's picker is open (Chromium
+dismisses the picker on style churn; detected via `select:open`), and
+run synchronously when focus moves onto or off a select so the
+focus-invert never shows stale.
+
+Screen-reader-only elements (absolutely positioned with a zero `clip`
+rect or a clipped ≤1px box — Tailwind `sr-only`) build no layout node:
+no grid ink, no layout footprint, still read by assistive tech.
+
 ## Deviations from CSS (running list)
 
 1. No parent–child / empty-box margin collapsing (sibling collapsing works
@@ -360,11 +394,13 @@ visible cell when `text-overflow: ellipsis` is set.
    applies exactly those cells as real padding — any raw off-grid inline
    padding is neutralized. Percent padding reads as 0; vertical inline
    padding passes through untouched (it never moves layout, per CSS).
-   Inline backgrounds (selection highlight, `bg-*`, focus-invert) paint
-   the font's content area (ascent + descent). The `line-height: normal`
-   default sizes the row to that content area, so backgrounds fit
-   within their own row instead of bleeding into the next — one pass,
-   no gradient clamp needed.
+   Inline backgrounds (`bg-*`, focus-invert) are mirrored into the
+   grid, cell-aligned, over the run's cells INCLUDING the reserved
+   padding cells (the light-DOM bg itself is transparent-locked). The
+   native selection highlight still paints the font's content area
+   (ascent + descent); the `line-height: normal` default sizes the row
+   to that content area, so it fits within its own row instead of
+   bleeding into the next.
    Atomic inline boxes ride the line per CSS (growing their line when
    taller) but their margins are ignored, and BLOCK-level elements nested
    inside a run are skipped with a warning.

@@ -131,14 +131,14 @@ export const ReverseAndOrder: StoryObj = {
     <mono-wind>
       <div class="flex flex-col gap-1">
         <div class="flex flex-row-reverse gap-1 border border-neutral-500 px-1">
-          <button class="border border-cyan-400 px-1">first</button>
-          <button class="border border-cyan-400 px-1">second</button>
-          <button class="border border-cyan-400 px-1">third</button>
+          <div class="border border-cyan-400 px-1">first</div>
+          <div class="border border-cyan-400 px-1">second</div>
+          <div class="border border-cyan-400 px-1">third</div>
         </div>
         <div class="flex gap-1 border border-neutral-500 px-1">
-          <button class="order-3 border border-yellow-400 px-1">order-3</button>
-          <button class="order-1 border border-yellow-400 px-1">order-1</button>
-          <button class="order-2 border border-yellow-400 px-1">order-2</button>
+          <div class="order-3 border border-yellow-400 px-1">order-3</div>
+          <div class="order-1 border border-yellow-400 px-1">order-1</div>
+          <div class="order-2 border border-yellow-400 px-1">order-2</div>
         </div>
       </div>
     </mono-wind>

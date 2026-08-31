@@ -4,6 +4,7 @@ import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
 import { buildTree, DIRECT_TEXT_DROPPED, hasDirectText } from "./tree.ts";
+import type { TextareaWidths } from "./tree.ts";
 import { defaultCellStyle, zeroInsets } from "./types.ts";
 import type { CellMetrics, LayoutNode } from "./types.ts";
 
@@ -191,7 +192,20 @@ export class MonoWindElement extends HTMLElementBase {
     MonoWindElement.#unwatchHead(this);
   }
 
-  #scheduleDynamicRelayout = (): void => {
+  #scheduleDynamicRelayout = (event: Event): void => {
+    // Focus moving onto or off a <select>: relayout NOW, while still
+    // inside the event dispatch — the click's default action opens the
+    // picker right after, and once it's open relayouts are held (see
+    // #openSelectPicker). Deferring here would freeze the grid with
+    // the PREVIOUS focus-invert while native text colors update,
+    // leaving the old select white-on-white.
+    if (
+      (event.type === "focusin" || event.type === "focusout") &&
+      event.target instanceof HTMLSelectElement
+    ) {
+      this.#performLayoutSafely();
+      return;
+    }
     this.#scheduleLayout();
   };
 
@@ -225,16 +239,40 @@ export class MonoWindElement extends HTMLElementBase {
     requestAnimationFrame(() => this.#scheduleLayout());
   };
 
+  /** True while a focused in-host <select> has its picker open. A
+   * relayout then would churn styles and make Chrome dismiss the
+   * picker instantly (`:open` on <select> is Chromium-only for now;
+   * browsers without it don't dismiss and fall through). */
+  #openSelectPicker(): boolean {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLSelectElement) || !this.contains(active)) return false;
+    try {
+      return active.matches(":open");
+    } catch {
+      return false;
+    }
+  }
+
+  #performLayoutSafely(): void {
+    try {
+      this.#performLayout();
+    } catch (err) {
+      console.error("[monowind] layout failed:", err);
+    }
+  }
+
   #scheduleLayout(): void {
     if (this.#layoutPending) return;
     this.#layoutPending = true;
     requestAnimationFrame(() => {
       this.#layoutPending = false;
-      try {
-        this.#performLayout();
-      } catch (err) {
-        console.error("[monowind] layout failed:", err);
+      // Hold the relayout while a select picker is up — re-arm so it
+      // runs the frame after the picker closes (change or dismiss).
+      if (this.#openSelectPicker()) {
+        this.#scheduleLayout();
+        return;
       }
+      this.#performLayoutSafely();
     });
   }
 
@@ -244,6 +282,27 @@ export class MonoWindElement extends HTMLElementBase {
     // strings, which would misclassify every element and misfire author
     // warnings. Reconnection schedules a fresh layout.
     if (!this.isConnected) return;
+    // Snapshot each textarea's content-area width in cells BEFORE the
+    // measuring attribute goes on. Inside measuring the engine's width
+    // rule is off — the textarea reverts to its browser-default width
+    // and any read would be wrong. The tree builder wraps the value
+    // against this width to compute the row count.
+    const textareaWidths: TextareaWidths = new Map();
+    const cellWidth = getComputedStyle(this).getPropertyValue("--mw-cw").trim();
+    const cellWidthPx = parseFloat(cellWidth);
+    if (Number.isFinite(cellWidthPx) && cellWidthPx > 0) {
+      for (const ta of this.querySelectorAll<HTMLTextAreaElement>("textarea")) {
+        const style = getComputedStyle(ta);
+        const contentPx =
+          ta.clientWidth -
+          (parseFloat(style.paddingLeft) || 0) -
+          (parseFloat(style.paddingRight) || 0);
+        // `round` (not `floor`) so subpixel remainders don't chop one
+        // cell off the width — the browser rarely wraps a character
+        // that fits within half a cell of the edge.
+        textareaWidths.set(ta, Math.max(0, Math.round(contentPx / cellWidthPx)));
+      }
+    }
     // The write phase is bracketed by the `measuring` attribute (gates the
     // companion stylesheet so reads see authored values). Everything the
     // engine writes to the light DOM — geometry vars, data-mw-* attributes
@@ -288,7 +347,7 @@ export class MonoWindElement extends HTMLElementBase {
       const childNodes: LayoutNode[] = [];
       for (const child of Array.from(this.children)) {
         if (child === this.#probe) continue;
-        const node = buildTree(child, rootFontSizePx, metrics);
+        const node = buildTree(child, rootFontSizePx, metrics, textareaWidths);
         if (node) childNodes.push(node);
       }
       // The host is a container like any other: direct text on it can't
@@ -340,11 +399,12 @@ export class MonoWindElement extends HTMLElementBase {
             (parseFloat(cs.borderTopWidth) || 0) +
             (parseFloat(cs.borderBottomWidth) || 0)
           : 0;
-      this.style.height = `${height * metrics.height + chrome}px`;
+      const hostHeight = `${height * metrics.height + chrome}px`;
+      if (this.style.height !== hostHeight) this.style.height = hostHeight;
 
       // (7) Reveal the host now that layout is done — kills the FOUC where
       // the browser paints raw flex/block layout before the engine runs.
-      this.setAttribute("data-mw-ready", "");
+      if (!this.hasAttribute("data-mw-ready")) this.setAttribute("data-mw-ready", "");
     } finally {
       this.removeAttribute("measuring");
       // Drain the records our own writes queued (takeRecords is

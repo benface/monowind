@@ -63,6 +63,26 @@
     caret-color: var(--mw-fg);
   }
 
+  /* Placeholder at half the element's own color, so it tracks both the
+   * theme and the focus-invert. Explicit opacity: Firefox dims its UA
+   * placeholder with opacity, which would double with the color mix. */
+  mono-wind :is(input, textarea)::placeholder {
+    color: color-mix(in srgb, currentcolor 50%, transparent);
+    opacity: 1;
+  }
+
+  /* A required <select> still on its empty placeholder option matches
+   * :invalid — same placeholder treatment (the :invalid specificity
+   * beats the form-control color above; the pair below beats the
+   * focus-invert). currentcolor would self-refer here, so the themed
+   * colors are spelled out. */
+  mono-wind select:invalid {
+    color: color-mix(in srgb, var(--mw-fg) 50%, transparent);
+  }
+  mono-wind select:invalid:focus-visible {
+    color: color-mix(in srgb, var(--mw-bg) 50%, transparent);
+  }
+
   /* Single-line controls: never wrap, clip overflow. The one-row
    * floor lives in the tree builder (a CSS min-height on the outer
    * box gives no content-area guarantee once border + padding exceed
@@ -72,25 +92,33 @@
     overflow: hidden;
   }
 
-  /* Textarea: engine controls the size — native resize handle would
-   * drag the box off-grid. */
+  /* Textarea: engine controls the size (it auto-grows to fit the
+   * value, so scrolling never has anything to reveal) — the native
+   * resize handle and scrollbars would drag the box off-grid. `clip`
+   * (not `hidden`) so the caret can't scroll the box either: under
+   * `leading-*` the last line's half-leading is a phantom scroll
+   * range that would shift every line off its row. */
   mono-wind textarea {
     resize: none;
+    overflow: clip;
   }
 
-  /* :focus-visible: TUI-native invert. Outlines off (they'd clip
-   * against grid glyphs). Where each declaration lands: bg only shows
-   * via the grid (engine reads it during [measuring]; the light-DOM
-   * bg is transparent-locked below); color/caret-color paint on
-   * editables (they're the ones exempted from the color-transparent
-   * lock), and get grid-mirrored by the engine for everyone else. */
-  mono-wind :is(a, button, input, select, textarea, [tabindex], [role="button"]):focus-visible {
+  /* :focus-visible on ANY element: TUI-native invert. Outlines off
+   * (they'd clip against grid glyphs). Where each declaration lands:
+   * bg only shows via the grid (engine reads it during [measuring];
+   * the light-DOM bg is transparent-locked below); color/caret-color
+   * paint on editables (they're the ones exempted from the
+   * color-transparent lock), and get grid-mirrored by the engine for
+   * everyone else. */
+  mono-wind :focus-visible {
     outline: none;
     background-color: var(--mw-fg);
     color: var(--mw-bg);
     caret-color: var(--mw-bg);
   }
 }
+
+/* === Modes and selection (engine-owned from here down) =============== */
 
 /* select="grid": pass pointer events through non-interactive light-DOM
  * elements so drag lands on the grid <pre> (native drag-selection of
@@ -127,6 +155,8 @@ mono-wind:not([measuring]) :focus-visible::selection {
   color: var(--mw-fg, canvastext) !important;
   background: var(--mw-bg, canvas) !important;
 }
+
+/* === Typography locks and measuring gates ============================ */
 
 /* Lock the font on descendants so the grid metrics stay consistent —
  * `!important` because user classes (`.text-2xl` etc.) would otherwise beat
@@ -218,6 +248,8 @@ mono-wind:not([measuring]) [data-mw-pre] * {
 mono-wind:not([measuring]) [data-mw-nowrap][data-mw-clip] {
   overflow: hidden !important;
 }
+
+/* === Engine-owned geometry =========================================== */
 
 /* Every CSS property the engine has taken over on laid-out elements.
  * Gated on the `measuring` attribute so the style reader still sees the
@@ -325,6 +357,10 @@ mono-wind:not([measuring]) [data-mw-inline-box] {
 mono-wind:not([measuring]) [data-mw-inline-box] {
   position: relative !important;
   vertical-align: top !important;
+  /* Same half-leading cancellation as laid-out elements — without it
+   * an inline box's NATIVE ink (a textarea's value under leading-*)
+   * sits centered in its line boxes instead of on its rows. */
+  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
 }
 
 /* Authored `vertical-align: bottom` on an atomic inline box: grid-exact
@@ -357,6 +393,8 @@ mono-wind:not([measuring]) [data-mw-inline-inset] {
   bottom: calc(var(--mw-ib) * var(--mw-ch, 1px)) !important;
   left: calc(var(--mw-il) * var(--mw-cw, 1px)) !important;
 }
+
+/* === Engine state attributes (warnings, hiding, alignment) =========== */
 
 /* A container whose direct text was dropped (mixed text + block children,
  * cell-model deviation): the browser would paint that text unpositioned

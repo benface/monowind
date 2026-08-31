@@ -102,10 +102,10 @@ export const InlineElements: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="max-w-48 border border-neutral-500 px-3 py-1">
-        Inline elements like <b class="text-yellow-400">bold text</b>,
-        <i class="text-cyan-400">italic text</i>, and
-        <a href="#" class="text-blue-400 underline">links (click me)</a> ride along in the text run.
-        Atomic boxes too: an inline-block
+        Inline elements like <b class="text-yellow-400">bold/strong text</b>,
+        <i class="text-cyan-400">italics/emphasized text</i>, and
+        <a href="#" class="text-blue-400 underline">links</a> ride along in the text run. Atomic
+        boxes too: an inline-block
         <span class="inline-block border border-fuchsia-400 px-1" data-test="block">boxed</span>
         pinned to its line's top, and a bottom-aligned inline table with
         <table class="inline-table align-bottom" data-test="inline-table">

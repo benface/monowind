@@ -51,18 +51,20 @@ export function renderCellSegments(root: LayoutNode): CellSegment[][] {
   return grid.map((row, y) => rowSegments(row, paints[y]!));
 }
 
-/** One rendered row → its same-paint runs. Trims trailing whitespace so
- * blank tails don't emit empty painted spans; painted spaces INSIDE a
- * run stay (underline/line-through spans an inline run's inner spaces —
- * filler cells carry no paint and split naturally). */
+/** One rendered row → its same-paint runs. Trims the blank tail so it
+ * doesn't emit useless spans — but a trailing space with a painted
+ * BACKGROUND is visible ink (a borderless focus-invert fill is nothing
+ * but spaces) and must stay. Painted spaces INSIDE a run stay too
+ * (underline spans an inline run's inner spaces). */
 function rowSegments(row: string[], paints: (CellPaint | undefined)[]): CellSegment[] {
-  const trimmed = row.join("").trimEnd();
+  let end = row.length;
+  while (end > 0 && row[end - 1] === " " && paints[end - 1]?.backgroundColor === undefined) end--;
   const segments: CellSegment[] = [];
-  for (let x = 0; x < trimmed.length; x++) {
+  for (let x = 0; x < end; x++) {
     const paint = paints[x];
     const last = segments[segments.length - 1];
-    if (last && samePaint(last, paint)) last.text += trimmed[x]!;
-    else segments.push({ text: trimmed[x]!, ...paint });
+    if (last && samePaint(last, paint)) last.text += row[x]!;
+    else segments.push({ text: row[x]!, ...paint });
   }
   return segments;
 }
@@ -125,15 +127,19 @@ function renderGrids(root: LayoutNode): {
   return { grid, paints };
 }
 
-/** Non-default text styling only, so unstyled runs stay bare. */
+/** Non-default text styling only, so unstyled runs stay bare.
+ * `backgroundColor` rides along for INLINE elements (a leaf's own bg
+ * paints via the border-box fill instead). */
 function textPaint(source: {
   color: string | undefined;
+  backgroundColor?: string | undefined;
   fontWeight: string;
   fontStyle: string;
   textDecorationLine: string;
 }): CellPaint {
   const paint: CellPaint = {};
   if (source.color) paint.color = source.color;
+  if (source.backgroundColor) paint.backgroundColor = source.backgroundColor;
   if (source.fontWeight !== "400" && source.fontWeight !== "normal" && source.fontWeight !== "")
     paint.fontWeight = source.fontWeight;
   if (source.fontStyle !== "normal" && source.fontStyle !== "") paint.fontStyle = source.fontStyle;
@@ -208,10 +214,10 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
       const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
       let x = contentX + (style.textAlign === "end" ? Math.max(0, contentWidth - lineWidth) : 0);
       for (let k = span.start; k < truncated.end; k++) {
-        // U+FFFC marks an embedded inline box (its cells are drawn by the
-        // box's own walk); INLINE_PAD marks a blank inline-padding cell —
-        // neither is a glyph.
-        if (node.text[k] !== OBJECT_REPLACEMENT && node.text[k] !== INLINE_PAD) {
+        // U+FFFC marks an embedded inline box (its cells are drawn by
+        // the box's own walk). INLINE_PAD marks a blank inline-padding
+        // cell: no glyph, but its element's background still fills it.
+        if (node.text[k] !== OBJECT_REPLACEMENT) {
           const inlineIndex = node.charInline?.[k] ?? -1;
           const entry = inlineIndex >= 0 ? node.inlineElements![inlineIndex] : undefined;
           // Inline relative shifts, whole cells (specs/positioning.md):
@@ -219,7 +225,13 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
           const insets = entry?.insets;
           const dx = insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0;
           const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
-          put(x + dx, row + dy, node.text[k]!, entry ? inlinePaints![inlineIndex] : leafPaint);
+          if (node.text[k] === INLINE_PAD) {
+            if (entry?.backgroundColor) {
+              put(x + dx, row + dy, " ", { backgroundColor: entry.backgroundColor });
+            }
+          } else {
+            put(x + dx, row + dy, node.text[k]!, entry ? inlinePaints![inlineIndex] : leafPaint);
+          }
         }
         x += advanceOf(k, k + 1, node.advances);
       }

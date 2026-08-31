@@ -432,6 +432,48 @@ describe("inline fidelity in segments", () => {
   });
 });
 
+describe("inline element background", () => {
+  it("fills the run's cells, padding included (a focus-inverted link)", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 40px">a <a href="#" style="background-color: red; color: blue; padding-left: 4px; padding-right: 4px">go</a> b</div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 10);
+    const rows = renderCellSegments(node);
+    // "a " bare, then the link: 1 pad cell + "go" + 1 pad cell all on
+    // red bg, then " b" bare.
+    expect(rows[0]).toEqual([
+      { text: "a " },
+      { text: " ", backgroundColor: "red" },
+      { text: "go", color: "blue", backgroundColor: "red" },
+      { text: " ", backgroundColor: "red" },
+      { text: " b" },
+    ]);
+  });
+});
+
+describe("bg fill at a row's end", () => {
+  it("keeps trailing painted-background spaces (borderless bg boxes)", () => {
+    // A borderless bg-filled box is nothing but painted spaces — the
+    // segment trim must not eat them or the fill vanishes entirely.
+    const filled = makeNode({
+      text: "",
+      intrinsicWidth: 4,
+      intrinsicHeight: 2,
+      style: {
+        width: { kind: "cells", value: 4 },
+        height: { kind: "cells", value: 2 },
+        backgroundColor: "red",
+      },
+    });
+    const root = makeNode({ children: [filled] });
+    layoutRoot(root, 4);
+    const rows = renderCellSegments(root);
+    expect(rows[0]).toEqual([{ text: "    ", backgroundColor: "red" }]);
+    expect(rows[1]).toEqual([{ text: "    ", backgroundColor: "red" }]);
+  });
+});
+
 describe("form controls (native-rendered value)", () => {
   it("leaves the leaf empty so the browser paints the value on top of the grid", () => {
     // <input>/<textarea>/<select> handle their own caret, selection,
@@ -446,5 +488,53 @@ describe("form controls (native-rendered value)", () => {
     const art = renderPlainText(node);
     expect(art).not.toContain("hello");
     expect(art.split("\n")[0]).toMatch(/^┌─+┐$/);
+  });
+
+  const control = (markup: string): LayoutNode => {
+    const host = document.createElement("div");
+    host.innerHTML = markup;
+    document.body.appendChild(host);
+    return buildTree(host.firstElementChild!, 16)!;
+  };
+
+  it("input intrinsic width comes from the size attribute", () => {
+    expect(control(`<input size="7">`).intrinsicWidth).toBe(7);
+    expect(control(`<input>`).intrinsicWidth).toBe(20);
+  });
+
+  it("select intrinsic width is the longest option label", () => {
+    const node = control(
+      `<select><option>ab</option><option>abcdef</option><option>abc</option></select>`,
+    );
+    expect(node.intrinsicWidth).toBe(6);
+  });
+
+  it("textarea intrinsic size: cols wide, max(rows, value lines) tall", () => {
+    const node = control(`<textarea cols="12" rows="3">one\ntwo</textarea>`);
+    expect(node.intrinsicWidth).toBe(12);
+    expect(node.intrinsicHeight).toBe(3);
+    const tall = control(`<textarea cols="12" rows="1">a\nb\nc\nd</textarea>`);
+    expect(tall.intrinsicHeight).toBe(4);
+  });
+
+  it("textarea wraps its value against the captured content width", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<textarea rows="1">alpha beta gamma</textarea>`;
+    document.body.appendChild(host);
+    const textarea = host.firstElementChild as HTMLTextAreaElement;
+    // "alpha beta gamma" at 6 cells wraps to 3 lines; a trailing \n
+    // adds its (caret) line.
+    const widths = new Map([[textarea, 6]]);
+    expect(buildTree(textarea, 16, undefined, widths)!.intrinsicHeight).toBe(3);
+    textarea.value = "alpha beta gamma\n";
+    expect(buildTree(textarea, 16, undefined, widths)!.intrinsicHeight).toBe(4);
+  });
+
+  it("textarea leading: N lines occupy N + (N − 1) × gap rows", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<textarea rows="1" style="line-height: 32px">a\nb</textarea>`;
+    document.body.appendChild(host);
+    // 32px ÷ 16px font = 2 rows per line → 2 lines + 1 gap = 3 rows.
+    expect(buildTree(host.firstElementChild!, 16)!.intrinsicHeight).toBe(3);
   });
 });

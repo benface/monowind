@@ -7,6 +7,12 @@ import type { LayoutNode, PerSide } from "./types.ts";
  * LayoutNode are parent-relative; the companion stylesheet turns them
  * into px via the measured cell size. No painting: decoration and text
  * glyphs land in the shadow grid via `paint.ts`.
+ *
+ * Every write is change-checked: a relayout that computes the same
+ * result mutates nothing. Chrome dismisses an open <select> popup on
+ * style mutations near it, and the dynamic-state listeners relayout on
+ * the very events that open one (focusin/pointerover) — idempotent
+ * writes keep the popup up.
  */
 export function render(root: LayoutNode): void {
   const inlineInsetElements = new Set<Element>();
@@ -22,19 +28,36 @@ export function render(root: LayoutNode): void {
   }
 }
 
+/** setProperty, skipped when the value is already there. */
+function setVar(el: HTMLElement, prop: string, value: string): void {
+  if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value);
+}
+
+/** removeProperty, skipped when the property isn't set. */
+function clearVar(el: HTMLElement, prop: string): void {
+  if (el.style.getPropertyValue(prop) !== "") el.style.removeProperty(prop);
+}
+
+/** Boolean attribute toggle, skipped when already in the target state. */
+function setFlag(el: Element, name: string, on: boolean): void {
+  if (el.hasAttribute(name) === on) return;
+  if (on) el.setAttribute(name, "");
+  else el.removeAttribute(name);
+}
+
 function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Element>): void {
   if (node.inlineElements) {
     for (const { element, tracking, padLeft, padRight, insets } of node.inlineElements) {
       const el = element as HTMLElement;
-      el.style.setProperty("--mw-ls", String(tracking));
+      setVar(el, "--mw-ls", String(tracking));
       // Quantized horizontal padding (specs/cell-model.md): the companion
       // stylesheet applies these cells as the element's real padding —
       // its typography lock zeroes any authored value, so browser padding
       // always equals the cells the run reserved.
-      if (padLeft > 0) el.style.setProperty("--mw-ipl", String(padLeft));
-      else el.style.removeProperty("--mw-ipl");
-      if (padRight > 0) el.style.setProperty("--mw-ipr", String(padRight));
-      else el.style.removeProperty("--mw-ipr");
+      if (padLeft > 0) setVar(el, "--mw-ipl", String(padLeft));
+      else clearVar(el, "--mw-ipl");
+      if (padRight > 0) setVar(el, "--mw-ipr", String(padRight));
+      else clearVar(el, "--mw-ipr");
       if (insets) {
         inlineInsetElements.add(element);
         applyInlineInsets(el, insets);
@@ -53,8 +76,8 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
     // `--mw-z`, written only where CSS applies it.
     const el = child.source as HTMLElement;
     if (child.style.zIndex !== null && zIndexApplies(child, node) && !child.inlineBox)
-      el.style.setProperty("--mw-z", String(child.style.zIndex));
-    else el.style.removeProperty("--mw-z");
+      setVar(el, "--mw-z", String(child.style.zIndex));
+    else clearVar(el, "--mw-z");
     walk(child, false, inlineInsetElements);
   }
 }
@@ -69,10 +92,10 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
  * computed-value time and the inset falls back to `auto`.
  */
 function applyInlineInsets(el: HTMLElement, insets: PerSide<number | null>): void {
-  el.setAttribute("data-mw-inline-inset", "");
+  setFlag(el, "data-mw-inline-inset", true);
   const write = (prop: string, cells: number | null) => {
-    if (cells === null) el.style.removeProperty(prop);
-    else el.style.setProperty(prop, String(cells));
+    if (cells === null) clearVar(el, prop);
+    else setVar(el, prop, String(cells));
   };
   write("--mw-it", insets.top);
   write("--mw-ir", insets.right);
@@ -88,47 +111,40 @@ function positionElement(node: LayoutNode): void {
   // Atomic inline boxes stay IN FLOW (the browser's line layout places
   // them); everything else is engine-positioned. Same geometry vars, a
   // different companion rule (see styles.css).
-  el.setAttribute(node.inlineBox ? "data-mw-inline-box" : "data-mw-laid-out", "");
-  el.removeAttribute(node.inlineBox ? "data-mw-laid-out" : "data-mw-inline-box");
+  setFlag(el, node.inlineBox ? "data-mw-inline-box" : "data-mw-laid-out", true);
+  setFlag(el, node.inlineBox ? "data-mw-laid-out" : "data-mw-inline-box", false);
   // Bottom-aligned atomic boxes keep their browser alignment (grid-exact,
   // probed); everything else is pinned top by the companion rule.
-  if (node.inlineBox && node.style.verticalAlign === "end") el.setAttribute("data-mw-vbottom", "");
-  else el.removeAttribute("data-mw-vbottom");
+  setFlag(el, "data-mw-vbottom", Boolean(node.inlineBox) && node.style.verticalAlign === "end");
   // Grid typography (specs/cell-model.md): extra cells per character, rows
   // per wrapped line, and the half-leading cancellation shift.
-  el.style.setProperty("--mw-ls", String(tracking));
-  el.style.setProperty("--mw-lh", String(lineGap + 1));
-  el.style.setProperty("--mw-lhs", String(-lineGap / 2));
-  if (whiteSpace !== "normal") el.setAttribute("data-mw-nowrap", "");
-  else el.removeAttribute("data-mw-nowrap");
+  setVar(el, "--mw-ls", String(tracking));
+  setVar(el, "--mw-lh", String(lineGap + 1));
+  setVar(el, "--mw-lhs", String(-lineGap / 2));
+  setFlag(el, "data-mw-nowrap", whiteSpace !== "normal");
   // `white-space: pre` leaves also keep their preserved spaces
   // browser-side (the tree builder kept them in the run) — see styles.css.
-  if (whiteSpace === "pre") el.setAttribute("data-mw-pre", "");
-  else el.removeAttribute("data-mw-pre");
-  el.style.setProperty("--mw-x", String(rect.x));
-  el.style.setProperty("--mw-y", String(rect.y));
-  el.style.setProperty("--mw-w", String(rect.width));
-  el.style.setProperty("--mw-h", String(rect.height));
-  if (overflow === "clip") el.setAttribute("data-mw-clip", "");
-  else el.removeAttribute("data-mw-clip");
+  setFlag(el, "data-mw-pre", whiteSpace === "pre");
+  setVar(el, "--mw-x", String(rect.x));
+  setVar(el, "--mw-y", String(rect.y));
+  setVar(el, "--mw-w", String(rect.width));
+  setVar(el, "--mw-h", String(rect.height));
+  setFlag(el, "data-mw-clip", overflow === "clip");
   // The browser insets content by border + padding; the engine has already
   // allocated cells for both. We expose them separately so the companion CSS
   // reads naturally, and the CSS sums them into the actual `padding` (since
   // engine border is painted as glyphs, native border-width stays 0).
-  el.style.setProperty("--mw-pt", String(padding.top));
-  el.style.setProperty("--mw-pr", String(padding.right));
-  el.style.setProperty("--mw-pb", String(padding.bottom));
-  el.style.setProperty("--mw-pl", String(padding.left));
-  el.style.setProperty("--mw-bt", String(border.top));
-  el.style.setProperty("--mw-br", String(border.right));
-  el.style.setProperty("--mw-bb", String(border.bottom));
-  el.style.setProperty("--mw-bl", String(border.left));
-  if (textAlignBlocked) el.setAttribute("data-mw-text-align-blocked", "");
-  else el.removeAttribute("data-mw-text-align-blocked");
+  setVar(el, "--mw-pt", String(padding.top));
+  setVar(el, "--mw-pr", String(padding.right));
+  setVar(el, "--mw-pb", String(padding.bottom));
+  setVar(el, "--mw-pl", String(padding.left));
+  setVar(el, "--mw-bt", String(border.top));
+  setVar(el, "--mw-br", String(border.right));
+  setVar(el, "--mw-bb", String(border.bottom));
+  setVar(el, "--mw-bl", String(border.left));
+  setFlag(el, "data-mw-text-align-blocked", textAlignBlocked);
   // Un-laid-out direct text (mixed with block children) would otherwise
   // paint unpositioned over the children — hide it (see styles.css).
-  if (node.droppedText) el.setAttribute("data-mw-dropped-text", "");
-  else el.removeAttribute("data-mw-dropped-text");
-  if (node.tableHidden) el.setAttribute("data-mw-table-hidden", "");
-  else el.removeAttribute("data-mw-table-hidden");
+  setFlag(el, "data-mw-dropped-text", Boolean(node.droppedText));
+  setFlag(el, "data-mw-table-hidden", Boolean(node.tableHidden));
 }

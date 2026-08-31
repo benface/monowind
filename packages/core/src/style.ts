@@ -60,7 +60,7 @@ export function readCellStyle(
         ? "grid"
         : rawDisplay === "table" || rawDisplay === "inline-table"
           ? "table"
-          : rawDisplay === "none"
+          : rawDisplay === "none" || isZeroClipped(cs)
             ? "none"
             : "block";
 
@@ -285,7 +285,7 @@ function applyBorderCollapse(style: CellStyle, cs: CSSStyleDeclaration): void {
  * `rgba(0, 0, 0, 0)`; the empty-string and `currentcolor` branches
  * cover happy-dom (test env), which leaves some computed values
  * unresolved. */
-function isTransparentColor(value: string): boolean {
+export function isTransparentColor(value: string): boolean {
   if (!value) return true;
   const normalized = value.trim().toLowerCase();
   return (
@@ -298,6 +298,22 @@ function isTransparentColor(value: string): boolean {
 
 function isClipping(value: string): boolean {
   return value === "hidden" || value === "clip";
+}
+
+/** The screen-reader-only pattern (Tailwind `sr-only` and friends): an
+ * absolutely positioned box whose ink can't show — a zero `clip` rect,
+ * or a clipped ≤1px box. Treated as display:none by the ENGINE only:
+ * the light-DOM element keeps its authored styles, so assistive tech
+ * still reads it. */
+function isZeroClipped(cs: CSSStyleDeclaration): boolean {
+  if (cs.position !== "absolute" && cs.position !== "fixed") return false;
+  const clip = cs.clip.replace(/\s/g, "");
+  if (clip === "rect(0px,0px,0px,0px)" || clip === "rect(0,0,0,0)") return true;
+  return (
+    (isClipping(cs.overflow) || isClipping(cs.overflowX)) &&
+    parseFloat(cs.width) <= 1 &&
+    parseFloat(cs.height) <= 1
+  );
 }
 
 /** Tag → display fallback for environments whose getComputedStyle

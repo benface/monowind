@@ -428,9 +428,11 @@ export interface LayoutNode {
     padLeft: number;
     padRight: number;
     insets: PerSide<number | null> | null;
-    /** Paint-only text styling for the plain-text mode (the browser
-     * renders the real element). */
+    /** Paint-only styling mirrored into the grid (the browser's own
+     * ink is transparent-locked). `backgroundColor` fills the run's
+     * cells — how a focus-inverted inline link shows its highlight. */
     color: string | undefined;
+    backgroundColor: string | undefined;
     fontWeight: string;
     fontStyle: string;
     textDecorationLine: string;
