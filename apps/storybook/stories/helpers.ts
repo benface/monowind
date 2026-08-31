@@ -66,21 +66,36 @@ export async function expectBrowserRowsToMatchEngine(
     const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0);
     if (rects.length > 0) {
       const box = el.getBoundingClientRect();
-      if (/right|end/.test(getComputedStyle(el).textAlign)) {
+      const textAlign = getComputedStyle(el).textAlign;
+      const label = el.textContent!.trim();
+      if (/right|end/.test(textAlign)) {
         const textRight = Math.max(...rects.map((r) => r.right));
         const expectedRight =
           box.left + (cells("--mw-w") - cells("--mw-br") - cells("--mw-pr")) * cellWidth;
-        expect(
-          Math.abs(textRight - expectedRight),
-          `"${el.textContent!.trim()}" text end`,
-        ).toBeLessThan(1.5);
+        expect(Math.abs(textRight - expectedRight), `"${label}" text end`).toBeLessThan(1.5);
+      } else if (/center/.test(textAlign)) {
+        // Engine centers at floor(leftover / 2) whole cells; the
+        // browser's own centering is fractional — they agree within
+        // half a cell (specs/cell-model.md "Text alignment").
+        const widest = rects.reduce((a, b) => (b.width > a.width ? b : a));
+        const contentCells =
+          cells("--mw-w") -
+          cells("--mw-bl") -
+          cells("--mw-br") -
+          cells("--mw-pl") -
+          cells("--mw-pr");
+        const lineCells = Math.round(widest.width / cellWidth);
+        const expectedLeft =
+          box.left +
+          (cells("--mw-bl") + cells("--mw-pl")) * cellWidth +
+          Math.floor(Math.max(0, contentCells - lineCells) / 2) * cellWidth;
+        expect(Math.abs(widest.left - expectedLeft), `"${label}" text center`).toBeLessThan(
+          cellWidth / 2 + 1.5,
+        );
       } else {
         const textLeft = Math.min(...rects.map((r) => r.left));
         const expectedLeft = box.left + (cells("--mw-bl") + cells("--mw-pl")) * cellWidth;
-        expect(
-          Math.abs(textLeft - expectedLeft),
-          `"${el.textContent!.trim()}" text start`,
-        ).toBeLessThan(1.5);
+        expect(Math.abs(textLeft - expectedLeft), `"${label}" text start`).toBeLessThan(1.5);
       }
     }
   }

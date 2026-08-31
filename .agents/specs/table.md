@@ -170,10 +170,9 @@ baseline alignment degenerates to top alignment. The default is
 `center` on `<td>`/`<th>` (UA `middle`, probed in all three engines;
 the companion's lock hides it, so the tag decides) and `start` on
 div-cells (CSS initial `baseline`). `text-align` follows the
-cell-model rules (start/end honored, center blocked); the UA's
-`th`/`caption` centering is reset to `start` by a base-layer companion
-rule, since off-grid centering can't be honored anyway. The legacy
-`align` attribute joins the blocking scan (see Reading).
+cell-model rules (start/center/end honored, justify blocked) — the
+UA's `th`/`caption` centering applies as-is, engine-quantized. The
+legacy `align` attribute maps through the same reader.
 
 ## Borders — collapsed
 

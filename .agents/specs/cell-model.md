@@ -30,6 +30,25 @@ section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
   1px, `border-2` = 2px), so border-width in px maps directly to border cells.
   This is intentionally a different scale from spacing — document it prominently
   in user-facing docs.
+- **Viewport-relative lengths** (`h-screen`, `h-dvh`/`svh`/`lvh`,
+  `w-screen`, arbitrary values like `h-[95dvh]`, and the min/max
+  variants) express PHYSICAL screen intent, so they convert via the
+  **measured cell size** (`floor(px ÷ cell width|height)`), not the
+  spacing scale — `h-screen` fills the actual viewport. Detection is by
+  CLASS SCAN in every engine: computed values (Typed OM included)
+  resolve viewport units to plain px, indistinguishable from
+  spacing-scale lengths. A scanned utility is ACTIVE-CHECKED against
+  the resolved computed px (within 30%) — an inactive variant
+  (`md:h-screen` below `md`) or an overriding inline style resolves
+  elsewhere and wins; when they agree the resolved px is used, so
+  sv/lv/dv bases are exact. A window `resize` listener retriggers
+  layout (the host ResizeObserver alone can miss height-only viewport
+  changes). Inline styles are caught too (the style attribute keeps
+  the authored unit verbatim, and inline beats classes per cascade).
+  **Deviation:** viewport units authored in plain CSS stylesheets are
+  only caught where the unit survives to the computed string —
+  detecting them otherwise would mean re-implementing the cascade over
+  document.styleSheets.
 
 ### Rounding
 
@@ -274,19 +293,23 @@ dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
 
 ## Text alignment
 
-`text-align: left | right | start | end` are on-grid: each line's offset is
-`(container_width − line_length) × cell_width`, always a whole number of
-cells since character width equals cell width in monospace. The engine
-reads the computed value (normalized LTR: `right`/`end` → end) so
-`renderPlainText` mirrors the browser's per-line offsets; a line at or over
-the content width stays at start, matching truncation.
+`text-align: left | right | start | end | center` are honored, quantized
+to whole cells (normalized LTR: `right`/`end` → end). Per line, with
+`leftover = container_width − line_length`:
 
-`text-align: center` and `justify` produce fractional per-line offsets when
-`(container_width − line_length)` is odd (center) or when inter-word spacing
-is redistributed (justify). Both are **forced back to `start`** by the
-companion stylesheet (via the engine-owned `data-mw-text-align-blocked`
-attribute). To center a text leaf as a whole, wrap it in a flex container
-with `justify-center` — that centers at the cell level.
+- `end`: offset by `leftover` cells (exact — character width equals cell
+  width in monospace).
+- `center`: offset by `floor(leftover / 2)` cells (**deviation**: the
+  browser's own centering is fractional when leftover is odd; the GRID
+  paints the quantized offset, and the browser's half-cell-off copy is
+  invisible under the unified render — only native form-control ink
+  shows browser centering).
+- A line at or over the content width stays at start, matching
+  truncation. `renderPlainText` mirrors the same offsets.
+
+`text-align: justify` redistributes inter-word spacing fractionally and
+stays **forced back to `start`** by the companion stylesheet (via the
+engine-owned `data-mw-text-align-blocked` attribute).
 
 ## Intrinsic sizing keywords
 
@@ -404,7 +427,8 @@ no grid ink, no layout footprint, still read by assistive tech.
    Atomic inline boxes ride the line per CSS (growing their line when
    taller) but their margins are ignored, and BLOCK-level elements nested
    inside a run are skipped with a warning.
-6. `text-align: center | justify` on descendants is forced to `start`.
+6. `text-align: justify` on descendants is forced to `start` (`center`
+   is honored, floor-quantized — see "Text alignment").
    Content/item alignment on a flex or grid element whose content is BARE
    text (`flex items-center justify-center`, `grid place-items-center`) IS
    supported, but quantized: the browser's own anonymous-item alignment

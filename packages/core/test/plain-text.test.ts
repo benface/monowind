@@ -432,6 +432,21 @@ describe("inline fidelity in segments", () => {
   });
 });
 
+describe("text-align rendering", () => {
+  it("centers each line at floor(leftover / 2) cells", () => {
+    const leaf = makeNode({
+      text: "abcd\nab\nabc",
+      intrinsicWidth: 4,
+      intrinsicHeight: 3,
+      style: { textAlign: "center", whiteSpace: "nowrap", width: { kind: "cells", value: 7 } },
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 7);
+    // Leftovers 3, 5, 4 → offsets 1, 2, 2 (floor keeps the left bias).
+    expect(renderPlainText(root)).toBe(" abcd\n  ab\n  abc");
+  });
+});
+
 describe("inline element background", () => {
   it("fills the run's cells, padding included (a focus-inverted link)", () => {
     const host = document.createElement("div");

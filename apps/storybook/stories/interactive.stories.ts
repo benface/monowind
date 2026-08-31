@@ -269,9 +269,12 @@ export const Link: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="max-w-60 border border-neutral-500 px-1">
-        This paragraph has <a href="#">a completely unstyled link</a> (invert on focus) and
+        This paragraph has
+        <a href="https://benface.com" target="_blank">a completely unstyled link</a> (invert on
+        focus) and
         <a
-          href="#"
+          href="https://benface.com"
+          target="_blank"
           id="custom-link"
           class="text-blue-400 underline focus-visible:bg-fuchsia-500 focus-visible:text-white focus-visible:no-underline"
           >a custom one</a
@@ -314,13 +317,17 @@ const bumpCount = (event: Event) => {
 export const Button: StoryObj = {
   render: () => html`
     <mono-wind>
-      <button
-        id="btn"
-        class="w-max max-w-full cursor-pointer truncate border px-1 hover:text-cyan-400"
-        @click=${bumpCount}
-      >
-        click me
-      </button>
+      <div class="flex flex-col gap-1">
+        <button id="btn" class="w-max max-w-full cursor-pointer border px-1" @click=${bumpCount}>
+          click me
+        </button>
+        <button
+          id="btn-full"
+          class="w-full cursor-pointer truncate border px-1 text-center hover:not-focus-visible:text-emerald-400 focus-visible:bg-amber-400"
+        >
+          full-width, centered label, custom hover and focus colors
+        </button>
+      </div>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
@@ -335,5 +342,16 @@ export const Button: StoryObj = {
     await waitFor(() => expect(host.toPlainText()).toContain("clicked (1)"), { timeout: 5_000 });
     btn.click();
     await waitFor(() => expect(host.toPlainText()).toContain("clicked (2)"), { timeout: 5_000 });
+    // Full-width + text-center: the label sits centered on the grid.
+    const full = host.querySelector<HTMLButtonElement>("#btn-full")!;
+    const label = full.textContent!.trim();
+    const cells = (name: string) => Number(full.style.getPropertyValue(name));
+    const line = host
+      .toPlainText()
+      .split("\n")
+      .find((row) => row.includes(label))!;
+    const contentCells = cells("--mw-w") - 2 - 2; // border + px-1 each side
+    const expectedOffset = 1 + 1 + Math.floor((contentCells - label.length) / 2);
+    expect(line.indexOf(label)).toBe(expectedOffset);
   },
 };

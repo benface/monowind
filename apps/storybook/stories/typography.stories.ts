@@ -104,8 +104,8 @@ export const InlineElements: StoryObj = {
       <div class="max-w-48 border border-neutral-500 px-3 py-1">
         Inline elements like <b class="text-yellow-400">bold/strong text</b>,
         <i class="text-cyan-400">italics/emphasized text</i>, and
-        <a href="#" class="text-blue-400 underline">links</a> ride along in the text run. Atomic
-        boxes too: an inline-block
+        <a href="https://benface.com" target="_blank" class="text-blue-400 underline">links</a> ride
+        along in the text run. Atomic boxes too: an inline-block
         <span class="inline-block border border-fuchsia-400 px-1" data-test="block">boxed</span>
         pinned to its line's top, and a bottom-aligned inline table with
         <table class="inline-table align-bottom" data-test="inline-table">
@@ -188,9 +188,11 @@ export const TextAlign: StoryObj = {
       <div class="flex flex-col gap-1">
         <div class="border border-neutral-500 px-1 text-end">text-end lands on the grid</div>
         <div class="border border-neutral-500 px-1 text-center">
-          text-center would be off-grid, so it is forced back to start
+          text-center too — each line centers at a whole-cell offset
         </div>
-        <div class="border border-neutral-500 px-1 text-justify">same thing for text-justify</div>
+        <div class="border border-neutral-500 px-1 text-justify">
+          text-justify would be off-grid, so it is forced back to start
+        </div>
       </div>
     </mono-wind>
   `,

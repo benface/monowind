@@ -286,12 +286,13 @@ describe("percent heights and legacy attributes", () => {
     expect(row.children.map((c) => c.localRect.width)).toEqual([8, 1]);
   });
 
-  it("honors the legacy valign attribute and blocks align=center", () => {
+  it("honors the legacy valign and align attributes", () => {
     const art = plainText(`<table><tr><td>a<br>b<br>c</td><td valign="bottom">z</td></tr></table>`);
     expect(art).toBe(["a", "b", "cz"].join("\n"));
     const node = build(`<table><tr><td align="center">x</td></tr></table>`);
     const cell = node.children[0]!.children[0]!.children[0]!;
-    expect(cell.style.textAlignBlocked).toBe(true);
+    expect(cell.style.textAlign).toBe("center");
+    expect(cell.style.textAlignBlocked).toBe(false);
   });
 });
 

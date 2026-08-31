@@ -170,12 +170,56 @@ export function readCellStyle(
     gridColumnEnd: parseGridLine(cs.getPropertyValue("grid-column-end")),
     gridRowStart: parseGridLine(cs.getPropertyValue("grid-row-start")),
     gridRowEnd: parseGridLine(cs.getPropertyValue("grid-row-end")),
-    width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle),
-    height: readSize(csm, cs.height, "height", rootFontSizePx, classAttr, inlineStyle),
-    minWidth: readLimit(cs.minWidth, rootFontSizePx) ?? "auto",
-    minHeight: readLimit(cs.minHeight, rootFontSizePx) ?? "auto",
-    maxWidth: readLimit(cs.maxWidth, rootFontSizePx),
-    maxHeight: readLimit(cs.maxHeight, rootFontSizePx),
+    width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle, metrics),
+    height: readSize(csm, cs.height, "height", rootFontSizePx, classAttr, inlineStyle, metrics),
+    minWidth:
+      viewportLimit(
+        csm,
+        "min-width",
+        cs.minWidth,
+        classAttr,
+        "min-w",
+        inlineStyle,
+        metrics,
+        rootFontSizePx,
+      ) ??
+      readLimit(cs.minWidth, rootFontSizePx) ??
+      "auto",
+    minHeight:
+      viewportLimit(
+        csm,
+        "min-height",
+        cs.minHeight,
+        classAttr,
+        "min-h",
+        inlineStyle,
+        metrics,
+        rootFontSizePx,
+      ) ??
+      readLimit(cs.minHeight, rootFontSizePx) ??
+      "auto",
+    maxWidth:
+      viewportLimit(
+        csm,
+        "max-width",
+        cs.maxWidth,
+        classAttr,
+        "max-w",
+        inlineStyle,
+        metrics,
+        rootFontSizePx,
+      ) ?? readLimit(cs.maxWidth, rootFontSizePx),
+    maxHeight:
+      viewportLimit(
+        csm,
+        "max-height",
+        cs.maxHeight,
+        classAttr,
+        "max-h",
+        inlineStyle,
+        metrics,
+        rootFontSizePx,
+      ) ?? readLimit(cs.maxHeight, rootFontSizePx),
     padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     position: readPosition(cs.position),
@@ -228,7 +272,7 @@ export function readCellStyle(
     // as `-webkit-center`/`-moz-center`. Inherited centering blocks each
     // descendant individually — same net effect as CSS inheritance.
     textAlignBlocked: authoredTextAlignBlocked(el, cs),
-    textAlign: cs.textAlign === "right" || cs.textAlign === "end" ? "end" : "start",
+    textAlign: readTextAlign(el, cs),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
     ruleX: display === "flex" || display === "grid" ? readGapRule(cs, "x") : null,
@@ -410,11 +454,23 @@ function readGapRule(cs: CSSStyleDeclaration, axis: "x" | "y"): GapRule | null {
   };
 }
 
+/** Only `justify` is blocked (its per-line extra word spacing is
+ * fractional and off-grid). `center` is engine-quantized: the grid
+ * paints each line at floor((W − line) / 2); the browser's own
+ * (fractional) centering only touches the invisible light-DOM copy. */
 function authoredTextAlignBlocked(el: Element, cs: CSSStyleDeclaration): boolean {
-  if (/center|justify/.test(cs.textAlign)) return true;
+  if (cs.textAlign === "justify") return true;
   // Hint fallback for environments that don't map `align` (happy-dom).
-  const attr = el.getAttribute("align")?.toLowerCase();
-  return attr === "center" || attr === "justify";
+  return el.getAttribute("align")?.toLowerCase() === "justify";
+}
+
+function readTextAlign(el: Element, cs: CSSStyleDeclaration): "start" | "center" | "end" {
+  const value = cs.textAlign || el.getAttribute("align")?.toLowerCase() || "";
+  if (value === "right" || value === "end") return "end";
+  // -webkit-center / -moz-center: the legacy `align` attribute's
+  // computed form in real browsers.
+  if (value === "center" || value.endsWith("-center")) return "center";
+  return "start";
 }
 
 function supportsTypedOM(
@@ -660,7 +716,35 @@ function readSize(
   rootFontSizePx: number,
   classAttr: string,
   inlineStyle: CSSStyleDeclaration,
+  metrics: CellMetrics | undefined,
 ): Size | undefined {
+  // Viewport-relative lengths (h-screen, style="height: 100dvh", …)
+  // express PHYSICAL screen intent, so they convert via the measured
+  // cell size, not the spacing scale (specs/cell-model.md
+  // "Viewport-relative lengths"). The inline style attribute keeps the
+  // authored unit verbatim — and inline beats classes, per cascade.
+  const inlineViewport = viewportLengthPx(key === "width" ? inlineStyle.width : inlineStyle.height);
+  if (inlineViewport !== null) {
+    return { kind: "cells", value: physicalCells(inlineViewport, key, metrics, rootFontSizePx) };
+  }
+  // Class scan, every engine: computed values (Typed OM included)
+  // resolve viewport units to plain px, indistinguishable from
+  // spacing-scale lengths.
+  const viewportPx = viewportUtilityPx(classAttr, key === "width" ? "w" : "h");
+  if (viewportPx !== null) {
+    // Confirm the utility is ACTIVE against the resolved value — an
+    // inactive variant (md:h-screen below md) or an overriding inline
+    // style resolves elsewhere and must win. When it agrees, prefer
+    // the RESOLVED px: it also carries sv/lv/dv bases the innerWidth/
+    // Height estimate can't know. No resolved value at all (headless
+    // test env, stylesheet not loaded yet) trusts the scan.
+    const resolved = parseFloat(csm ? String(csm.get(key) ?? "") : fallback);
+    const agrees = Number.isFinite(resolved) && Math.abs(resolved - viewportPx) <= viewportPx * 0.3;
+    if (agrees || !Number.isFinite(resolved)) {
+      const px = agrees ? resolved : viewportPx;
+      return { kind: "cells", value: physicalCells(px, key, metrics, rootFontSizePx) };
+    }
+  }
   if (csm) {
     const value = csm.get(key);
     if (value == null) return undefined;
@@ -672,6 +756,15 @@ function readSize(
     if (s.endsWith("px")) return { kind: "cells", value: pxToCells(parseFloat(s), rootFontSizePx) };
     if (s.endsWith("rem"))
       return { kind: "cells", value: roundHalfAwayFromZero(parseFloat(s) / 0.25) };
+    // Authored viewport units that survive to the computed string
+    // (engine-dependent; arbitrary values like h-[50vh]).
+    const authoredViewport = viewportLengthPx(s);
+    if (authoredViewport !== null) {
+      return {
+        kind: "cells",
+        value: physicalCells(authoredViewport, key, metrics, rootFontSizePx),
+      };
+    }
   }
   // Fallback path (Firefox pre-157: no Typed OM). getComputedStyle returns
   // *used* values (always px) for box properties, so we can't distinguish
@@ -722,6 +815,99 @@ function readSize(
   const px = parseFloat(fallback);
   if (Number.isFinite(px)) return { kind: "cells", value: pxToCells(px, rootFontSizePx) };
   return undefined;
+}
+
+/** Parse an authored viewport-relative length ("100dvh", "50vw", …)
+ * into px against the current viewport. null for anything else. */
+function viewportLengthPx(value: string): number | null {
+  const match = /^(-?[\d.]+)((?:[dsl]?v)(?:h|w|min|max)|vi|vb)$/.exec(value.trim());
+  if (!match || typeof window === "undefined") return null;
+  const amount = parseFloat(match[1]!);
+  if (!Number.isFinite(amount)) return null;
+  const unit = match[2]!;
+  const height = window.innerHeight;
+  const width = window.innerWidth;
+  const basis = unit.endsWith("h")
+    ? height
+    : unit.endsWith("min")
+      ? Math.min(width, height)
+      : unit.endsWith("max")
+        ? Math.max(width, height)
+        : unit === "vb"
+          ? height
+          : width; // vw / vi
+  return (amount / 100) * basis;
+}
+
+/** Tailwind viewport utilities (`h-screen`, `min-h-dvh`, `h-[95dvh]`,
+ * …) → px. Scanned in EVERY engine (computed values resolve viewport
+ * units to plain px); callers active-check the result. `prefix` is
+ * the utility stem ("h", "w", "min-h", …). */
+function viewportUtilityPx(classAttr: string, prefix: string): number | null {
+  if (typeof window === "undefined") return null;
+  const named = new RegExp(`(?:^|[\\s:.[!])${prefix}-(screen|[dsl]v[hw])(?![\\w-])`).exec(
+    classAttr,
+  );
+  if (named) {
+    const name = named[1]!;
+    // h-screen = 100vh, w-screen = 100vw; explicit units name their axis.
+    if (name === "screen") return prefix.includes("h") ? window.innerHeight : window.innerWidth;
+    return name.endsWith("h") ? window.innerHeight : window.innerWidth;
+  }
+  // Arbitrary viewport values: h-[95dvh], min-h-[50vh], …
+  const arbitrary = new RegExp(
+    `(?:^|[\\s:.[!])${prefix}-\\[(-?[\\d.]+(?:[dsl]?v(?:h|w|min|max)|vi|vb))\\]`,
+  ).exec(classAttr);
+  return arbitrary ? viewportLengthPx(arbitrary[1]!) : null;
+}
+
+/** Convert PHYSICAL px to cells on the given axis using the measured
+ * cell size — viewport-relative lengths mean real screen distance, not
+ * the spacing scale. Headless fallback: the spacing scale. */
+function physicalCells(
+  px: number,
+  key: "width" | "height",
+  metrics: CellMetrics | undefined,
+  rootFontSizePx: number,
+): number {
+  const cellPx = key === "width" ? metrics?.width : metrics?.height;
+  if (cellPx && cellPx > 0) return Math.max(0, Math.floor(px / cellPx));
+  return pxToCells(px, rootFontSizePx);
+}
+
+/** Viewport-relative min/max limit, when one is authored. Class scan
+ * (`min-h-screen`, `min-h-[95dvh]`, …) — computed values resolve
+ * viewport units to plain px in every engine, so the class list is the
+ * only reliable signal — active-checked against the resolved value,
+ * same rules as readSize's viewport branch. undefined = not
+ * viewport-relative (caller falls through to the normal readLimit). */
+function viewportLimit(
+  csm: StylePropertyMapReadOnly | null,
+  property: string,
+  resolvedValue: string,
+  classAttr: string,
+  utilityPrefix: string,
+  inlineStyle: CSSStyleDeclaration,
+  metrics: CellMetrics | undefined,
+  rootFontSizePx: number,
+): number | undefined {
+  const key = property.endsWith("width") ? "width" : "height";
+  // An authored viewport string — inline style (kept verbatim in the
+  // style attribute) or a computed value that survives resolution —
+  // is proof in itself: no active-check needed (or possible: parsing
+  // it as px would misread "100dvh" as 100).
+  const authoredPx =
+    viewportLengthPx(inlineStyle.getPropertyValue(property)) ??
+    viewportLengthPx(csm?.get(property)?.toString().trim() ?? "");
+  if (authoredPx !== null) return physicalCells(authoredPx, key, metrics, rootFontSizePx);
+  // Class scan needs the active-check, same rules as readSize's
+  // viewport branch.
+  const scanned = viewportUtilityPx(classAttr, utilityPrefix);
+  if (scanned === null) return undefined;
+  const resolved = parseFloat(csm ? String(csm.get(property) ?? "") : resolvedValue);
+  const agrees = Number.isFinite(resolved) && Math.abs(resolved - scanned) <= scanned * 0.3;
+  if (!agrees && Number.isFinite(resolved)) return undefined;
+  return physicalCells(agrees ? resolved : scanned, key, metrics, rootFontSizePx);
 }
 
 /**

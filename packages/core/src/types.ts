@@ -339,13 +339,14 @@ export interface CellStyle {
   fontWeight: string;
   fontStyle: string;
   textDecorationLine: string;
-  /** True when text-align is center/justify — forced back to `start` since
-   * per-line centering can't be snapped to whole cells. See cell-model spec. */
+  /** True when text-align is `justify` — forced back to `start` (its
+   * extra per-line word spacing is fractional). See cell-model spec. */
   textAlignBlocked: boolean;
-  /** Computed text-align, normalized LTR (`right`/`end` → `end`, all else
-   * `start`). On-grid: line offsets are whole cells. Browser paints its
-   * own alignment; `renderPlainText` mirrors it per line. */
-  textAlign: "start" | "end";
+  /** Computed text-align, normalized LTR. `end` offsets each line by
+   * W − line, `center` by floor((W − line) / 2) — whole cells, painted
+   * by the grid (the browser's own fractional centering only touches
+   * the invisible light-DOM copy). */
+  textAlign: "start" | "center" | "end";
   tableRole: TableRole;
   tableLayout: "auto" | "fixed";
   /** True for `border-collapse: collapse` (Tailwind preflight's default

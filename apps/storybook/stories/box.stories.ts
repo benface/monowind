@@ -69,13 +69,15 @@ export const NestedBorders: StoryObj = {
 
 export const Margin: StoryObj = {
   render: () => html`
-    <mono-wind>
-      <div class="max-w-50 border border-neutral-500 px-1">
-        <div class="relative z-10 -my-1 border border-red-400 px-1">-my-1</div>
-        <div class="mb-2 border border-cyan-400 px-1">mb-2</div>
-        <div class="mt-1 border border-yellow-400 px-1">mt-1 (collapses to 2, not 3)</div>
-        <div class="mx-auto w-min max-w-full border border-emerald-400 px-1">w-min mx-auto</div>
-        <div class="mx-auto w-max max-w-full border border-amber-400 px-1">w-max mx-auto</div>
+    <mono-wind class="-m-4">
+      <div class="min-h-dvh border border-dashed border-neutral-500 px-1">
+        <div class="max-w-50 border border-neutral-500 px-1">
+          <div class="relative z-10 -my-1 border border-red-400 px-1">-my-1</div>
+          <div class="mb-2 border border-cyan-400 px-1">mb-2</div>
+          <div class="mt-1 border border-yellow-400 px-1">mt-1 (collapses to 2, not 3)</div>
+          <div class="mx-auto w-min max-w-full border border-emerald-400 px-1">w-min mx-auto</div>
+          <div class="mx-auto w-max max-w-full border border-amber-400 px-1">w-max mx-auto</div>
+        </div>
       </div>
     </mono-wind>
   `,

@@ -24,6 +24,64 @@ it("has no Typed OM in this environment (the point of this suite)", () => {
   ).toBeUndefined();
 });
 
+describe("viewport-relative sizing", () => {
+  it("converts viewport utilities via the measured cell size, not the spacing scale", () => {
+    // Physical intent: h-screen fills the real viewport. innerHeight ÷
+    // cell height (not ÷ 0.25rem).
+    const metrics = { width: 9, height: 18, letterSpacing: 0 };
+    const rows = Math.floor(window.innerHeight / 18);
+    const cols = Math.floor(window.innerWidth / 9);
+    expect(read({ class: "h-screen" }, metrics).height).toEqual({ kind: "cells", value: rows });
+    expect(read({ class: "h-dvh" }, metrics).height).toEqual({ kind: "cells", value: rows });
+    expect(read({ class: "w-screen" }, metrics).width).toEqual({ kind: "cells", value: cols });
+    expect(read({ class: "min-h-svh" }, metrics).minHeight).toBe(rows);
+    expect(read({ class: "max-h-lvh" }, metrics).maxHeight).toBe(rows);
+    // Arbitrary viewport values.
+    expect(read({ class: "h-[50vh]" }, metrics).height).toEqual({
+      kind: "cells",
+      value: Math.floor(window.innerHeight / 2 / 18),
+    });
+    expect(read({ class: "min-h-[95dvh]" }, metrics).minHeight).toBe(
+      Math.floor((0.95 * window.innerHeight) / 18),
+    );
+  });
+
+  it("catches viewport units in inline styles (kept verbatim by the style attribute)", () => {
+    // vh here because happy-dom's CSS parser drops dvh/svh from inline
+    // styles; real browsers keep every viewport unit verbatim.
+    const metrics = { width: 9, height: 18, letterSpacing: 0 };
+    expect(read({ style: "height: 100vh" }, metrics).height).toEqual({
+      kind: "cells",
+      value: Math.floor(window.innerHeight / 18),
+    });
+    expect(read({ style: "min-height: 50vh" }, metrics).minHeight).toBe(
+      Math.floor(window.innerHeight / 2 / 18),
+    );
+  });
+
+  it("trusts an authored viewport string from Typed OM without an active-check", () => {
+    // Stub computedStyleMap (happy-dom has none) as an engine that
+    // returns the AUTHORED viewport unit — the string is proof, and
+    // must not be misparsed as px by the active-check.
+    const metrics = { width: 9, height: 18, letterSpacing: 0 };
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const values = new Map([
+      ["min-height", "100dvh"],
+      ["height", "50vh"],
+    ]);
+    (el as unknown as { computedStyleMap: () => unknown }).computedStyleMap = () => ({
+      get: (property: string) => values.get(property) ?? null,
+    });
+    const style = readCellStyle(el, 16, metrics);
+    expect(style.minHeight).toBe(Math.floor(window.innerHeight / 18));
+    expect(style.height).toEqual({
+      kind: "cells",
+      value: Math.floor(window.innerHeight / 2 / 18),
+    });
+  });
+});
+
 describe("sizing fallbacks", () => {
   it("reads inline width/height in px, %, and auto", () => {
     expect(read({ style: "width: 80px" }).width).toEqual({ kind: "cells", value: 20 });
@@ -151,16 +209,17 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
     expect(style.textOverflow).toBe("ellipsis");
   });
 
-  it("blocks authored center/justify via computed text-align and the align attribute", () => {
+  it("honors center, blocks justify — via computed text-align and the align attribute", () => {
     // Computed detection is echo-safe: the forced-start rule is
     // measuring-gated, so the read sees the authored value.
-    expect(read({ style: "text-align: center" }).textAlignBlocked).toBe(true);
+    expect(read({ style: "text-align: center" }).textAlign).toBe("center");
+    expect(read({ style: "text-align: center" }).textAlignBlocked).toBe(false);
     expect(read({ style: "text-align: justify" }).textAlignBlocked).toBe(true);
-    expect(read({ style: "text-align: end" }).textAlignBlocked).toBe(false);
+    expect(read({ style: "text-align: end" }).textAlign).toBe("end");
     const el = document.createElement("td");
     el.setAttribute("align", "CENTER");
     document.body.appendChild(el);
-    expect(readCellStyle(el, 16).textAlignBlocked).toBe(true);
+    expect(readCellStyle(el, 16).textAlign).toBe("center");
   });
 
   it("warns once per element on authored font sizes, colors excluded", () => {

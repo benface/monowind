@@ -209,10 +209,17 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
           : { end: span.end, ellipsis: false };
       // Each character advances by its own cell count (tracking gaps).
       // `text-align: end` offsets each line to the content box's right
-      // edge (whole cells; a line at or over the width stays at start,
-      // matching the truncation path).
+      // edge; `center` to floor((W − line) / 2). Whole cells; a line
+      // at or over the width stays at start, matching truncation.
       const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
-      let x = contentX + (style.textAlign === "end" ? Math.max(0, contentWidth - lineWidth) : 0);
+      const leftover = Math.max(0, contentWidth - lineWidth);
+      const alignOffset =
+        style.textAlign === "end"
+          ? leftover
+          : style.textAlign === "center"
+            ? Math.floor(leftover / 2)
+            : 0;
+      let x = contentX + alignOffset;
       for (let k = span.start; k < truncated.end; k++) {
         // U+FFFC marks an embedded inline box (its cells are drawn by
         // the box's own walk). INLINE_PAD marks a blank inline-padding

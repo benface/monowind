@@ -141,6 +141,11 @@ export class MonoWindElement extends HTMLElementBase {
 
     this.#resizeObserver = new ResizeObserver(() => this.#scheduleLayout());
     this.#resizeObserver.observe(this);
+    // Viewport-relative lengths (h-screen, h-[95dvh], …) read
+    // window.innerWidth/Height at layout time; a window resize that
+    // doesn't change the HOST's size (height-only, typically) would
+    // otherwise never retrigger them.
+    window.addEventListener("resize", this.#onWindowResize);
 
     // Any surviving record is a user mutation: everything the engine
     // writes happens synchronously inside #performLayout and is drained
@@ -181,6 +186,7 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   disconnectedCallback(): void {
+    window.removeEventListener("resize", this.#onWindowResize);
     this.#resizeObserver?.disconnect();
     this.#mutationObserver?.disconnect();
     this.#resizeObserver = null;
@@ -229,6 +235,10 @@ export class MonoWindElement extends HTMLElementBase {
     if (this.#layoutPending) this.#performLayout();
     return this.#lastLayout ? renderPlainText(this.#lastLayout) : "";
   }
+
+  #onWindowResize = (): void => {
+    this.#scheduleLayout();
+  };
 
   #onFontsLoaded = (): void => {
     // Defer a frame: rAF callbacks run BEFORE the style recalc that

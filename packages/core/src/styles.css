@@ -33,14 +33,6 @@
     --mw-bg: canvas;
   }
 
-  /* UA `th`/`caption { text-align: center }` (preflight leaves them):
-   * center can't land on whole cells, and the engine renders start
-   * (specs/table.md). Base layer, so alignment utilities still override
-   * (into the blocked path for center/justify, as anywhere else). */
-  mono-wind :is(th, caption) {
-    text-align: start;
-  }
-
   /* Normalize native form controls so they don't borrow browser chrome that
    * would break the grid. Padding, margin, border-width, and box-sizing are
    * handled by the engine-owned rules below. In `base` so utilities
