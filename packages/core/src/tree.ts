@@ -44,7 +44,12 @@ export function buildTree(
   const elementChildren = Array.from(root.children);
   const roles = elementChildren.map(childRole);
 
-  if (!roles.includes("block")) {
+  // Form controls are always leaves — descending into a <select>'s
+  // <option>s would leak that text into the grid.
+  const tag = root.tagName;
+  const formControl = isFormControlTag(tag);
+
+  if (!roles.includes("block") || formControl) {
     // Leaf: in-flow inline content forms the text run (atomic inline
     // boxes ride it as U+FFFC markers); out-of-flow children become
     // layout nodes for the positioning pass.
@@ -65,13 +70,46 @@ export function buildTree(
       });
     }
     const intrinsicWidth = longestLineAdvance(text, run.advances, style.tracking);
-    const intrinsicHeight = text.length > 0 ? countHardLines(text) : 0;
-    const children: LayoutNode[] = [...run.boxes];
-    for (let i = 0; i < elementChildren.length; i++) {
-      if (roles[i] !== "out-of-flow") continue;
-      const child = buildTree(elementChildren[i]!, rootFontSizePx, cellMetrics);
-      if (child) children.push(child);
+    // Form controls always reserve one row (native shows a caret-
+    // height field even empty). `min-height` can't do it — it floors
+    // the outer box, which the border already exceeds. Textarea sizes
+    // to max(rows, value line count); `field-sizing: content` drops
+    // the rows floor to 1.
+    const contentHeight = text.length > 0 ? countHardLines(text) : 0;
+    let intrinsicHeight: number;
+    if (tag === "TEXTAREA") {
+      const textarea = root as HTMLTextAreaElement;
+      const value = textarea.value ?? "";
+      const valueLines = value === "" ? 0 : value.split(/\r\n?|\n/).length;
+      const rowsFloor =
+        getComputedStyle(root).getPropertyValue("field-sizing") === "content" ? 1 : textarea.rows;
+      intrinsicHeight = Math.max(rowsFloor, valueLines);
+    } else if (formControl) {
+      intrinsicHeight = Math.max(1, contentHeight);
+    } else {
+      intrinsicHeight = contentHeight;
     }
+    // `children` in DOM order so paint-order ties (same z-index)
+    // resolve as CSS would — later DOM wins. Direct atomic-inline
+    // boxes interleave with out-of-flow siblings; nested boxes paint
+    // via their inline ancestor's tree and just get appended.
+    const directBoxes = new Map<Element, LayoutNode>();
+    const nestedBoxes: LayoutNode[] = [];
+    for (const box of run.boxes) {
+      if (box.source.parentElement === root) directBoxes.set(box.source, box);
+      else nestedBoxes.push(box);
+    }
+    const children: LayoutNode[] = [];
+    for (let i = 0; i < elementChildren.length; i++) {
+      const el = elementChildren[i]!;
+      const box = directBoxes.get(el);
+      if (box) children.push(box);
+      else if (roles[i] === "out-of-flow") {
+        const child = buildTree(el, rootFontSizePx, cellMetrics);
+        if (child) children.push(child);
+      }
+    }
+    children.push(...nestedBoxes);
     const node: LayoutNode = {
       source: root,
       style,
@@ -242,6 +280,10 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
     }
     return cells;
   };
+  // Form controls render their value / caret / selection natively —
+  // leave the leaf empty so the grid doesn't double-render, and skip
+  // descending into their internals (e.g. <select>'s <option>s).
+  if (isFormControlTag(el.tagName)) return;
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
       if (ctx.preserve) {
@@ -434,18 +476,31 @@ function warnSkippedRunContent(el: Element): void {
   );
 }
 
+/** True if `el` has any direct text child that isn't just whitespace. */
+export function hasDirectText(el: Element): boolean {
+  return Array.from(el.childNodes).some(
+    (child) => child.nodeType === Node.TEXT_NODE && /[^ \t\r\n\f]/.test(child.textContent ?? ""),
+  );
+}
+
+/** Author-facing warning when direct text can't be laid out alongside
+ * block children — shared by the nested-container path here and the
+ * host-level path in element.ts. */
+export const DIRECT_TEXT_DROPPED =
+  "Direct text next to block-level children can't be laid out and was hidden. " +
+  "Wrap each text segment in its own element (e.g. a <div>).";
+
+/** True for tags whose value/caret/selection are handled by the browser
+ * natively — the tree builder treats them as empty leaves. */
+export function isFormControlTag(tag: string): boolean {
+  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+}
+
 /** Mixed direct text + in-flow block children: the text can't be laid out
  * (no element to position — cell-model deviation). Hide it (via the
  * renderer) and tell the author how to fix their markup, once. */
 function flagDroppedText(el: Element, node: LayoutNode): void {
-  const hasText = Array.from(el.childNodes).some(
-    (child) => child.nodeType === Node.TEXT_NODE && /[^ \t\r\n\f]/.test(child.textContent ?? ""),
-  );
-  if (!hasText) return;
+  if (!hasDirectText(el)) return;
   node.droppedText = true;
-  warnOnce(
-    el,
-    "Direct text next to block-level children can't be laid out and was hidden. " +
-      "Wrap each text segment in its own element (e.g. a <div>).",
-  );
+  warnOnce(el, DIRECT_TEXT_DROPPED);
 }

@@ -1,6 +1,6 @@
 # monowind — core architecture
 
-Status: living document — Milestones 1–5 implemented; Milestone 6 (unified render) planned (last updated 2026-08-30)
+Status: living document — Milestones 1–6 implemented (last updated 2026-08-30)
 
 ## What monowind is
 
@@ -79,26 +79,37 @@ normative for the engine and its tests.
   size. Parent-relative coordinates, so the DOM hierarchy is preserved and no node
   is ever reparented.
 
-### D3. Two rendering layers sharing one grid
+### D3. One shadow-side grid, live light DOM underneath
 
-1. **Light DOM content layer** — the application's own elements: text, links,
-   buttons, inputs, containers. Visible, interactive, framework-owned. The
-   component never clones, replaces, moves, or reorders them; it only writes CSS
-   custom properties and owned `data-*` attributes.
-2. **Shadow DOM decoration layer** — box-drawing borders, separators, backgrounds,
-   decorative control framing (e.g. `[ Save ]` brackets). `aria-hidden="true"`,
-   `pointer-events: none`, `user-select: none`. Never contains semantic content.
+Rendering happens in one cell-precise `<pre id="grid">` inside the shadow
+root: box-drawing borders, backgrounds, and text glyphs all land in the
+same span tree, one monospace character per cell. The grid is
+`aria-hidden="true"` and inert to events (`pointer-events: none` in the
+default `select="text"` mode) so it never captures clicks or gets read
+aloud.
 
-Native interactive elements stay native: normalized visually (no browser chrome)
-but retaining tab order, focus, caret, selection, clipboard, form behavior, and
-ARIA semantics. Relayout must never recreate or blur a focused control.
+The light DOM sits on top of the grid (later in the shadow tree). Its
+text goes `color: transparent` and its `background-color` goes
+transparent too, so nothing paints twice — the grid is what the eye
+sees. Events, ARIA, focus, selection, clipboard, and form behavior all
+still work on the real elements. Relayout must never recreate or blur
+a focused control.
 
-> **Revision incoming (Milestone 6, unified render initiative —
-> `../plans/2026-08-30-unified-render-initiative.md`):** the two-layer
-> split collapses into one cell-precise shadow-side grid that carries
-> both decoration AND text glyphs. The light DOM stays framework-owned
-> but its text goes `color: transparent` — events, ARIA, focus, and
-> selection still work. This D3 section rewrites when Phase 2 lands.
+Form controls (`<input>` / `<textarea>` / `<select>`) are the exception:
+their value/caret/selection/IME are painted natively by the browser
+(mirroring them in the grid would mask the caret and the selection
+highlight). The tree builder leaves their leaf empty so the grid
+doesn't double-render; the light-DOM color exemption in the companion
+stylesheet keeps the native text visible on top of the grid's borders
+and background.
+
+The `select` attribute on `<mono-wind>` switches drag-selection target:
+`select="text"` (default) selects the semantic light DOM, `select="grid"`
+selects the grid ASCII directly.
+
+The plan file `../plans/2026-08-30-unified-render-initiative.md`
+documents how this arrived; the code and specs (`../specs/cell-model.md`)
+are the current source of truth.
 
 ### D4. Framework-agnostic via a Web Component
 
@@ -230,15 +241,14 @@ dominant.
 
 ## Open questions
 
-- **Dynamic style-change detection** — DECIDED 2026-08-30, ships in
-  Milestone 6, Phase 3. Instead of the CSS-transition-event trick
-  (which risks a feedback loop with our own geometry writes), the
-  engine attaches host-level `pointerover`/`pointerleave` +
-  `focusin`/`focusout` + `input`/`change` listeners, event-delegated
-  to laid-out elements; each fires a scoped relayout. No
+- **Dynamic style-change detection** — RESOLVED 2026-08-30, shipped
+  in Milestone 6. Instead of the CSS-transition-event trick (which
+  risks a feedback loop with our own geometry writes), the host
+  registers `pointerover`/`pointerleave` + `focusin`/`focusout` +
+  `input`/`change` listeners, event-delegated to laid-out elements;
+  each fires a scoped relayout, coalesced per frame. No
   computed-style polling, no observation of properties we write —
-  the trigger is the state change itself. Full spec:
-  `../plans/2026-08-30-unified-render-initiative.md` (Phase 3).
+  the trigger is the state change itself.
 - **Transforms**: `translate-y-1` etc. would shift content off-grid (browser
   applies raw px). Likely answer: rescale the standalone `translate` property to
   cells the way insets are handled; neutralize matrix `transform`s. Needs

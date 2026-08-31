@@ -92,25 +92,32 @@ the scrolling milestone.
 
 ## Typography
 
-- `font-family`, `font-size`, `line-height` (default **1**), and
+- `font-family`, `font-size`, `line-height` (default **`normal`**), and
   `letter-spacing` (default **0**) on the **`<mono-wind>` root** define the
   cell metrics: cell width = one glyph advance **plus the root's
-  letter-spacing**, cell height = the root's line box. Root leading and
-  tracking therefore size the grid itself, decorations included (box-drawing
-  glyphs don't stretch, so a cell taller or wider than the glyph shows gaps
-  in borders). On inner elements `font-family`/`font-size` are **locked**
-  (neutralized by the companion stylesheet); multi-size text is out of
-  scope for the foreseeable future. An authored inner font size (Tailwind
-  size utility or inline style — the lock hides it from computed style)
+  letter-spacing**, cell height = the root's line box. The default
+  `normal` picks the font's natural leading (~1.15–1.30em) so cell
+  height fully contains ascent + descent — inline span backgrounds
+  (selection, `bg-*`, focus-invert) then fit within one row instead of
+  bleeding into the next. Root leading and tracking size the grid
+  itself, decorations included (box-drawing glyphs don't stretch, so a
+  cell taller or wider than the glyph shows gaps in borders). On inner
+  elements `font-family`/`font-size` are **locked** (neutralized by the
+  companion stylesheet); multi-size text is out of scope for the
+  foreseeable future. An authored inner font size (Tailwind size
+  utility or inline style — the lock hides it from computed style)
   triggers a one-time console warning.
 - **Line height on the grid** (`leading-*`, any element the engine lays
-  out): `rows per line = max(1, floor(line-height ÷ cell height))`, and
+  out): `rows per line = max(1, floor(line-height ÷ font-size))`, and
   `line gap = rows − 1` empty rows are inserted **between** wrapped lines
   only — a single line is unaffected, and N lines occupy
-  `N + (N − 1) × gap` rows. Unitless values are ratios of the font size
-  (`leading-loose` = 2 → 1 empty row between lines); length values
-  (`leading-6` = 24px) go through the same floor, so they scale with the
-  root font size like CSS. Preflight's default 1.5 floors to 1 row.
+  `N + (N − 1) × gap` rows. The divisor is **font-size**, not cell
+  height: under the default `line-height: normal` the cell is ~1.15em,
+  so dividing by cell height would shrink every leading. Unitless
+  values are ratios of the font size (`leading-loose` = 2 → 2 rows per
+  line, 1 empty row between); length values (`leading-6` = 24px) go
+  through the same floor, so they scale with the root font size like
+  CSS. Preflight's default 1.5 floors to 1 row.
   `leading-*` on inline elements is ignored (**deviation**). Rendering: the
   browser paints wrapped lines with `line-height = rows × cell`, and the
   engine cancels CSS's half-leading (the (rows − 1)/2-row offset CSS puts
@@ -353,18 +360,11 @@ visible cell when `text-overflow: ellipsis` is set.
    applies exactly those cells as real padding — any raw off-grid inline
    padding is neutralized. Percent padding reads as 0; vertical inline
    padding passes through untouched (it never moves layout, per CSS).
-   Note: an inline element's BACKGROUND paints the font's content area
-   (ascent + descent, ~1.2em — taller than the 1em row), so it bleeds
-   slightly into adjacent rows. That's standard CSS at line-height 1
-   (`text-box-trim`/`text-box-edge` can't fix it: Chromium ignores it on
-   inlines, WebKit trims to cap-height — below the row — and Firefox
-   doesn't ship it). Cell-aligned backgrounds arrive with
-   Milestone 6 (unified render) via the VERIFIED gradient clamp — solid-color
-   `background-image: linear-gradient(<color> 0 0); background-size:
-100% 1em; background-position: center; background-repeat: no-repeat`
-   paints exactly the line box in all three engines (half-leading is
-   symmetric, so the content area is centered on the row) — using the
-   same read-and-rewrite var machinery as inline padding.
+   Inline backgrounds (selection highlight, `bg-*`, focus-invert) paint
+   the font's content area (ascent + descent). The `line-height: normal`
+   default sizes the row to that content area, so backgrounds fit
+   within their own row instead of bleeding into the next — one pass,
+   no gradient clamp needed.
    Atomic inline boxes ride the line per CSS (growing their line when
    taller) but their margins are ignored, and BLOCK-level elements nested
    inside a run are skipped with a warning.

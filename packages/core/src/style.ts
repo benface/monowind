@@ -208,14 +208,15 @@ export function readCellStyle(
     tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
     // Both readable because the companion stylesheet's typography rewrite
     // is gated on `:not([measuring])`.
-    lineGap: lineGapRows(cs.lineHeight, metrics?.height ?? fontSizePx),
+    lineGap: lineGapRows(cs.lineHeight, fontSizePx),
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     color: cs.color,
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
     textDecorationLine: cs.textDecorationLine,
-    backgroundColor: cs.backgroundColor === "rgba(0, 0, 0, 0)" ? undefined : cs.backgroundColor,
+    backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
+    backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     borderColor: {
       top: cs.borderTopColor,
       right: cs.borderRightColor,
@@ -277,6 +278,22 @@ function applyBorderCollapse(style: CellStyle, cs: CSSStyleDeclaration): void {
   };
   style.border = zeroInsets();
   if (style.display === "table") style.padding = zeroInsets();
+}
+
+/** True for a computed `background-color` that shouldn't trigger the
+ * bg-occludes-decorations fill. Real browsers resolve transparent to
+ * `rgba(0, 0, 0, 0)`; the empty-string and `currentcolor` branches
+ * cover happy-dom (test env), which leaves some computed values
+ * unresolved. */
+function isTransparentColor(value: string): boolean {
+  if (!value) return true;
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === "" ||
+    normalized === "transparent" ||
+    normalized === "rgba(0, 0, 0, 0)" ||
+    normalized === "currentcolor"
+  );
 }
 
 function isClipping(value: string): boolean {
@@ -510,13 +527,17 @@ export function trackingCells(
   return Math.floor(px / (0.025 * fontSizePx) + 1e-6);
 }
 
-/** Empty rows between wrapped lines: floor(line-height ÷ cell height) − 1,
- * never negative. Computed line-height is always px (or `normal`). */
-function lineGapRows(lineHeight: string, cellHeightPx: number): number {
-  if (!lineHeight || lineHeight === "normal" || cellHeightPx <= 0) return 0;
+/** Empty rows between wrapped lines: floor(line-height ÷ font-size) − 1,
+ * never negative. Computed line-height is always px (or `normal`); the
+ * divisor is FONT-SIZE, not cell-height, so unitless ratios keep their
+ * CSS meaning (`leading-loose` = 2 → 2 rows per line, 1 gap) even when
+ * cell-height ≠ 1em (default `line-height: normal` on the root makes
+ * the cell ~1.15em). */
+function lineGapRows(lineHeight: string, fontSizePx: number): number {
+  if (!lineHeight || lineHeight === "normal" || fontSizePx <= 0) return 0;
   const px = parseFloat(lineHeight);
   if (!Number.isFinite(px)) return 0;
-  return Math.max(0, Math.floor(px / cellHeightPx + 1e-6) - 1);
+  return Math.max(0, Math.floor(px / fontSizePx + 1e-6) - 1);
 }
 
 function readPosition(value: string): Position {
@@ -669,6 +690,16 @@ function readSize(
     classAttr,
   );
   if (arbitraryPercent) return { kind: "percent", value: Number(arbitraryPercent[1]) };
+  // Numeric spacing-scale utility (`h-7`, `w-0.5`, …): map the class
+  // directly to cells. Match the Tailwind spacing scale (N * 0.25rem
+  // = N cells) so we don't have to trust `cs.height` — same result
+  // for most elements, but critical for <td>/<th> in Firefox where
+  // `cs.height` returns the USED height from the table layout
+  // (including rowspan effects), not the authored value.
+  const numeric = new RegExp(`(?:^|[\\s:.[!])${axis}-(\\d+(?:\\.\\d+)?)(?![\\w-/])`).exec(
+    classAttr,
+  );
+  if (numeric) return { kind: "cells", value: roundHalfAwayFromZero(Number(numeric[1])) };
   if (!hasSizingUtility(classAttr, axis)) return { kind: "auto" };
   if (fallback === "auto") return { kind: "auto" };
   if (fallback.endsWith("%")) return { kind: "percent", value: parseFloat(fallback) };

@@ -34,13 +34,11 @@ await page.waitForFunction(() => document.body.textContent?.includes("count is 2
 const result = await page.evaluate(() => {
   const container = document.querySelector("mono-wind > div");
   const style = container?.getAttribute("style") ?? "";
-  const decorations = document
-    .querySelector("mono-wind")
-    ?.shadowRoot?.getElementById("decorations");
+  const grid = document.querySelector("mono-wind")?.shadowRoot?.getElementById("grid");
   return {
     laidOut: /--mw-w: \d+/.test(style),
     minHeightApplied: Number(style.match(/--mw-h: (\d+)/)?.[1] ?? 0) >= 5,
-    hasBorderGlyphs: (decorations?.textContent ?? "").includes("┌"),
+    hasBorderGlyphs: (grid?.textContent ?? "").includes("┌"),
     tailwindRan: getComputedStyle(document.body).backgroundColor !== "rgba(0, 0, 0, 0)",
     reactStateFlowedThrough: document.body.textContent?.includes("count is 2") ?? false,
   };

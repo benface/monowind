@@ -49,14 +49,14 @@ addons.getChannel().on(UPDATE_GLOBALS, ({ globals }: { globals: Record<string, u
 // paints the canvas), so dark-system users otherwise start half-themed.
 applyTheme(systemTheme);
 
-// The plain-text toggle, via the channel like the theme (a decorator
+// The select toggle, via the channel like the theme (a decorator
 // would also need a hook for re-applying after story navigation).
 // Starts true to match initialGlobals (the boot value emits no event).
-let plainTextOn = true;
-function applyPlainText(): void {
+let gridSelect = true;
+function applySelect(): void {
   for (const host of document.querySelectorAll("mono-wind")) {
-    if (plainTextOn) host.setAttribute("plain-text", "");
-    else host.removeAttribute("plain-text");
+    if (gridSelect) host.setAttribute("select", "grid");
+    else host.removeAttribute("select");
   }
 }
 // GLOBALS_UPDATED also covers values restored from the URL/session at
@@ -64,26 +64,26 @@ function applyPlainText(): void {
 addons.getChannel().on(GLOBALS_UPDATED, ({ globals }: { globals: Record<string, unknown> }) => {
   const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
   if (value !== undefined) applyTheme(value);
-  if (globals.plainText !== undefined) {
-    plainTextOn = globals.plainText === "plain-text";
-    applyPlainText();
+  if (globals.select !== undefined) {
+    gridSelect = globals.select === "grid";
+    applySelect();
   }
 });
 addons.getChannel().on(STORY_RENDERED, () => {
   // The event can precede the new canvas's paint; apply a frame later.
-  requestAnimationFrame(applyPlainText);
+  requestAnimationFrame(applySelect);
 });
 
 const preview: Preview = {
   globalTypes: {
-    plainText: {
-      description: "Render every <mono-wind> as selectable plain text",
+    select: {
+      description: "Text selection: element text (default) or the whole cell grid",
       toolbar: {
-        title: "Plain text",
+        title: "Select",
         icon: "paragraph",
         items: [
-          { value: "layered", title: "Layered rendering" },
-          { value: "plain-text", title: "Plain text (copyable)" },
+          { value: "text", title: "Select element text" },
+          { value: "grid", title: "Select whole grid" },
         ],
         dynamicTitle: true,
       },
@@ -105,7 +105,7 @@ const preview: Preview = {
   },
   initialGlobals: {
     backgrounds: { value: systemTheme },
-    plainText: "plain-text",
+    select: "grid",
   },
 };
 

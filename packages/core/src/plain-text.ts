@@ -24,49 +24,85 @@ export function renderPlainText(root: LayoutNode): string {
     .join("\n");
 }
 
-/** Paint-through styling for one cell; every field optional so spans
- * only carry what differs from the host's inherited text style. */
+/** Per-cell paint; every field optional so spans only carry what
+ * differs from the host's inherited text style. `color` paints the
+ * glyph, `backgroundColor` fills the cell (the light DOM's own bg is
+ * neutralized in styles.css so the grid owns backgrounds outright). */
 export interface CellPaint {
   color?: string;
+  backgroundColor?: string;
   fontWeight?: string;
   fontStyle?: string;
   textDecorationLine?: string;
 }
 
-/** One row of same-styled text runs. Joining every segment's text
- * reproduces the `renderPlainText` row — the plain-text mode builds
- * spans from these, so a copy still yields the pure text. */
-export interface PlainTextSegment extends CellPaint {
+/** One row of same-paint runs. Joining every segment's text reproduces
+ * the `renderPlainText` row, so a copy from the DOM adapter (paint.ts)
+ * still yields the pure text. */
+export interface CellSegment extends CellPaint {
   text: string;
 }
 
-export function renderPlainTextSegments(root: LayoutNode): PlainTextSegment[][] {
+/** Row-major cell segments. Each row is `rowSegments(grid[y],
+ * paints[y])` — the DOM adapter (paint.ts) uses this, and tests
+ * assert paint fields against it. */
+export function renderCellSegments(root: LayoutNode): CellSegment[][] {
   const { grid, paints } = renderGrids(root);
-  return grid.map((row, y) => {
-    const trimmed = row.join("").trimEnd();
-    const segments: PlainTextSegment[] = [];
-    for (let x = 0; x < trimmed.length; x++) {
-      // Painted spaces keep their bundle: underline/line-through must
-      // span an inline run's inner spaces (filler cells carry none).
-      const paint = paints[y]![x];
-      const last = segments[segments.length - 1];
-      if (last && samePaint(last, paint)) last.text += trimmed[x]!;
-      else segments.push({ text: trimmed[x]!, ...paint });
-    }
-    return segments;
-  });
+  return grid.map((row, y) => rowSegments(row, paints[y]!));
+}
+
+/** One rendered row → its same-paint runs. Trims trailing whitespace so
+ * blank tails don't emit empty painted spans; painted spaces INSIDE a
+ * run stay (underline/line-through spans an inline run's inner spaces —
+ * filler cells carry no paint and split naturally). */
+function rowSegments(row: string[], paints: (CellPaint | undefined)[]): CellSegment[] {
+  const trimmed = row.join("").trimEnd();
+  const segments: CellSegment[] = [];
+  for (let x = 0; x < trimmed.length; x++) {
+    const paint = paints[x];
+    const last = segments[segments.length - 1];
+    if (last && samePaint(last, paint)) last.text += trimmed[x]!;
+    else segments.push({ text: trimmed[x]!, ...paint });
+  }
+  return segments;
 }
 
 function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
   return (
     a.color === b?.color &&
+    a.backgroundColor === b?.backgroundColor &&
     a.fontWeight === b?.fontWeight &&
     a.fontStyle === b?.fontStyle &&
     a.textDecorationLine === b?.textDecorationLine
   );
 }
 
-function renderGrids(root: LayoutNode): { grid: string[][]; paints: (CellPaint | undefined)[][] } {
+/** Apply a `CellPaint` to a `CSSStyleDeclaration`. Kept in this file
+ * alongside samePaint / textPaint so the paint schema has one home. */
+export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): void {
+  if (paint.color !== undefined) style.color = paint.color;
+  if (paint.backgroundColor !== undefined) style.backgroundColor = paint.backgroundColor;
+  if (paint.fontWeight !== undefined) style.fontWeight = paint.fontWeight;
+  if (paint.fontStyle !== undefined) style.fontStyle = paint.fontStyle;
+  if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
+}
+
+/** True when a segment carries no paint — the DOM adapter emits a bare
+ * text node for these instead of an empty <span>. */
+export function isBarePaint(paint: CellPaint): boolean {
+  return (
+    paint.color === undefined &&
+    paint.backgroundColor === undefined &&
+    paint.fontWeight === undefined &&
+    paint.fontStyle === undefined &&
+    paint.textDecorationLine === undefined
+  );
+}
+
+function renderGrids(root: LayoutNode): {
+  grid: string[][];
+  paints: (CellPaint | undefined)[][];
+} {
   const width = Math.max(0, root.localRect.width);
   const height = Math.max(0, root.localRect.height);
   const grid: string[][] = Array.from({ length: height }, () =>
@@ -78,7 +114,12 @@ function renderGrids(root: LayoutNode): { grid: string[][]; paints: (CellPaint |
   walk(root, 0, 0, (x, y, glyph, paint) => {
     if (x >= 0 && x < width && y >= 0 && y < height) {
       grid[y]![x] = glyph;
-      paints[y]![x] = paint;
+      // Merge paints per field: a later glyph over an earlier fill
+      // keeps the fill's fields (bg-fill's backgroundColor survives
+      // when text paints its color on top). Same-field overlaps still
+      // last-wins.
+      const existing = paints[y]![x];
+      paints[y]![x] = existing ? { ...existing, ...paint } : paint;
     }
   });
   return { grid, paints };
@@ -108,6 +149,20 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
   const absX = parentAbsX + node.localRect.x;
   const absY = parentAbsY + node.localRect.y;
   const style = node.style;
+
+  // Fill the border-box with painted spaces so this element's bg
+  // wipes ancestor decoration glyphs at these cells; own borders /
+  // text / decoration paint after and layer on top. `bg-clear` runs
+  // the same fill without a visible color.
+  if (style.backgroundColor !== undefined || style.backgroundClear) {
+    const fillPaint: CellPaint | undefined =
+      style.backgroundColor !== undefined ? { backgroundColor: style.backgroundColor } : undefined;
+    for (let dy = 0; dy < node.localRect.height; dy++) {
+      for (let dx = 0; dx < node.localRect.width; dx++) {
+        put(absX + dx, absY + dy, " ", fillPaint);
+      }
+    }
+  }
 
   const borderRuns: BorderRun[] = [];
   collectBorderRuns(

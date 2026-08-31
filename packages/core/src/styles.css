@@ -21,10 +21,16 @@
     isolation: isolate;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 14px;
-    line-height: 1;
+    /* `normal` picks a line box tall enough for the font's ascent +
+     * descent so inline span backgrounds fit within a row instead of
+     * bleeding into the next. Cell height derives from the probe, so
+     * this stays deterministic — just taller. */
+    line-height: normal;
     letter-spacing: 0;
-    /* Default themable focus ring color (see form-controls rule below). */
-    --mw-focus-color: currentColor;
+    /* Themable fg / bg pair for the focus-invert default. System
+     * colors honor the viewer's color scheme; authors override. */
+    --mw-fg: canvastext;
+    --mw-bg: canvas;
   }
 
   /* UA `th`/`caption { text-align: center }` (preflight leaves them):
@@ -49,14 +55,53 @@
     appearance: none;
   }
 
-  /* Restore a themable focus ring — `appearance: none` above kills the UA
-   * default, and without this keyboard users can lose track of where focus
-   * is. `outline-offset: -1px` keeps the ring inside the element's box so it
-   * doesn't overlap our decoration layer. */
-  mono-wind :is(button, input, select, textarea, a):focus-visible {
-    outline: 2px solid var(--mw-focus-color);
-    outline-offset: -1px;
+  /* Form controls render their value/caret/selection natively — the
+   * color-transparent rule below excludes them via `:not()`, so this
+   * visible color and themed caret actually stick. */
+  mono-wind :is(input, textarea, select) {
+    color: var(--mw-fg);
+    caret-color: var(--mw-fg);
   }
+
+  /* Single-line controls: never wrap, clip overflow. The one-row
+   * floor lives in the tree builder (a CSS min-height on the outer
+   * box gives no content-area guarantee once border + padding exceed
+   * it). */
+  mono-wind :is(input, select) {
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* Textarea: engine controls the size — native resize handle would
+   * drag the box off-grid. */
+  mono-wind textarea {
+    resize: none;
+  }
+
+  /* :focus-visible: TUI-native invert. Outlines off (they'd clip
+   * against grid glyphs). Where each declaration lands: bg only shows
+   * via the grid (engine reads it during [measuring]; the light-DOM
+   * bg is transparent-locked below); color/caret-color paint on
+   * editables (they're the ones exempted from the color-transparent
+   * lock), and get grid-mirrored by the engine for everyone else. */
+  mono-wind :is(a, button, input, select, textarea, [tabindex], [role="button"]):focus-visible {
+    outline: none;
+    background-color: var(--mw-fg);
+    color: var(--mw-bg);
+    caret-color: var(--mw-bg);
+  }
+}
+
+/* select="grid": pass pointer events through non-interactive light-DOM
+ * elements so drag lands on the grid <pre> (native drag-selection of
+ * the ASCII); interactives opt back into `auto` so clicks still work.
+ * (The slot itself is pointer-events: none in the shadow CSS.) */
+mono-wind[select="grid"] * {
+  pointer-events: none !important;
+}
+mono-wind[select="grid"]
+  :is(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
+  pointer-events: auto !important;
 }
 
 /* Hide the host until the first layout completes to avoid the flash of raw
@@ -65,6 +110,22 @@
  * cell metrics can still be probed while invisible. */
 mono-wind:not([data-mw-ready]) {
   visibility: hidden !important;
+}
+
+/* Full invert on selection. Both fields spelled out — setting only
+ * `color` makes some engines drop the OS default background. Native
+ * copy still yields the real text (the DOM the browser reads). The
+ * shadow grid mirrors this rule inside element.ts. */
+mono-wind:not([measuring]) *::selection {
+  color: var(--mw-bg, canvas) !important;
+  background: var(--mw-fg, canvastext) !important;
+}
+/* Focus-invert already flipped the element's colors, so re-flipping in
+ * ::selection would land on the same colors as the focused bg and hide
+ * the selection. Swap them back for the focused element. */
+mono-wind:not([measuring]) :focus-visible::selection {
+  color: var(--mw-fg, canvastext) !important;
+  background: var(--mw-bg, canvas) !important;
 }
 
 /* Lock the font on descendants so the grid metrics stay consistent —
@@ -106,6 +167,14 @@ mono-wind:not([measuring]) * {
   overflow-wrap: anywhere !important;
   letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-ls) * var(--mw-cw, 1px)) !important;
   line-height: inherit !important;
+  /* Backgrounds paint in the grid too, so the light DOM's own bg goes
+   * transparent — otherwise it would cover the grid (light DOM sits
+   * ON TOP of the grid in the shadow tree so native selection
+   * highlights can show through). The engine still reads authored
+   * background-color during [measuring] (this rule is off then), so
+   * bg-* and focus-invert both make it into the grid paint. */
+  background-color: transparent !important;
+  text-shadow: none !important;
   /* Inline-element horizontal padding, quantized: the engine writes
    * `--mw-ipl`/`--mw-ipr` (whole cells) on inline elements whose authored
    * padding it reserved in the run; everything else gets 0, so raw
@@ -115,6 +184,14 @@ mono-wind:not([measuring]) * {
    * and passes through untouched. */
   padding-left: calc(var(--mw-ipl, 0) * var(--mw-cw, 1px)) !important;
   padding-right: calc(var(--mw-ipr, 0) * var(--mw-cw, 1px)) !important;
+}
+
+/* Light-DOM text goes invisible so the grid is the only visible copy;
+ * form controls opt out because they render their value/caret/selection
+ * natively (the tree builder skips their content so the grid doesn't
+ * double-render). Events, ARIA, focus, selection all still work. */
+mono-wind:not([measuring]) *:not(input):not(textarea):not(select) {
+  color: transparent !important;
 }
 
 /* Author-requested `white-space: nowrap` (or `pre`) — the engine sized this
@@ -153,7 +230,7 @@ mono-wind:not([measuring]) [data-mw-nowrap][data-mw-clip] {
  * Geometry: position/box-sizing/left/top/width/height + min/max — set from
  * the engine-owned --mw-x/y/w/h custom properties.
  *
- * Neutralized: border-width (painted as glyphs by the decoration layer),
+ * Neutralized: border-width (painted as glyphs by the shadow grid),
  * margin (position:absolute + margin still nudges the element off-grid).
  *
  * Owned via `--mw-p{t,r,b,l}` (padding) and `--mw-b{t,r,b,l}` (border cells):

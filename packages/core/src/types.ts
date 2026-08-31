@@ -329,6 +329,11 @@ export interface CellStyle {
    */
   color: string | undefined;
   backgroundColor: string | undefined;
+  /** `bg-clear` marker (`--mw-bg-clear: 1`): occlude ancestor decoration
+   * glyphs under this element's border box WITHOUT painting a bg color.
+   * `backgroundColor` stays undefined; the renderer fills with plain
+   * spaces instead of colored spaces. */
+  backgroundClear: boolean;
   /** Paint-only text styling, passed through to the browser and
    * mirrored per-segment by the plain-text mode's spans. */
   fontWeight: string;
@@ -549,6 +554,7 @@ export function defaultCellStyle(): CellStyle {
     textOverflow: "clip",
     color: undefined,
     backgroundColor: undefined,
+    backgroundClear: false,
     fontWeight: "400",
     fontStyle: "normal",
     textDecorationLine: "none",

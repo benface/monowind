@@ -34,6 +34,14 @@ interfaces (TUIs) on the web. Start with
   non-obvious constraint or decision; one tight sentence usually suffices.
   No restating what the code does, no narrating history, no multi-sentence
   essays where a pointer to a spec would do.
+- No backticks inside comments in JS/TS template literals — they close
+  the string. The shadow template in `packages/core/src/element.ts` is
+  the trap; use plain quotes or bare identifiers.
+- No plan-internal jargon in code, tests, or story text (milestone
+  numbers, phase numbers, plan-file dates, "before/after" migration
+  language). Describe what the code IS; cite a spec or a concrete rule
+  when shape-of-change context helps. That vocabulary lives in
+  `.agents/plans/` and rots when a plan is archived.
 - No diminutives or ad-hoc abbreviations in identifiers (`cumAuto`, `btnLbl`,
   `usrCfg`, `idx` in non-loop contexts, …). Spell it out
   (`cumulativeAutoOffset`, `buttonLabel`, `userConfig`, `index`).

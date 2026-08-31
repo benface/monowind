@@ -108,10 +108,15 @@ describe("grid typography", () => {
     expect(read({ style: "letter-spacing: 0.4px" }, metrics).tracking).toBe(0);
   });
 
-  it("reads leading as gap rows over the measured cell height", () => {
-    const metrics = { width: 8, height: 24, letterSpacing: 0 };
-    expect(read({ style: "line-height: 48px" }, metrics).lineGap).toBe(1);
+  it("reads leading as gap rows over the font size (unitless ratios keep CSS meaning)", () => {
+    // Line-height is normalized against font-size, not cell-height —
+    // so an authored `leading-loose` (2em) stays 2 rows per line
+    // (1 gap) regardless of the cell height the root ends up with
+    // under `line-height: normal`.
+    // 48px ÷ default 16px font-size = 3 rows per line, 2 gaps.
     expect(read({ style: "line-height: 48px" }).lineGap).toBe(2);
+    // Same line-height at a larger font: 48 ÷ 24 = 2 rows per line, 1 gap.
+    expect(read({ style: "font-size: 24px; line-height: 48px" }).lineGap).toBe(1);
   });
 });
 

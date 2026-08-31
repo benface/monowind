@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderPlainText, renderPlainTextSegments } from "../src/plain-text.ts";
+import { renderPlainText, renderCellSegments } from "../src/plain-text.ts";
 import { collectBorderRuns } from "../src/borders.ts";
 import type { BorderRun } from "../src/borders.ts";
 import { layoutRoot } from "../src/layout.ts";
@@ -238,6 +238,139 @@ describe("wrapLines", () => {
   });
 });
 
+describe("background occludes decorations", () => {
+  it("wipes ancestor decoration glyphs under a bg-colored child's border-box", () => {
+    // Cyan-bordered wrapper; a red-bg badge positioned over the top-
+    // border row: the badge's box fills with red spaces so the last-wins
+    // per-cell rule wipes the border glyphs under it.
+    const badge = makeNode({
+      text: "badge",
+      style: {
+        position: "absolute",
+        insets: { top: -1, right: null, bottom: null, left: 2 },
+        backgroundColor: "red",
+      },
+    });
+    const wrapper = makeNode({
+      style: {
+        position: "relative",
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderColor: { top: "cyan", right: "cyan", bottom: "cyan", left: "cyan" },
+        minHeight: 3,
+      },
+      text: "",
+      children: [badge],
+    });
+    const root = makeNode({ children: [wrapper] });
+    layoutRoot(root, 16);
+    // Top border row: `badge` glyphs occupy cells 2..6 in place of
+    // the `─` glyphs the ancestor painted first (the cells not covered
+    // by the badge keep the cyan border).
+    expect(renderPlainText(root).split("\n")[0]).toBe("┌──badge───────┐");
+  });
+
+  it("`bg-clear` wipes the same cells without a bg color", () => {
+    const cutout = makeNode({
+      // No text — an empty absolute box that just occludes decorations.
+      text: "",
+      intrinsicWidth: 3,
+      intrinsicHeight: 1,
+      style: {
+        position: "absolute",
+        insets: { top: -1, right: null, bottom: null, left: 4 },
+        width: { kind: "cells", value: 3 },
+        height: { kind: "cells", value: 1 },
+        backgroundClear: true,
+      },
+    });
+    const wrapper = makeNode({
+      style: {
+        position: "relative",
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderColor: { top: "cyan", right: "cyan", bottom: "cyan", left: "cyan" },
+        minHeight: 3,
+      },
+      text: "",
+      children: [cutout],
+    });
+    const root = makeNode({ children: [wrapper] });
+    layoutRoot(root, 16);
+    // The 3 cells under the cutout are plain spaces (no paint at all),
+    // not the border's `─` glyphs.
+    const topRow = renderCellSegments(root)[0]!;
+    expect(topRow.map((s) => s.text).join("")).toBe("┌────   ───────┐");
+    expect(topRow.find((s) => s.text === "   ")?.color).toBeUndefined();
+  });
+});
+
+describe("grid paint order and dedup", () => {
+  it("dedups same-cell overlap: junction tees replace border edges", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="display: flex; width: 28px; border: 1px solid; --mw-rule-x-width: 1px"><div>aa</div><div>bb</div></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 7);
+    const art = renderPlainText(node);
+    const count = (glyph: string) => (art.match(new RegExp(glyph, "g")) ?? []).length;
+    expect(count("┬")).toBe(1);
+    expect(count("┴")).toBe(1);
+    // 5 interior top/bottom cells minus the tee cell each: no `─` cell
+    // hides underneath a junction.
+    expect(count("─")).toBe(8);
+  });
+
+  it("honors z-index on positioned elements: overlap row inverts to cyan", () => {
+    // Without z-index the later (red) box would win the shared cells;
+    // z-10 on the FIRST (relative) box flips the overlap row to cyan.
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 24px">
+      <div style="border: 1px solid; border-color: cyan; z-index: 10; position: relative">a</div>
+      <div style="border: 1px solid; border-color: red; margin-top: -4px">b</div>
+    </div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 6);
+    const colors = renderCellSegments(node)
+      .flat()
+      .map((seg) => seg.color);
+    expect(colors.filter((c) => c === "cyan").length).toBeGreaterThan(
+      colors.filter((c) => c === "red").length,
+    );
+  });
+
+  it("non-positioned inline paints AFTER non-positioned block, regardless of DOM order (CSS Appendix E)", () => {
+    // A red block at (0,0) and a cyan inline-atomic box at (2,0),
+    // in that DOM order. CSS paints inline AFTER block, so the
+    // overlapping cell belongs to cyan (not red).
+    const block = makeNode({
+      style: {
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderColor: { top: "red", right: "red", bottom: "red", left: "red" },
+      },
+      intrinsicWidth: 4,
+      intrinsicHeight: 2,
+    });
+    block.localRect = { x: 0, y: 0, width: 4, height: 2 };
+    const inline = makeNode({
+      style: {
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderColor: { top: "cyan", right: "cyan", bottom: "cyan", left: "cyan" },
+      },
+      intrinsicWidth: 4,
+      intrinsicHeight: 2,
+    });
+    inline.localRect = { x: 2, y: 0, width: 4, height: 2 };
+    inline.inlineBox = true;
+    const root = makeNode({ children: [block, inline] });
+    root.localRect = { x: 0, y: 0, width: 6, height: 2 };
+    const rows = renderCellSegments(root);
+    // Cell (2,0) is block's top-right ┐ AND inline's top-left ┌ —
+    // inline paints last, so cyan ┌ wins.
+    const flatRow0 = rows[0]!.flatMap((s) => Array.from(s.text, (ch) => ({ ch, color: s.color })));
+    expect(flatRow0[2]).toEqual({ ch: "┌", color: "cyan" });
+  });
+});
+
 describe("inline padding rendering", () => {
   it("renders pad markers as blank cells", () => {
     const leaf = makeNode({ text: `a${INLINE_PAD}b`, intrinsicWidth: 3 });
@@ -247,14 +380,14 @@ describe("inline padding rendering", () => {
   });
 });
 
-describe("renderPlainTextSegments", () => {
+describe("renderCellSegments", () => {
   it("splits rows into same-colored runs whose text joins back to the plain render", () => {
     const host = document.createElement("div");
     host.innerHTML = `<div style="width: 24px; border: 1px solid; border-color: cyan; color: red">hi</div>`;
     document.body.appendChild(host);
     const node = buildTree(host.firstElementChild!, 16)!;
     layoutRoot(node, 6);
-    const rows = renderPlainTextSegments(node);
+    const rows = renderCellSegments(node);
     expect(rows.map((row) => row.map((s) => s.text).join("")).join("\n")).toBe(
       renderPlainText(node),
     );
@@ -275,7 +408,7 @@ describe("inline fidelity in segments", () => {
     document.body.appendChild(host);
     const node = buildTree(host.firstElementChild!, 16)!;
     layoutRoot(node, 15);
-    const rows = renderPlainTextSegments(node);
+    const rows = renderCellSegments(node);
     expect(rows[0]).toEqual([{ text: "click me", textDecorationLine: "underline" }]);
   });
 
@@ -285,7 +418,7 @@ describe("inline fidelity in segments", () => {
     document.body.appendChild(host);
     const node = buildTree(host.firstElementChild!, 16)!;
     layoutRoot(node, 10);
-    const rows = renderPlainTextSegments(node);
+    const rows = renderCellSegments(node);
     // Row 0: leaf text bare, "cd" red + bold (spaces always unstyled);
     // "ef" shifted down one row by `top: 4px`, keeping its color.
     expect(rows[0]!.map((s) => [s.text, s.color, s.fontWeight])).toEqual([
@@ -296,5 +429,22 @@ describe("inline fidelity in segments", () => {
       ["      ", undefined],
       ["ef", "blue"],
     ]);
+  });
+});
+
+describe("form controls (native-rendered value)", () => {
+  it("leaves the leaf empty so the browser paints the value on top of the grid", () => {
+    // <input>/<textarea>/<select> handle their own caret, selection,
+    // and IME natively — mirroring the value into the grid would
+    // double-render and mask those. The grid still paints the
+    // control's borders and background around the empty leaf.
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 40px; border: 1px solid"><input value="hello" style="width: 38px"></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 10);
+    const art = renderPlainText(node);
+    expect(art).not.toContain("hello");
+    expect(art.split("\n")[0]).toMatch(/^┌─+┐$/);
   });
 });

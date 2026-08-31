@@ -56,7 +56,7 @@ export const FontSize: StoryObj = {
 export const Color: StoryObj = {
   render: () => html`
     <mono-wind class="bg-neutral-950 p-2 text-emerald-400">
-      <div class="border border-current px-2 py-1">
+      <div class="border border-current px-3 py-1">
         The root's <span class="text-yellow-300">color</span>, background, and padding are ordinary
         CSS: text, borders, and inline elements inherit the colors, and the grid sits inside the
         padding.

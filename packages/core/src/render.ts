@@ -1,18 +1,16 @@
-import { collectBorderRuns, paintOrderedChildren, zIndexApplies } from "./borders.ts";
-import type { BorderRun } from "./borders.ts";
+import { paintOrderedChildren, zIndexApplies } from "./borders.ts";
 import type { LayoutNode, PerSide } from "./types.ts";
 
 /**
- * Write geometry custom properties on each source element and (re)paint the
- * decoration layer. Coordinates on LayoutNode are parent-relative; borders
- * are painted in absolute coordinates so we accumulate the parent origin as
- * we walk.
+ * Write geometry custom properties, quantized inline padding, and z-index
+ * markers on each source element in the light DOM. Coordinates on
+ * LayoutNode are parent-relative; the companion stylesheet turns them
+ * into px via the measured cell size. No painting: decoration and text
+ * glyphs land in the shadow grid via `paint.ts`.
  */
-export function render(root: LayoutNode, decorationLayer: HTMLElement): void {
-  const borderRuns: BorderRun[] = [];
+export function render(root: LayoutNode): void {
   const inlineInsetElements = new Set<Element>();
-  walk(root, 0, 0, borderRuns, true, inlineInsetElements);
-  paintDecorations(decorationLayer, borderRuns);
+  walk(root, true, inlineInsetElements);
   // Clear engine-written inset vars from inline elements that no longer
   // carry authored relative insets.
   for (const el of Array.from(root.source.querySelectorAll("[data-mw-inline-inset]"))) {
@@ -24,17 +22,7 @@ export function render(root: LayoutNode, decorationLayer: HTMLElement): void {
   }
 }
 
-function walk(
-  node: LayoutNode,
-  parentAbsX: number,
-  parentAbsY: number,
-  borderRuns: BorderRun[],
-  isRoot: boolean,
-  inlineInsetElements: Set<Element>,
-): void {
-  const absX = parentAbsX + node.localRect.x;
-  const absY = parentAbsY + node.localRect.y;
-
+function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Element>): void {
   if (node.inlineElements) {
     for (const { element, tracking, padLeft, padRight, insets } of node.inlineElements) {
       const el = element as HTMLElement;
@@ -56,18 +44,8 @@ function walk(
 
   if (!isRoot) positionElement(node);
   // A hidden table box (misparented content, <col>) hides its whole
-  // subtree browser-side; nothing to paint or recurse into.
+  // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
-
-  collectBorderRuns(
-    node.style,
-    { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height },
-    borderRuns,
-  );
-  if (node.decorationRuns) {
-    for (const run of node.decorationRuns)
-      borderRuns.push({ ...run, x: absX + run.x, y: absY + run.y });
-  }
 
   for (const child of paintOrderedChildren(node)) {
     // Absolutization would otherwise activate z-index on static block
@@ -77,7 +55,7 @@ function walk(
     if (child.style.zIndex !== null && zIndexApplies(child, node) && !child.inlineBox)
       el.style.setProperty("--mw-z", String(child.style.zIndex));
     else el.style.removeProperty("--mw-z");
-    walk(child, absX, absY, borderRuns, false, inlineInsetElements);
+    walk(child, false, inlineInsetElements);
   }
 }
 
@@ -153,46 +131,4 @@ function positionElement(node: LayoutNode): void {
   else el.removeAttribute("data-mw-dropped-text");
   if (node.tableHidden) el.setAttribute("data-mw-table-hidden", "");
   else el.removeAttribute("data-mw-table-hidden");
-}
-
-function paintDecorations(layer: HTMLElement, runs: BorderRun[]): void {
-  layer.replaceChildren();
-  // Later runs win per cell (junction tees over border edges, lattice
-  // crossings) — the same overwrite semantics as renderPlainText's grid;
-  // overlapping glyph spans would BOTH paint (visible under mismatched
-  // ink, e.g. `╦` over `═`).
-  const cells = new Map<string, { x: number; y: number; glyph: string; color?: string }>();
-  for (const run of runs)
-    for (let i = 0; i < run.length; i++) {
-      const x = run.x + i;
-      const cell: { x: number; y: number; glyph: string; color?: string } = {
-        x,
-        y: run.y,
-        glyph: run.glyph,
-      };
-      if (run.color) cell.color = run.color;
-      cells.set(`${x},${run.y}`, cell);
-    }
-  // One span PER CELL, not per run: box-drawing glyphs may come from a
-  // fallback font with a different advance width than the measured cell
-  // (e.g. Google Fonts subsets that omit box-drawing characters), so a
-  // multi-glyph run would drift off the grid. Positioning every glyph
-  // from the grid keeps borders aligned regardless of which font supplies
-  // the glyph. Revisit as a perf optimization once we can detect that the
-  // active font covers the glyphs (or when painting to canvas).
-  for (const cell of cells.values()) {
-    const span = document.createElement("span");
-    span.setAttribute("aria-hidden", "true");
-    span.style.position = "absolute";
-    span.style.left = `calc(${cell.x} * var(--mw-cw))`;
-    span.style.top = `calc(${cell.y} * var(--mw-ch))`;
-    span.style.font = "inherit";
-    span.style.lineHeight = "inherit";
-    span.style.whiteSpace = "pre";
-    span.style.pointerEvents = "none";
-    span.style.userSelect = "none";
-    if (cell.color) span.style.color = cell.color;
-    span.textContent = cell.glyph;
-    layer.appendChild(span);
-  }
 }

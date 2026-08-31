@@ -15,7 +15,7 @@ export default meta;
 export const Wrapping: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-40 border border-neutral-500 px-2 py-1">
+      <div class="max-w-40 border border-neutral-500 px-1">
         This text wraps at word boundaries when it runs out of columns, and breaks long words at
         cell boundaries. Try resizing the window to see how it behaves.
       </div>
@@ -63,7 +63,7 @@ export const HyphenBreaks: StoryObj = {
 export const Truncating: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-40 truncate border border-neutral-500 px-2 py-1">
+      <div class="max-w-40 truncate border border-neutral-500 px-1">
         This text gets truncated when it is wider than the available width.
       </div>
     </mono-wind>
@@ -73,7 +73,7 @@ export const Truncating: StoryObj = {
 export const HardBreaks: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="border border-neutral-500 px-2 py-1">
+      <div class="border border-neutral-500 px-1">
         first line<br />second line<br /><br />after a blank line
       </div>
     </mono-wind>
@@ -90,8 +90,8 @@ export const Preformatted: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-col gap-1">
-        <pre class="border border-neutral-500 px-2 py-1">${indentedMarkup}</pre>
-        <div class="border border-emerald-400 px-2 py-1 whitespace-pre">${tabbedColumns}</div>
+        <pre class="border border-neutral-500 px-1">${indentedMarkup}</pre>
+        <div class="border border-emerald-400 px-1 whitespace-pre">${tabbedColumns}</div>
       </div>
     </mono-wind>
   `,
@@ -101,7 +101,7 @@ export const Preformatted: StoryObj = {
 export const InlineElements: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-40 border border-neutral-500 px-2 py-1">
+      <div class="max-w-48 border border-neutral-500 px-3 py-1">
         Inline elements like <b class="text-yellow-400">bold text</b>,
         <i class="text-cyan-400">italic text</i>, and
         <a href="#" class="text-blue-400 underline">links (click me)</a> ride along in the text run.
@@ -137,7 +137,7 @@ export const InlineElements: StoryObj = {
 export const InlineDisplay: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="relative max-w-54 border border-neutral-500 px-2 py-1">
+      <div class="relative max-w-48 border border-neutral-500 px-3 py-1">
         <!-- A block child turns its parent into a container, and containers
              don't lay out direct text (cell-model deviation 7) — so the
              running text lives in its own div beside the block span. -->
@@ -151,12 +151,10 @@ export const InlineDisplay: StoryObj = {
           </div>
           a <span class="hidden">completely invisible</span> hidden span whose text never joins the
           flow, and an absolute span that leaves the flow to become the corner badge
-          <span class="absolute -top-1 right-2 bg-bg-light px-1 text-yellow-500 dark:bg-bg-dark">
-            * badge
-          </span>
+          <span class="absolute -top-1 right-2 bg-clear px-1 text-yellow-500">* badge</span>
           instead of rendering here.
         </div>
-        <span class="block text-cyan-400">Finally, this is a block span on its own line.</span>
+        <span class="block text-cyan-400">Finally, this is a block span.</span>
       </div>
     </mono-wind>
   `,
@@ -203,7 +201,7 @@ export const Leading: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex items-start gap-2">
-        <div class="max-w-30 border border-neutral-500 px-1">
+        <div class="max-w-30 border border-neutral-500 px-1 leading-normal">
           leading-normal: wrapped lines sit on consecutive rows, as usual.
         </div>
         <div class="max-w-30 border border-cyan-400 px-1 leading-loose">

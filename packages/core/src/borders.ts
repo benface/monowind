@@ -164,17 +164,29 @@ export function zIndexApplies(child: LayoutNode, parent: LayoutNode): boolean {
   );
 }
 
-function effectiveZIndex(child: LayoutNode, parent: LayoutNode): number {
-  return zIndexApplies(child, parent) ? (child.style.zIndex ?? 0) : 0;
-}
-
-/** Children in paint order: stable-sorted by effective z-index,
- * document order breaking ties — mirrored by both renderers so
- * decorations and plain text agree with browser stacking at overlaps (a
- * simplified model: no stacking contexts, negative z still paints over
- * the parent's own glyphs). */
+/** Children in paint order (CSS 2.1 Appendix E, no floats or stacking
+ * contexts — negative z still paints over the parent): non-positioned
+ * block, then non-positioned inline, then positioned (asc z-index).
+ * Stable within a bucket, so DOM order breaks ties. Bucketed instead
+ * of full-sorted so the common case (single bucket, no z-index) is
+ * allocation-free. */
 export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
-  return [...node.children].sort((a, b) => effectiveZIndex(a, node) - effectiveZIndex(b, node));
+  if (node.children.length <= 1) return node.children;
+  let blocks: LayoutNode[] | null = null;
+  let inlines: LayoutNode[] | null = null;
+  let positioned: LayoutNode[] | null = null;
+  for (const child of node.children) {
+    if (zIndexApplies(child, node)) (positioned ??= []).push(child);
+    else if (child.inlineBox) (inlines ??= []).push(child);
+    else (blocks ??= []).push(child);
+  }
+  if (positioned && positioned.length > 1) {
+    positioned.sort((a, b) => (a.style.zIndex ?? 0) - (b.style.zIndex ?? 0));
+  }
+  if (blocks && !inlines && !positioned) return blocks;
+  if (!blocks && inlines && !positioned) return inlines;
+  if (!blocks && !inlines && positioned) return positioned;
+  return [...(blocks ?? []), ...(inlines ?? []), ...(positioned ?? [])];
 }
 
 /** A style's straight line glyph, for lattice segments. */

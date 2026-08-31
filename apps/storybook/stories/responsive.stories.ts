@@ -28,14 +28,14 @@ export const RootFontSize: StoryObj = {
 export const LayoutChange: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="flex flex-col gap-1 md:flex-row md:gap-2">
-        <div class="border border-cyan-400 px-2 py-1 md:flex-1">
+      <div class="flex flex-col gap-x-1 md:flex-row md:gap-2">
+        <div class="border border-cyan-400 px-1 md:flex-1">
           Stacked as a column on narrow viewports…
         </div>
-        <div class="border border-yellow-400 px-2 py-1 md:flex-1">
+        <div class="border border-yellow-400 px-1 md:flex-1">
           …side by side (flex-row + flex-1) from md up.
         </div>
-        <div class="hidden border border-fuchsia-400 px-2 py-1 lg:block lg:flex-1">
+        <div class="hidden border border-fuchsia-400 px-1 lg:block lg:flex-1">
           This third box only exists from lg up.
         </div>
       </div>

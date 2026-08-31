@@ -15,27 +15,27 @@ export const JustifyContent: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-col gap-1">
-        <div class="flex justify-start gap-1 border border-neutral-500">
+        <div class="flex justify-start gap-1 border border-neutral-500 px-1">
           <div>justify</div>
           <div>start</div>
         </div>
-        <div class="flex justify-center gap-1 border border-neutral-500">
+        <div class="flex justify-center gap-1 border border-neutral-500 px-1">
           <div>justify</div>
           <div>center</div>
         </div>
-        <div class="flex justify-end gap-1 border border-neutral-500">
+        <div class="flex justify-end gap-1 border border-neutral-500 px-1">
           <div>justify</div>
           <div>end</div>
         </div>
-        <div class="flex justify-between border border-neutral-500">
+        <div class="flex justify-between border border-neutral-500 px-1">
           <div>justify</div>
           <div>between</div>
         </div>
-        <div class="flex justify-around border border-neutral-500">
+        <div class="flex justify-around border border-neutral-500 px-1">
           <div>justify</div>
           <div>around</div>
         </div>
-        <div class="flex justify-evenly border border-neutral-500">
+        <div class="flex justify-evenly border border-neutral-500 px-1">
           <div>justify</div>
           <div>evenly</div>
         </div>
@@ -149,15 +149,15 @@ export const AutoMargins: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex flex-col gap-1">
-        <div class="flex border border-neutral-500">
+        <div class="flex border border-neutral-500 px-1">
           <div class="me-auto">me-auto</div>
           <div>end</div>
         </div>
-        <div class="flex border border-neutral-500">
+        <div class="flex border border-neutral-500 px-1">
           <div>start</div>
           <div class="ms-auto">ms-auto</div>
         </div>
-        <div class="flex min-h-5 border border-neutral-500">
+        <div class="flex min-h-5 border border-neutral-500 px-1">
           <div class="mx-auto my-auto">mx-auto my-auto</div>
         </div>
       </div>
@@ -168,7 +168,7 @@ export const AutoMargins: StoryObj = {
 export const Column: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="flex min-h-18 flex-col gap-1 border border-neutral-500 px-2 py-1">
+      <div class="flex min-h-16 flex-col border border-neutral-500 px-1">
         <div class="border border-cyan-400 px-1">header</div>
         <div class="grow border border-emerald-400 px-1">
           content section that grows to fill the container, with a lot of text in it so we can see

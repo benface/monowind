@@ -434,11 +434,11 @@ export const GapDecorations: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     await expectBrowserRowsToMatchEngine(canvasElement);
-    // Rules paint into the decoration layer as colored glyph spans —
+    // Rules paint into the shadow grid as colored glyph spans —
     // crossings included (the ┼ between the four quadrants).
     const host = canvasElement.querySelector("mono-wind")!;
-    const decorations = host.shadowRoot!.querySelectorAll("span");
-    const glyphs = Array.from(decorations, (span) => span.textContent).join("");
+    const spans = host.shadowRoot!.querySelectorAll("span");
+    const glyphs = Array.from(spans, (span) => span.textContent).join("");
     expect(glyphs).toContain("│");
     expect(glyphs).toContain("─");
     expect(glyphs).toContain("┼");
@@ -449,9 +449,7 @@ export const GapDecorations: StoryObj = {
     reference.style.color = getComputedStyle(rules).getPropertyValue("--mw-rule-x-color").trim();
     canvasElement.appendChild(reference);
     const expected = getComputedStyle(reference).color;
-    const colored = Array.from(decorations).some(
-      (span) => getComputedStyle(span).color === expected,
-    );
+    const colored = Array.from(spans).some((span) => getComputedStyle(span).color === expected);
     expect(colored).toBe(true);
     // Segment features (specs/gap-decorations.md "Segments"), probed
     // against Chromium's native css-gaps rendering.

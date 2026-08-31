@@ -138,3 +138,20 @@
   rule-visibility-items: between;
   --mw-rule-visibility-items: between;
 }
+
+/* bg-clear: cut ancestor decoration glyphs out from under this element
+ * WITHOUT painting a bg color. The engine fills the border-box with
+ * plain spaces so anything below in the last-wins per-cell grid gets
+ * wiped. `background-color: transparent` cascades over an earlier
+ * `bg-red-500` in `bg-red-500 sm:bg-clear` so the browser-side
+ * visible bg goes away too; the mirror is what the engine actually
+ * reads. */
+@utility bg-clear {
+  background-color: transparent;
+  --mw-bg-clear: 1;
+}
+@property --mw-bg-clear {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}

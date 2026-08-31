@@ -23,9 +23,10 @@ const stories = Object.values(index.entries).filter(
 
 for (const story of stories) {
   test(story.id, async ({ page }) => {
-    // Pin the layered render: plain text is the toolbar default, but the
-    // goldens guard the decoration/geometry pipeline browsers actually paint.
-    await page.goto(`/iframe.html?id=${story.id}&viewMode=story&globals=plainText:layered`);
+    // Pin `select=text`: both modes render identically, but the visible
+    // cursor differs (text-select over the grid in `select=grid`) and
+    // that would flicker some goldens.
+    await page.goto(`/iframe.html?id=${story.id}&viewMode=story&globals=select:text`);
     // Wait for every <mono-wind> to finish its first layout, then for fonts
     // (a late font load triggers a relayout), then one more settle frame.
     await page.waitForFunction(() => {
