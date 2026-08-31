@@ -197,7 +197,15 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     const contentY = absY + style.border.top + padding.top;
     const contentWidth =
       node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
-    const { spans, textY } = leafLineGeometry(node, contentWidth);
+    // A multicol leaf paints its layout-computed fragmentation (line →
+    // column map); other leaves recompute the single-column geometry.
+    const multicol = node.multicolGeometry;
+    const { spans, textY } = multicol ?? leafLineGeometry(node, contentWidth);
+    // Alignment and truncation act within one column of a multicol leaf,
+    // against the tracked wrap width — the browser's own alignment
+    // includes the trailing letter-spacing gap, so the engine ends lines
+    // at `width − tracking` to sit under it.
+    const alignWidth = multicol ? Math.max(1, multicol.columnWidth - style.tracking) : contentWidth;
     const leafPaint = textPaint(style);
     const inlinePaints = node.inlineElements?.map((entry) => textPaint(entry));
     for (let i = 0; i < spans.length; i++) {
@@ -205,21 +213,21 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
       const row = contentY + textY[i]!;
       const truncated =
         style.whiteSpace !== "normal" && style.overflow === "clip"
-          ? truncateSpan(node.text, span, contentWidth, node.advances, style)
+          ? truncateSpan(node.text, span, alignWidth, node.advances, style)
           : { end: span.end, ellipsis: false };
       // Each character advances by its own cell count (tracking gaps).
       // `text-align: end` offsets each line to the content box's right
       // edge; `center` to floor((W − line) / 2). Whole cells; a line
       // at or over the width stays at start, matching truncation.
       const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
-      const leftover = Math.max(0, contentWidth - lineWidth);
+      const leftover = Math.max(0, alignWidth - lineWidth);
       const alignOffset =
         style.textAlign === "end"
           ? leftover
           : style.textAlign === "center"
             ? Math.floor(leftover / 2)
             : 0;
-      let x = contentX + alignOffset;
+      let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset;
       for (let k = span.start; k < truncated.end; k++) {
         // U+FFFC marks an embedded inline box (its cells are drawn by
         // the box's own walk). INLINE_PAD marks a blank inline-padding

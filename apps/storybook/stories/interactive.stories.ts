@@ -108,7 +108,11 @@ export const Textarea: StoryObj = {
             class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:text-white dark:group-has-focus-visible:text-black"
             >Textarea</label
           >
-          <textarea id="textarea" rows="1" class="w-40 max-w-full border border-cyan-400 px-1">
+          <textarea
+            id="textarea"
+            rows="1"
+            class="w-40 max-w-full border border-cyan-400 px-1 dark:focus-visible:border-black"
+          >
 Textarea
 with multiple
 lines</textarea>
@@ -173,7 +177,10 @@ export const Select: StoryObj = {
             class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:text-white dark:group-has-focus-visible:text-black"
             >Select</label
           >
-          <select id="select" class="w-40 max-w-full truncate border border-cyan-400 px-1">
+          <select
+            id="select"
+            class="w-40 max-w-full truncate border border-cyan-400 px-1 dark:focus-visible:border-black"
+          >
             <option>Select</option>
             <option>an</option>
             <option>option</option>

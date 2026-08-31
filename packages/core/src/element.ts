@@ -141,6 +141,13 @@ export class MonoWindElement extends HTMLElementBase {
 
     this.#resizeObserver = new ResizeObserver(() => this.#scheduleLayout());
     this.#resizeObserver.observe(this);
+    // The probe too: a freshly inserted probe can transiently font-match
+    // the FALLBACK at first layout even when the real font is already
+    // loaded (WebKit; no fonts event ever follows). The swap changes the
+    // probe's size, so observing it is the missing re-measure signal.
+    // (The probe is absolutely positioned, hence blockified — inline
+    // boxes would be unobservable.)
+    this.#resizeObserver.observe(this.#probe);
     // Viewport-relative lengths (h-screen, h-[95dvh], …) read
     // window.innerWidth/Height at layout time; a window resize that
     // doesn't change the HOST's size (height-only, typically) would
@@ -334,11 +341,13 @@ export class MonoWindElement extends HTMLElementBase {
         previous === null ||
         previous.width !== metrics.width ||
         previous.height !== metrics.height ||
-        previous.letterSpacing !== metrics.letterSpacing
+        previous.letterSpacing !== metrics.letterSpacing ||
+        previous.inkOverhang !== metrics.inkOverhang
       ) {
         this.style.setProperty("--mw-cw", `${metrics.width}px`);
         this.style.setProperty("--mw-ch", `${metrics.height}px`);
         this.style.setProperty("--mw-rls", `${metrics.letterSpacing}px`);
+        this.style.setProperty("--mw-ink", `${metrics.inkOverhang ?? 0}px`);
       }
       this.#cellMetrics = metrics;
 

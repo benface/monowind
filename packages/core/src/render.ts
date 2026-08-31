@@ -108,11 +108,28 @@ function positionElement(node: LayoutNode): void {
   const rect = node.localRect;
   const padding = node.resolvedPadding;
   const { border, textAlignBlocked, overflow, whiteSpace, tracking, lineGap } = node.style;
-  // Atomic inline boxes stay IN FLOW (the browser's line layout places
+  // Atomic inline boxes and paragraph-flow multicol children stay IN
+  // FLOW (the browser's own line layout / column fragmentation places
   // them); everything else is engine-positioned. Same geometry vars, a
-  // different companion rule (see styles.css).
-  setFlag(el, node.inlineBox ? "data-mw-inline-box" : "data-mw-laid-out", true);
-  setFlag(el, node.inlineBox ? "data-mw-laid-out" : "data-mw-inline-box", false);
+  // different companion rule each (see styles.css).
+  const flow = node.multicolFlow;
+  const flowSpan = node.multicolFlowSpan;
+  setFlag(el, "data-mw-laid-out", !node.inlineBox && !flow && !flowSpan);
+  setFlag(el, "data-mw-inline-box", Boolean(node.inlineBox));
+  setFlag(el, "data-mw-multicol-flow", Boolean(flow));
+  setFlag(el, "data-mw-multicol-flow-span", Boolean(flowSpan));
+  const flowMargins = flow ?? flowSpan;
+  if (flowMargins) {
+    setVar(el, "--mw-mt", String(flowMargins.top ?? 0));
+    setVar(el, "--mw-mr", String(flowMargins.right ?? 0));
+    setVar(el, "--mw-mb", String(flowMargins.bottom ?? 0));
+    setVar(el, "--mw-ml", String(flowMargins.left ?? 0));
+  } else {
+    clearVar(el, "--mw-mt");
+    clearVar(el, "--mw-mr");
+    clearVar(el, "--mw-mb");
+    clearVar(el, "--mw-ml");
+  }
   // Bottom-aligned atomic boxes keep their browser alignment (grid-exact,
   // probed); everything else is pinned top by the companion rule.
   setFlag(el, "data-mw-vbottom", Boolean(node.inlineBox) && node.style.verticalAlign === "end");
@@ -122,6 +139,24 @@ function positionElement(node: LayoutNode): void {
   setVar(el, "--mw-lh", String(lineGap + 1));
   setVar(el, "--mw-lhs", String(-lineGap / 2));
   setFlag(el, "data-mw-nowrap", whiteSpace !== "normal");
+  // A multicol TEXT LEAF or paragraph-flow container keeps native
+  // columns, driven by the engine's used values so the browser
+  // fragments on the same lines (specs/multicol.md "Browser
+  // agreement"); a spanner-split flow additionally trusts the NATIVE
+  // balancer per segment (probed exact). Atomic element-children
+  // containers get no flag: their light DOM has nothing in flow.
+  // Flow CHILDREN carry a geometry too (their line maps) but must never
+  // get native columns themselves — only the container fragments.
+  const multicol = flow || flowSpan ? undefined : node.multicolGeometry;
+  setFlag(el, "data-mw-multicol", Boolean(multicol));
+  setFlag(el, "data-mw-multicol-balance", Boolean(multicol?.nativeBalance));
+  if (multicol) {
+    setVar(el, "--mw-colc", String(multicol.columnCount));
+    setVar(el, "--mw-colg", String(multicol.gap));
+  } else {
+    clearVar(el, "--mw-colc");
+    clearVar(el, "--mw-colg");
+  }
   // `white-space: pre` leaves also keep their preserved spaces
   // browser-side (the tree builder kept them in the run) — see styles.css.
   setFlag(el, "data-mw-pre", whiteSpace === "pre");

@@ -6,7 +6,7 @@ This directory holds simplified, cell-adapted versions of the CSS features
 monowind re-implements. The guiding rule: **follow the CSS specs as closely as
 possible**; every deviation must be called out explicitly in a "Deviations"
 section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
-`table.md`, `gap-decorations.md`.
+`table.md`, `gap-decorations.md`, `multicol.md`.
 
 ## Units and value mapping
 

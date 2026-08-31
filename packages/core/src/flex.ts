@@ -71,7 +71,10 @@ function rowBandSegments(
   );
 }
 
-function insetSegments(segments: RuleSegment[], inset: number | "overlap-join"): RuleSegment[] {
+export function insetSegments(
+  segments: RuleSegment[],
+  inset: number | "overlap-join",
+): RuleSegment[] {
   if (typeof inset !== "number" || inset <= 0) return segments;
   return segments
     .map((segment) => ({ ...segment, start: segment.start + inset, end: segment.end - inset }))

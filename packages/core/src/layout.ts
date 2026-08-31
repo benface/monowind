@@ -17,6 +17,14 @@ import {
   mainAxisOffsets,
 } from "./flex.ts";
 import { gridIntrinsicInnerWidths, layoutGrid } from "./grid.ts";
+import {
+  layoutMulticol,
+  multicolIntrinsicInnerWidth,
+  multicolLeafGeometry,
+  multicolLeafRuleRuns,
+  resolveLeafColumns,
+  restrictingHeight,
+} from "./multicol.ts";
 import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
 import type { TableData } from "./table.ts";
 import { walkPositioned } from "./positioning.ts";
@@ -26,6 +34,7 @@ import type {
   CellStyle,
   Insets,
   LayoutNode,
+  MulticolLeafGeometry,
   NullableInsets,
   PerSide,
   Size,
@@ -107,8 +116,11 @@ export function layoutNode(
   const style = node.style;
   const forcedHeight = forced?.height;
   // Fresh per layout: only the pass that runs (table lattice, flex/grid
-  // gap rules) repopulates it.
+  // gap rules, multicol) repopulates them.
   delete node.decorationRuns;
+  delete node.multicolGeometry;
+  delete node.multicolFlow;
+  delete node.multicolFlowSpan;
 
   // Width is clamped to min/max BEFORE laying out content — wrapping and
   // child sizing must see the constrained width, not the raw resolved one.
@@ -157,69 +169,28 @@ export function layoutNode(
   const definiteInnerHeight =
     heightIsDefinite && Number.isFinite(inner.height) ? inner.height : undefined;
 
+  // `height` and `max-height` both RESTRICT multicol column heights
+  // (css-multicol §7), unlike other displays where max-height only clamps
+  // the final rect and overflow spills.
+  const maxInnerHeight =
+    maxHeight === undefined
+      ? undefined
+      : Math.max(
+          0,
+          maxHeight - style.border.top - style.border.bottom - padding.top - padding.bottom,
+        );
+
   let contentHeight: number;
   if (laysOutAsTextLeaf(node)) {
-    // A text leaf (possibly carrying out-of-flow children), or an empty
-    // box. `white-space: nowrap` text never soft-wraps: its height is the
-    // hard-line (`<br>`) count, regardless of width. `leading-*` adds
-    // `lineGap` empty rows BETWEEN lines only (specs/cell-model.md).
-    if (node.text) {
-      // Atomic inline boxes first: lay each out (shrink-to-fit; height =
-      // its own content) and resolve its U+FFFC marker's advance to the
-      // laid-out width, so the wrap below treats it as an unbreakable
-      // unit of exactly that many cells.
-      const boxes = node.children.filter((child) => child.inlineBox);
-      eachObjectMarker(node.text, (charIndex, boxIndex) => {
-        const box = boxes[boxIndex]!;
-        layoutNode(box, inner.width, undefined, 0, 0, "shrink", cache);
-        node.advances![charIndex] = Math.max(1, box.localRect.width);
-      });
-      const geometry = leafLineGeometry(node, inner.width);
-      contentHeight = geometry.totalRows;
-      // Content alignment of the anonymous text item, quantized to whole
-      // cells (specs/cell-model.md): a flex/grid element whose content is
-      // bare text centers/ends it by folding the leftover into the
-      // engine-owned padding. The browser's own (fractional, off-grid)
-      // anonymous-item alignment is reset in styles.css; padding places
-      // the text instead, so browser, plain text, and decorations agree.
-      // Symmetry of the wrap is preserved: the padded content box is
-      // exactly the widest line, and greedy wrap breaks identically there
-      // (every line fits, and every overflow still overflows).
-      alignLeafText(node, geometry, inner.width, inner.height, padding);
-      // Place each box at its marker's wrapped (line, column) — the
-      // browser's own line layout puts the in-flow box in the same spot
-      // because both models reserve exactly the same cells for it, and a
-      // taller box grows its LINE (per CSS; the box is vertical-align:
-      // top, so its top sits on the line's first row like the text).
-      if (boxes.length > 0) {
-        const lineOfChar = (charIndex: number) =>
-          geometry.spans.findIndex((span) => charIndex >= span.start && charIndex < span.end);
-        eachObjectMarker(node.text, (charIndex, boxIndex) => {
-          const line = lineOfChar(charIndex);
-          if (line === -1) return; // e.g. width 0 edge; box stays at origin
-          const span = geometry.spans[line]!;
-          boxes[boxIndex]!.localRect = {
-            ...boxes[boxIndex]!.localRect,
-            x: style.border.left + padding.left + advanceOf(span.start, charIndex, node.advances),
-            y: style.border.top + padding.top + geometry.lineY[line]!,
-          };
-        });
-      }
-    } else {
-      contentHeight = node.intrinsicHeight;
-    }
-    // Out-of-flow children of a leaf: static position = the content-box
-    // origin plus their margins (specs/positioning.md — CSS's hypothetical
-    // inline position is approximated by the run's origin).
-    for (const child of node.children) {
-      if (child.inlineBox) continue;
-      const margin = resolveMargin(child.style.margin, inner.width);
-      child.staticSlot = {
-        kind: "block",
-        x: style.border.left + padding.left + (margin.left ?? 0),
-        y: style.border.top + padding.top + (margin.top ?? 0),
-      };
-    }
+    contentHeight = layoutTextLeaf(
+      node,
+      inner.width,
+      inner.height,
+      definiteInnerHeight,
+      maxInnerHeight,
+      padding,
+      cache,
+    );
   } else if (style.display === "flex" && style.flexDirection === "row") {
     contentHeight = layoutFlexRow(
       node,
@@ -251,6 +222,16 @@ export function layoutNode(
       padding,
       cache,
     );
+  } else if (style.display === "multicol") {
+    contentHeight = layoutMulticol(
+      node,
+      inner.width,
+      definiteInnerHeight,
+      maxInnerHeight,
+      style.border,
+      padding,
+      cache,
+    );
   } else {
     contentHeight = layoutBlock(
       node,
@@ -274,7 +255,130 @@ export function layoutNode(
   node.naturalContentHeight = naturalHeight;
   const finalHeight = clampSize(unclampedHeight, minHeight, maxHeight);
 
+  // Multicol browser agreement (leaf and paragraph-flow container,
+  // specs/multicol.md): fold the FINAL box's vertical slack into the
+  // engine-owned bottom padding so the browser's column box is exactly
+  // as tall as the engine's fill (its sequential fill then breaks on
+  // the same lines), and only then paint the column rules — the fold
+  // decides whether they tee into the bottom border.
+  // The cast defeats stale narrowing from the `delete` above (the leaf
+  // pass re-populates the property behind a call TS doesn't track).
+  const multicolGeometry = node.multicolGeometry as MulticolLeafGeometry | undefined;
+  if (multicolGeometry) {
+    const finalContentHeight =
+      finalHeight - style.border.top - style.border.bottom - padding.top - padding.bottom;
+    if (finalContentHeight > multicolGeometry.totalRows)
+      padding.bottom += finalContentHeight - multicolGeometry.totalRows;
+    multicolLeafRuleRuns(node, multicolGeometry, style.border, padding);
+  }
+
   node.localRect = { x: parentX, y: parentY, width: outerWidth, height: finalHeight };
+}
+
+/**
+ * Layout for a TEXT LEAF (possibly carrying out-of-flow children), or an
+ * empty box. `white-space: nowrap` text never soft-wraps: its height is
+ * the hard-line (`<br>`) count, regardless of width. `leading-*` adds
+ * `lineGap` empty rows BETWEEN lines only (specs/cell-model.md). Returns
+ * content height (rows used); mutates `padding` (=== resolvedPadding)
+ * for quantized content alignment and multicol column folding.
+ */
+function layoutTextLeaf(
+  node: LayoutNode,
+  innerWidth: number,
+  innerHeight: number,
+  definiteInnerHeight: number | undefined,
+  maxInnerHeight: number | undefined,
+  padding: Insets,
+  cache: IntrinsicCache,
+): number {
+  const style = node.style;
+  let contentHeight: number;
+  if (node.text) {
+    // Atomic inline boxes first: lay each out (shrink-to-fit; height =
+    // its own content) and resolve its U+FFFC marker's advance to the
+    // laid-out width, so the wrap below treats it as an unbreakable
+    // unit of exactly that many cells.
+    const boxes = node.children.filter((child) => child.inlineBox);
+    eachObjectMarker(node.text, (charIndex, boxIndex) => {
+      const box = boxes[boxIndex]!;
+      layoutNode(box, innerWidth, undefined, 0, 0, "shrink", cache);
+      node.advances![charIndex] = Math.max(1, box.localRect.width);
+    });
+    let geometry: { spans: LineSpan[]; lineY: number[]; textY: number[]; totalRows: number };
+    let lineX: number[] | undefined;
+    if (style.display === "multicol") {
+      // Direct-text multicol leaf (specs/multicol.md): fragment the
+      // wrapped lines into columns, the fill restricted by a definite
+      // height or max-height (css-multicol §7). The division remainder
+      // folds into the engine-owned right padding so the browser's
+      // equal fractional columns start on the engine's whole cells;
+      // vertical slack folds after the final height clamp (layoutNode).
+      const gap = resolveGap(style, "x", innerWidth);
+      const columns = resolveLeafColumns(style, innerWidth, gap);
+      padding.right += columns.leftover;
+      const multicol = multicolLeafGeometry(
+        node,
+        columns,
+        gap,
+        restrictingHeight(definiteInnerHeight, maxInnerHeight),
+      );
+      node.multicolGeometry = multicol;
+      geometry = multicol;
+      lineX = multicol.lineX;
+    } else {
+      geometry = leafLineGeometry(node, innerWidth);
+    }
+    contentHeight = geometry.totalRows;
+    // Content alignment of the anonymous text item, quantized to whole
+    // cells (specs/cell-model.md): a flex/grid element whose content is
+    // bare text centers/ends it by folding the leftover into the
+    // engine-owned padding. The browser's own (fractional, off-grid)
+    // anonymous-item alignment is reset in styles.css; padding places
+    // the text instead, so browser, plain text, and decorations agree.
+    // Symmetry of the wrap is preserved: the padded content box is
+    // exactly the widest line, and greedy wrap breaks identically there
+    // (every line fits, and every overflow still overflows).
+    alignLeafText(node, geometry, innerWidth, innerHeight, padding);
+    // Place each box at its marker's wrapped (line, column) — the
+    // browser's own line layout puts the in-flow box in the same spot
+    // because both models reserve exactly the same cells for it, and a
+    // taller box grows its LINE (per CSS; the box is vertical-align:
+    // top, so its top sits on the line's first row like the text).
+    if (boxes.length > 0) {
+      const lineOfChar = (charIndex: number) =>
+        geometry.spans.findIndex((span) => charIndex >= span.start && charIndex < span.end);
+      eachObjectMarker(node.text, (charIndex, boxIndex) => {
+        const line = lineOfChar(charIndex);
+        if (line === -1) return; // e.g. width 0 edge; box stays at origin
+        const span = geometry.spans[line]!;
+        boxes[boxIndex]!.localRect = {
+          ...boxes[boxIndex]!.localRect,
+          x:
+            style.border.left +
+            padding.left +
+            (lineX?.[line] ?? 0) +
+            advanceOf(span.start, charIndex, node.advances),
+          y: style.border.top + padding.top + geometry.lineY[line]!,
+        };
+      });
+    }
+  } else {
+    contentHeight = node.intrinsicHeight;
+  }
+  // Out-of-flow children of a leaf: static position = the content-box
+  // origin plus their margins (specs/positioning.md — CSS's hypothetical
+  // inline position is approximated by the run's origin).
+  for (const child of node.children) {
+    if (child.inlineBox) continue;
+    const margin = resolveMargin(child.style.margin, innerWidth);
+    child.staticSlot = {
+      kind: "block",
+      x: style.border.left + padding.left + (margin.left ?? 0),
+      y: style.border.top + padding.top + (margin.top ?? 0),
+    };
+  }
+  return contentHeight;
 }
 
 /**
@@ -360,38 +464,58 @@ function alignLeafText(
   }
 }
 
-/**
- * A text leaf's wrapped lines with their vertical geometry. Lines are one
- * row tall unless an atomic inline box on the line is taller — the line
- * grows to the tallest box (per CSS line-box growth), and later lines
- * shift down. `lineGap` rows separate lines as usual. Requires the leaf's
- * inline boxes to be laid out already (their rect heights are read here);
- * marker advances must be resolved.
- */
+/** A single-column text leaf's wrapped lines with their vertical
+ * geometry: `lineGap` rows between lines, per-line heights and text
+ * drops from leafLineMetrics (multicol leaves fragment through
+ * multicolLeafGeometry instead). Marker advances must be resolved. */
 export function leafLineGeometry(
   node: LayoutNode,
   contentWidth: number,
 ): { spans: LineSpan[]; lineY: number[]; textY: number[]; totalRows: number } {
-  const spans =
-    node.style.whiteSpace !== "normal"
-      ? hardLineSpans(node.text)
-      : wrapLineSpans(node.text, contentWidth, {
-          advances: node.advances,
-          tracking: node.style.tracking,
-        });
-  const boxes = node.children.filter((child) => child.inlineBox);
+  const spans = leafLineSpans(node, contentWidth);
+  const { heights, textOffsets } = leafLineMetrics(node, spans);
   const lineY: number[] = [];
   const textY: number[] = [];
   let y = 0;
-  let boxIndex = 0;
   for (let s = 0; s < spans.length; s++) {
     lineY.push(y);
-    const span = spans[s]!;
+    textY.push(y + textOffsets[s]!);
+    y += heights[s]! + (s < spans.length - 1 ? node.style.lineGap : 0);
+  }
+  return { spans, lineY, textY, totalRows: y };
+}
+
+/** A leaf's line spans: hard `<br>` lines under nowrap/pre, greedy
+ * word-wrap at the content width otherwise. */
+export function leafLineSpans(node: LayoutNode, contentWidth: number): LineSpan[] {
+  return node.style.whiteSpace !== "normal"
+    ? hardLineSpans(node.text)
+    : wrapLineSpans(node.text, contentWidth, {
+        advances: node.advances,
+        tracking: node.style.tracking,
+      });
+}
+
+/**
+ * Per-line height and text drop for a leaf's wrapped lines. Lines are one
+ * row tall unless an atomic inline box on the line is taller — the line
+ * grows to the tallest box (per CSS line-box growth). `vertical-align:
+ * bottom` on a box drops the line's TEXT to the box's last row
+ * (grid-exact in every engine, probed); the largest such box wins.
+ * top/middle/baseline behave as top (cell-model deviation — middle and
+ * baseline are off-grid). Requires the leaf's inline boxes to be laid
+ * out already (their rect heights are read here).
+ */
+export function leafLineMetrics(
+  node: LayoutNode,
+  spans: LineSpan[],
+): { heights: number[]; textOffsets: number[] } {
+  const boxes = node.children.filter((child) => child.inlineBox);
+  const heights: number[] = [];
+  const textOffsets: number[] = [];
+  let boxIndex = 0;
+  for (const span of spans) {
     let height = 1;
-    // `vertical-align: bottom` on an atomic box drops the line's TEXT to
-    // the box's last row (grid-exact in every engine, probed); the
-    // largest such box wins. top/middle/baseline behave as top
-    // (cell-model deviation — middle and baseline are off-grid).
     let textOffset = 0;
     for (let i = span.start; i < span.end; i++) {
       if (node.text[i] !== OBJECT_REPLACEMENT) continue;
@@ -407,10 +531,10 @@ export function leafLineGeometry(
         );
       boxIndex++;
     }
-    textY.push(y + Math.min(textOffset, height - 1));
-    y += height + (s < spans.length - 1 ? node.style.lineGap : 0);
+    heights.push(height);
+    textOffsets.push(Math.min(textOffset, height - 1));
   }
-  return { spans, lineY, textY, totalRows: y };
+  return { heights, textOffsets };
 }
 
 /** The used gap in an axis: the resolved gap floored at the axis's rule
@@ -527,15 +651,7 @@ function layoutBlock(
       "fill",
       cache,
     );
-    const crossAvailable = innerWidth - child.localRect.width;
-    const bothAutoX = childMargin.left === null && childMargin.right === null;
-    const oneAutoLeft = childMargin.left === null && childMargin.right !== null;
-    const oneAutoRight = childMargin.right === null && childMargin.left !== null;
-    let crossOffset: number;
-    if (bothAutoX) crossOffset = Math.floor(crossAvailable / 2);
-    else if (oneAutoLeft) crossOffset = crossAvailable - marginRight;
-    else if (oneAutoRight) crossOffset = marginLeft;
-    else crossOffset = marginLeft;
+    const crossOffset = blockCrossOffset(childMargin, innerWidth, child.localRect.width);
 
     // `y` tracks the position where the next child's top edge goes. Margins
     // are added JUST BEFORE placing each child, then only the child's height
@@ -551,13 +667,27 @@ function layoutBlock(
   return y - startY;
 }
 
+/** Horizontal placement of a box inside its block-flow slot: `auto`
+ * margins center or end-align, fixed margins offset (CSS block flow;
+ * multicol columns use the same rule). */
+export function blockCrossOffset(
+  margin: NullableInsets,
+  slotWidth: number,
+  boxWidth: number,
+): number {
+  const available = slotWidth - boxWidth;
+  if (margin.left === null && margin.right === null) return Math.floor(available / 2);
+  if (margin.left === null) return available - (margin.right ?? 0);
+  return margin.left;
+}
+
 /**
  * CSS margin-collapsing rule for two adjacent block-flow margins:
  * - both positive → the larger absorbs the smaller.
  * - both negative → the more negative absorbs the less negative.
  * - mixed → they sum (positive shrunk by the negative).
  */
-function collapseMargins(a: number, b: number): number {
+export function collapseMargins(a: number, b: number): number {
   if (a >= 0 && b >= 0) return Math.max(a, b);
   if (a <= 0 && b <= 0) return Math.min(a, b);
   return a + b;
@@ -658,7 +788,11 @@ export function intrinsicOuterWidth(node: LayoutNode, cache: IntrinsicCache): nu
 
 function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
-  if (inFlow.length === 0) return node.intrinsicWidth;
+  if (inFlow.length === 0) {
+    if (node.style.display === "multicol")
+      return multicolIntrinsicInnerWidth(node.style, node.intrinsicWidth);
+    return node.intrinsicWidth;
+  }
   if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "flex" && node.style.flexDirection === "row") {
@@ -667,7 +801,9 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
       Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + intrinsicOuterWidth(c, cache), 0) + gap;
   }
-  return inFlow.reduce((max, c) => Math.max(max, intrinsicOuterWidth(c, cache)), 0);
+  const widest = inFlow.reduce((max, c) => Math.max(max, intrinsicOuterWidth(c, cache)), 0);
+  if (node.style.display === "multicol") return multicolIntrinsicInnerWidth(node.style, widest);
+  return widest;
 }
 
 /**

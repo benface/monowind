@@ -290,10 +290,12 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
 }
 
-/* Shared cell geometry for engine-sized boxes — both engine-POSITIONED
- * elements and in-flow atomic inline boxes (below). */
+/* Shared cell geometry for engine-sized boxes — engine-POSITIONED
+ * elements, in-flow atomic inline boxes, and in-flow multicol spanners
+ * (below). */
 mono-wind:not([measuring]) [data-mw-laid-out],
-mono-wind:not([measuring]) [data-mw-inline-box] {
+mono-wind:not([measuring]) [data-mw-inline-box],
+mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
   box-sizing: border-box !important;
   /* Trailing-gap allowance: a tracked box's lines end with a phantom
    * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
@@ -361,6 +363,93 @@ mono-wind:not([measuring]) [data-mw-inline-box] {
  * off-grid and behave as top (cell-model deviation). */
 mono-wind:not([measuring]) [data-mw-inline-box][data-mw-vbottom] {
   vertical-align: bottom !important;
+}
+
+/* Multicol TEXT LEAF (specs/multicol.md "Browser agreement"): native
+ * columns driven by the engine's used values — quantized count and gap,
+ * sequential fill into the engine-quantized content height — so the
+ * browser breaks on exactly the engine's lines and the native text,
+ * caret, and selection sit under the grid's glyphs. The orphans/widows
+ * initial value of 2 vetoes single-line column endings the engine's
+ * model allows (probed: Chromium then breaks [3, 2, 2] where the engine
+ * says [3, 3, 1]), so both reset to 1. */
+mono-wind:not([measuring]) [data-mw-multicol] {
+  column-count: var(--mw-colc, 1) !important;
+  column-width: auto !important;
+  column-gap: calc(var(--mw-colg, 0) * var(--mw-cw, 1px)) !important;
+  column-fill: auto !important;
+  orphans: 1 !important;
+  widows: 1 !important;
+  /* No trailing-gap carve-out here: it would widen only the LAST column
+   * (native columns split the content box equally), so tracked multicol
+   * text instead wraps at `width − tracking` engine-side — the exact
+   * fit rule the browser applies per column. */
+  width: calc(var(--mw-w, 0) * var(--mw-cw, 1px) + 0.03125px) !important;
+  padding-right: calc((var(--mw-pr, 0) + var(--mw-br, 0)) * var(--mw-cw, 1px)) !important;
+  /* Column-axis reconstruction: the engine's box is TIGHT (each
+   * column's last trailing leading trimmed, like single-column leaves),
+   * but browsers count FULL line boxes when fragmenting — re-extend by
+   * the `--mw-lh − 1` leading rows so every column fits its lines.
+   * `--mw-ink` (the host-measured ink overhang — WebKit breaks at ink
+   * bottoms, and some fonts draw taller than their line box) plus one
+   * layout unit of calc-rounding slack keep the last line's ink inside
+   * its column. The extension is under one line box, so no engine fits
+   * an extra line, and the extra rows are blank leading — nothing
+   * visible moves. */
+  height: calc(
+    (var(--mw-h, 0) + var(--mw-lh, 1) - 1) * var(--mw-ch, 1px) + var(--mw-ink, 0px) + 0.03125px
+  ) !important;
+}
+
+/* Paragraph-flow multicol children (specs/multicol.md "Fragmenting
+ * text-leaf children"): chrome-less text leaves stay IN FLOW inside the
+ * container's native columns so the browser fragments them itself, with
+ * engine-quantized margins (native sibling collapsing IS the engine's
+ * collapse rule). Width and height stay natural — a chrome-less block's
+ * natural height is full line boxes, exactly what fragmentation counts;
+ * typography quantization and the color/background locks come from the
+ * universal rules, and line-height inherits from the container. */
+mono-wind:not([measuring]) [data-mw-multicol-flow] {
+  position: static !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-width: 0 !important;
+  margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
+  margin-right: calc(var(--mw-mr, 0) * var(--mw-cw, 1px)) !important;
+  margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
+  margin-left: calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
+  column-span: none !important;
+}
+
+/* In-flow multicol SPANNER (specs/multicol.md): a normally laid-out box
+ * that stays in the native flow so paragraphs fragment around it —
+ * engine-forced geometry (the shared rule above), quantized margins,
+ * `column-span: all`. The half-leading translate doubles as the
+ * containing block for its absolutized descendants (a transformed box
+ * contains them like a positioned one). */
+mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
+  position: static !important;
+  column-span: all !important;
+  margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
+  margin-right: 0 !important;
+  margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
+  margin-left: calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
+  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
+}
+
+/* Spanner-split paragraph flow trusts the NATIVE balancer per segment
+ * (probed pixel-exact in all three engines under quantized inputs):
+ * `column-fill: balance` and the natural height replace the
+ * fill-to-computed-height reconstruction of the base multicol rule. */
+mono-wind:not([measuring]) [data-mw-multicol][data-mw-multicol-balance] {
+  column-fill: balance !important;
+  height: auto !important;
 }
 
 /* Author-requested `overflow: hidden` or `overflow: clip` — both keep

@@ -53,6 +53,18 @@ export function readCellStyle(
   // row — cell-model deviation).
   const rawDisplay = cs.display || TABLE_DISPLAY_FALLBACK[el.tagName] || "";
   const tableRole: TableRole = TABLE_ROLES[rawDisplay] ?? "none";
+  // Multicol: a block with an authored column-count or column-width
+  // (specs/multicol.md). Computed values are specified values (probed
+  // — no used-value trap).
+  const columnCount =
+    cs.columnCount && cs.columnCount !== "auto"
+      ? Math.max(1, Math.floor(Number(cs.columnCount) || 1))
+      : null;
+  const columnWidthPx =
+    cs.columnWidth && cs.columnWidth !== "auto" ? parseFloat(cs.columnWidth) : NaN;
+  const columnWidth = Number.isFinite(columnWidthPx)
+    ? Math.max(1, pxToCells(columnWidthPx, rootFontSizePx))
+    : null;
   const display: Display =
     rawDisplay === "flex" || rawDisplay === "inline-flex"
       ? "flex"
@@ -62,7 +74,9 @@ export function readCellStyle(
           ? "table"
           : rawDisplay === "none" || isZeroClipped(cs)
             ? "none"
-            : "block";
+            : columnCount !== null || columnWidth !== null
+              ? "multicol"
+              : "block";
 
   // Grid templates: `getComputedStyle` on a live grid container returns
   // the USED track list (expanded, in px) — fr factors, repeat(), and
@@ -224,7 +238,17 @@ export function readCellStyle(
     margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     position: readPosition(cs.position),
     insets: readInsets(cs, csm, classAttr, inlineStyle, rootFontSizePx),
-    gapX: readSpacing(cs.columnGap === "normal" ? "0px" : cs.columnGap, rootFontSizePx),
+    // `column-gap: normal` is 0 in flex/grid but 1em in multicol, per
+    // CSS (specs/multicol.md "Reading"). Headless DOMs report unset as
+    // an empty string — same initial value.
+    gapX: readSpacing(
+      cs.columnGap === "normal" || cs.columnGap === ""
+        ? display === "multicol"
+          ? `${fontSizePx}px`
+          : "0px"
+        : cs.columnGap,
+      rootFontSizePx,
+    ),
     gapY: readSpacing(cs.rowGap === "normal" ? "0px" : cs.rowGap, rootFontSizePx),
     border: readBorderInsets(cs),
     borderStyle: {
@@ -275,7 +299,10 @@ export function readCellStyle(
     textAlign: readTextAlign(el, cs),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
-    ruleX: display === "flex" || display === "grid" ? readGapRule(cs, "x") : null,
+    ruleX:
+      display === "flex" || display === "grid" || display === "multicol"
+        ? readGapRule(cs, "x")
+        : null,
     ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y") : null,
     ruleBreak: readKeyword(cs, "--mw-rule-break", ["none", "intersection"] as const, "normal"),
     ruleInset:
@@ -291,6 +318,13 @@ export function readCellStyle(
       ["all", "around", "between"] as const,
       "normal",
     ),
+    columnCount,
+    columnWidth,
+    columnFill: cs.columnFill === "auto" ? "auto" : "balance",
+    columnSpan: cs.columnSpan === "all",
+    breakBeforeColumn: cs.breakBefore === "column",
+    breakAfterColumn: cs.breakAfter === "column",
+    breakInsideAvoid: cs.breakInside === "avoid" || cs.breakInside === "avoid-column",
   };
   applyBorderCollapse(style, cs);
   return style;

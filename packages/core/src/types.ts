@@ -33,7 +33,7 @@ export type Size =
   | { kind: "max-content" }
   | { kind: "fit-content" };
 
-export type Display = "block" | "flex" | "grid" | "table" | "none";
+export type Display = "block" | "flex" | "grid" | "table" | "multicol" | "none";
 /** Table-internal role from the computed display (specs/table.md).
  * `"none"` on everything that isn't table-internal. Cells and captions
  * keep `display: "block"` — they ARE block containers; the table
@@ -381,6 +381,21 @@ export interface CellStyle {
    * connect. */
   ruleInset: number | "overlap-join";
   ruleVisibilityItems: RuleVisibilityItems;
+  /** Multicol container inputs (specs/multicol.md): authored
+   * column-count / column-width (cells), null = auto. A container is
+   * multicol (display "multicol") when either is set on a block. */
+  columnCount: number | null;
+  columnWidth: number | null;
+  columnFill: "auto" | "balance";
+  /** column-span: all on a child — closes the column row, spans the
+   * container's full content width (specs/multicol.md "Spanners"). */
+  columnSpan: boolean;
+  /** Forced column breaks (`break-before/after-column`). */
+  breakBeforeColumn: boolean;
+  breakAfterColumn: boolean;
+  /** `break-inside: avoid` / `avoid-column` — a paragraph-flow child
+   * fragments as one unbreakable unit (specs/multicol.md). */
+  breakInsideAvoid: boolean;
 }
 
 export interface LayoutNode {
@@ -494,6 +509,50 @@ export interface LayoutNode {
    * (percent resolves against the containing block width, which only
    * layout knows); the renderers read this, never `style.padding`. */
   resolvedPadding: Insets;
+  /** Fragmented line map of a multicol text leaf (specs/multicol.md):
+   * text wrapped at the column width, each line assigned a column and
+   * column-local rows. Written by layout; the plain-text renderer reads
+   * it back so both place lines identically. A paragraph-flow container
+   * carries a spanless one for its rules, height fold, and native
+   * column vars; its children carry their own line maps in
+   * container-content coordinates. */
+  multicolGeometry?: MulticolLeafGeometry;
+  /** Paragraph-flow multicol child (specs/multicol.md "Fragmenting
+   * text-leaf children"): stays IN FLOW in the browser inside the
+   * container's native columns so the browser fragments it itself.
+   * Carries the engine-resolved margins the companion re-applies
+   * quantized. */
+  multicolFlow?: NullableInsets;
+  /** In-flow multicol SPANNER (specs/multicol.md): a normally laid-out
+   * box that stays in the native flow with `column-span: all`, its
+   * geometry forced like a laid-out element's. Carries the quantized
+   * native margins (`left` = the engine's cross offset). */
+  multicolFlowSpan?: NullableInsets;
+}
+
+/** A multicol text leaf's per-line fragmentation. `lineY`/`textY` are
+ * COLUMN-local rows; `lineX` is the line's column's content-relative x.
+ * Leaf columns are all `columnWidth` wide (the division remainder is
+ * folded into the engine-owned right padding so the browser's equal
+ * fractional columns land on the same whole cells). */
+export interface MulticolLeafGeometry {
+  spans: { start: number; end: number }[];
+  lineY: number[];
+  textY: number[];
+  lineX: number[];
+  totalRows: number;
+  columnCount: number;
+  columnWidth: number;
+  gap: number;
+  /** Columns holding at least one line — overflow columns included. */
+  columnsUsed: number;
+  /** Spanner-split flow: one rule extent per SEGMENT (content-relative
+   * rows and its occupied columns); absent = one full-height segment. */
+  ruleSegments?: { start: number; end: number; columns: number }[];
+  /** Spanner-split flow relies on the NATIVE balancer per segment (the
+   * companion keeps `column-fill: balance` and the natural height)
+   * instead of the fill-to-computed-height reconstruction. */
+  nativeBalance?: boolean;
 }
 
 /** The root's cell, in px: width = glyph advance + the root's
@@ -504,6 +563,11 @@ export interface CellMetrics {
   width: number;
   height: number;
   letterSpacing: number;
+  /** How far a glyph's ink extends past the cell's line box, in px
+   * (some fonts' ascent + descent exceed their `normal` line box).
+   * WebKit breaks columns at ink bottoms, so multicol leaves get this
+   * much extra native column height (see styles.css). */
+  inkOverhang?: number;
 }
 
 export function defaultCellStyle(): CellStyle {
@@ -578,6 +642,13 @@ export function defaultCellStyle(): CellStyle {
     ruleBreak: "normal",
     ruleInset: 0,
     ruleVisibilityItems: "normal",
+    columnCount: null,
+    columnWidth: null,
+    columnFill: "balance",
+    columnSpan: false,
+    breakBeforeColumn: false,
+    breakAfterColumn: false,
+    breakInsideAvoid: false,
   };
 }
 

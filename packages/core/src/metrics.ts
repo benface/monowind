@@ -29,7 +29,13 @@ export function percentToCells(percent: number, containerCells: number): number 
 export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellMetrics {
   const rect = probe.getBoundingClientRect();
   const letterSpacing = parseFloat(getComputedStyle(host).letterSpacing) || 0;
-  return { width: rect.width / 100, height: rect.height, letterSpacing };
+  // Glyph ink vs line box: a Range rect spans the font's ascent + descent,
+  // which some fonts draw TALLER than their `normal` line box. WebKit
+  // fragments columns at ink bottoms, so multicol needs the overhang.
+  const range = probe.ownerDocument.createRange();
+  range.selectNodeContents(probe);
+  const inkOverhang = Math.max(0, range.getBoundingClientRect().height - rect.height);
+  return { width: rect.width / 100, height: rect.height, letterSpacing, inkOverhang };
 }
 
 export function getRootFontSizePx(): number {

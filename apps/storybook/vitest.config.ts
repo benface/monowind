@@ -15,6 +15,10 @@ export default defineConfig({
     // Generous: three browsers share a loaded CI runner's CPU, and slow
     // tails have crossed 30s.
     testTimeout: 60_000,
+    // Playwright's initial `page.goto` occasionally times out or crashes
+    // when three browsers boot in parallel on a busy machine (WebKit is
+    // the usual culprit). Second attempts recover cleanly.
+    retry: 1,
     browser: {
       enabled: true,
       provider: playwright(),

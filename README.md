@@ -27,7 +27,8 @@ forms, and accessibility semantics stay fully intact.
 ```
 
 > **Status: early development.** Block, flex, grid (subgrid and named
-> areas included), and table layout (collapsed borders as shared
+> areas included), multi-column (`columns-*`, balancing, spanners,
+> column rules), and table layout (collapsed borders as shared
 > box-drawing lattices), gap decorations (`rule-*` separators with
 > junction glyphs), text wrap, and margins work; a `<mono-wind plain-text>`
 > attribute renders a selectable text mirror. The unified-render
