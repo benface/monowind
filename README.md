@@ -37,6 +37,33 @@ forms, and accessibility semantics stay fully intact.
 > live in [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
+## Pointer states in grid mode
+
+Under the default `select="grid"`, non-interactive elements pass
+pointer events through to the grid so drag-selection works — which
+would normally make `:hover`/`:active` dead on a plain `<div>`.
+monowind synthesizes both instead: the engine hit-tests the pointer
+against the cell layout and Tailwind's `hover:` and `active:` variants
+(plus `group-*`/`peer-*`) respond as usual, `cursor-*` included, with
+selection intact. Two things still need a real hit target: native
+`title` tooltips and your own JS click handlers on non-interactive
+elements — opt those elements in with `pointer-events-auto!` (they
+then block grid selection over their cells, like buttons do).
+
+If you redefine Tailwind's `hover:` variant yourself, your definition
+wins — include the data attribute (and Tailwind's hover-capability
+gate) to keep grid-mode hover working:
+
+```css
+@custom-variant hover {
+  @media (hover: hover) {
+    &:is(:hover, [data-mw-hover]) {
+      @slot;
+    }
+  }
+}
+```
+
 ## Structure
 
 This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):

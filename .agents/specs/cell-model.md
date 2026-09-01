@@ -331,6 +331,114 @@ size, not the cell width. **Deviations**: negative values clamp to 0
 (hanging indents are off-grid), percentages resolve to 0, and the
 indent doesn't count toward intrinsic sizing.
 
+## Opacity
+
+`opacity` is honored: ancestors MULTIPLY down the paint walk (CSS
+opacity nests, it doesn't inherit) and the product rides on every grid
+span the subtree paints (glyphs, backgrounds, borders, rules), which
+composites against the page. **Deviations**: translucency blends with
+what's behind the HOST, never with covered cells (the front paint wins
+a cell outright, as always); opacity on INLINE elements (a `<span>`)
+is ignored — only block-level boxes carry it. `opacity: 0` still
+paints its glyphs — invisible but present, so `select="grid"`
+selection keeps working (unlike `invisible`). The light DOM keeps the
+authored opacity natively, so form-control ink dims in step.
+
+## Animation
+
+Transitions of the SAMPLED properties — `color`, the `border-*-color`
+longhands, and `opacity` — animate the grid: `transitionrun` on the
+host starts a per-frame relayout loop (element.ts) that re-reads
+computed styles until every tracked transition ends (a 30s safety
+valve guards lost end events), so the grid repaints with the browser's
+own interpolated values and lands exactly on the target.
+
+This works because the text-visibility lock is
+`-webkit-text-fill-color: transparent`, NOT `color: transparent` — the
+computed `color` stays live and authored transitions actually run on
+it (decoration ink follows `color` and gets its own transparent lock).
+Under `[measuring]` — and `[settling]`, which replaces it for one
+forced style flush at the end of every layout — `transition-property`
+is forced to the sampled set: lock-owned properties (backgrounds,
+decoration color, geometry) snap instead of animating a lock toggle,
+while in-flight fades of sampled properties survive the pass. The
+settling flush matters — without it, the snap from the measured real
+background back to the lock's transparent would commit with the
+authored list live and start a NATIVE fade (transitions beat
+`!important` in the cascade) that paints the light-DOM element's box
+on top of the grid. Every unmasked commit — frame ends included — then
+sees no lock delta, so the authored list is fully respected there:
+`transition-colors` does not make `opacity` fade.
+
+`background-color` has NO native timeline at all (the lock holds the
+light-DOM bg transparent at every unmasked commit), so the engine
+SYNTHESIZES its transitions (animate.ts): a read that sees the value
+change on an element whose authored `transition` covers
+background-color arms a fade with the authored duration, delay, and
+easing (cubic-bezier solved numerically; `steps()` behaves as linear),
+interpolating premultiplied in OKLAB (sRGB for legacy rgb pairs, per
+css-color-4) and driving the same per-frame loop. The config resolves
+after the settling flush, where the authored `transition-property` is
+readable again and the reads themselves can start nothing.
+**Deviations**: transitions of other non-sampled properties
+(decoration color, geometry) flip to their target on the next relayout
+instead of fading; CSS `animation` keyframes are not yet sampled
+(transitions only).
+
+## Selection
+
+A live grid selection survives repaints, by preserving node identity
+(paint.ts). A paint whose STRUCTURE matches the last one — same
+segment texts, same span/bare split, as during fades, which change
+only colors — patches span styles in place: no node churn, so
+Selections AND an in-flight drag's browser-internal anchor survive
+untouched in every engine. A STRUCTURAL change rebuilds the nodes: the
+selection is captured as flat character offsets (via
+`Selection.getComposedRanges`, with Chromium's
+`ShadowRoot.getSelection()` as the legacy fallback) and restored with
+`setBaseAndExtent` after — and while a primary press holds a
+selection anchor in the grid, the rebuild is deferred to release
+instead, because even a restored rebuild collapses Chromium's drag.
+Any API surprise degrades to the old behavior (selection collapses),
+never an error. **Deviations**: a selection reaching OUTSIDE the grid
+(e.g. select-all across the page) is not restored across structural
+rebuilds; restore assumes a forwards selection where the engine
+doesn't expose `Selection.direction`.
+
+## Pointer states
+
+Under `select="grid"`, non-interactive light-DOM elements are
+`pointer-events: none` (drag-selection lands on the grid), so
+`:hover`/`:active` can never match on them. The engine synthesizes
+both (pointer.ts + element.ts): pointer events stay on the grid, the
+pointer's cell is hit-tested against the layout tree, and the covered
+element plus its ancestors — the same chain native `:hover` marks —
+carry `data-mw-hover` (`data-mw-active` between press and release,
+kept native-faithful: only while the pointer stays over the pressed
+element). rules.css redefines the Tailwind `hover:`/`active:` variants
+to match either the pseudo-class or the attribute, preserving
+Tailwind's own `(hover: hover)` media gate; `group-*` and `peer-*`
+compose from the redefined variants automatically. The hovered
+element's computed `cursor` is mirrored onto the grid so
+`cursor-pointer` shows. Hover synthesis runs only under
+`select="grid"` on hover-capable pointers; active synthesis is not
+hover-gated (touch presses count). The chain re-derives on scroll and
+after every layout, so content moving under a stationary pointer
+updates like native `:hover`.
+
+Consumers who redefine `@custom-variant hover` themselves win (last
+definition counts) — their selector must include `[data-mw-hover]`
+(block form, keeping the media gate) or grid-mode hover stops working;
+the README carries the snippet. **Deviations**: only the Tailwind
+variants (and selectors written against the data attributes)
+participate — raw `:hover` in hand-written CSS stays native-only;
+hover resolves to block-level boxes (inline elements carry no
+attribute, but `group-*` reaches them through an ancestor); overlaps
+resolve by grid paint order; native `title` tooltips and JS
+pointer/click handlers on non-interactive elements still need a real
+hit target — `pointer-events-auto!` is the escape hatch, at the cost
+of grid selection over that element.
+
 ## Intrinsic sizing keywords
 
 `width: min-content | max-content | fit-content` (`w-min` / `w-max` /

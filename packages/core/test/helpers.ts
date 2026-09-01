@@ -10,10 +10,11 @@ export function makeNode(overrides: {
   text?: string;
   intrinsicWidth?: number;
   intrinsicHeight?: number;
+  source?: Element;
 }): LayoutNode {
   const text = overrides.text ?? "";
   return {
-    source: stubElement,
+    source: overrides.source ?? stubElement,
     style: { ...defaultCellStyle(), ...overrides.style },
     children: overrides.children ?? [],
     text,

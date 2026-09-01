@@ -34,6 +34,11 @@ export interface CellPaint {
   fontWeight?: string;
   fontStyle?: string;
   textDecorationLine?: string;
+  /** Effective opacity (ancestor product, baked by the walk) as a CSS
+   * value — the span composites against the page, so translucency
+   * blends with what's behind the HOST, never with covered cells.
+   * `"0"` still paints: the glyphs stay selectable in grid mode. */
+  opacity?: string;
 }
 
 /** One row of same-paint runs. Joining every segment's text reproduces
@@ -69,13 +74,14 @@ function rowSegments(row: string[], paints: (CellPaint | undefined)[]): CellSegm
   return segments;
 }
 
-function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
+export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
   return (
     a.color === b?.color &&
     a.backgroundColor === b?.backgroundColor &&
     a.fontWeight === b?.fontWeight &&
     a.fontStyle === b?.fontStyle &&
-    a.textDecorationLine === b?.textDecorationLine
+    a.textDecorationLine === b?.textDecorationLine &&
+    a.opacity === b?.opacity
   );
 }
 
@@ -87,6 +93,7 @@ export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): vo
   if (paint.fontWeight !== undefined) style.fontWeight = paint.fontWeight;
   if (paint.fontStyle !== undefined) style.fontStyle = paint.fontStyle;
   if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
+  if (paint.opacity !== undefined) style.opacity = paint.opacity;
 }
 
 /** True when a segment carries no paint — the DOM adapter emits a bare
@@ -97,7 +104,8 @@ export function isBarePaint(paint: CellPaint): boolean {
     paint.backgroundColor === undefined &&
     paint.fontWeight === undefined &&
     paint.fontStyle === undefined &&
-    paint.textDecorationLine === undefined
+    paint.textDecorationLine === undefined &&
+    paint.opacity === undefined
   );
 }
 
@@ -150,11 +158,23 @@ function textPaint(source: {
 
 type PutGlyph = (x: number, y: number, glyph: string, paint: CellPaint | undefined) => void;
 
-function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: PutGlyph): void {
+function walk(
+  node: LayoutNode,
+  parentAbsX: number,
+  parentAbsY: number,
+  put: PutGlyph,
+  alpha = 1,
+): void {
   if (node.tableHidden) return;
   const absX = parentAbsX + node.localRect.x;
   const absY = parentAbsY + node.localRect.y;
   const style = node.style;
+  // Effective opacity (specs/cell-model.md "Opacity"): ancestors
+  // multiply (CSS nests, it doesn't inherit) and the value rides on
+  // every paint this node produces — including an opacity of 0, whose
+  // glyphs must stay in the grid for select="grid" selection.
+  const alphaPaint = (paint: CellPaint | undefined): CellPaint | undefined =>
+    alpha >= 1 ? paint : { ...paint, opacity: String(Math.round(alpha * 1000) / 1000) };
 
   // Fill the border-box with painted spaces so this element's bg
   // wipes ancestor decoration glyphs at these cells; own borders /
@@ -162,7 +182,9 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
   // the same fill without a visible color.
   if (style.backgroundColor !== undefined || style.backgroundClear) {
     const fillPaint: CellPaint | undefined =
-      style.backgroundColor !== undefined ? { backgroundColor: style.backgroundColor } : undefined;
+      style.backgroundColor !== undefined
+        ? alphaPaint({ backgroundColor: style.backgroundColor })
+        : undefined;
     for (let dy = 0; dy < node.localRect.height; dy++) {
       for (let dx = 0; dx < node.localRect.width; dx++) {
         put(absX + dx, absY + dy, " ", fillPaint);
@@ -177,12 +199,12 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     borderRuns,
   );
   for (const run of borderRuns) {
-    const paint = run.color === undefined ? undefined : { color: run.color };
+    const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
     for (let i = 0; i < run.length; i++) put(run.x + i, run.y, run.glyph, paint);
   }
   if (node.decorationRuns) {
     for (const run of node.decorationRuns) {
-      const paint = run.color === undefined ? undefined : { color: run.color };
+      const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
       for (let i = 0; i < run.length; i++) put(absX + run.x + i, absY + run.y, run.glyph, paint);
     }
   }
@@ -206,8 +228,8 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     // includes the trailing letter-spacing gap, so the engine ends lines
     // at `width − tracking` to sit under it.
     const alignWidth = multicol ? Math.max(1, multicol.columnWidth - style.tracking) : contentWidth;
-    const leafPaint = textPaint(style);
-    const inlinePaints = node.inlineElements?.map((entry) => textPaint(entry));
+    const leafPaint = alphaPaint(textPaint(style));
+    const inlinePaints = node.inlineElements?.map((entry) => alphaPaint(textPaint(entry)));
     for (let i = 0; i < spans.length; i++) {
       const span = spans[i]!;
       const row = contentY + textY[i]!;
@@ -246,7 +268,7 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
           const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
           if (node.text[k] === INLINE_PAD) {
             if (entry?.backgroundColor) {
-              put(x + dx, row + dy, " ", { backgroundColor: entry.backgroundColor });
+              put(x + dx, row + dy, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
             }
           } else {
             put(x + dx, row + dy, node.text[k]!, entry ? inlinePaints![inlineIndex] : leafPaint);
@@ -259,7 +281,7 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
   }
 
   for (const child of paintOrderedChildren(node)) {
-    walk(child, absX, absY, put);
+    walk(child, absX, absY, put, alpha * child.style.opacity);
   }
 }
 

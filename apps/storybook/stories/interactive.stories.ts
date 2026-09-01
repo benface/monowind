@@ -81,13 +81,15 @@ export const Input: StoryObj = {
     expect(grid).not.toContain("John Smith");
     expect(grid).toContain("Name:");
     expect(grid).toContain("Date of birth:");
-    // Cascade guard: form controls opt out of the color-transparent
-    // lock, so computed color and caret-color must both be visible.
+    // Cascade guard: form controls opt out of the ink locks, so
+    // computed color, the INHERITED text-fill (which, unlike color, has
+    // no UA default on controls), and caret-color must all be visible.
     for (const input of host.querySelectorAll<HTMLInputElement>("input")) {
-      const color = getComputedStyle(input).color;
-      expect(color).not.toBe("rgba(0, 0, 0, 0)");
-      expect(color).not.toBe("transparent");
-      expect(getComputedStyle(input).caretColor).not.toBe("rgba(0, 0, 0, 0)");
+      const cs = getComputedStyle(input);
+      expect(cs.color).not.toBe("rgba(0, 0, 0, 0)");
+      expect(cs.color).not.toBe("transparent");
+      expect(cs.webkitTextFillColor, "control ink visible").not.toBe("rgba(0, 0, 0, 0)");
+      expect(cs.caretColor).not.toBe("rgba(0, 0, 0, 0)");
     }
     // The size attribute drives intrinsic width: DD/MM are narrower
     // than YYYY (2 vs 4 content cells; same px-2 py-1 chrome).
@@ -330,9 +332,9 @@ export const Button: StoryObj = {
         </button>
         <button
           id="btn-full"
-          class="w-full cursor-pointer truncate border px-1 text-center hover:not-focus-visible:text-emerald-400 focus-visible:bg-amber-400"
+          class="w-full cursor-pointer truncate border px-1 text-center transition-colors duration-200 hover:not-focus-visible:text-emerald-400 focus-visible:bg-amber-400 active:opacity-50"
         >
-          full-width, centered label, custom hover and focus colors
+          full-width, centered label, with custom hover, active, and focus states
         </button>
       </div>
     </mono-wind>
@@ -360,5 +362,13 @@ export const Button: StoryObj = {
     const contentCells = cells("--mw-w") - 2 - 2; // border + px-1 each side
     const expectedOffset = 1 + 1 + Math.floor((contentCells - label.length) / 2);
     expect(line.indexOf(label)).toBe(expectedOffset);
+    // The `transition` class must not leak animation frames into the
+    // engine's style reads (the measuring gate snaps transitions) — a
+    // mid-fade read once painted this whole button transparent.
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const invisible = Array.from(grid.querySelectorAll("span")).filter(
+      (span) => span.textContent!.includes("full-width") && span.style.color === "rgba(0, 0, 0, 0)",
+    );
+    expect(invisible, "transitioned label paints visibly").toHaveLength(0);
   },
 };

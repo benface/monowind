@@ -14,18 +14,20 @@ import "@tailwindcss/browser";
 import { defineMonoWind } from "./element.ts";
 import rulesCss from "./rules.css?inline";
 import companionCss from "./styles.css?inline";
+import variantsCss from "./variants.css?inline";
 
 const style = document.createElement("style");
 style.setAttribute("data-monowind", "");
 style.textContent = companionCss;
 document.head.appendChild(style);
 
-// The rule-* utilities are Tailwind source: the plain tag above leaves
-// @utility inert, so hand them to the in-browser compiler separately.
+// The rule-* utilities and pointer-state variants are Tailwind source:
+// the plain tag above leaves @utility/@custom-variant inert, so hand
+// them to the in-browser compiler separately.
 const rules = document.createElement("style");
 rules.setAttribute("type", "text/tailwindcss");
 rules.setAttribute("data-monowind-rules", "");
-rules.textContent = rulesCss;
+rules.textContent = `${rulesCss}\n${variantsCss}`;
 document.head.appendChild(rules);
 
 defineMonoWind();

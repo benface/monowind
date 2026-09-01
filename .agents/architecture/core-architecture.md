@@ -89,7 +89,8 @@ same span tree, one monospace character per cell. The grid is
 aloud.
 
 The light DOM sits on top of the grid (later in the shadow tree). Its
-text goes `color: transparent` and its `background-color` goes
+ink goes transparent (`-webkit-text-fill-color`, so computed `color`
+stays live for animation sampling) and its `background-color` goes
 transparent too, so nothing paints twice — the grid is what the eye
 sees. Events, ARIA, focus, selection, clipboard, and form behavior all
 still work on the real elements. Relayout must never recreate or blur
@@ -250,11 +251,16 @@ dominant.
 - **Dynamic style-change detection** — RESOLVED 2026-08-30, shipped
   in Milestone 6. Instead of the CSS-transition-event trick (which
   risks a feedback loop with our own geometry writes), the host
-  registers `pointerover`/`pointerleave` + `focusin`/`focusout` +
+  registers `pointerover`/`pointerleave` + `pointerdown`/`pointerup`/
+  `pointercancel` + `keydown`/`keyup` + `focusin`/`focusout` +
   `input`/`change` listeners, event-delegated to laid-out elements;
   each fires a scoped relayout, coalesced per frame. No
   computed-style polling, no observation of properties we write —
-  the trigger is the state change itself.
+  the trigger is the state change itself. Under `select="grid"`,
+  `:hover`/`:active` on non-interactive elements are SYNTHESIZED from
+  cell hit-testing instead (`data-mw-hover`/`data-mw-active` +
+  redefined Tailwind variants — specs/cell-model.md "Pointer
+  states"), since the light DOM is never the hit target there.
 - **Transforms**: `translate-y-1` etc. would shift content off-grid (browser
   applies raw px). Likely answer: rescale the standalone `translate` property to
   cells the way insets are handled; neutralize matrix `transform`s. Needs

@@ -1,3 +1,4 @@
+import { trackBackground } from "./animate.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack, zeroInsets } from "./types.ts";
 import { warnOnce } from "./warn.ts";
@@ -283,7 +284,7 @@ export function readCellStyle(
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
     textDecorationLine: cs.textDecorationLine,
-    backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
+    backgroundColor: readAnimatedBackground(el, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     borderColor: {
       top: cs.borderTopColor,
@@ -298,6 +299,7 @@ export function readCellStyle(
     textAlignBlocked: authoredTextAlignBlocked(el, cs),
     textAlign: readTextAlign(el, cs),
     textIndent: readTextIndent(cs, rootFontSizePx),
+    opacity: readOpacity(cs.opacity),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
     ruleX:
@@ -373,6 +375,19 @@ export function isTransparentColor(value: string): boolean {
     normalized === "rgba(0, 0, 0, 0)" ||
     normalized === "currentcolor"
   );
+}
+
+/** Background-color read, routed through the synthesized-transition
+ * tracker (animate.ts): a mid-fade read returns the interpolated color
+ * — including near-transparent frames of a fade to/from unset, which
+ * must paint rather than read as "no background". */
+function readAnimatedBackground(
+  el: Element,
+  raw: string,
+  cs: CSSStyleDeclaration,
+): string | undefined {
+  const tracked = trackBackground(el, isTransparentColor(raw) ? "" : raw, cs);
+  return tracked === "" ? undefined : tracked;
 }
 
 function isClipping(value: string): boolean {
@@ -742,6 +757,12 @@ function readSpacing(value: string, rootFontSizePx: number): CellLength {
   }
   const px = parseFloat(value);
   return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : 0;
+}
+
+/** Computed `opacity`, clamped to [0, 1]; a non-numeric read is opaque. */
+function readOpacity(value: string): number {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 1;
 }
 
 /** `text-indent` in cells. Percentages come through as `Npx` after

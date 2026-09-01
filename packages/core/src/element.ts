@@ -1,3 +1,5 @@
+import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
+import { hitChain } from "./pointer.ts";
 import { renderPlainText } from "./plain-text.ts";
 import { paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
@@ -45,11 +47,32 @@ const DEFAULT_SELECT = "grid";
 const DYNAMIC_RELAYOUT_EVENTS = [
   "pointerover",
   "pointerleave",
+  // `:active` styles (`active:opacity-50`) need a repaint on both edges
+  // of a press — pointer and keyboard (Space/Enter activation).
+  "pointerdown",
+  "pointerup",
+  "pointercancel",
+  "keydown",
+  "keyup",
   "focusin",
   "focusout",
   "input",
   "change",
 ] as const;
+
+/** Transition properties the engine SAMPLES per animation frame (the
+ * grid repaints with true mid-fade values): computed `color` stays live
+ * under the text-fill lock, and nothing locks border colors or opacity.
+ * Lock-owned properties (backgrounds, decoration color, geometry) are
+ * snapped by the measuring/settling `transition-property` allow-list
+ * instead — keep the two in sync (styles.css "Lock toggles must
+ * never…"). */
+const SAMPLED_TRANSITION = /^(color|opacity|border-(top|right|bottom|left)-color|border-color)$/;
+
+/** Safety valve for the sampling loop: a transition whose end/cancel
+ * event never arrives (subtree torn down mid-fade) must not pin a rAF
+ * loop forever. */
+const SAMPLING_VALVE_MS = 30_000;
 
 // Import-safe outside the browser (SSR, Node scripts using renderPlainText):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
@@ -197,6 +220,30 @@ export class MonoWindElement extends HTMLElementBase {
       this.addEventListener(evt, this.#scheduleDynamicRelayout);
     }
 
+    // Animation sampling (specs/cell-model.md "Animation"): a running
+    // transition of a sampled property re-lays-out every frame, so the
+    // grid repaints with the browser's own interpolated values.
+    this.addEventListener("transitionrun", this.#onTransitionRun);
+    this.addEventListener("transitionend", this.#onTransitionDone);
+    this.addEventListener("transitioncancel", this.#onTransitionDone);
+
+    // Synthesized pointer states (specs/cell-model.md "Pointer
+    // states"): under select="grid" the light DOM is pointer-events:
+    // none, so :hover/:active can't match — the engine hit-tests the
+    // pointer's cell and marks the chain with data-mw-hover /
+    // data-mw-active (rules.css retargets the Tailwind variants).
+    this.addEventListener("pointermove", this.#onPointerMove);
+    this.addEventListener("pointerleave", this.#onPointerLeave);
+    this.addEventListener("pointerdown", this.#onPointerDown);
+    // Release on the window: a selection drag routinely ends outside
+    // the host, and the press state must thaw wherever it ends.
+    window.addEventListener("pointerup", this.#onPointerUp);
+    window.addEventListener("pointercancel", this.#onPointerUp);
+    // Content scrolling under a stationary pointer moves cells beneath
+    // it — native :hover re-evaluates there, so the synthesis must
+    // too. Capture catches nested scrollers (scroll doesn't bubble).
+    document.addEventListener("scroll", this.#onAnyScroll, { capture: true, passive: true });
+
     MonoWindElement.#watchHead(this);
     this.#scheduleLayout();
   }
@@ -211,7 +258,185 @@ export class MonoWindElement extends HTMLElementBase {
     for (const evt of DYNAMIC_RELAYOUT_EVENTS) {
       this.removeEventListener(evt, this.#scheduleDynamicRelayout);
     }
+    this.removeEventListener("transitionrun", this.#onTransitionRun);
+    this.removeEventListener("transitionend", this.#onTransitionDone);
+    this.removeEventListener("transitioncancel", this.#onTransitionDone);
+    this.#activeTransitions = 0;
+    this.removeEventListener("pointermove", this.#onPointerMove);
+    this.removeEventListener("pointerleave", this.#onPointerLeave);
+    this.removeEventListener("pointerdown", this.#onPointerDown);
+    window.removeEventListener("pointerup", this.#onPointerUp);
+    window.removeEventListener("pointercancel", this.#onPointerUp);
+    document.removeEventListener("scroll", this.#onAnyScroll, { capture: true });
+    this.#hoverClient = null;
+    this.#pressTarget = null;
+    this.#pressing = false;
+    this.#paintHeld = false;
+    this.#updatePointerStates();
     MonoWindElement.#unwatchHead(this);
+  }
+
+  /* === Synthesized pointer states ==================================== */
+
+  #hovered = new Set<Element>();
+  #pressed = new Set<Element>();
+  #pressTarget: Element | null = null;
+  #pressing = false;
+  #paintHeld = false;
+  #hoverClient: { x: number; y: number } | null = null;
+  #hoverCol = NaN;
+  #hoverRow = NaN;
+  #gridOrigin: { left: number; top: number } | null = null;
+  static #hoverCapable = typeof matchMedia === "undefined" ? null : matchMedia("(hover: hover)");
+
+  #onPointerMove = (event: Event): void => {
+    const { clientX, clientY } = event as PointerEvent;
+    this.#hoverClient = { x: clientX, y: clientY };
+    // High-frequency path: skip the update while the pointer stays in
+    // the same cell (state can only change with the cell — relayouts
+    // and scrolls have their own refresh calls).
+    const origin = this.#gridOrigin;
+    const metrics = this.#cellMetrics;
+    if (origin && metrics) {
+      const col = Math.floor((clientX - origin.left) / metrics.width);
+      const row = Math.floor((clientY - origin.top) / metrics.height);
+      if (col === this.#hoverCol && row === this.#hoverRow) return;
+    }
+    this.#updatePointerStates();
+  };
+
+  #onPointerLeave = (): void => {
+    this.#hoverClient = null;
+    this.#updatePointerStates();
+  };
+
+  #onPointerDown = (event: Event): void => {
+    const e = event as PointerEvent;
+    if (!e.isPrimary || e.button !== 0) return;
+    this.#hoverClient = { x: e.clientX, y: e.clientY };
+    this.#pressing = true;
+    this.#updatePointerStates(true);
+  };
+
+  #onPointerUp = (event: Event): void => {
+    if (!(event as PointerEvent).isPrimary) return;
+    if (!this.#pressing && !this.#pressTarget) return;
+    this.#pressing = false;
+    this.#pressTarget = null;
+    this.#updatePointerStates();
+    if (this.#paintHeld) this.#scheduleLayout();
+  };
+
+  #onAnyScroll = (): void => {
+    if (!this.#hoverClient) return;
+    this.#gridOrigin = null;
+    this.#updatePointerStates();
+  };
+
+  /** Recompute both synthesized chains from the stored pointer
+   * position and diff them onto the DOM; a change schedules a repaint.
+   * `claimPress` (pointerdown only) makes the fresh chain's innermost
+   * element the press target before the active chain derives from
+   * it. */
+  #updatePointerStates(claimPress = false): void {
+    const layout = this.#lastLayout;
+    const metrics = this.#cellMetrics;
+    let chain: Element[] = [];
+    if (
+      this.#hoverClient &&
+      layout &&
+      metrics &&
+      this.isConnected &&
+      this.getAttribute("select") === "grid" &&
+      (this.#pressing || MonoWindElement.#hoverCapable?.matches)
+    ) {
+      if (!this.#gridOrigin) {
+        const rect = this.#grid.getBoundingClientRect();
+        this.#gridOrigin = { left: rect.left, top: rect.top };
+      }
+      this.#hoverCol = Math.floor((this.#hoverClient.x - this.#gridOrigin.left) / metrics.width);
+      this.#hoverRow = Math.floor((this.#hoverClient.y - this.#gridOrigin.top) / metrics.height);
+      chain = hitChain(layout, this.#hoverCol, this.#hoverRow);
+    } else {
+      this.#hoverCol = NaN;
+      this.#hoverRow = NaN;
+    }
+    const innermost = chain.at(-1) ?? null;
+    if (claimPress) this.#pressTarget = innermost;
+    // Hover applies only on hover-capable pointers; the press chain
+    // exists regardless (touch has :active). Like native :active, the
+    // pressed element and its ancestors stay marked while the pointer
+    // is over the pressed element, drop when it leaves, return when it
+    // re-enters. (Mid-drag hover changes track normally — the paint
+    // hold keeps their restyles off the grid until release.)
+    const hover = MonoWindElement.#hoverCapable?.matches ? chain : [];
+    const pressIndex = this.#pressTarget ? chain.indexOf(this.#pressTarget) : -1;
+    const press = pressIndex >= 0 ? chain.slice(0, pressIndex + 1) : [];
+    let changed = this.#applyChain("data-mw-hover", this.#hovered, hover);
+    changed = this.#applyChain("data-mw-active", this.#pressed, press) || changed;
+    // Mirror the hovered cursor onto the grid (the real hit target) —
+    // `cursor-pointer` on a click-wired element is invisible otherwise.
+    const cursor = innermost ? getComputedStyle(innermost).cursor : "";
+    this.#grid.style.cursor = cursor === "auto" ? "" : cursor;
+    if (changed && this.isConnected) this.#scheduleLayout();
+  }
+
+  #applyChain(attribute: string, previous: Set<Element>, next: Element[]): boolean {
+    let changed = false;
+    const nextSet = new Set(next);
+    for (const el of previous) {
+      if (!nextSet.has(el)) {
+        el.removeAttribute(attribute);
+        changed = true;
+      }
+    }
+    for (const el of nextSet) {
+      if (!previous.has(el)) {
+        el.setAttribute(attribute, "");
+        changed = true;
+      }
+    }
+    previous.clear();
+    for (const el of nextSet) previous.add(el);
+    return changed;
+  }
+
+  #activeTransitions = 0;
+  #samplingLoopRunning = false;
+  #lastTransitionRun = 0;
+
+  #onTransitionRun = (event: Event): void => {
+    if (!SAMPLED_TRANSITION.test((event as TransitionEvent).propertyName)) return;
+    this.#activeTransitions++;
+    this.#lastTransitionRun = performance.now();
+    this.#startSamplingLoop();
+  };
+
+  #onTransitionDone = (event: Event): void => {
+    if (!SAMPLED_TRANSITION.test((event as TransitionEvent).propertyName)) return;
+    this.#activeTransitions = Math.max(0, this.#activeTransitions - 1);
+  };
+
+  #startSamplingLoop(): void {
+    if (this.#samplingLoopRunning) return;
+    this.#samplingLoopRunning = true;
+    const tick = (): void => {
+      if (
+        !this.isConnected ||
+        (this.#activeTransitions === 0 && !hasSynthesizedTransitions()) ||
+        performance.now() - this.#lastTransitionRun > SAMPLING_VALVE_MS
+      ) {
+        this.#samplingLoopRunning = false;
+        this.#activeTransitions = 0;
+        // One final settle pass so the grid lands exactly on the
+        // transitions' target values.
+        this.#scheduleLayout();
+        return;
+      }
+      this.#performLayoutSafely();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 
   #scheduleDynamicRelayout = (event: Event): void => {
@@ -245,6 +470,9 @@ export class MonoWindElement extends HTMLElementBase {
       this.setAttribute("select", DEFAULT_SELECT);
       return;
     }
+    // select="text" hands pointer events back to the light DOM — the
+    // synthesized chains must not double up with the native states.
+    if (name === "select") this.#updatePointerStates();
     this.#scheduleLayout();
   }
 
@@ -425,7 +653,13 @@ export class MonoWindElement extends HTMLElementBase {
       // before clearing the measuring attribute so the browser only
       // paints the final state.
       render(virtualRoot);
-      paintGrid(virtualRoot, this.#grid);
+      // Style-only paints patch nodes in place (drag anchors survive);
+      // a STRUCTURAL rebuild while a primary press holds a selection
+      // anchor in the grid is deferred to release — a drag in flight
+      // re-derives from the browser's internal anchor, which the
+      // rebuild would destroy (Chromium collapses even across a
+      // capture-and-restore).
+      this.#paintHeld = !paintGrid(virtualRoot, this.#grid, this.#pressing);
       this.#lastLayout = virtualRoot;
 
       // (6) Size the host to match content rows (content-driven height).
@@ -445,11 +679,40 @@ export class MonoWindElement extends HTMLElementBase {
       // the browser paints raw flex/block layout before the engine runs.
       if (!this.hasAttribute("data-mw-ready")) this.setAttribute("data-mw-ready", "");
     } finally {
+      // The measured real values are about to snap back to the locks —
+      // a delta that must never start a native fade (transitions beat
+      // `!important`, and a native background fade paints the light-DOM
+      // element's box ON TOP of the grid). [settling] holds the
+      // transition-property mask up while the snap-back COMMITS: the
+      // forced flush consumes every lock delta under the mask, so the
+      // unmasked commits that follow (this frame's end included) see no
+      // delta and the authored lists stay fully respected.
+      this.setAttribute("settling", "");
       this.removeAttribute("measuring");
+      void getComputedStyle(this).transitionProperty;
+      this.removeAttribute("settling");
       // Drain the records our own writes queued (takeRecords is
       // synchronous). Deferring this to a microtask would open a window
       // where a USER mutation gets dropped with the engine's own.
       this.#mutationObserver?.takeRecords();
+      // Synthesized transitions (animate.ts): background changes the
+      // read detected arm HERE, outside the masks, where the authored
+      // `transition-property` list is readable — then the sampling loop
+      // drives the fade. A pending change that did NOT arm was painted
+      // stale this pass; one more relayout paints its target.
+      if (resolvePendingTransitions(this)) {
+        if (hasSynthesizedTransitions()) {
+          this.#lastTransitionRun = performance.now();
+          this.#startSamplingLoop();
+        } else {
+          this.#scheduleLayout();
+        }
+      }
+      // The layout may have moved content under a stationary pointer —
+      // re-derive the synthesized pointer states (cheap when nothing
+      // changed; a chain change coalesces into the next frame).
+      this.#gridOrigin = null;
+      if (this.#hoverClient) this.#updatePointerStates();
     }
   }
 }

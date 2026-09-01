@@ -553,3 +553,24 @@ describe("form controls (native-rendered value)", () => {
     expect(buildTree(host.firstElementChild!, 16)!.intrinsicHeight).toBe(3);
   });
 });
+
+describe("opacity", () => {
+  it("bakes the ancestor product onto every paint; 0 keeps its glyphs", () => {
+    const half = makeNode({
+      style: { opacity: 0.5, color: "red" },
+      children: [
+        makeNode({ style: { opacity: 0.5, color: "blue" }, text: "in", intrinsicWidth: 2 }),
+      ],
+    });
+    const ghost = makeNode({ style: { opacity: 0 }, text: "go", intrinsicWidth: 2 });
+    const root = makeNode({ children: [half, ghost] });
+    layoutRoot(root, 2);
+    const rows = renderCellSegments(root);
+    // Nested opacity multiplies (0.5 × 0.5 = 0.25) — CSS nests, it
+    // doesn't inherit.
+    expect(rows[0]![0]).toMatchObject({ text: "in", color: "blue", opacity: "0.25" });
+    // opacity: 0 still paints its glyphs (transparent spans stay
+    // selectable in grid mode), never drops them.
+    expect(rows[1]![0]).toMatchObject({ text: "go", opacity: "0" });
+  });
+});

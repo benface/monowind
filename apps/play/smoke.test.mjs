@@ -121,6 +121,27 @@ const tidyWorks =
   tidied.includes("<!-- keep -->") &&
   tidied.includes("\n  <div>\n    <p>a <em>b</em> &lt;c></p>\n  </div>\n</div>");
 
+// Synthesized pointer states reach the CDN path: rules.css (injected
+// as text/tailwindcss) retargets the hover: variant to match
+// data-mw-hover, so the in-browser compiler's output must too.
+await page.fill("#source", '<div class="border px-1 hover:text-rose-400">HOVERME</div>');
+await page.waitForFunction(() => {
+  const grid = document
+    .getElementById("preview")
+    ?.contentDocument?.querySelector("mono-wind")
+    ?.shadowRoot?.getElementById("grid");
+  return (grid?.textContent ?? "").includes("HOVERME");
+});
+const hoverVariantCompiled = await page.evaluate(() => {
+  const doc = document.getElementById("preview").contentDocument;
+  const div = doc.querySelector("mono-wind div");
+  const before = doc.defaultView.getComputedStyle(div).color;
+  div.setAttribute("data-mw-hover", "");
+  const after = doc.defaultView.getComputedStyle(div).color;
+  div.removeAttribute("data-mw-hover");
+  return before !== after;
+});
+
 await browser.close();
 
 const result = {
@@ -134,6 +155,7 @@ const result = {
   highlighted,
   sampleRoundTrips,
   tidyWorks,
+  hoverVariantCompiled,
 };
 if (
   !sampleRendered ||
@@ -145,7 +167,8 @@ if (
   !mobileSlot ||
   !highlighted ||
   !sampleRoundTrips ||
-  !tidyWorks
+  !tidyWorks ||
+  !hoverVariantCompiled
 ) {
   console.error("play smoke test FAILED:", JSON.stringify(result, null, 2));
   process.exit(1);

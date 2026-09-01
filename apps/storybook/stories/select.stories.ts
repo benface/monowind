@@ -48,10 +48,11 @@ export const SelectProp: StoryObj = {
       Array.from(textGrid.querySelectorAll("span"), (s) => getComputedStyle(s).color),
     );
     expect(gridColors.size).toBeGreaterThanOrEqual(2);
-    // Light-DOM text is visually inert (color: transparent) — the grid
-    // is what the eye sees.
+    // Light-DOM ink is invisible (text-fill-color: transparent; the
+    // computed `color` stays live for animation sampling) — the grid is
+    // what the eye sees.
     const slotted = textHost.querySelector<HTMLElement>(":scope > div")!;
-    expect(getComputedStyle(slotted).color).toBe("rgba(0, 0, 0, 0)");
+    expect(getComputedStyle(slotted).webkitTextFillColor).toBe("rgba(0, 0, 0, 0)");
     // Selection semantics differ: grid is user-selectable under the
     // select="grid" default, inert under select="text". Read via
     // getPropertyValue — WebKit surfaces user-select only as
@@ -61,5 +62,55 @@ export const SelectProp: StoryObj = {
       getComputedStyle(el).getPropertyValue("-webkit-user-select");
     expect(userSelect(defaultGrid)).toBe("text");
     expect(userSelect(textGrid)).toBe("none");
+  },
+};
+
+/** A live grid selection must survive repaints: paintGrid rebuilds the
+ * <pre>'s nodes (invalidating any Range), so it captures the selection
+ * as flat offsets and restores it onto the new nodes (paint.ts). The
+ * fade covers the worst case — a repaint EVERY frame for its whole
+ * duration. */
+export const SelectionSurvivesRepaints: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="max-w-max border px-1" data-test="line">alpha bravo charlie delta</div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const line = canvasElement.querySelector<HTMLElement>('[data-test="line"]')!;
+    const textNodeWith = (needle: string): Text => {
+      const walker = document.createTreeWalker(grid, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node && !(node as Text).data.includes(needle)) node = walker.nextNode();
+      return node as Text;
+    };
+    const selection = window.getSelection()!;
+    const anchor = textNodeWith("bravo");
+    const from = anchor.data.indexOf("bravo");
+    selection.setBaseAndExtent(anchor, from, anchor, from + 13);
+    expect(selection.toString()).toBe("bravo charlie");
+
+    // A one-shot repaint (color change, no transition).
+    line.classList.add("text-rose-400");
+    await waitFor(() => expect(textNodeWith("bravo").parentElement!.style.color).not.toBe(""), {
+      timeout: 10_000,
+    });
+    expect(selection.toString(), "survives a restyle repaint").toBe("bravo charlie");
+
+    // A fade: repaints every frame for ~300ms, selection intact
+    // throughout (checked mid-fade and at the settled end).
+    line.classList.add("transition-colors", "duration-300");
+    line.classList.replace("text-rose-400", "text-cyan-400");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(selection.toString(), "survives mid-fade").toBe("bravo charlie");
+    await waitFor(
+      () =>
+        expect(textNodeWith("bravo").parentElement!.style.color).toBe(getComputedStyle(line).color),
+      { timeout: 10_000 },
+    );
+    expect(selection.toString(), "survives the whole fade").toBe("bravo charlie");
   },
 };

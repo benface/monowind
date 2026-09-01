@@ -8,9 +8,13 @@
  * ENGINE owns (geometry, typography locking, alignment/overflow enforcement)
  * stay unlayered with `!important` so no utility can push content off-grid. */
 
-/* Gap-decoration utilities + engine mirrors (specs/gap-decorations.md).
- * Must precede all rules, per @import syntax. */
+/* Gap-decoration utilities + engine mirrors (specs/gap-decorations.md)
+ * and the synthesized pointer-state variants — Tailwind source, split
+ * out so cdn.ts can hand them to the in-browser compiler (this file is
+ * plain CSS there). Imports must precede all rules, per @import
+ * syntax. */
 @import "./rules.css";
+@import "./variants.css";
 
 @layer base {
   mono-wind {
@@ -158,6 +162,28 @@ mono-wind * {
   font-size: inherit !important;
 }
 
+/* Lock toggles must never become native animations: an authored
+ * `transition` would otherwise ANIMATE them — a background flashes to
+ * its real value while `[measuring]` lifts the lock, and the snap back
+ * to transparent starts a native fade that paints the light-DOM
+ * element ON TOP of the grid (transitions beat even `!important`
+ * declarations in the cascade). Restricting `transition-property` to
+ * the SAMPLED properties (which no lock toggles — color stays live
+ * under the text-fill lock, and nothing touches border colors or
+ * opacity) snaps everything lock-owned while keeping in-flight fades
+ * of the sampled properties alive ACROSS measuring passes. The engine
+ * swaps `[measuring]` for `[settling]` and forces one style flush
+ * before unmasking, so the snap-back delta always commits masked;
+ * outside both attributes the authored list is live and fully
+ * respected — background fades, which can never run natively, are
+ * synthesized by the engine instead. */
+mono-wind[measuring],
+mono-wind[measuring] *,
+mono-wind[settling],
+mono-wind[settling] * {
+  transition-property: color, border-color, opacity !important;
+}
+
 /* Grid-template read assist (specs/grid.md), no-Typed-OM engines only
  * (Firefox pre-157): getComputedStyle on a live grid container returns
  * the USED `grid-template-*` track list (expanded px) — the authored
@@ -211,9 +237,25 @@ mono-wind:not([measuring]) * {
 /* Light-DOM text goes invisible so the grid is the only visible copy;
  * form controls opt out because they render their value/caret/selection
  * natively (the tree builder skips their content so the grid doesn't
- * double-render). Events, ARIA, focus, selection all still work. */
+ * double-render). Events, ARIA, focus, selection all still work.
+ * `-webkit-text-fill-color` (universal support), NOT `color`: it hides
+ * the ink while computed `color` stays LIVE — authored transitions run
+ * on it for real and the engine samples true mid-fade values (the
+ * animation loop, element.ts). Decoration ink follows `color`, so it
+ * needs its own transparent lock (the grid paints decorations). */
 mono-wind:not([measuring]) *:not(input):not(textarea):not(select) {
-  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-decoration-color: transparent !important;
+}
+
+/* Form controls escape the fill lock by INHERITANCE, not just by the
+ * exclusion above: text-fill-color inherits and has no UA default on
+ * controls (unlike `color`), so without this reset an input under any
+ * locked ancestor would inherit transparent ink. */
+mono-wind:not([measuring]) input,
+mono-wind:not([measuring]) textarea,
+mono-wind:not([measuring]) select {
+  -webkit-text-fill-color: currentColor !important;
 }
 
 /* Author-requested `white-space: nowrap` (or `pre`) — the engine sized this

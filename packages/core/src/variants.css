@@ -1,0 +1,17 @@
+/* Synthesized pointer states (specs/cell-model.md "Pointer states"):
+ * under select="grid" the light DOM is pointer-events: none, so
+ * :hover/:active never match — the engine hit-tests the pointer's
+ * cell and marks the chain with data-mw-hover / data-mw-active. These
+ * retarget the Tailwind variants to match either source; group-* and
+ * peer-* compose from them automatically. A consumer redefining a
+ * variant later wins (last definition counts) — their selector must
+ * include the data attribute to keep grid-mode states. The block form
+ * preserves Tailwind's own (hover: hover) gate for hover. */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:is(:hover, [data-mw-hover]) {
+      @slot;
+    }
+  }
+}
+@custom-variant active (&:is(:active, [data-mw-active]));

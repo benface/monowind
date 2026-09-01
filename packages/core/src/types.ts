@@ -368,6 +368,12 @@ export interface CellStyle {
    * only `end` (bottom) acts — it drops the line's text to the box's
    * last row (specs/cell-model.md). */
   verticalAlign: "start" | "center" | "end";
+  /** Effective element opacity input (0..1). Ancestors MULTIPLY down
+   * the paint walk (CSS opacity nests, it doesn't inherit); the product
+   * rides on every emitted grid span, which composites against the
+   * page — translucency blends with what's behind the host, never with
+   * covered cells (deviation; front paint wins a cell as always). */
+  opacity: number;
   /** Authored `z-index` (`null` = auto). Browser stacking is native;
    * the renderers walk children in this order (stable, document-order
    * ties) so decorations and plain text agree with it at overlaps. */
@@ -641,6 +647,7 @@ export function defaultCellStyle(): CellStyle {
     borderSpacingY: 0,
     captionSide: "top",
     verticalAlign: "start",
+    opacity: 1,
     zIndex: null,
     latticeBorder: null,
     ruleX: null,
