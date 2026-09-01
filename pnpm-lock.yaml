@@ -130,6 +130,10 @@ importers:
         version: 8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
   apps/play:
+    dependencies:
+      monowind:
+        specifier: workspace:*
+        version: link:../../packages/core
     devDependencies:
       playwright:
         specifier: ^1.62.1
