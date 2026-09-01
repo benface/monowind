@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>monowind play</title>
+    <!-- The CDN bundle is the whole runtime (engine + Tailwind's browser
+         compiler); sort.js is its optional companion adding the class
+         sorter Tidy uses. In production these are:
+         <script src="https://unpkg.com/monowind/dist/cdn.js"></script>
+         <script src="https://unpkg.com/monowind/dist/sort.js"></script>
+         (both copied from packages/core/dist by the dev/build/test
+         scripts). Since the compiler is already loaded for the preview,
+         the app itself is styled with Tailwind classes too — dogfood. -->
+    <script src="./cdn.js"></script>
+    <script src="./sort.js"></script>
+    <style>
+      /* Safety net for the first paint: the Tailwind browser compiler
+         runs after parse, so this covers the tens of ms before the
+         utility classes below have any effect. Everything else lives on
+         the elements. */
+      html {
+        color-scheme: dark;
+        background: #171717;
+      }
+      body {
+        margin: 0;
+      }
+      #source::selection {
+        background: #33415580;
+      }
+      /* Highlighter tokens — inline so the very first character typed
+         paints already colored. Colors match Tailwind's neutral-500 /
+         pink-400 / sky-300 / lime-300 palette. */
+      .tok-punc {
+        color: #737373;
+      }
+      .tok-tag {
+        color: #f472b6;
+      }
+      .tok-attr {
+        color: #7dd3fc;
+      }
+      .tok-str {
+        color: #bef264;
+      }
+      .tok-com {
+        color: #737373;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body class="flex h-dvh flex-col bg-neutral-900 font-mono text-sm text-neutral-200">
+    <header class="flex items-center gap-4 border-b border-neutral-700 px-4 py-2">
+      <h1 class="m-0 text-base font-semibold">
+        monowind play
+        <!-- Filled from globalThis.monowind.version (injected into the
+             CDN bundle at build time from packages/core/package.json). -->
+        <span id="version" class="ml-1 text-xs font-normal text-neutral-500"></span>
+      </h1>
+      <a
+        href="https://github.com/benface/monowind"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Source on GitHub"
+        class="flex items-center text-neutral-400 hover:text-neutral-200"
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+          <path
+            d="M12 .5a11.5 11.5 0 0 0-3.63 22.42c.57.1.78-.25.78-.55v-2c-3.2.7-3.87-1.36-3.87-1.36-.53-1.32-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.75 2.7 1.24 3.36.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a11 11 0 0 1 5.72 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.73.8 1.18 1.83 1.18 3.08 0 4.42-2.7 5.38-5.26 5.66.41.35.78 1.05.78 2.12v3.14c0 .3.21.66.79.55A11.5 11.5 0 0 0 12 .5Z"
+          />
+        </svg>
+      </a>
+      <div class="flex-1"></div>
+      <div id="toggle-slot-desktop" class="max-md:hidden"></div>
+      <button
+        id="copy"
+        type="button"
+        class="min-w-[7rem] cursor-pointer rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-center text-inherit hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-sky-300"
+      >
+        copy link
+      </button>
+    </header>
+    <main class="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div
+        id="editor"
+        class="relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-neutral-950 [scrollbar-gutter:stable]"
+      >
+        <div id="editor-inner" class="relative min-h-full">
+          <pre
+            id="highlight"
+            aria-hidden="true"
+            class="pointer-events-none absolute inset-0 m-0 p-4 font-[inherit] leading-normal break-words whitespace-pre-wrap"
+          ><code></code></pre>
+          <textarea
+            id="source"
+            spellcheck="false"
+            aria-label="HTML source"
+            class="relative m-0 block min-h-full w-full resize-none overflow-hidden border-none bg-transparent p-4 font-[inherit] leading-normal break-words whitespace-pre-wrap text-transparent caret-neutral-200 outline-none"
+          ></textarea>
+        </div>
+        <div id="editor-actions" class="sticky bottom-3 z-10 -mt-9 mr-3 flex justify-end gap-2">
+          <button
+            id="tidy"
+            type="button"
+            class="cursor-pointer rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-inherit hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-sky-300"
+          >
+            tidy
+          </button>
+        </div>
+      </div>
+      <div
+        id="divider"
+        role="separator"
+        aria-label="resize panes"
+        aria-valuenow="50"
+        tabindex="0"
+        class="shrink-0 grow-0 basis-[6px] cursor-row-resize touch-none border-y border-neutral-700 bg-neutral-800 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-300 md:cursor-col-resize md:border-x md:border-y-0"
+      ></div>
+      <!-- Mobile-only home for the select toggle: no room in the header
+           on narrow screens, so play.js reparents the toggle here (a
+           single element, no state to sync). Adjacent to the preview
+           since that's what it controls. -->
+      <div id="toggle-slot-mobile" class="md:hidden"></div>
+      <!-- Preview lives in an iframe so the sample gets a fresh document
+           to render into — the app's Tailwind classes on body (font,
+           color, background) don't inherit down, and pasted <script>
+           tags stay isolated. srcdoc is set from play.js so the <base>
+           can resolve `cdn.js` relative to the parent URL. -->
+      <div id="frame" class="min-w-0 flex-1">
+        <iframe
+          id="preview"
+          title="preview"
+          class="block h-full w-full border-0 bg-neutral-900"
+        ></iframe>
+      </div>
+    </main>
+    <footer
+      class="flex items-center justify-center gap-4 border-t border-neutral-700 px-4 py-1.5 text-xs text-neutral-500"
+    >
+      <span
+        >made with 🤖 by
+        <a
+          href="https://x.com/benface"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200"
+          >benface</a
+        ></span
+      >
+      <span
+        >forever thankful to
+        <a
+          href="https://tailwindcss.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200"
+          >tailwindcss</a
+        ></span
+      >
+    </footer>
+    <!-- Mounted into one of the toggle slots on load and on breakpoint
+         change (play.js). Sits here in the source as a fallback if the
+         script fails; the max-md:* classes shape it for either home. -->
+    <label
+      id="select-text-label"
+      class="flex cursor-pointer items-center justify-center gap-1.5 text-neutral-400 max-md:border-b max-md:border-neutral-700 max-md:bg-neutral-800 max-md:px-4 max-md:py-1.5"
+    >
+      <input type="checkbox" id="select-text" />
+      select text only
+    </label>
+    <!-- Classic script (not a module) so the page also works straight
+         from disk, like the CDN bundle itself. -->
+    <script src="./play.js"></script>
+  </body>
+</html>

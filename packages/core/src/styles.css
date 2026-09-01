@@ -427,6 +427,24 @@ mono-wind:not([measuring]) [data-mw-multicol-flow] {
   column-span: none !important;
 }
 
+/* text-indent (specs/cell-model.md): native px would resolve to the
+ * root font size, not the cell width, so the transparent light-DOM
+ * text drifts out from under the grid's paint. Rewrite it in cells so
+ * the two agree — selection ranges land exactly where the glyphs are. */
+mono-wind:not([measuring]) [data-mw-laid-out],
+mono-wind:not([measuring]) [data-mw-multicol-flow] {
+  text-indent: calc(var(--mw-ti, 0) * var(--mw-cw, 1px)) !important;
+}
+
+/* Centered text with uniform odd leftover (specs/cell-model.md "Text
+ * alignment"): the browser's fractional centering sits half a cell
+ * right of the grid's floor()'d paint — nudge the native copy onto the
+ * glyphs. `transform`, not `translate`: the spanner rule owns the
+ * latter, and the two compose. */
+mono-wind:not([measuring]) [data-mw-center-nudge] {
+  transform: translateX(calc(-0.5 * var(--mw-cw, 1px))) !important;
+}
+
 /* In-flow multicol SPANNER (specs/multicol.md): a normally laid-out box
  * that stays in the native flow so paragraphs fragment around it —
  * engine-forced geometry (the shared rule above), quantized margins,

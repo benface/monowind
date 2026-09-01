@@ -1,18 +1,19 @@
-# Netlify site config for the deployed Storybook (site: monowind-storybook).
+# Netlify site config for the deployed playground (site: monowind-play,
+# → play.monowind.benface.com).
 #
 # Netlify does NOT build this site: no repository is linked, so pushes
 # never trigger (or bill) a Netlify build. Instead, the release workflow
-# (.github/workflows/release.yml) builds Storybook on GitHub Actions and
-# pushes the finished files with `netlify deploy --prod` — the site
-# updates once per release.
+# (.github/workflows/release.yml) builds on GitHub Actions and pushes
+# the finished files with `netlify deploy --prod` — the site updates
+# once per release.
 #
 # The publish directory below still applies to those CLI deploys; the
 # build command is kept for anyone deploying manually with
 # `netlify build && netlify deploy`.
 
 [build]
-command = "pnpm --filter @monowind/storybook build"
-publish = "storybook-static"
+command = "pnpm --filter @monowind/play build"
+publish = "dist"
 
 [build.environment]
 NODE_VERSION = "24"

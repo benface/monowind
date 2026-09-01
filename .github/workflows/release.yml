@@ -2,9 +2,10 @@ name: Release
 
 # On a version tag (v*): publish both packages to npm (trusted publishing
 # via OIDC — each package lists this workflow as a trusted publisher on
-# npmjs.com), then deploy the Storybook site. Two jobs so a deploy hiccup
-# can be re-run without re-publishing. Publishing MUST go through pnpm:
-# `publishConfig.exports` (the src → dist swap) is pnpm-only.
+# npmjs.com), then deploy the Storybook and playground sites. Three jobs
+# so a deploy hiccup can be re-run without re-publishing. Publishing
+# MUST go through pnpm: `publishConfig.exports` (the src → dist swap) is
+# pnpm-only.
 
 on:
   push:
@@ -55,10 +56,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm --filter @monowind/storybook... install --frozen-lockfile
-      # Netlify's own builds are stopped (saves credits) — this push of the
-      # built files is the only deploy path. The CLI must run from the
-      # site's base directory with an absolute --dir. Site id is public;
-      # NETLIFY_AUTH_TOKEN is a personal access token repo secret.
+      # No repository is linked to this Netlify site, so this push of
+      # the built files is the only deploy path. The CLI must run from
+      # the site's base directory with an absolute --dir. Site id is
+      # public; NETLIFY_AUTH_TOKEN is a personal access token repo
+      # secret.
       - name: Build and deploy
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
@@ -71,3 +73,32 @@ jobs:
           pnpm --filter @monowind/storybook build
           cd apps/storybook
           npx -y netlify-cli@27 deploy --prod --no-build --dir "$PWD/storybook-static"
+
+  deploy-play:
+    name: Deploy playground
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm --filter @monowind/play... install --frozen-lockfile
+      # Same arrangement as the Storybook site: GitHub Actions builds,
+      # `netlify deploy --prod` pushes the finished files (site:
+      # monowind-play, → play.monowind.benface.com).
+      - name: Build and deploy
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: 24201d4d-2408-4b28-a8be-e2ad25fdb6da
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "NETLIFY_AUTH_TOKEN secret not set - skipping deploy"
+            exit 0
+          fi
+          pnpm --filter @monowind/play build
+          cd apps/play
+          npx -y netlify-cli@27 deploy --prod --no-build --dir "$PWD/dist"

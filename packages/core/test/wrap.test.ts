@@ -101,6 +101,34 @@ describe("wrapLineCount / wrapLines", () => {
   });
 });
 
+describe("first-line indent (text-indent)", () => {
+  it("charges the first line only", () => {
+    // "hello world" (11 cells) fits in width 11 with no indent, but
+    // indent 4 leaves only 7 cells on line 1 — "world" wraps.
+    expect(wrapLines("hello world", 11)).toEqual(["hello world"]);
+    expect(wrapLines("hello world", 11, { firstLineIndent: 4 })).toEqual(["hello", "world"]);
+  });
+
+  it("does not re-indent after a hard line break", () => {
+    // `<br>` (a \n) restarts the wrap but not the indent (per CSS:
+    // text-indent applies to the first formatted line only). Second
+    // segment gets the full width 10 and fits "world foo" (9 cells).
+    expect(wrapLines("hello\nworld foo", 10, { firstLineIndent: 4 })).toEqual([
+      "hello",
+      "world foo",
+    ]);
+  });
+
+  it("is a no-op when the indent is 0", () => {
+    // Same as no indent: "hello" (5) + " world" (6) = 11 > 10 → wraps,
+    // then "world" (5) + " foo" (4) = 9 fits.
+    expect(wrapLines("hello world foo", 10, { firstLineIndent: 0 })).toEqual([
+      "hello",
+      "world foo",
+    ]);
+  });
+});
+
 describe("inline padding markers", () => {
   it("glues INLINE_PAD to its neighbors — the padding travels with the word", () => {
     // "aa ⁠bb": the marker is the padded span's left edge. At width 4 the

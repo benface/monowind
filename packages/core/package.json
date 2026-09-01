@@ -1,6 +1,6 @@
 {
   "name": "monowind",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Text-based user interfaces (TUI) on the web, from ordinary HTML and Tailwind utility classes",
   "keywords": [
     "ascii",
@@ -46,7 +46,7 @@
     }
   },
   "scripts": {
-    "build": "vite build && vite build -c vite.cdn.config.ts && tsc -p tsconfig.build.json",
+    "build": "vite build && vite build -c vite.cdn.config.ts && vite build -c vite.sort.config.ts && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -58,6 +58,7 @@
     "@tailwindcss/browser": "^4.3.3",
     "@vitest/coverage-v8": "4.1.11",
     "happy-dom": "^20.12.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

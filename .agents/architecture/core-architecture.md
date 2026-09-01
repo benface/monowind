@@ -85,7 +85,7 @@ Rendering happens in one cell-precise `<pre id="grid">` inside the shadow
 root: box-drawing borders, backgrounds, and text glyphs all land in the
 same span tree, one monospace character per cell. The grid is
 `aria-hidden="true"` and inert to events (`pointer-events: none` in the
-default `select="text"` mode) so it never captures clicks or gets read
+`select="text"` mode) so it never captures clicks or gets read
 aloud.
 
 The light DOM sits on top of the grid (later in the shadow tree). Its
@@ -104,8 +104,9 @@ stylesheet keeps the native text visible on top of the grid's borders
 and background.
 
 The `select` attribute on `<mono-wind>` switches drag-selection target:
-`select="text"` (default) selects the semantic light DOM, `select="grid"`
-selects the grid ASCII directly.
+`select="grid"` (the default, reflected onto the attribute so the
+default lives in one place) selects the rendered ASCII grid directly,
+`select="text"` selects the semantic light DOM.
 
 The plan file `../plans/2026-08-30-unified-render-initiative.md`
 documents how this arrived; the code and specs (`../specs/cell-model.md`)
@@ -154,16 +155,21 @@ All three share one core. Concretely, the planned packages:
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_
-  `dist/cdn.js` (~78 KB gzip), built by `vite.cdn.config.ts` from
-  `src/cdn.ts`, exercised by `apps/example-html`.
+  `dist/cdn.js` (~107 KB gzip), built by `vite.cdn.config.ts` from
+  `src/cdn.ts`, exercised by `apps/example-html`; it exposes
+  `globalThis.monowind.version`. `dist/sort.js` (`vite.sort.config.ts`,
+  ~77 KB gzip) is its optional companion adding
+  `globalThis.monowind.sortClasses` — canonical Tailwind class order via
+  the `tailwindcss` design system, kept out of cdn.js for size.
 - **`apps/`** — `storybook` (the showcase + dev environment; every story is
   also a browser test and a visual-regression fixture), `example-html` (CDN
   mode), `example-tailwind` (native mode, custom `@theme`), `example-vite`
   (standalone mode via `@monowind/vite`), `example-react` (React 19 owning
-  the light DOM — its smoke test proves state → re-render → relayout), with
-  a docs/landing site (`website`, → monowind.benface.com) and an
-  in-browser playground (`play`, → play.monowind.benface.com, powered by
-  the CDN bundle) to come.
+  the light DOM — its smoke test proves state → re-render → relayout),
+  `play` (in-browser playground, → play.monowind.benface.com — live HTML
+  editing through an iframe-isolated preview, shareable compressed-hash
+  URLs, Tidy formatting via `dist/sort.js`), with a docs/landing site
+  (`website`, → monowind.benface.com) to come.
 - Per-framework packages: only if/when a component layer (`<mono-textarea>`,
   `<mono-scroll>`, …) happens.
 

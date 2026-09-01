@@ -54,9 +54,10 @@ applyTheme(systemTheme);
 // Starts true to match initialGlobals (the boot value emits no event).
 let gridSelect = true;
 function applySelect(): void {
+  // Explicit both ways: a removed attribute reflects back to the "grid"
+  // default, so "text" must be written, not implied by absence.
   for (const host of document.querySelectorAll("mono-wind")) {
-    if (gridSelect) host.setAttribute("select", "grid");
-    else host.removeAttribute("select");
+    host.setAttribute("select", gridSelect ? "grid" : "text");
   }
 }
 // GLOBALS_UPDATED also covers values restored from the URL/session at
@@ -77,7 +78,7 @@ addons.getChannel().on(STORY_RENDERED, () => {
 const preview: Preview = {
   globalTypes: {
     select: {
-      description: "Text selection: element text (default) or the whole cell grid",
+      description: "Text selection: the whole cell grid (default) or element text",
       toolbar: {
         title: "Select",
         icon: "paragraph",

@@ -493,6 +493,7 @@ export function leafLineSpans(node: LayoutNode, contentWidth: number): LineSpan[
     : wrapLineSpans(node.text, contentWidth, {
         advances: node.advances,
         tracking: node.style.tracking,
+        firstLineIndent: node.style.textIndent,
       });
 }
 

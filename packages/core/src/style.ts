@@ -297,6 +297,7 @@ export function readCellStyle(
     // descendant individually — same net effect as CSS inheritance.
     textAlignBlocked: authoredTextAlignBlocked(el, cs),
     textAlign: readTextAlign(el, cs),
+    textIndent: readTextIndent(cs, rootFontSizePx),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
     ruleX:
@@ -741,6 +742,16 @@ function readSpacing(value: string, rootFontSizePx: number): CellLength {
   }
   const px = parseFloat(value);
   return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : 0;
+}
+
+/** `text-indent` in cells. Percentages come through as `Npx` after
+ * `getComputedStyle` only when a definite width is around, and even then
+ * they'd need per-line resolution; treat them as 0. */
+function readTextIndent(cs: CSSStyleDeclaration, rootFontSizePx: number): number {
+  const value = cs.textIndent;
+  if (!value || value.endsWith("%")) return 0;
+  const px = parseFloat(value);
+  return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
 }
 
 function readSize(

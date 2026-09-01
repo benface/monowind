@@ -1,5 +1,7 @@
 import { paintOrderedChildren, zIndexApplies } from "./borders.ts";
+import { leafLineSpans } from "./layout.ts";
 import type { LayoutNode, PerSide } from "./types.ts";
+import { lineAdvance } from "./wrap.ts";
 
 /**
  * Write geometry custom properties, quantized inline padding, and z-index
@@ -103,6 +105,35 @@ function applyInlineInsets(el: HTMLElement, insets: PerSide<number | null>): voi
   write("--mw-il", insets.left);
 }
 
+/** Centered text: the grid paints `floor(leftover / 2)` whole cells,
+ * the browser centers the native copy fractionally — half a cell apart
+ * on odd-leftover lines (specs/cell-model.md "Text alignment"). When
+ * EVERY line shares the odd-parity drift (a single-line heading, most
+ * commonly), the companion nudges the native copy half a cell left so
+ * selection sits on the glyphs. CHILDLESS text leaves only: the nudge
+ * would also shift an embedded atomic box's visible native ink and an
+ * absolutized child's selectable text, and an inline box's own
+ * form-control ink keeps browser centering per the spec. The leftover
+ * math mirrors the paint's alignOffset (plain-text.ts). */
+function needsCenterNudge(node: LayoutNode): boolean {
+  const style = node.style;
+  if (style.textAlign !== "center" || !node.text) return false;
+  if (node.inlineBox || node.children.length > 0) return false;
+  const multicol = node.multicolGeometry;
+  const padding = node.resolvedPadding;
+  const contentWidth =
+    node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
+  const alignWidth = multicol ? Math.max(1, multicol.columnWidth - style.tracking) : contentWidth;
+  const spans = multicol?.spans ?? leafLineSpans(node, contentWidth);
+  if (spans.length === 0) return false;
+  return spans.every((span, i) => {
+    const indent = i === 0 ? style.textIndent : 0;
+    const leftover =
+      alignWidth - indent - lineAdvance(span.start, span.end, node.advances, style.tracking);
+    return leftover > 0 && leftover % 2 === 1;
+  });
+}
+
 function positionElement(node: LayoutNode): void {
   const el = node.source as HTMLElement;
   const rect = node.localRect;
@@ -177,7 +208,14 @@ function positionElement(node: LayoutNode): void {
   setVar(el, "--mw-br", String(border.right));
   setVar(el, "--mw-bb", String(border.bottom));
   setVar(el, "--mw-bl", String(border.left));
+  // Native text-indent is authored in px; overwrite it in cells so the
+  // browser's own line (the selectable, transparent-locked text under
+  // the grid) sits under the glyphs the engine painted. Always set —
+  // custom properties inherit, so an unset var on an `indent-0` child
+  // would resolve to an indented ancestor's value.
+  setVar(el, "--mw-ti", String(node.style.textIndent));
   setFlag(el, "data-mw-text-align-blocked", textAlignBlocked);
+  setFlag(el, "data-mw-center-nudge", needsCenterNudge(node));
   // Un-laid-out direct text (mixed with block children) would otherwise
   // paint unpositioned over the children — hide it (see styles.css).
   setFlag(el, "data-mw-dropped-text", Boolean(node.droppedText));

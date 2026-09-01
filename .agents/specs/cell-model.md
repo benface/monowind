@@ -303,13 +303,33 @@ to whole cells (normalized LTR: `right`/`end` → end). Per line, with
   browser's own centering is fractional when leftover is odd; the GRID
   paints the quantized offset, and the browser's half-cell-off copy is
   invisible under the unified render — only native form-control ink
-  shows browser centering).
+  shows browser centering). When EVERY line of a CHILDLESS text leaf
+  shares the odd-parity drift (a single-line heading, most commonly),
+  the companion nudges the native copy half a cell left
+  (`data-mw-center-nudge`, a transform) so `select="text"` selection
+  sits on the glyphs; mixed-parity multi-line leaves, leaves with
+  embedded boxes (whose native ink must not shift), and form controls
+  keep the deviation.
 - A line at or over the content width stays at start, matching
   truncation. `renderPlainText` mirrors the same offsets.
 
 `text-align: justify` redistributes inter-word spacing fractionally and
 stays **forced back to `start`** by the companion stylesheet (via the
 engine-owned `data-mw-text-align-blocked` attribute).
+
+## Text indent
+
+`text-indent` is honored on text leaves, quantized to whole cells: the
+first formatted line wraps at `width − indent` and paints `indent`
+cells in (`<br>` lines don't re-indent, per CSS; alignment and
+truncation act on the reduced width). The companion rewrites the native
+value in cells (`--mw-ti × --mw-cw`, always set — the custom property
+inherits, so an `indent-0` child under an indented ancestor must pin
+its own 0) so the selectable light-DOM copy sits under the grid's
+glyphs; an authored `1rem` would otherwise resolve against the font
+size, not the cell width. **Deviations**: negative values clamp to 0
+(hanging indents are off-grid), percentages resolve to 0, and the
+indent doesn't count toward intrinsic sizing.
 
 ## Intrinsic sizing keywords
 

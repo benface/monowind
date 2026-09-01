@@ -11,8 +11,10 @@ packages/*/LICENSE
 /apps/storybook/playwright-report/
 
 # Copied from packages/core/dist by copy-cdn.mjs
-/apps/example-html/cdn.js
-/apps/example-html/cdn.js.map
+/apps/**/cdn.js
+/apps/**/cdn.js.map
+/apps/**/sort.js
+/apps/**/sort.js.map
 
 # Local Netlify folder
 .netlify

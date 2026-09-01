@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+
+const { version } = JSON.parse(
+  readFileSync(resolve(import.meta.dirname, "package.json"), "utf8"),
+) as { version: string };
 
 /**
  * Builds the self-contained CDN bundle (dist/cdn.js): engine + companion
@@ -8,6 +13,9 @@ import { defineConfig } from "vite";
  * lib mode builds one format-set per run and the main build is ESM-only.
  */
 export default defineConfig({
+  define: {
+    __MONOWIND_VERSION__: JSON.stringify(version),
+  },
   build: {
     lib: {
       entry: resolve(import.meta.dirname, "src/cdn.ts"),

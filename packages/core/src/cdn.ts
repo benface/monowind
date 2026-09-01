@@ -29,3 +29,12 @@ rules.textContent = rulesCss;
 document.head.appendChild(rules);
 
 defineMonoWind();
+
+// Injected by vite.cdn.config.ts from packages/core/package.json.
+declare const __MONOWIND_VERSION__: string;
+
+// Merge, not replace — dist/sort.js (the optional class-order
+// companion, see src/sort.ts) contributes to the same global.
+Object.assign(globalThis, {
+  monowind: { ...(globalThis as { monowind?: object }).monowind, version: __MONOWIND_VERSION__ },
+});

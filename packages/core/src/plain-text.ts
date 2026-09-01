@@ -211,23 +211,27 @@ function walk(node: LayoutNode, parentAbsX: number, parentAbsY: number, put: Put
     for (let i = 0; i < spans.length; i++) {
       const span = spans[i]!;
       const row = contentY + textY[i]!;
+      // First-line indent: reduces usable width for truncation and
+      // alignment, and shifts the paint origin by the same amount (per
+      // CSS, `<br>` doesn't re-indent, so only spans[0] is charged).
+      const indent = i === 0 ? style.textIndent : 0;
       const truncated =
         style.whiteSpace !== "normal" && style.overflow === "clip"
-          ? truncateSpan(node.text, span, alignWidth, node.advances, style)
+          ? truncateSpan(node.text, span, alignWidth - indent, node.advances, style)
           : { end: span.end, ellipsis: false };
       // Each character advances by its own cell count (tracking gaps).
       // `text-align: end` offsets each line to the content box's right
       // edge; `center` to floor((W − line) / 2). Whole cells; a line
       // at or over the width stays at start, matching truncation.
       const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
-      const leftover = Math.max(0, alignWidth - lineWidth);
+      const leftover = Math.max(0, alignWidth - indent - lineWidth);
       const alignOffset =
         style.textAlign === "end"
           ? leftover
           : style.textAlign === "center"
             ? Math.floor(leftover / 2)
             : 0;
-      let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset;
+      let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset + indent;
       for (let k = span.start; k < truncated.end; k++) {
         // U+FFFC marks an embedded inline box (its cells are drawn by
         // the box's own walk). INLINE_PAD marks a blank inline-padding

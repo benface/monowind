@@ -17,11 +17,12 @@ const SHADOW_TEMPLATE = `
    * state so an authored 'invisible' on the host stays intact. */
   :host([data-mw-dropped-text]) #viewport { visibility: visible; }
   /* The unified grid: one <pre> with same-paint-run spans, cell-precise
-   * (one monospace character = one cell). In select="grid" the grid
-   * catches drags for native selection of the ASCII; interactive
+   * (one monospace character = one cell). In select="grid" (the
+   * default, reflected onto the attribute — see DEFAULT_SELECT) the
+   * grid catches drags for native selection of the ASCII; interactive
    * elements opt back into pointer-events via styles.css so clicks
-   * still work. In default select="text" the grid is inert to events
-   * and drag selects the light DOM natively. */
+   * still work. In select="text" the grid is inert to events and drag
+   * selects the light DOM natively. */
   #grid { position: absolute; inset: 0; margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
@@ -35,6 +36,11 @@ const SHADOW_TEMPLATE = `
   <slot></slot>
 </div>
 `;
+
+/** The `select` attribute's default, reflected onto the attribute when
+ * it is absent or unrecognized so every stylesheet keys on an explicit
+ * value — the single place the default lives. */
+const DEFAULT_SELECT = "grid";
 
 const DYNAMIC_RELAYOUT_EVENTS = [
   "pointerover",
@@ -136,6 +142,9 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   connectedCallback(): void {
+    // attributeChangedCallback only fires on changes; an absent
+    // attribute reflects its default here.
+    if (!this.hasAttribute("select")) this.setAttribute("select", DEFAULT_SELECT);
     // Before the observers connect, so its insertion isn't observed.
     if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
 
@@ -223,11 +232,18 @@ export class MonoWindElement extends HTMLElementBase {
   };
 
   attributeChangedCallback(name: string, _previous: string | null, next: string | null): void {
-    if (name === "select" && next !== null && next !== "text" && next !== "grid") {
-      console.warn(
-        `[monowind] Ignoring unrecognized select="${next}". Expected "text" (default) or "grid".`,
-        this,
-      );
+    if (name === "select" && next !== "text" && next !== "grid") {
+      if (next !== null) {
+        console.warn(
+          `[monowind] Ignoring unrecognized select="${next}". Expected "grid" (default) or "text".`,
+          this,
+        );
+      }
+      // Reflect the default so the attribute is the single source of
+      // truth — every selector keys on an explicit value, and no CSS
+      // has to know what an absent attribute means.
+      this.setAttribute("select", DEFAULT_SELECT);
+      return;
     }
     this.#scheduleLayout();
   }
@@ -334,7 +350,11 @@ export class MonoWindElement extends HTMLElementBase {
       // already being forced). No cache to go stale: fonts settling out of
       // order with our rAFs once left a fallback-font measurement cached
       // with nothing to invalidate it. The vars are only rewritten when
-      // the values change.
+      // the values change. A host innerHTML swap wipes the probe (a
+      // detached node measures 0×0, and 0-px cells blow the layout up) —
+      // re-adopt it here; the childList record drains with the engine's
+      // own writes below.
+      if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
       const metrics = measureCellMetrics(this, this.#probe);
       const previous = this.#cellMetrics;
       if (

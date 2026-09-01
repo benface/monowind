@@ -35,6 +35,10 @@ export interface LineSpan {
 export interface WrapOptions {
   advances?: number[] | undefined;
   tracking?: number;
+  /** `text-indent` in cells: reduces the first hard line's usable width
+   * (the paint layer offsets that line's x by the same amount). Per CSS,
+   * subsequent hard lines (`<br>`-separated) don't re-indent. */
+  firstLineIndent?: number | undefined;
 }
 
 export function wrapLines(text: string, width: number, options: WrapOptions = {}): string[] {
@@ -74,9 +78,11 @@ export function wrapLineSpans(text: string, width: number, options: WrapOptions 
   if (!/[^ \t\r\f]/.test(text)) return [];
   const spans: LineSpan[] = [];
   let lineStart = 0;
+  let indent = options.firstLineIndent ?? 0;
   for (let i = 0; i <= text.length; i++) {
     if (i === text.length || text[i] === "\n") {
-      spans.push(...wrapHardLine(text, lineStart, i, width, options));
+      spans.push(...wrapHardLine(text, lineStart, i, width, options, indent));
+      indent = 0; // Only the very first hard line gets the indent.
       lineStart = i + 1;
     }
   }
@@ -206,6 +212,7 @@ function wrapHardLine(
   end: number,
   width: number,
   { advances, tracking = 0 }: WrapOptions,
+  firstLineIndent = 0,
 ): LineSpan[] {
   const words = wordRanges(text, start, end);
   if (words.length === 0) return [{ start, end: start }];
@@ -216,6 +223,10 @@ function wrapHardLine(
   // Advances accumulated over the current line, with words joined by ONE
   // space each regardless of the source whitespace run (collapsing).
   let advancesSum = 0;
+  // Only the first line box (before the first `lines.push`) is charged
+  // the text-indent — subsequent lines get the full width back.
+  let lineIndent = Math.max(0, firstLineIndent);
+  const availableWidth = () => width - lineIndent;
 
   for (const word of words) {
     let joinsPrevious = false; // segments after the first attach with no space
@@ -225,18 +236,26 @@ function wrapHardLine(
       const separatorStart = current !== null && !joinsPrevious ? segStart - 1 : segStart;
       const candidate = advancesSum + advanceOf(separatorStart, segEnd, advances);
       const trailing = Math.min(tracking, trailingGap(segEnd - 1, advances));
-      if (current !== null && candidate - trailing <= width) {
+      if (current !== null && candidate - trailing <= availableWidth()) {
         current.end = segEnd;
         advancesSum = candidate;
       } else {
-        if (current !== null) lines.push(current);
+        if (current !== null) {
+          lines.push(current);
+          lineIndent = 0;
+        }
         // Break a too-wide segment at cell boundaries: a chunk of exactly
         // `width` stays as the current line (matching browser overflow-wrap).
         for (;;) {
           let fit = segStart;
-          while (fit < segEnd && lineAdvance(segStart, fit + 1, advances, tracking) <= width) fit++;
+          while (
+            fit < segEnd &&
+            lineAdvance(segStart, fit + 1, advances, tracking) <= availableWidth()
+          )
+            fit++;
           if (fit === segEnd || fit === segStart) break;
           lines.push({ start: segStart, end: fit });
+          lineIndent = 0;
           segStart = fit;
         }
         current = { start: segStart, end: segEnd };

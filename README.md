@@ -30,11 +30,11 @@ forms, and accessibility semantics stay fully intact.
 > areas included), multi-column (`columns-*`, balancing, spanners,
 > column rules), and table layout (collapsed borders as shared
 > box-drawing lattices), gap decorations (`rule-*` separators with
-> junction glyphs), text wrap, and margins work; a `<mono-wind plain-text>`
-> attribute renders a selectable text mirror. The unified-render
-> initiative — one cell-precise renderer that stays fully interactive,
-> plus backgrounds that clear decorations — is what's next. Design
-> docs live in [.agents/architecture](.agents/architecture),
+> junction glyphs), text wrap, and margins work. The unified-render
+> initiative shipped: one cell-precise renderer that keeps the light
+> DOM fully interactive, with the ASCII grid selectable via
+> `<mono-wind select="text">` for a semantic text mirror. Design docs
+> live in [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
 ## Structure
@@ -49,6 +49,9 @@ This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):
 
 - [Storybook](https://storybook.monowind.benface.com) — live examples of every
   supported feature, deployed from `apps/storybook`.
+- [Playground](https://play.monowind.benface.com) — edit HTML in the browser and
+  see the character grid update live; every document is a shareable URL.
+  Deployed from `apps/play`.
 
 ## Development
 
@@ -78,6 +81,9 @@ pnpm build
 
 # interactively update dependencies across the workspace
 pnpm check-updates
+
+# Playground (live HTML editing through <mono-wind>, shareable URLs), port 5181
+pnpm --filter @monowind/play dev
 
 # Example apps (each demonstrates one way to consume monowind):
 pnpm --filter @monowind/example-html dev       # CDN mode: one script tag

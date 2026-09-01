@@ -347,6 +347,11 @@ export interface CellStyle {
    * by the grid (the browser's own fractional centering only touches
    * the invisible light-DOM copy). */
   textAlign: "start" | "center" | "end";
+  /** First-line indent in cells (per CSS: applies once to the first
+   * formatted line of the block; `<br>` doesn't re-indent). Charged
+   * against the wrap width of the first line and offsets that line's
+   * paint x. Percentages resolve to 0 (unsupported). */
+  textIndent: number;
   tableRole: TableRole;
   tableLayout: "auto" | "fixed";
   /** True for `border-collapse: collapse` (Tailwind preflight's default
@@ -628,6 +633,7 @@ export function defaultCellStyle(): CellStyle {
     borderColor: { top: undefined, right: undefined, bottom: undefined, left: undefined },
     textAlignBlocked: false,
     textAlign: "start",
+    textIndent: 0,
     tableRole: "none",
     tableLayout: "auto",
     borderCollapse: false,

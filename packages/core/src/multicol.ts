@@ -260,11 +260,17 @@ export function multicolLines(
     tracking?: number;
     lineGap?: number;
     restrictingHeight?: number;
+    /** `text-indent` charged to the first line (cells). */
+    firstLineIndent?: number;
   },
 ): { text: string; column: number; top: number }[] {
   const { columnWidth, columnCount, tracking = 0, lineGap = 0, restrictingHeight } = options;
   const advances = tracking > 0 ? Array.from(text, () => 1 + tracking) : undefined;
-  const spans = wrapLineSpans(text, Math.max(1, columnWidth - tracking), { advances, tracking });
+  const spans = wrapLineSpans(text, Math.max(1, columnWidth - tracking), {
+    advances,
+    tracking,
+    firstLineIndent: options.firstLineIndent,
+  });
   const units = lineUnits(spans.map(() => 1 + lineGap));
   const height =
     restrictingHeight ??
