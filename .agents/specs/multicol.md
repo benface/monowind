@@ -183,12 +183,36 @@ the companion keeps `column-fill: balance` and the natural height and
 trusts the NATIVE balancer — probed pixel-identical in all three
 engines under quantized inputs, spanner margins never collapsing with
 column content (matching deviation 5 and css-multicol §6.1). The
-probes bound the scope: segment-leading margins derail WebKit's
-balancer and mid-segment margins feed Chromium/WebKit's balance cost
-off-grid, so a spanner container requires ZERO vertical margins on its
-paragraphs (spanner margins are fine), `column-fill: balance`, and no
-height restriction; the engine advances non-final segments by FULL
-line boxes (the native stacking) and trims only the final one.
+probes bound the scope to `column-fill: balance` and no height
+restriction; the engine advances non-final segments by FULL line boxes
+(the native stacking) and trims only the final one.
+
+Paragraph VERTICAL MARGINS ride along by translation: native margins
+derail the balancers (segment-leading margins derail WebKit's, and
+margin truncation at breaks feeds every balancer's cost off-grid), so
+the companion zeroes them and writes the engine-collapsed gaps as
+PADDING — each inter-paragraph gap as the PRECEDING paragraph's
+`padding-bottom` (`--mw-mb`, the unit's glued `post` rows), the
+segment-leading gap (which no break can precede) as the first
+paragraph's `padding-top` (`--mw-mt`). Probed: Chromium and Firefox
+keep a trailing padding MONOLITHIC with its last line at a column
+break — counted by the break check, never spilled — so a gap sits
+invisibly at a column bottom and the next paragraph starts flush at
+the column top, matching the look of CSS margin truncation. WebKit
+needs gating (runtime fixture probe `detectGluedPreBreak`): it
+slice-spills padding across breaks — so margined paragraphs fall back
+to atomic distribution there — and balances segments in INK-HEIGHT
+sub-pixels, a fractional height that corrupts the ORIGIN of whatever
+segment follows and flips its distribution (probed live). WebKit flow
+therefore also requires every paragraph in ONE segment (spanners only
+at the container's edges), whose origin is engine-quantized boxes
+alone; the paragraph–spanner–paragraph shape falls back to atomic
+there. Two deviations from
+CSS margin semantics in the glued flow: a gap's rows stay COUNTED in
+its column's balance height (true truncation would free them), and a
+final segment's trailing bottom margin is dropped. A trailing bottom
+margin BEFORE a spanner survives by transfer into the spanner's top
+margin — a sum, per §6.1 non-collapsing.
 
 Any other non-fragmentable in-flow child (a decorated box) reverts
 the WHOLE container to atomic distribution below — mixing in-flow and

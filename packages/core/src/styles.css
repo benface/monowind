@@ -470,6 +470,24 @@ mono-wind:not([measuring]) [data-mw-multicol][data-mw-multicol-balance] {
   height: auto !important;
 }
 
+/* Paragraph gaps under a spanner-split (balance) container: margins
+ * derail the native balancers (probed), so the engine-collapsed gaps
+ * ride as PADDING — each inter-paragraph gap as the preceding
+ * paragraph's padding-bottom (`--mw-mb`), the segment-leading gap as
+ * the first paragraph's padding-top (`--mw-mt`). Chromium and Firefox
+ * keep a trailing padding monolithic with its last line at a column
+ * break (probed), so a gap sits invisibly at a column bottom and the
+ * next paragraph starts flush at the column top — the CSS-truncation
+ * look. WebKit slice-spills padding at breaks instead, and its gate
+ * (multicol.ts detectGluedPreBreak) keeps margined spanner containers
+ * on atomic distribution there. */
+mono-wind:not([measuring]) [data-mw-multicol-balance] > [data-mw-multicol-flow] {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
+  padding-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
+}
+
 /* Author-requested `overflow: hidden` or `overflow: clip` — both keep
  * content inside the engine-allocated box. Uses `clip` (no scroll
  * container, cheaper, more precise semantic for what we're doing). */

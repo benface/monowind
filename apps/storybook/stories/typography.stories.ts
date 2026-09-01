@@ -128,9 +128,10 @@ export const InlineElements: StoryObj = {
     expect(block.hasAttribute("data-mw-inline-box")).toBe(true);
     expect(inlineTable.hasAttribute("data-mw-inline-box")).toBe(true);
     expect(Number(inlineTable.style.getPropertyValue("--mw-h"))).toBe(3);
-    // align-bottom passes through to the browser (grid-exact, probed).
-    expect(inlineTable.hasAttribute("data-mw-vbottom")).toBe(true);
+    // align-bottom passes through to the browser (grid-exact, probed) —
+    // the plain box stays top-pinned, the align-bottom one drops.
     expect(block.hasAttribute("data-mw-vbottom")).toBe(false);
+    expect(inlineTable.hasAttribute("data-mw-vbottom")).toBe(true);
   },
 };
 

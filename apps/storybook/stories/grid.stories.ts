@@ -71,9 +71,9 @@ export const MixedTracks: StoryObj = {
     const gap =
       cellsOf(flexible!, "--mw-x") - cellsOf(fixed!, "--mw-x") - cellsOf(fixed!, "--mw-w");
     expect(cellsOf(fixed!, "--mw-w")).toBe(24);
-    expect(cellsOf(autoSized!, "--mw-w")).toBe(autoCells);
     const containerCells = cellsOf(container, "--mw-w");
     expect(cellsOf(flexible!, "--mw-w")).toBe(containerCells - 24 - autoCells - 2 * gap);
+    expect(cellsOf(autoSized!, "--mw-w")).toBe(autoCells);
   },
 };
 

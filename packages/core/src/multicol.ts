@@ -175,27 +175,46 @@ export function multicolLeafGeometry(
 interface FillUnit {
   rows: number;
   pre: number;
+  /** Glued trailing rows (a paragraph gap as padding-bottom): counted
+   * with the unit at break checks, never trimmed or spilled. */
+  post: number;
   forced: boolean;
   lines: number;
 }
+
+/** How `pre` rows behave at a column break (specs/multicol.md):
+ * - "truncate": a break swallows the margin it lands in (CSS
+ *   Fragmentation §5.2) — the spanless forced-height reconstruction,
+ *   where the native gaps ARE margins.
+ * - "glue": the spanner path, where the companion rewrites each gap as
+ *   padding-bottom on the PRECEDING paragraph (`post` rows) —
+ *   Chromium/Firefox keep a trailing padding monolithic with its last
+ *   line (probed pixel-exact), so the gap sits invisibly at a column
+ *   bottom and the next paragraph starts flush at the column top, the
+ *   CSS-truncation look. WebKit instead slice-spills padding across
+ *   breaks AND adds further in-engine divergences (fractional balance
+ *   heights, post-spanner segment misplacement), so
+ *   `detectGluedPreBreak` gates it back to the zero-margin constraint —
+ *   see the layoutMulticol dispatch. */
+type PreBreakMode = "truncate" | "glue";
 
 /** Greedy sequential fill of line units into columns at `limit`:
  * LINE-major columns and top rows. Heights are TIGHT — a column of L
  * lines occupies `Σ(h + lineGap) − lineGap` rows, its last line's
  * trailing leading trimmed like a single-column leaf's (the companion
  * re-extends the native box by `lineGap` so the browser still counts
- * full line boxes). A break truncates the margin it lands in (CSS
- * Fragmentation §5.2); the very first margin stays — a multicol
- * container is an independent formatting context, so it never
- * parent-collapses. A multi-line unit too tall for ANY column breaks
- * to a fresh column and then splits greedily (probed:
- * Chromium/Firefox; WebKit instead abandons `avoid` — documented
- * divergence). Drives the balance searches, the final maps, and the
- * public `multicolLines` predictor. */
+ * full line boxes). `pre` rows follow `mode` at breaks (see
+ * PreBreakMode); the very first margin stays — a multicol container is
+ * an independent formatting context, so it never parent-collapses. A
+ * multi-line unit too tall for ANY column breaks to a fresh column and
+ * then splits greedily (probed: Chromium/Firefox; WebKit instead
+ * abandons `avoid` — documented divergence). Drives the balance
+ * searches, the final maps, and the public `multicolLines` predictor. */
 function fillLineColumns(
   units: FillUnit[],
   lineGap: number,
   limit: number,
+  mode: PreBreakMode = "truncate",
 ): { columns: number; maxUsed: number; column: number[]; top: number[] } {
   let column = 0;
   let used = 0;
@@ -204,20 +223,22 @@ function fillLineColumns(
   const top: number[] = [];
   for (let i = 0; i < units.length; i++) {
     const unit = units[i]!;
-    let lead = i === 0 || used > 0 ? unit.pre : 0;
-    if (used > 0 && (unit.forced || used + lead + unit.rows - lineGap > limit)) {
+    let lead = mode === "glue" || i === 0 || used > 0 ? unit.pre : 0;
+    // A glued trailing pad is monolithic with its unit: the break check
+    // counts it, and it never spills to the next column (probed).
+    if (used > 0 && (unit.forced || used + lead + unit.rows + unit.post - lineGap > limit)) {
+      if (mode === "truncate") lead = 0;
       column += 1;
       used = 0;
-      lead = 0;
     }
     const lineRows = unit.rows / unit.lines;
     if (unit.lines > 1 && unit.rows - lineGap > limit) {
       // Too tall to keep whole: split greedily from the (fresh) column.
       for (let line = 0; line < unit.lines; line++) {
         if (used > 0 && used + lead + lineRows - lineGap > limit) {
+          if (mode === "truncate") lead = 0;
           column += 1;
           used = 0;
-          lead = 0;
         }
         columnOf.push(column);
         top.push(used + lead);
@@ -225,21 +246,59 @@ function fillLineColumns(
         lead = 0;
         maxUsed = Math.max(maxUsed, used - lineGap);
       }
+      used += unit.post;
+      if (unit.post > 0) maxUsed = Math.max(maxUsed, used);
       continue;
     }
     for (let line = 0; line < unit.lines; line++) {
       columnOf.push(column);
       top.push(used + lead + line * lineRows);
     }
-    used += lead + unit.rows;
-    maxUsed = Math.max(maxUsed, used - lineGap);
+    used += lead + unit.rows + unit.post;
+    // A column ending in a bare line trims its trailing leading (tight
+    // model); a glued pad sits below the FULL line box, untrimmed.
+    maxUsed = Math.max(maxUsed, used - (unit.post > 0 ? 0 : lineGap));
   }
   return { columns: column + 1, maxUsed, column: columnOf, top };
 }
 
 /** Margin-less, break-less line units from per-line row heights. */
 function lineUnits(rows: number[]): FillUnit[] {
-  return rows.map((r) => ({ rows: r, pre: 0, forced: false, lines: 1 }));
+  return rows.map((r) => ({ rows: r, pre: 0, post: 0, forced: false, lines: 1 }));
+}
+
+/** Whether the running browser GLUES a trailing padding to its last
+ * line at a column break — measured once from a hidden fixture
+ * replaying the probes' distinguishing case: a 3-line paragraph with
+ * one row of padding-bottom, then a 2-line one, balanced into 2
+ * columns. Glue (Chromium/Firefox) keeps the pad in column 0 and the
+ * second paragraph starts flush atop column 1; WebKit slice-spills the
+ * pad into column 1, pushing the paragraph a row down. An environment
+ * that doesn't lay the fixture out (unit tests) measures nothing and
+ * counts as glued. */
+let detectedGluedPreBreak: boolean | null = null;
+function detectGluedPreBreak(): boolean {
+  if (detectedGluedPreBreak !== null) return detectedGluedPreBreak;
+  // The fixture carries its own fixed geometry (the behavior it probes
+  // is font-independent): `row` px per line, one row of padding-bottom,
+  // 2 columns of 10 characters.
+  const row = 20;
+  const fixture = document.createElement("div");
+  fixture.style.cssText =
+    "position:absolute;left:-9999px;visibility:hidden;columns:2;column-gap:0;" +
+    `column-fill:balance;width:200px;font:10px/${row}px monospace;orphans:1;widows:1`;
+  fixture.innerHTML =
+    `<div style="margin:0;padding:0 0 ${row}px 0">aaaaaa aaaaaa aaaaaa</div>` +
+    '<div style="margin:0"><span>bbbbbb</span> bbbbbb</div>';
+  document.body.appendChild(fixture);
+  const fixtureTop = fixture.getBoundingClientRect().top;
+  const probe = fixture.querySelector("span")!.getBoundingClientRect();
+  fixture.remove();
+  // Glued: the second paragraph starts at the column top (offset 0);
+  // sliced: the spilled pad pushes it a full row down. Split the
+  // difference for sub-pixel robustness.
+  detectedGluedPreBreak = !(probe.width > 0 && probe.top - fixtureTop >= row / 2);
+  return detectedGluedPreBreak;
 }
 
 /**
@@ -413,42 +472,83 @@ function layoutMulticolFlow(
     }
   }
   const hasSpanners = segments.length > 1;
+  // With spanners the native balancer is trusted, and the companion
+  // rewrites inter-paragraph gaps as padding-bottom on the preceding
+  // paragraph (margins derail it — see the spec), glued to its last
+  // line. No detection needed HERE: the dispatch gate keeps non-glue
+  // (WebKit) spanner flow margin-less, and with every gap 0 the two
+  // modes are identical. Spanless flow keeps real native margins under
+  // a forced height, where breaks truncate them.
+  const preBreakMode: PreBreakMode = hasSpanners ? "glue" : "truncate";
 
   const ruleSegments: { start: number; end: number; columns: number }[] = [];
   let segTop = 0;
   let columnsUsed = 0;
   for (let seg = 0; seg < segments.length; seg++) {
     const paragraphs = segments[seg]!;
+    // A segment's last bottom margin: the companion zeroes native
+    // paragraph bottoms, so it survives by transfer into the following
+    // spanner's top margin — a SUM, per css-multicol §6.1 (spanner
+    // margins never collapse with column content).
+    let trailingBottom = 0;
     if (paragraphs.length > 0) {
       const children = paragraphs.map((child) => ({
         node: child,
         spans: leafLineSpans(child, Math.max(1, columns.width - child.style.tracking)),
         margin: resolveMargin(child.style.margin, columns.width),
+        pre: 0,
+        post: 0,
       }));
       const units: FillUnit[] = [];
       let prevBottom: number | null = null;
+      let prevChild: (typeof children)[number] | null = null;
       let pendingBreak = false;
-      for (const { node: child, spans, margin } of children) {
-        const pre =
+      for (const child of children) {
+        const { node, spans, margin } = child;
+        const gap =
           prevBottom === null ? (margin.top ?? 0) : collapseMargins(prevBottom, margin.top ?? 0);
-        const forced = pendingBreak || child.style.breakBeforeColumn;
-        if (child.style.breakInsideAvoid && spans.length > 0) {
+        // Glue mode rides each inter-paragraph gap as the PRECEDING
+        // child's padding-bottom (its last unit's glued `post`); the
+        // segment-leading gap, which no break can precede, stays the
+        // first child's own padding-top. Truncate mode keeps every gap
+        // as the following child's margin (`pre`).
+        let pre = gap;
+        if (preBreakMode === "glue" && prevChild !== null) {
+          pre = 0;
+          prevChild.post = gap;
+          units[units.length - 1]!.post = gap;
+        } else {
+          child.pre = gap;
+        }
+        const forced = pendingBreak || node.style.breakBeforeColumn;
+        if (node.style.breakInsideAvoid && spans.length > 0) {
           // The whole child is one unbreakable unit (probed: engines
           // keep it whole, or split from a fresh column when too tall).
-          units.push({ rows: spans.length * (1 + lineGap), pre, forced, lines: spans.length });
+          units.push({
+            rows: spans.length * (1 + lineGap),
+            pre,
+            post: 0,
+            forced,
+            lines: spans.length,
+          });
         } else {
           for (let s = 0; s < spans.length; s++) {
             units.push({
               rows: 1 + lineGap,
               pre: s > 0 ? 0 : pre,
+              post: 0,
               forced: s === 0 && forced,
               lines: 1,
             });
           }
         }
-        if (spans.length > 0) prevBottom = margin.bottom ?? 0;
-        pendingBreak = child.style.breakAfterColumn;
+        if (spans.length > 0) {
+          prevBottom = margin.bottom ?? 0;
+          prevChild = child;
+        }
+        pendingBreak = node.style.breakAfterColumn;
       }
+      trailingBottom = prevBottom ?? 0;
 
       let height: number;
       if (style.columnFill === "auto" && restriction !== undefined) {
@@ -456,16 +556,19 @@ function layoutMulticolFlow(
       } else {
         const balanced = minimalHeight(
           1,
-          Math.max(1, fillLineColumns(units, lineGap, Number.POSITIVE_INFINITY).maxUsed),
-          (limit) => fillLineColumns(units, lineGap, limit).columns <= columns.count,
+          Math.max(
+            1,
+            fillLineColumns(units, lineGap, Number.POSITIVE_INFINITY, preBreakMode).maxUsed,
+          ),
+          (limit) => fillLineColumns(units, lineGap, limit, preBreakMode).columns <= columns.count,
         );
         height =
           restriction !== undefined ? Math.max(1, Math.min(balanced, restriction)) : balanced;
       }
-      const filled = fillLineColumns(units, lineGap, height);
+      const filled = fillLineColumns(units, lineGap, height, preBreakMode);
 
       for (let c = 0, line = 0; c < children.length; c++) {
-        const { node: child, spans, margin } = children[c]!;
+        const { node: child, spans, margin, pre, post } = children[c]!;
         const lineY: number[] = [];
         const lineX: number[] = [];
         for (let s = 0; s < spans.length; s++, line++) {
@@ -484,7 +587,15 @@ function layoutMulticolFlow(
           gap,
           columnsUsed: filled.columns,
         };
-        child.multicolFlow = margin;
+        // Spanner containers: the companion reinterprets the vertical
+        // gaps as padding (engine-collapsed, so native sibling
+        // collapsing can't disagree) — the segment-leading gap as this
+        // child's padding-top, each inter-paragraph gap as the
+        // PRECEDING child's padding-bottom — see the
+        // [data-mw-multicol-balance] child rule.
+        child.multicolFlow = hasSpanners
+          ? { top: pre, right: margin.right, bottom: post, left: margin.left }
+          : margin;
         child.localRect = { x: originX, y: originY, width: contentWidth, height: filled.maxUsed };
         child.resolvedPadding = { top: 0, right: 0, bottom: 0, left: 0 };
       }
@@ -506,10 +617,11 @@ function layoutMulticolFlow(
       const marginX = (margin.left ?? 0) + (margin.right ?? 0);
       layoutNode(spanner, Math.max(0, contentWidth - marginX), undefined, 0, 0, "fill", cache);
       const cross = blockCrossOffset(margin, contentWidth, spanner.localRect.width);
-      segTop += margin.top ?? 0;
+      const marginTop = (margin.top ?? 0) + trailingBottom;
+      segTop += marginTop;
       spanner.localRect = { ...spanner.localRect, x: originX + cross, y: originY + segTop };
       spanner.multicolFlowSpan = {
-        top: margin.top ?? 0,
+        top: marginTop,
         right: 0,
         bottom: margin.bottom ?? 0,
         left: cross,
@@ -571,21 +683,36 @@ export function layoutMulticol(
   // Paragraph flow: every in-flow child a chrome-less text leaf (or a
   // spanner) → text fragments at line granularity instead of
   // distributing atomically. With spanners the native balancer handles
-  // the segments, which the probes pin down only for margin-less
-  // paragraphs, unrestricted heights, and `column-fill: balance`.
+  // the segments, which the probes pin down for unrestricted heights
+  // and `column-fill: balance`; paragraph margins ride along as
+  // companion-written padding glued to the preceding paragraph. Both
+  // require a browser whose balancer the engine can predict. WebKit
+  // slice-spills padding at breaks (so margins there fall back to
+  // atomic) and balances segments in INK-HEIGHT sub-pixels — the
+  // fractional height corrupts the ORIGIN of whatever segment follows,
+  // flipping its distribution (probed live) — so WebKit flow also
+  // requires all paragraphs in ONE segment (spanners only at the
+  // edges), whose origin is engine-quantized boxes alone.
   const inFlow = node.children.filter((child) => !isOutOfFlow(child.style));
   const paragraphs = inFlow.filter((child) => !child.style.columnSpan);
+  const paragraphSegments = inFlow.reduce(
+    (count, child, i) =>
+      !child.style.columnSpan && (i === 0 || inFlow[i - 1]!.style.columnSpan) ? count + 1 : count,
+    0,
+  );
   if (
     paragraphs.length > 0 &&
     paragraphs.every((child) => isFragmentableLeaf(child, style)) &&
     (paragraphs.length === inFlow.length ||
       (style.columnFill === "balance" &&
         restriction === undefined &&
-        paragraphs.every(
-          (child) =>
-            (child.style.margin.top === 0 || child.style.margin.top === null) &&
-            (child.style.margin.bottom === 0 || child.style.margin.bottom === null),
-        )))
+        (detectGluedPreBreak() ||
+          (paragraphSegments <= 1 &&
+            paragraphs.every(
+              (child) =>
+                (child.style.margin.top === 0 || child.style.margin.top === null) &&
+                (child.style.margin.bottom === 0 || child.style.margin.bottom === null),
+            )))))
   ) {
     return layoutMulticolFlow(node, inFlow, innerWidth, restriction, border, padding, cache);
   }

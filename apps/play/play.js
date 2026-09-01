@@ -30,9 +30,9 @@ const SAMPLE = `<div class="@container mx-auto flex max-w-128 flex-col border bo
   <div class="columns-1 gap-5 px-3 py-1 rule-neutral-500 rule-dashed rule-x @md:columns-2">
     <h1 class="mb-1 text-center font-bold text-yellow-300 [column-span:all]">◇ A polite theft on Maple Street ◇</h1>
     <p>A raccoon walked into the corner bakery at <span class="text-sky-300">6:47 AM</span> this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.</p>
-    <p class="indent-4">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway. The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
-    <p class="indent-4">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
-    <p class="indent-4">Regulars are asked to keep their eyes open, their bread bags zipped, and their expectations reasonable.</p>
+    <p class="mt-1">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway. The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
+    <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
+    <p class="mt-1">Regulars are asked to keep their eyes open, their bread bags zipped, and their expectations reasonable.</p>
   </div>
   <div class="flex items-center justify-between px-2 py-1 text-neutral-400">
     <div class="flex gap-3">

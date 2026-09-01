@@ -150,8 +150,8 @@ export const CaptionAndAlignment: StoryObj = {
   play: async ({ canvasElement }) => {
     await expectBrowserRowsToMatchEngine(canvasElement);
     const caption = canvasElement.querySelector<HTMLElement>("caption")!;
-    const top = canvasElement.querySelector<HTMLElement>('[data-test="top"]')!;
     const middle = canvasElement.querySelector<HTMLElement>('[data-test="middle"]')!;
+    const top = canvasElement.querySelector<HTMLElement>('[data-test="top"]')!;
     const bottom = canvasElement.querySelector<HTMLElement>('[data-test="bottom"]')!;
     // The caption sits above the grid (default caption-side: top) —
     // rows live under the parser-inserted <tbody>, so compare siblings:
@@ -159,13 +159,13 @@ export const CaptionAndAlignment: StoryObj = {
     const group = canvasElement.querySelector<HTMLElement>("tbody")!;
     expect(cellsOf(caption, "--mw-y")).toBeLessThan(cellsOf(group, "--mw-y"));
     // All three cells share the row box; alignment lives in the content
-    // padding: top pads nothing, middle centers, bottom pads fully. The
+    // padding: middle centers, top pads nothing, bottom pads fully. The
     // first cell's trailing <br /><br /> makes the row three lines tall
     // (one blank line — a final <br> adds none, the one before it does).
-    expect(cellsOf(middle, "--mw-y")).toBe(cellsOf(top, "--mw-y"));
-    expect(cellsOf(bottom, "--mw-y")).toBe(cellsOf(top, "--mw-y"));
-    expect(cellsOf(top, "--mw-pt")).toBe(0);
+    expect(cellsOf(top, "--mw-y")).toBe(cellsOf(middle, "--mw-y"));
+    expect(cellsOf(bottom, "--mw-y")).toBe(cellsOf(middle, "--mw-y"));
     expect(cellsOf(middle, "--mw-pt")).toBe(1);
+    expect(cellsOf(top, "--mw-pt")).toBe(0);
     expect(cellsOf(bottom, "--mw-pt")).toBe(2);
   },
 };
@@ -298,6 +298,12 @@ export const SeparateBorders: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     await expectBrowserRowsToMatchEngine(canvasElement);
+    // border-spacing-0 zeroes the UA's 2px default: rings touch (││),
+    // the doubled line being honest CSS — collapse is what merges them.
+    const tight = canvasElement.querySelector<HTMLElement>('[data-test="tight"]')!;
+    const [r1, r2] = Array.from(tight.querySelectorAll<HTMLElement>("td"));
+    expect(cellsOf(r1!, "--mw-x")).toBe(0);
+    expect(cellsOf(r2!, "--mw-x")).toBe(cellsOf(r1!, "--mw-w"));
     const table = canvasElement.querySelector<HTMLElement>('[data-test="table"]')!;
     const [a, b] = Array.from(table.querySelectorAll<HTMLElement>("th"));
     const span = table.querySelector<HTMLElement>('[colspan="2"]')!;
@@ -309,12 +315,6 @@ export const SeparateBorders: StoryObj = {
     expect(cellsOf(a!, "--mw-bl")).toBe(1);
     // The colspan covers both columns plus the spacing between them.
     expect(cellsOf(span, "--mw-w")).toBe(cellsOf(a!, "--mw-w") + cellsOf(b!, "--mw-w") + 2);
-    // border-spacing-0 zeroes the UA's 2px default: rings touch (││),
-    // the doubled line being honest CSS — collapse is what merges them.
-    const tight = canvasElement.querySelector<HTMLElement>('[data-test="tight"]')!;
-    const [r1, r2] = Array.from(tight.querySelectorAll<HTMLElement>("td"));
-    expect(cellsOf(r1!, "--mw-x")).toBe(0);
-    expect(cellsOf(r2!, "--mw-x")).toBe(cellsOf(r1!, "--mw-w"));
   },
 };
 
@@ -352,12 +352,6 @@ export const FixedLayout: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     await expectBrowserRowsToMatchEngine(canvasElement);
-    const table = canvasElement.querySelector<HTMLElement>('[data-test="table"]')!;
-    const [long, short] = Array.from(table.querySelectorAll<HTMLElement>("td"));
-    // Fixed layout ignores content: both unsized columns split the table
-    // evenly (±1 integer remainder), long content wraps.
-    expect(Math.abs(cellsOf(long!, "--mw-w") - cellsOf(short!, "--mw-w"))).toBeLessThanOrEqual(1);
-    expect(cellsOf(long!, "--mw-h")).toBeGreaterThan(1);
     // w-full + table-fixed: equal columns across the full width.
     const full = canvasElement.querySelector<HTMLElement>('[data-test="full"]')!;
     const fullCols = Array.from(full.querySelectorAll<HTMLElement>("td"), (td) =>
@@ -370,6 +364,12 @@ export const FixedLayout: StoryObj = {
         host.clientWidth / parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw")),
       ) - 1,
     );
+    const table = canvasElement.querySelector<HTMLElement>('[data-test="table"]')!;
+    const [long, short] = Array.from(table.querySelectorAll<HTMLElement>("td"));
+    // Fixed layout ignores content: both unsized columns split the table
+    // evenly (±1 integer remainder), long content wraps.
+    expect(Math.abs(cellsOf(long!, "--mw-w") - cellsOf(short!, "--mw-w"))).toBeLessThanOrEqual(1);
+    expect(cellsOf(long!, "--mw-h")).toBeGreaterThan(1);
     // Without an authored width, table-fixed falls back to the auto
     // algorithm (probed browser behavior): columns are content-sized.
     const fallback = canvasElement.querySelector<HTMLElement>('[data-test="auto-fallback"]')!;

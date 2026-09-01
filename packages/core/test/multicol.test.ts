@@ -161,11 +161,35 @@ describe("paragraph flow", () => {
     expect(art).toBe(["aaa │ccc", "bbb │ddd", "SPAN", "eee │fff"].join("\n"));
   });
 
-  it("keeps a spanner container atomic when a paragraph carries margins", () => {
+  it("flows margined paragraphs around a spanner (gaps as glued padding)", () => {
+    // mt-4 (1 row) between the two paragraphs of segment 1: the gap
+    // rides as padding-bottom glued under "aa bb", so "cc dd" starts
+    // flush atop column 1 (the CSS-truncation look) and the gap row
+    // sits invisibly at column 0's bottom.
+    const art = plainText(
+      `<div style="column-count: 2; column-gap: 4px; width: 36px"><div>aa bb</div><div style="margin-top: 4px">cc dd</div><div style="column-span: all">S</div><div>ee</div></div>`,
+    );
+    expect(art).toBe(["aa   cc", "bb   dd", "", "S", "ee"].join("\n"));
+  });
+
+  it("transfers a trailing bottom margin into the spanner's top margin", () => {
+    // The companion zeroes native paragraph bottoms, so mb-4 (1 row)
+    // before the spanner survives as spanner top margin — a sum, per
+    // css-multicol §6.1 (spanner margins don't collapse with content).
     const art = plainText(
       `<div style="column-count: 2; column-gap: 4px; width: 36px"><div style="margin-bottom: 4px">aa bb</div><div style="column-span: all">S</div><div>cc</div></div>`,
     );
-    expect(art).toBe(["aa", "bb", "S", "cc"].join("\n"));
+    expect(art).toBe(["aa   bb", "", "S", "cc"].join("\n"));
+  });
+
+  it("glues a gap under a break-inside: avoid paragraph in a spanner flow", () => {
+    // The mt-4 (1 row) gap rides as the AVOID unit's trailing pad —
+    // monolithic with the whole unit, filling column 0 to the balance
+    // height while "cc dd" starts flush atop column 1.
+    const art = plainText(
+      `<div style="column-count: 2; column-gap: 4px; width: 36px"><div style="break-inside: avoid">aa bb</div><div style="margin-top: 4px">cc dd</div><div style="column-span: all">S</div><div>ee</div></div>`,
+    );
+    expect(art).toBe(["aa   cc", "bb   dd", "", "S", "ee"].join("\n"));
   });
 
   it("reverts to atomic distribution when any child is decorated", () => {

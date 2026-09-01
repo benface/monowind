@@ -370,15 +370,15 @@ export const GapDecorations: StoryObj = {
     // a floored gap, and a bordered leaf with teeing rules all still
     // break on the engine's lines.
     await expectBrowserColumnsToMatchEngine(canvasElement, "flush");
-    await expectBrowserColumnsToMatchEngine(canvasElement, "floor");
-    await expectBrowserColumnsToMatchEngine(canvasElement, "tee");
-    // `gap-0` alone is flush; `gap-0 rule` floors the gap at the rule
-    // width — the rule needs its cell (specs/gap-decorations.md
-    // deviation 1).
+    // `gap-0` alone is flush…
     const flush = canvasElement.querySelector<HTMLElement>('[data-test="flush"]')!;
-    const floor = canvasElement.querySelector<HTMLElement>('[data-test="floor"]')!;
     expect(cellsOf(flush, "--mw-colg")).toBe(0);
+    await expectBrowserColumnsToMatchEngine(canvasElement, "floor");
+    // …while `gap-0 rule` floors the gap at the rule width — the rule
+    // needs its cell (specs/gap-decorations.md deviation 1).
+    const floor = canvasElement.querySelector<HTMLElement>('[data-test="floor"]')!;
     expect(cellsOf(floor, "--mw-colg")).toBe(1);
+    await expectBrowserColumnsToMatchEngine(canvasElement, "tee");
   },
 };
 
@@ -411,33 +411,119 @@ export const Blocks: StoryObj = {
 export const Spanner: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-60 columns-2 gap-5 rule-zinc-500 rule-x" data-test="span">
-        <p>${PROSE}</p>
-        <h2 class="my-1 bg-fuchsia-500 p-1 text-white [column-span:all]">Spanning heading</h2>
-        <p>A closing paragraph flows through both columns below the spanning heading.</p>
+      <div class="flex flex-col gap-2">
+        <div class="max-w-60 columns-2 gap-5 rule-zinc-500 rule-x" data-test="span">
+          <p>${PROSE}</p>
+          <p class="mt-1">A margined paragraph rides its gap into the flow.</p>
+          <h2 class="my-1 bg-fuchsia-500 p-1 text-white [column-span:all]">Spanning heading</h2>
+          <p>
+            A closing paragraph flows through both columns below the spanning heading — split
+            mid-paragraph, except in Safari, which distributes whole paragraphs between spanners.
+          </p>
+        </div>
+        <div class="max-w-60 columns-2 gap-5 rule-zinc-500 rule-x" data-test="span-lead">
+          <h2 class="mb-1 bg-sky-500 p-1 text-white [column-span:all]">Leading heading</h2>
+          <p>A single paragraph below a leading spanner flows through both columns everywhere.</p>
+        </div>
       </div>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    // In-flow spanner (specs/multicol.md, probed): the native balancer
-    // splits each SINGLE paragraph across both columns of its segment,
-    // the spanner spanning between them.
+    // In-flow spanner (specs/multicol.md, probed): on engines whose
+    // balancer the engine can predict (Chromium/Firefox), each SINGLE
+    // paragraph splits across both columns of its segment. WebKit
+    // balances segments in ink-height sub-pixels — unpredictable — and
+    // falls back to atomic distribution.
     const host = await readyHost(canvasElement);
     await document.fonts.ready;
     await waitFor(
       () => {
         const el = canvasElement.querySelector<HTMLElement>('[data-test="span"]')!;
         const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-        const [first, second] = Array.from(el.querySelectorAll("p"));
-        expect(charColumns(el, first!, cellWidth).size, "first paragraph splits").toBe(2);
-        expect(charColumns(el, second!, cellWidth).size, "second paragraph splits").toBe(2);
+        const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+        const paragraphs = Array.from(el.querySelectorAll("p"));
+        const first = paragraphs[0]!;
+        const last = paragraphs.at(-1)!;
+        if (el.hasAttribute("data-mw-multicol")) {
+          // The long opening paragraph splits across its segment's
+          // columns (the short margined one need not).
+          expect(charColumns(el, first, cellWidth).size, "first paragraph splits").toBe(2);
+        }
         // The spanner sits at full width between the two segments.
         const spanner = el.querySelector("h2")!.getBoundingClientRect();
-        expect(spanner.top).toBeGreaterThan(first!.getBoundingClientRect().top);
-        expect(spanner.bottom).toBeLessThan(second!.getBoundingClientRect().bottom);
+        expect(spanner.top).toBeGreaterThan(first.getBoundingClientRect().top);
+        expect(spanner.bottom).toBeLessThan(last.getBoundingClientRect().bottom);
         expect(Math.round(spanner.width / cellWidth), "spanner full width").toBe(
           contentCellsOf(el),
         );
+        if (el.hasAttribute("data-mw-multicol")) {
+          // …and so does the closing paragraph below it.
+          expect(charColumns(el, last, cellWidth).size, "last paragraph splits").toBe(2);
+        }
+        // The margin-as-padding translation must never leave native text
+        // between cells: every character lands on a whole engine row,
+        // whichever path laid it out.
+        const box = el.getBoundingClientRect();
+        const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
+        eachCharRect(el, (rect, char) => {
+          const row = (rect.top + rect.height / 2 - contentTop) / cellHeight - 0.5;
+          expect(Math.abs(row - Math.round(row)), `"${char}" on a whole row`).toBeLessThan(0.2);
+        });
+        // With every paragraph in ONE segment (spanner only at the
+        // edge), the flow path holds in EVERY engine — WebKit's
+        // ink-fractional segment heights can't corrupt an origin that
+        // has no balanced segment above it.
+        const lead = canvasElement.querySelector<HTMLElement>('[data-test="span-lead"]')!;
+        expect(lead.hasAttribute("data-mw-multicol"), "leading-spanner container flows").toBe(true);
+        expect(
+          charColumns(lead, lead.querySelector("p")!, cellWidth).size,
+          "single paragraph splits below a leading spanner",
+        ).toBe(2);
+      },
+      { timeout: 10_000 },
+    );
+  },
+};
+
+export const SpannerMarginFallback: StoryObj = {
+  // Test-only: hidden from the Storybook sidebar (and the visual suite),
+  // still run by the Vitest story tests. A MARGINED single-segment
+  // spanner container — visually a repeat of the Spanner story, but the
+  // margin is the one trigger its visible containers can't isolate:
+  // glue engines keep the flow; WebKit (slice) falls back to atomic
+  // distribution.
+  tags: ["!dev"],
+  render: () => html`
+    <mono-wind>
+      <div class="max-w-60 columns-2 gap-5 rule-zinc-500 rule-x" data-test="margins">
+        <h2 class="mb-1 bg-emerald-500 p-1 text-white [column-span:all]">Margined prose</h2>
+        <p>${PROSE}</p>
+        <p class="mt-1">A margined trailer.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    await document.fonts.ready;
+    await waitFor(
+      () => {
+        const el = canvasElement.querySelector<HTMLElement>('[data-test="margins"]')!;
+        const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+        const paragraphs = Array.from(el.querySelectorAll("p"));
+        if (el.hasAttribute("data-mw-multicol")) {
+          expect(charColumns(el, paragraphs[0]!, cellWidth).size, "margined prose splits").toBe(2);
+        } else {
+          // Atomic: whole paragraphs, each about one column wide
+          // (gap-5 across 2 tracks; a split one would span the full
+          // content width), give or take a quantized cell.
+          const columnWidth = (contentCellsOf(el) - 5) / 2;
+          for (const p of paragraphs) {
+            expect(
+              p.getBoundingClientRect().width / cellWidth,
+              "paragraph stays in one column",
+            ).toBeLessThanOrEqual(columnWidth + 1);
+          }
+        }
       },
       { timeout: 10_000 },
     );
