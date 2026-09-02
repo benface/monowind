@@ -6,8 +6,8 @@
   "license": "MIT",
   "scripts": {
     "dev": "pnpm --filter @monowind/storybook dev",
-    "check": "oxlint && oxfmt --check && pnpm -r typecheck && pnpm -r test",
-    "check:fix": "oxlint --fix && oxfmt && pnpm -r typecheck && pnpm -r test",
+    "check": "node scripts/check-workspace-deps.mjs && oxlint && oxfmt --check && pnpm -r typecheck && pnpm -r test",
+    "check:fix": "node scripts/check-workspace-deps.mjs && oxlint --fix && oxfmt && pnpm -r typecheck && pnpm -r test",
     "check-updates": "ncu -iu --deep",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

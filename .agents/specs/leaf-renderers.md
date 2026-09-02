@@ -69,9 +69,13 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   the parent's run; packages should still ship `display: block` for
   sane non-grid fallback rendering.
 - Intrinsic size: one cell per code point of the longest line ×
-  line count; `line-height`/`tracking` apply like any leaf; authored
-  box constraints and overflow follow the normal cell-model rules, no
-  special-casing.
+  line count; `line-height`/`tracking` apply like any leaf. SIZING IS
+  REPLACED-ELEMENT (like `<img>`): auto width means intrinsic, not
+  block stretch — `mx-auto` centers, `w-full` stretches. Enforced in
+  the engine, not companion CSS: Gecko's computed styles never
+  surface intrinsic keywords, so a stylesheet `width: max-content`
+  works everywhere EXCEPT Firefox. Other authored constraints and
+  overflow follow the normal cell-model rules.
 - A leaf element outside a `<mono-wind>` host is simply never seen by
   the engine; warning about it is the component package's business.
 

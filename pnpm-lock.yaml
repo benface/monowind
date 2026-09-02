@@ -29,6 +29,9 @@ importers:
 
   apps/example-html:
     devDependencies:
+      monowind:
+        specifier: workspace:*
+        version: link:../../packages/core
       playwright:
         specifier: ^1.62.1
         version: 1.62.1
@@ -131,6 +134,9 @@ importers:
 
   apps/play:
     dependencies:
+      '@monowind/ascii':
+        specifier: workspace:*
+        version: link:../../packages/ascii
       monowind:
         specifier: workspace:*
         version: link:../../packages/core

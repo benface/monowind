@@ -9,6 +9,7 @@
     "test": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && node smoke.test.mjs"
   },
   "dependencies": {
+    "@monowind/ascii": "workspace:*",
     "monowind": "workspace:*"
   },
   "devDependencies": {

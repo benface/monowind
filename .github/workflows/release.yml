@@ -56,7 +56,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm --filter @monowind/storybook... install --frozen-lockfile
+      # Unfiltered: a filtered install fails on undeclared cross-package
+      # reaches (declarations guarded by scripts/check-workspace-deps.mjs).
+      - run: pnpm install --frozen-lockfile
       # No repository is linked to this Netlify site, so this push of
       # the built files is the only deploy path. The CLI must run from
       # the site's base directory with an absolute --dir. Site id is
@@ -87,7 +89,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm --filter @monowind/play... install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       # Same arrangement as the Storybook site: GitHub Actions builds,
       # `netlify deploy --prod` pushes the finished files (site:
       # monowind-play, → play.monowind.benface.com).

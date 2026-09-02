@@ -23,7 +23,7 @@ const versionLabel = document.getElementById("version");
 if (globalThis.monowind?.version) versionLabel.textContent = `v${globalThis.monowind.version}`;
 
 const SAMPLE = `<div class="@container mx-auto flex max-w-128 flex-col border border-emerald-400 rule-emerald-400 rule-y">
-  <mono-ascii font="small" class="mx-auto max-w-full overflow-clip py-1 text-emerald-300">monowind</mono-ascii>
+  <mono-ascii font="small" effect="metal" class="mx-auto max-w-full overflow-clip py-1">monowind</mono-ascii>
   <div class="flex items-center justify-between bg-emerald-400 px-2 py-1 text-black">
     <div class="font-bold">◆ MONOWIND DAILY</div>
     <div>issue 001</div>

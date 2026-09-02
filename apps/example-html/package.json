@@ -8,6 +8,7 @@
     "test": "pnpm -C ../../packages/core build && node copy-cdn.mjs && node smoke.test.mjs"
   },
   "devDependencies": {
+    "monowind": "workspace:*",
     "playwright": "^1.62.1",
     "vite": "^8.2.2"
   }

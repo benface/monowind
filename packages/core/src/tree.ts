@@ -227,6 +227,13 @@ function buildRendererLeaf(
   const lines = content?.lines ?? [];
   const text = lines.join("\n");
   style.whiteSpace = "pre";
+  // Replaced-element sizing (like <img>): auto width means intrinsic,
+  // not stretch — and it must live HERE, not in companion CSS, because
+  // Gecko's computed styles never surface intrinsic keywords (only the
+  // class scan would see a `w-max`, and a stylesheet rule has neither).
+  if (style.width === undefined || style.width.kind === "auto") {
+    style.width = { kind: "max-content" };
+  }
   // One cell per UTF-16 unit — consistent with the run mapping below
   // (astral glyph art is out of scope; fonts are BMP in practice).
   const intrinsicWidth = longestLineAdvance(

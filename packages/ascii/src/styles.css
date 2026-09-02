@@ -6,13 +6,12 @@
  * In `base` so themes and utilities override everything here. */
 
 @layer base {
-  /* Custom elements default to inline; the banner behaves like a
-   * REPLACED element (its art has intrinsic dimensions, like an img):
-   * a block box shrink-wrapped to the art, so `mx-auto` centers it
-   * and `w-full` stretches it. In `base`, so utilities override. */
+  /* Custom elements default to inline. Replaced-element sizing (auto
+   * width = intrinsic, so `mx-auto` centers and `w-full` stretches)
+   * comes from the engine's leaf handling — a CSS `width: max-content`
+   * here would be invisible to Gecko's computed styles. */
   mono-ascii {
     display: block;
-    width: max-content;
   }
 
   /* ANSI-16 theme tokens: what SGR-colored fonts and `effect` filters
