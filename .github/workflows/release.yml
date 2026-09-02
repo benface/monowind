@@ -1,6 +1,7 @@
 name: Release
 
-# On a version tag (v*): publish both packages to npm (trusted publishing
+# On a version tag (v*): publish every public workspace package to npm
+# (trusted publishing
 # via OIDC — each package lists this workflow as a trusted publisher on
 # npmjs.com), then deploy the Storybook and playground sites. Three jobs
 # so a deploy hiccup can be re-run without re-publishing. Publishing

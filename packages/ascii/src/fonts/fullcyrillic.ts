@@ -1,0 +1,7 @@
+// Generated from fonts/fullcyrillic.tlf by scripts/generate-fonts.mjs — do not edit.
+import { registerAsciiFont } from "../registry.ts";
+
+const data: string =
+  "tlf2a 1 1 3 -1 15 0 0 0\n===============================================================================\n  This is fullcyrillic.tlf, or “Full Cyrillic”, by Mark Schreiber\n<mark7@alumni.cmu.edu>.  It was created on May 2nd, 2015.\n\n  This font is free software. It comes without any warranty, to the extent\npermitted by applicable law. You can redistribute it and/or modify it under\nthe terms of the Do What The Fuck You Want To Public License, Version 2,\nas published by Sam Hocevar. See http://sam.zoy.org/wtfpl/COPYING for more\ndetails.\n\n  Missing: ! \" # $ % & ' ( ) , : ; < > ? @ [ \\ ] ^ _ ` { | } ~ Ü ü ß\n\n  This font is part of TOIlet’s official distribution. More information\non the TOIlet website at http://caca.zoy.org/wiki/toilet\n===============================================================================\n@\n!@\n\"@\n#@\n$@\n%@\n&@\n'@\n(@\n)@\n*@\n+@\n@@\n-@\n.@\n/@\nꙨ0\nӏ1\nꙄ2\nӠ3\nЧ4\nҔ5\nб6\nГ7\nӨ8\nӴ9\n:@\n;@\n<@\n=@\n>@\n?@\n@#\nДA\nБB\nҪC\nԒD\nЭE\nҒF\nԌG\nНH\nЇI\nЈJ\nЌK\nГL\nМM\nИN\nФO\nРP\nԚQ\nЯR\nЅS\nтT\nЦU\nѴV\nШW\nЖX\nУY\nиZ\n[@\n\\@\n]@\n^@\n_@\n`@\nдa\nЬb\nсc\nԁd\nэe\nғf\nԍg\nҺh\nїi\nјj\nкk\nꙇl\nщm\nпn\nѻo\nҏp\nԛq\nяr\nꙅs\nꚍt\nџu\nѵv\nшw\nжx\nүy\nӆz\n{@\n|@\n}@\n~@\nӒÄ\nӦÖ\nÜ@\nӓä\nӧö\nü@\nß@\n";
+registerAsciiFont("fullcyrillic", data);
+export default data;

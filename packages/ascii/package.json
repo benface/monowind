@@ -1,0 +1,76 @@
+{
+  "name": "@monowind/ascii",
+  "version": "0.1.9",
+  "description": "FIGlet/TOIlet ascii-art banner text for monowind: the <mono-ascii> element and a font library",
+  "keywords": [
+    "ascii-art",
+    "banner",
+    "figlet",
+    "monowind",
+    "toilet",
+    "tui"
+  ],
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/ascii"
+  },
+  "style": "./src/styles.css",
+  "files": [
+    "dist",
+    "src/*.css",
+    "fonts"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "./src/index.ts",
+    "./src/fonts/*.ts",
+    "./dist/index.js",
+    "./dist/fonts/*.js"
+  ],
+  "exports": {
+    ".": {
+      "style": "./src/styles.css",
+      "typecheck": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./fonts/*": "./src/fonts/*.ts",
+    "./styles.css": "./src/styles.css",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "style": "./src/styles.css",
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./fonts/*": "./dist/fonts/*.js",
+      "./styles.css": "./src/styles.css",
+      "./package.json": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/generate-fonts.mjs && vite build && vite build -c vite.cdn.config.ts && tsc -p tsconfig.build.json && node -e \"fs.readdirSync('dist/fonts').filter(f=>f.endsWith('.map')).forEach(f=>fs.rmSync('dist/fonts/'+f))\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "devDependencies": {
+    "@types/figlet": "^1.7.0",
+    "@types/node": "^26.4.0",
+    "figlet": "^1.11.4",
+    "happy-dom": "^20.12.0",
+    "monowind": "workspace:^",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "monowind": "workspace:^"
+  }
+}

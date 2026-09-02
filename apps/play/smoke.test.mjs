@@ -3,6 +3,7 @@
  * renders through the engine, then type new content and verify the live
  * update, the select toggle, and the shareable hash round-trip.
  */
+import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 
 const url = new URL("./index.html", import.meta.url).href;
@@ -24,6 +25,15 @@ const sampleRendered = await page.evaluate(() => {
     ?.contentDocument?.querySelector("mono-wind")
     ?.shadowRoot?.getElementById("grid");
   return (grid?.textContent ?? "").includes("┌") && (grid?.textContent ?? "").includes("│");
+});
+
+// The sample's <mono-ascii> masthead renders as art through the ascii
+// CDN bundle: the semantic string stays in the light DOM only.
+const asciiRendered = await page.evaluate(() => {
+  const doc = document.getElementById("preview")?.contentDocument;
+  const grid = doc?.querySelector("mono-wind")?.shadowRoot?.getElementById("grid");
+  const banner = doc?.querySelector("mono-ascii");
+  return banner?.textContent === "monowind" && !(grid?.textContent ?? "").includes("monowind");
 });
 
 // Live edit: replace the source and expect the grid to follow.
@@ -142,10 +152,55 @@ const hoverVariantCompiled = await page.evaluate(() => {
   return before !== after;
 });
 
+// Lazy font loading needs same-origin fetch, which file:// forbids —
+// serve the app for this one check. Typing font="slant" (bundled in
+// fonts/ but not in ascii-cdn.js) must render art via loadFont.
+const server = spawn(
+  "node",
+  [
+    new URL("../../scripts/serve-static.mjs", import.meta.url).pathname,
+    new URL(".", import.meta.url).pathname,
+    "5183",
+  ],
+  { stdio: "ignore" },
+);
+// Even a failed run must release the port for the next one.
+process.on("exit", () => server.kill());
+await new Promise((resolve) => setTimeout(resolve, 800));
+const served = await browser.newPage();
+await served.goto("http://localhost:5183/index.html");
+await served.waitForFunction(
+  () =>
+    document.getElementById("preview")?.contentDocument?.querySelector("mono-wind[data-mw-ready]"),
+  null,
+  { timeout: 10_000 },
+);
+await served.fill("#source", '<mono-ascii font="slant">lazy</mono-ascii>');
+let fontLazyLoaded = true;
+await served
+  .waitForFunction(
+    () => {
+      const grid = document
+        .getElementById("preview")
+        ?.contentDocument?.querySelector("mono-wind")
+        ?.shadowRoot?.getElementById("grid");
+      const text = grid?.textContent ?? "";
+      return text.includes("_") && !text.includes("lazy");
+    },
+    null,
+    { timeout: 10_000 },
+  )
+  .catch(() => {
+    fontLazyLoaded = false;
+  });
+server.kill();
+
 await browser.close();
 
 const result = {
   sampleRendered,
+  asciiRendered,
+  fontLazyLoaded,
   restored,
   selectMode,
   selectQueryPersisted,
@@ -159,6 +214,8 @@ const result = {
 };
 if (
   !sampleRendered ||
+  !asciiRendered ||
+  !fontLazyLoaded ||
   !restored ||
   selectMode !== "text" ||
   selectQueryPersisted !== "text" ||

@@ -11,6 +11,7 @@
  * - the engine, with <mono-wind> registered immediately.
  */
 import "@tailwindcss/browser";
+import { invalidateLeaves, registerLeafRenderer } from "./leaf.ts";
 import { defineMonoWind } from "./element.ts";
 import rulesCss from "./rules.css?inline";
 import companionCss from "./styles.css?inline";
@@ -36,7 +37,15 @@ defineMonoWind();
 declare const __MONOWIND_VERSION__: string;
 
 // Merge, not replace — dist/sort.js (the optional class-order
-// companion, see src/sort.ts) contributes to the same global.
+// companion, see src/sort.ts) and @monowind/ascii's cdn.js contribute
+// to the same global. The public extension API rides along so sibling
+// CDN bundles (built with `monowind` external → this global) share
+// the engine's registries instead of bundling a second copy.
 Object.assign(globalThis, {
-  monowind: { ...(globalThis as { monowind?: object }).monowind, version: __MONOWIND_VERSION__ },
+  monowind: {
+    ...(globalThis as { monowind?: object }).monowind,
+    version: __MONOWIND_VERSION__,
+    registerLeafRenderer,
+    invalidateLeaves,
+  },
 });

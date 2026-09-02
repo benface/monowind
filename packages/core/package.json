@@ -1,6 +1,6 @@
 {
   "name": "monowind",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Text-based user interfaces (TUI) on the web, from ordinary HTML and Tailwind utility classes",
   "keywords": [
     "ascii",

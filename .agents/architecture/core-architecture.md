@@ -120,9 +120,12 @@ schedules layout, paints decoration. Frameworks just render children into it —
 per-framework renderer needed (optional JSX type declarations only).
 
 Note: custom element names **require a hyphen**, so `<monowind>` is invalid.
-Decision (2026-08-25): the tag is **`<mono-wind>`**. If a component layer emerges
-later (e.g. `<mono-textarea>`, `<mono-scroll>`), consider migrating the host to
-`<mono-root>` so the whole family shares the `mono-` prefix.
+Decision (2026-08-25): the tag is **`<mono-wind>`**. The component family has
+since begun — `<mono-ascii>` (`@monowind/ascii`) builds on the public
+leaf-renderer API (specs/leaf-renderers.md), the extension point for elements
+that supply their own grid content. If the family grows into interactive
+components (`<mono-textarea>`, `<mono-scroll>`), consider migrating the host to
+`<mono-root>` so it shares the `mono-` prefix.
 
 ### D5. One engine, three packagings
 
@@ -153,12 +156,19 @@ All three share one core. Concretely, the planned packages:
   _required_ Tailwind config, not zero customizability. (CDN mode gets the
   same via `<style type="text/tailwindcss">`, which `@tailwindcss/browser`
   supports.) Exercised by `apps/example-vite`.
+- **`@monowind/ascii`** (`packages/ascii`) — the first component package:
+  `<mono-ascii>` FIGlet/TOIlet banner text on the public leaf-renderer
+  API, with 44 clearly-licensed fonts as per-module imports, SGR/effect
+  color through `--mw-ansi-*` theme tokens, and its own CDN bundle
+  (`dist/cdn.js`, loaded next to core's — external `monowind` mapped to
+  the shared global so the registries stay singular).
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_
   `dist/cdn.js` (~107 KB gzip), built by `vite.cdn.config.ts` from
   `src/cdn.ts`, exercised by `apps/example-html`; it exposes
-  `globalThis.monowind.version`. `dist/sort.js` (`vite.sort.config.ts`,
+  `globalThis.monowind.version` plus the leaf-renderer extension API for
+  sibling CDN bundles. `dist/sort.js` (`vite.sort.config.ts`,
   ~77 KB gzip) is its optional companion adding
   `globalThis.monowind.sortClasses` — canonical Tailwind class order via
   the `tailwindcss` design system, kept out of cdn.js for size.
@@ -171,8 +181,10 @@ All three share one core. Concretely, the planned packages:
   editing through an iframe-isolated preview, shareable compressed-hash
   URLs, Tidy formatting via `dist/sort.js`), with a docs/landing site
   (`website`, → monowind.benface.com) to come.
-- Per-framework packages: only if/when a component layer (`<mono-textarea>`,
-  `<mono-scroll>`, …) happens.
+- Per-framework packages: only if/when interactive components
+  (`<mono-textarea>`, `<mono-scroll>`, …) happen. The component layer itself
+  has started: `@monowind/ascii` ships `<mono-ascii>` on the leaf-renderer
+  API.
 
 **Workspace vs. publish resolution.** Each publishable package exposes its own
 source via `exports` (`"default": "./src/index.ts"`) so workspace consumers

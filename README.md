@@ -33,7 +33,11 @@ forms, and accessibility semantics stay fully intact.
 > junction glyphs), text wrap, and margins work. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
-> `<mono-wind select="text">` for a semantic text mirror. Design docs
+> `<mono-wind select="text">` for a semantic text mirror. Opacity and
+> CSS transitions animate the grid (backgrounds synthesized by the
+> engine), hover/active states work on any element without breaking
+> grid selection, and `<mono-ascii>` renders FIGlet banner text —
+> see the sections below. Design docs
 > live in [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
@@ -63,6 +67,23 @@ gate) to keep grid-mode hover working:
   }
 }
 ```
+
+## Ascii-art banners
+
+`@monowind/ascii` adds `<mono-ascii>`: FIGlet/TOIlet banner text
+rendered on the grid, with the semantic string intact for screen
+readers and text-mode selection. Fonts are per-module imports (or
+`registerAsciiFont` with your own `.flf`/`.tlf` data); SGR-colored
+fonts and the `effect` attribute (`rainbow`, `metal`) paint through
+theme-aware `--mw-ansi-*` tokens.
+
+```html
+<mono-ascii font="small" class="text-emerald-400">monowind</mono-ascii>
+```
+
+44 clearly-licensed fonts ship with the package; see
+[packages/ascii/README.md](packages/ascii/README.md) for setup per
+integration and the full font list.
 
 ## Structure
 

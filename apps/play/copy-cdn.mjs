@@ -4,7 +4,7 @@
  * also mirrors how the files are consumed in the real world (URLs, not
  * monorepo paths).
  */
-import { copyFileSync } from "node:fs";
+import { copyFileSync, cpSync } from "node:fs";
 
 for (const file of ["cdn.js", "cdn.js.map", "sort.js", "sort.js.map"]) {
   copyFileSync(
@@ -12,3 +12,19 @@ for (const file of ["cdn.js", "cdn.js.map", "sort.js", "sort.js.map"]) {
     new URL(`./${file}`, import.meta.url),
   );
 }
+for (const file of ["cdn.js", "cdn.js.map"]) {
+  copyFileSync(
+    new URL(`../../packages/ascii/dist/${file}`, import.meta.url),
+    new URL(`./ascii-${file}`, import.meta.url),
+  );
+}
+// The full font catalog, for loadFont's same-origin path (typing
+// font="slant" in the playground lazy-loads it).
+cpSync(
+  new URL("../../packages/ascii/fonts", import.meta.url),
+  new URL("./fonts", import.meta.url),
+  {
+    recursive: true,
+    filter: (source) => !source.includes("LICENSES"),
+  },
+);

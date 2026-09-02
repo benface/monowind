@@ -1,4 +1,6 @@
 import { intrinsicOuterWidth, makeIntrinsicCache } from "./layout.ts";
+import { leafRendererFor, renderLeafContent } from "./leaf.ts";
+import type { LeafRegistration } from "./leaf.ts";
 import { pxToCells } from "./metrics.ts";
 import { isTransparentColor, readCellStyle, trackingCells } from "./style.ts";
 import { zeroInsets } from "./types.ts";
@@ -49,6 +51,13 @@ export function buildTree(
 ): LayoutNode | null {
   const style = readCellStyle(root, rootFontSizePx, cellMetrics);
   if (style.display === "none") return null;
+
+  // Registered leaf renderers (specs/leaf-renderers.md) supply their
+  // own grid content; children are skipped entirely. The light DOM
+  // stays untouched — it keeps the a11y tree and select="text"
+  // semantics while the grid shows the rendered content.
+  const leaf = leafRendererFor(root.tagName);
+  if (leaf) return buildRendererLeaf(root, style, leaf);
 
   const elementChildren = Array.from(root.children);
   const roles = elementChildren.map(childRole);
@@ -204,6 +213,69 @@ export function buildTree(
   return container;
 }
 
+/** A registered leaf renderer's node (specs/leaf-renderers.md): the
+ * renderer's lines become the leaf's preformatted text (white-space
+ * styling does not apply — the lines ARE the content), and its paint
+ * runs ride the existing inline-run machinery as paint-only entries
+ * with neutral geometry, so the painters need no new path. */
+function buildRendererLeaf(
+  root: Element,
+  style: ReturnType<typeof readCellStyle>,
+  leaf: LeafRegistration,
+): LayoutNode {
+  const content = renderLeafContent(leaf, root);
+  const lines = content?.lines ?? [];
+  const text = lines.join("\n");
+  style.whiteSpace = "pre";
+  // One cell per UTF-16 unit — consistent with the run mapping below
+  // (astral glyph art is out of scope; fonts are BMP in practice).
+  const intrinsicWidth = longestLineAdvance(
+    text,
+    Array.from({ length: text.length }, () => 1),
+    style.tracking,
+  );
+  const intrinsicHeight = lines.length;
+  const node: LayoutNode = {
+    source: root,
+    style,
+    children: [],
+    text,
+    intrinsicWidth,
+    intrinsicHeight,
+    localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
+    unclampedHeight: 0,
+    resolvedPadding: zeroInsets(),
+  };
+  const runs = content?.runs ?? [];
+  if (runs.length > 0 && text.length > 0) {
+    // Line start offsets into the joined text (newlines included).
+    const lineStart: number[] = [0];
+    for (const line of lines) lineStart.push(lineStart[lineStart.length - 1]! + line.length + 1);
+    const charInline = Array.from({ length: text.length }, () => -1);
+    node.inlineElements = runs.map((run) => ({
+      element: root,
+      tracking: 0,
+      padLeft: 0,
+      padRight: 0,
+      insets: null,
+      color: run.paint.color,
+      backgroundColor: run.paint.backgroundColor,
+      fontWeight: run.paint.fontWeight ?? "",
+      fontStyle: run.paint.fontStyle ?? "",
+      textDecorationLine: run.paint.textDecorationLine ?? "",
+    }));
+    runs.forEach((run, index) => {
+      const line = lines[run.line];
+      if (line === undefined) return;
+      const from = Math.max(0, run.start);
+      const to = Math.min(line.length, run.end);
+      for (let col = from; col < to; col++) charInline[lineStart[run.line]! + col] = index;
+    });
+    node.charInline = charInline;
+  }
+  return node;
+}
+
 /**
  * HTML tags whose default display is inline — a FALLBACK for environments
  * whose getComputedStyle returns "" for un-styled elements (happy-dom in
@@ -269,6 +341,10 @@ function childRole(el: Element): "none" | "out-of-flow" | "inline" | "block" {
   const cs = getComputedStyle(el);
   if (cs.display === "none") return "none";
   if (cs.position === "absolute" || cs.position === "fixed") return "out-of-flow";
+  // Registered leaf renderers are always block participants — an
+  // unstyled custom element computes to `inline`, which would fold
+  // its semantic text into the parent's run instead of rendering.
+  if (leafRendererFor(el.tagName)) return "block";
   if (isRunInline(el, cs.display) || isAtomicInline(el, cs.display)) return "inline";
   return "block";
 }

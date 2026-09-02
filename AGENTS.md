@@ -50,7 +50,7 @@ interfaces (TUIs) on the web. Start with
 
 ## Releasing
 
-Bump the `version` in both `packages/*/package.json` (same number) —
+Bump the `version` in every `packages/*/package.json` (same number) —
 preferably inside the release's final substantive commit, to avoid a
 version-only commit and its extra CI run — push, and wait for green CI.
 Then

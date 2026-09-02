@@ -1,0 +1,7 @@
+// Generated from fonts/bfraktur.tlf by scripts/generate-fonts.mjs — do not edit.
+import { registerAsciiFont } from "../registry.ts";
+
+const data: string =
+  "tlf2a 1 1 3 -1 15 0 0 0\n===============================================================================\n  This is bfraktur.tlf, or “Bold Fraktur”, by Sam Hocevar <sam@hocevar.net>.\nIt was created on September 17th, 2013.\n\n  This font is free software. It comes without any warranty, to the extent\npermitted by applicable law. You can redistribute it and/or modify it under\nthe terms of the Do What The Fuck You Want To Public License, Version 2,\nas published by Sam Hocevar. See http://sam.zoy.org/wtfpl/COPYING for more\ndetails.\n\n  Missing: ! \" # $ % & ' ( ) , : ; < > ? @ [ \\ ] ^ _ ` { | } ~ Ä Ö Ü ä ö ü ß\n\n  This font is part of TOIlet’s official distribution. More information\non the TOIlet website at http://caca.zoy.org/wiki/toilet\n===============================================================================\n@\n!@\n\"@\n#@\n$@\n%@\n&@\n'@\n(@\n)@\n**\n++\n@@\n--\n..\n//\n00\n11\n22\n33\n44\n55\n66\n77\n88\n99\n:@\n;@\n<@\n⊜=\n>@\n?@\n@#\n𝕬A\n𝕭B\n𝕮C\n𝕯D\n𝕰E\n𝕱F\n𝕲G\n𝕳H\n𝕴I\n𝕵J\n𝕶K\n𝕷L\n𝕸M\n𝕹N\n𝕺O\n𝕻P\n𝕼Q\n𝕽R\n𝕾S\n𝕿T\n𝖀U\n𝖁V\n𝖂W\n𝖃X\n𝖄Y\n𝖅Z\n[@\n\\@\n]@\n^@\n_@\n`@\n𝖆a\n𝖇b\n𝖈c\n𝖉d\n𝖊e\n𝖋f\n𝖌g\n𝖍h\n𝖎i\n𝖏j\n𝖐k\n𝖑l\n𝖒m\n𝖓n\n𝖔o\n𝖕p\n𝖖q\n𝖗r\n𝖘s\n𝖙t\n𝖚u\n𝖛v\n𝖜w\n𝖝x\n𝖞y\n𝖟z\n{@\n|@\n}@\n~@\nÄ@\nÖ@\nÜ@\nä@\nö@\nü@\nß@\n";
+registerAsciiFont("bfraktur", data);
+export default data;

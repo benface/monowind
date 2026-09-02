@@ -1,0 +1,40 @@
+/* @monowind/ascii companion stylesheet — import next to monowind's:
+ *   @import "tailwindcss";
+ *   @import "monowind";
+ *   @import "@monowind/ascii";
+ *
+ * In `base` so themes and utilities override everything here. */
+
+@layer base {
+  /* Custom elements default to inline; the banner behaves like a
+   * REPLACED element (its art has intrinsic dimensions, like an img):
+   * a block box shrink-wrapped to the art, so `mx-auto` centers it
+   * and `w-full` stretches it. In `base`, so utilities override. */
+  mono-ascii {
+    display: block;
+    width: max-content;
+  }
+
+  /* ANSI-16 theme tokens: what SGR-colored fonts and `effect` filters
+   * resolve against, so a font's "red" follows the theme. Defaults
+   * follow the VS Code terminal palette; the themes initiative (and
+   * any consumer) overrides them. */
+  mono-wind {
+    --mw-ansi-black: #000000;
+    --mw-ansi-red: #cd3131;
+    --mw-ansi-green: #0dbc79;
+    --mw-ansi-yellow: #e5e510;
+    --mw-ansi-blue: #2472c8;
+    --mw-ansi-magenta: #bc3fbc;
+    --mw-ansi-cyan: #11a8cd;
+    --mw-ansi-white: #e5e5e5;
+    --mw-ansi-bright-black: #666666;
+    --mw-ansi-bright-red: #f14c4c;
+    --mw-ansi-bright-green: #23d18b;
+    --mw-ansi-bright-yellow: #f5f543;
+    --mw-ansi-bright-blue: #3b8eea;
+    --mw-ansi-bright-magenta: #d670d6;
+    --mw-ansi-bright-cyan: #29b8db;
+    --mw-ansi-bright-white: #ffffff;
+  }
+}

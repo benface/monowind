@@ -1,4 +1,5 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
+import { leafObservedAttributes, onLeafRegistryChange } from "./leaf.ts";
 import { hitChain } from "./pointer.ts";
 import { renderPlainText } from "./plain-text.ts";
 import { paintGrid } from "./paint.ts";
@@ -139,6 +140,29 @@ export class MonoWindElement extends HTMLElementBase {
   #layoutPending = false;
   #cellMetrics: CellMetrics | null = null;
   #lastLayout: LayoutNode | null = null;
+  #unsubscribeLeafRegistry: (() => void) | null = null;
+
+  /** (Re-)observe the light DOM; re-run when the leaf registry adds
+   * observed attributes to the filter. `observe` on the same target
+   * replaces the previous options in place. */
+  #observeLightDom(): void {
+    this.#mutationObserver?.observe(this, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      // colspan/rowspan/span are layout inputs too (specs/table.md);
+      // leaf renderers declare theirs at registration.
+      attributeFilter: [
+        "class",
+        "style",
+        "colspan",
+        "rowspan",
+        "span",
+        ...leafObservedAttributes(),
+      ],
+    });
+  }
 
   constructor() {
     super();
@@ -190,13 +214,13 @@ export class MonoWindElement extends HTMLElementBase {
     // writes happens synchronously inside #performLayout and is drained
     // there before observation resumes.
     this.#mutationObserver = new MutationObserver(() => this.#scheduleLayout());
-    this.#mutationObserver.observe(this, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      // colspan/rowspan/span are layout inputs too (specs/table.md).
-      attributeFilter: ["class", "style", "colspan", "rowspan", "span"],
+    this.#observeLightDom();
+    // Leaf renderers (specs/leaf-renderers.md): a registration or
+    // invalidation after this host's first layout must repaint it, and
+    // new observed attributes must join the filter.
+    this.#unsubscribeLeafRegistry = onLeafRegistryChange(() => {
+      this.#observeLightDom();
+      this.#scheduleLayout();
     });
 
     // Fonts can finish loading after our first layout (the first layout then
@@ -254,6 +278,8 @@ export class MonoWindElement extends HTMLElementBase {
     this.#mutationObserver?.disconnect();
     this.#resizeObserver = null;
     this.#mutationObserver = null;
+    this.#unsubscribeLeafRegistry?.();
+    this.#unsubscribeLeafRegistry = null;
     document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
     for (const evt of DYNAMIC_RELAYOUT_EVENTS) {
       this.removeEventListener(evt, this.#scheduleDynamicRelayout);

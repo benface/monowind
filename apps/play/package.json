@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm -C ../../packages/core build && node copy-cdn.mjs && vite --port 5181",
-    "build": "pnpm -C ../../packages/core build && node copy-cdn.mjs && node build.mjs",
-    "test": "pnpm -C ../../packages/core build && node copy-cdn.mjs && node smoke.test.mjs"
+    "dev": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && vite --port 5181",
+    "build": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && node build.mjs",
+    "test": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && node smoke.test.mjs"
   },
   "dependencies": {
     "monowind": "workspace:*"

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "monowind";
+@import "@monowind/ascii";
 @import "../../../assets/fonts/jetbrains-mono.css";
 @import "../../../assets/fonts/dejavu-sans-mono.css";
 

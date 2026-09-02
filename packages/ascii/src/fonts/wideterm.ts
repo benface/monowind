@@ -1,0 +1,7 @@
+// Generated from fonts/wideterm.tlf by scripts/generate-fonts.mjs — do not edit.
+import { registerAsciiFont } from "../registry.ts";
+
+const data: string =
+  "tlf2a 1 1 3 -1 15 0 0 0\n===============================================================================\n  This is wideterm.tlf, or “WideTerm”, by Sam Hocevar <sam@hocevar.net>. It was\ncreated on August 2nd, 2007.\n\n  This font is free software. It comes without any warranty, to the extent\npermitted by applicable law. You can redistribute it and/or modify it under\nthe terms of the Do What The Fuck You Want To Public License, Version 2,\nas published by Sam Hocevar. See http://sam.zoy.org/wtfpl/COPYING for more\ndetails.\n\n  Missing: Ä Ö Ü ä ö ü ß\n\n  This font is part of TOIlet’s official distribution. More information\non the TOIlet website at http://caca.zoy.org/wiki/toilet\n===============================================================================\n@\n！!\n＂\"\n＃#\n＄$\n％%\n＆&\n＇'\n（(\n）)\n＊*\n＋+\n，,\n－-\n．.\n／/\n０0\n１1\n２2\n３3\n４4\n５5\n６6\n７7\n８8\n９9\n：:\n；;\n＜<\n＝=\n＞>\n？?\n＠@\nＡA\nＢB\nＣC\nＤD\nＥE\nＦF\nＧG\nＨH\nＩI\nＪJ\nＫK\nＬL\nＭM\nＮN\nＯO\nＰP\nＱQ\nＲR\nＳS\nＴT\nＵU\nＶV\nＷW\nＸX\nＹY\nＺZ\n［[\n＼\\\n］]\n＾^\n＿_\n｀`\nａa\nｂb\nｃc\nｄd\nｅe\nｆf\nｇg\nｈh\nｉi\nｊj\nｋk\nｌl\nｍm\nｎn\nｏo\nｐp\nｑq\nｒr\nｓs\nｔt\nｕu\nｖv\nｗw\nｘx\nｙy\nｚz\n｛{\n｜|\n｝}\n～~\nÄ@\nÖ@\nÜ@\nä@\nö@\nü@\nß@\n0x00a2 ¢ CENT SIGN\n￠@\n0x00a3 £ POUND SIGN\n￡@\n0x00ac ¬ NOT SIGN\n￢@\n0x00af ¯ MACRON\n￣@\n0x00a6 ¦ BROKEN BAR\n￤@\n0x00a5 ¥ YEN SIGN\n￥@\n0x20a9 ₩ WON SIGN\n￦@\n";
+registerAsciiFont("wideterm", data);
+export default data;

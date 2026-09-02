@@ -2,6 +2,7 @@ import { addons } from "storybook/preview-api";
 import { GLOBALS_UPDATED, STORY_RENDERED, UPDATE_GLOBALS } from "storybook/internal/core-events";
 import type { Preview } from "@storybook/web-components-vite";
 import { defineMonoWind } from "monowind";
+import "@monowind/ascii";
 import "./styles.css";
 
 defineMonoWind();

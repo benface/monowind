@@ -1,0 +1,7 @@
+// Generated from fonts/fauxcyrillic.tlf by scripts/generate-fonts.mjs — do not edit.
+import { registerAsciiFont } from "../registry.ts";
+
+const data: string =
+  "tlf2a 1 1 3 -1 15 0 0 0\n===============================================================================\n  This is fauxcyrillic.tlf, or “Faux Cyrillic”, by Mark Schreiber\n<mark7@alumni.cmu.edu>.  It was created on May 2nd, 2015.\n\n  This font is free software. It comes without any warranty, to the extent\npermitted by applicable law. You can redistribute it and/or modify it under\nthe terms of the Do What The Fuck You Want To Public License, Version 2,\nas published by Sam Hocevar. See http://sam.zoy.org/wtfpl/COPYING for more\ndetails.\n\n  Missing: Most, but that's intentional.\n\n  This font is part of TOIlet’s official distribution. More information\non the TOIlet website at http://caca.zoy.org/wiki/toilet\n===============================================================================\n@\n!@\n\"@\n#@\n$@\n%@\n&@\n'@\n(@\n)@\n*@\n+@\n@@\n-@\n.@\n/@\nФ0\n1@\n2@\nЗ3\n4@\n5@\nБ6\n7@\n8@\n9@\n:@\n;@\n<@\n=@\n>@\n?@\n@#\nДA\nБB\nСC\nD@\nЭE\nҒF\nБG\nНH\nІI\nЛJ\nКK\nL@\nМM\nИN\nФO\nРP\nQ@\nЯR\nЅS\nГT\nЦU\nѴV\nШW\nЖX\nУY\nZ@\n[@\n\\@\n]@\n^@\n_@\n`@\na@\nЬb\nc@\nd@\ne@\nf@\ng@\nПh\ni@\nj@\nk@\nl@\nm@\nПn\no@\np@\nq@\nГr\ns@\nt@\nu@\nv@\nw@\nx@\ny@\nz@\n{@\n|@\n}@\n~@\nÄ@\nÖ@\nÜ@\nä@\nö@\nü@\nß@\n";
+registerAsciiFont("fauxcyrillic", data);
+export default data;

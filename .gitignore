@@ -10,9 +10,12 @@ packages/*/LICENSE
 /apps/storybook/test-results/
 /apps/storybook/playwright-report/
 
-# Copied from packages/core/dist by copy-cdn.mjs
+# Copied from packages/*/dist by copy-cdn.mjs
 /apps/**/cdn.js
 /apps/**/cdn.js.map
+/apps/**/ascii-cdn.js
+/apps/**/ascii-cdn.js.map
+/apps/play/fonts/
 /apps/**/sort.js
 /apps/**/sort.js.map
 
