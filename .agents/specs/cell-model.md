@@ -527,6 +527,9 @@ focus-invert never shows stale.
 Screen-reader-only elements (absolutely positioned with a zero `clip`
 rect or a clipped ≤1px box — Tailwind `sr-only`) build no layout node:
 no grid ink, no layout footprint, still read by assistive tech.
+Renderer leaves are exempt from the clipped-box half (their natural
+browser size is 0x0 before the engine sizes them from the renderer's
+lines); the explicit zero `clip` rect still drops them.
 
 ## Deviations from CSS (running list)
 

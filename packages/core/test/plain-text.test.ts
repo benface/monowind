@@ -338,6 +338,57 @@ describe("grid paint order and dedup", () => {
     );
   });
 
+  it("positioned flex item (z auto) paints over later static siblings", () => {
+    // The relative item in a flex column overlaps the static bg bar
+    // below it; per Appendix E the positioned step paints AFTER flow
+    // content, so the item's text wins over the bar's fill and text.
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="display: flex; flex-direction: column; width: 48px">
+      <div style="position: relative; top: 4px">TOP</div>
+      <div style="background-color: red">bar text</div>
+    </div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 3);
+    const rows = renderCellSegments(node);
+    const barRow = rows[1]!.map((s) => s.text).join("");
+    expect(barRow.startsWith("TOP")).toBe(true);
+  });
+
+  it("negative z-index paints under static siblings", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="display: flex; flex-direction: column; width: 48px">
+      <div style="position: relative; top: 4px; z-index: -1">TOP</div>
+      <div style="background-color: red">bar text</div>
+    </div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 3);
+    const rows = renderCellSegments(node);
+    expect(
+      rows[1]!
+        .map((s) => s.text)
+        .join("")
+        .startsWith("bar"),
+    ).toBe(true);
+  });
+
+  it("bg-clear on a positioned overlap erases the background beneath", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="display: flex; flex-direction: column; width: 48px">
+      <div style="position: relative; top: 4px; --mw-bg-clear: 1">TOP</div>
+      <div style="background-color: red">bar text</div>
+    </div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 3);
+    const rows = renderCellSegments(node);
+    // The cleared item's cells carry NO background; the bar keeps red
+    // only where the item does not cover it.
+    const covered = rows[1]!.find((s) => s.text.startsWith("TOP"));
+    expect(covered?.backgroundColor).toBeUndefined();
+  });
+
   it("non-positioned inline paints AFTER non-positioned block, regardless of DOM order (CSS Appendix E)", () => {
     // A red block at (0,0) and a cyan inline-atomic box at (2,0),
     // in that DOM order. CSS paints inline AFTER block, so the

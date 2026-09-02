@@ -1,6 +1,7 @@
 import { trackBackground } from "./animate.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack, zeroInsets } from "./types.ts";
+import { leafRendererFor } from "./leaf.ts";
 import { warnOnce } from "./warn.ts";
 import type {
   AlignItems,
@@ -73,7 +74,7 @@ export function readCellStyle(
         ? "grid"
         : rawDisplay === "table" || rawDisplay === "inline-table"
           ? "table"
-          : rawDisplay === "none" || isZeroClipped(cs)
+          : rawDisplay === "none" || isZeroClipped(el, cs)
             ? "none"
             : columnCount !== null || columnWidth !== null
               ? "multicol"
@@ -400,10 +401,16 @@ function isClipping(value: string): boolean {
  * or a clipped ≤1px box. Treated as display:none by the ENGINE only:
  * the light-DOM element keeps its authored styles, so assistive tech
  * still reads it. */
-function isZeroClipped(cs: CSSStyleDeclaration): boolean {
+function isZeroClipped(el: Element, cs: CSSStyleDeclaration): boolean {
   if (cs.position !== "absolute" && cs.position !== "fixed") return false;
   const clip = cs.clip.replace(/\s/g, "");
   if (clip === "rect(0px,0px,0px,0px)" || clip === "rect(0,0,0,0)") return true;
+  // The clipped-box half reads the browser's NATURAL size, which for a
+  // renderer leaf is meaningless (its size comes from the renderer's
+  // lines; its light content is invisible) — a fresh absolute leaf
+  // with overflow-clip and no padding measures 0x0 and would be
+  // dropped before it ever renders, staying 0x0 forever.
+  if (leafRendererFor(el.tagName)) return false;
   return (
     (isClipping(cs.overflow) || isClipping(cs.overflowX)) &&
     parseFloat(cs.width) <= 1 &&

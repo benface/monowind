@@ -164,39 +164,48 @@ function paintRing(
   }
 }
 
-/** Where CSS applies `z-index`: positioned elements and flex/grid
- * items; inert on static block-flow children. */
-export function zIndexApplies(child: LayoutNode, parent: LayoutNode): boolean {
+/** Whether the child paints in the positioned step (Appendix E step
+ * 8+): positioned elements, and flex/grid items with an explicit
+ * z-index (z-index applies there per CSS, but `auto` items paint as
+ * normal flow, steps 4-7 — source order only decides among them,
+ * never over a positioned sibling). */
+export function paintsInPositionedStep(child: LayoutNode, parent: LayoutNode): boolean {
   return (
     child.style.position !== "static" ||
-    parent.style.display === "flex" ||
-    parent.style.display === "grid"
+    ((parent.style.display === "flex" || parent.style.display === "grid") &&
+      child.style.zIndex !== null)
   );
 }
 
-/** Children in paint order (CSS 2.1 Appendix E, no floats or stacking
- * contexts — negative z still paints over the parent): non-positioned
- * block, then non-positioned inline, then positioned (asc z-index).
- * Stable within a bucket, so DOM order breaks ties. Bucketed instead
- * of full-sorted so the common case (single bucket, no z-index) is
- * allocation-free. */
+/** Children in paint order (CSS 2.1 Appendix E, no floats and sibling
+ * stacking only): negative z-index (asc), then non-positioned block,
+ * then non-positioned inline, then positioned with z-index >= 0 or
+ * auto (asc, auto counts as 0). Stable within a bucket, so DOM order
+ * breaks ties. Bucketed instead of full-sorted so the common case
+ * (single bucket, no z-index) is allocation-free. */
 export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
   if (node.children.length <= 1) return node.children;
+  let negatives: LayoutNode[] | null = null;
   let blocks: LayoutNode[] | null = null;
   let inlines: LayoutNode[] | null = null;
   let positioned: LayoutNode[] | null = null;
   for (const child of node.children) {
-    if (zIndexApplies(child, node)) (positioned ??= []).push(child);
-    else if (child.inlineBox) (inlines ??= []).push(child);
+    if (paintsInPositionedStep(child, node)) {
+      if ((child.style.zIndex ?? 0) < 0) (negatives ??= []).push(child);
+      else (positioned ??= []).push(child);
+    } else if (child.inlineBox) (inlines ??= []).push(child);
     else (blocks ??= []).push(child);
+  }
+  if (negatives && negatives.length > 1) {
+    negatives.sort((a, b) => (a.style.zIndex ?? 0) - (b.style.zIndex ?? 0));
   }
   if (positioned && positioned.length > 1) {
     positioned.sort((a, b) => (a.style.zIndex ?? 0) - (b.style.zIndex ?? 0));
   }
-  if (blocks && !inlines && !positioned) return blocks;
-  if (!blocks && inlines && !positioned) return inlines;
-  if (!blocks && !inlines && positioned) return positioned;
-  return [...(blocks ?? []), ...(inlines ?? []), ...(positioned ?? [])];
+  if (!negatives && blocks && !inlines && !positioned) return blocks;
+  if (!negatives && !blocks && inlines && !positioned) return inlines;
+  if (!negatives && !blocks && !inlines && positioned) return positioned;
+  return [...(negatives ?? []), ...(blocks ?? []), ...(inlines ?? []), ...(positioned ?? [])];
 }
 
 /** A style's straight line glyph, for lattice segments. */

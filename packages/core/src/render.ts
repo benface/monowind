@@ -1,4 +1,4 @@
-import { paintOrderedChildren, zIndexApplies } from "./borders.ts";
+import { paintOrderedChildren, paintsInPositionedStep } from "./borders.ts";
 import { leafLineSpans } from "./layout.ts";
 import type { LayoutNode, PerSide } from "./types.ts";
 import { lineAdvance } from "./wrap.ts";
@@ -77,7 +77,7 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
     // children too (CSS keeps it inert there): the companion reads
     // `--mw-z`, written only where CSS applies it.
     const el = child.source as HTMLElement;
-    if (child.style.zIndex !== null && zIndexApplies(child, node) && !child.inlineBox)
+    if (child.style.zIndex !== null && paintsInPositionedStep(child, node) && !child.inlineBox)
       setVar(el, "--mw-z", String(child.style.zIndex));
     else clearVar(el, "--mw-z");
     walk(child, false, inlineInsetElements);

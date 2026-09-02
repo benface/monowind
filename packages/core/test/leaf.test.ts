@@ -64,6 +64,27 @@ describe("leaf renderers", () => {
     expect(rows[1]!.map((s) => s.text).join("")).toBe("C D");
   });
 
+  it("absolute + overflow-clip leaf is not dropped as sr-only", () => {
+    // The sr-only heuristic's clipped-box half reads the browser's
+    // natural size — 0x0 for a fresh leaf — so leaves are exempt; the
+    // explicit clip rect(0,0,0,0) pattern still drops them.
+    registerLeafRenderer({ tag: "test-clipped", render: () => ({ lines: ["ART"] }) });
+    const el = document.createElement("test-clipped");
+    el.style.cssText = "position: absolute; overflow: clip; top: 0; left: 0";
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "position: relative; width: 40px; height: 16px";
+    wrapper.appendChild(el);
+    document.body.appendChild(wrapper);
+    const node = buildTree(wrapper, 16)!;
+    layoutRoot(node, 10);
+    expect(node.children).toHaveLength(1);
+    const rows = renderCellSegments(node);
+    expect(rows[0]!.map((s) => s.text).join("")).toContain("ART");
+    el.style.clip = "rect(0, 0, 0, 0)";
+    const dropped = buildTree(wrapper, 16)!;
+    expect(dropped.children).toHaveLength(0);
+  });
+
   it("survives a throwing renderer: warns, renders nothing, layout intact", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     registerLeafRenderer({

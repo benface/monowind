@@ -30,7 +30,9 @@ export function renderPlainText(root: LayoutNode): string {
  * neutralized in styles.css so the grid owns backgrounds outright). */
 export interface CellPaint {
   color?: string;
-  backgroundColor?: string;
+  /** `string | undefined` (not just optional): a bg-clear fill merges
+   * an EXPLICIT undefined over the cell to erase the bg beneath. */
+  backgroundColor?: string | undefined;
   fontWeight?: string;
   fontStyle?: string;
   textDecorationLine?: string;
@@ -181,10 +183,13 @@ function walk(
   // text / decoration paint after and layer on top. `bg-clear` runs
   // the same fill without a visible color.
   if (style.backgroundColor !== undefined || style.backgroundClear) {
+    // bg-clear fills with an EXPLICIT undefined so the merge in put()
+    // strips the cell's painted background too — the wipe covers
+    // ancestor backgrounds, not just their glyphs.
     const fillPaint: CellPaint | undefined =
       style.backgroundColor !== undefined
         ? alphaPaint({ backgroundColor: style.backgroundColor })
-        : undefined;
+        : { backgroundColor: undefined };
     for (let dy = 0; dy < node.localRect.height; dy++) {
       for (let dx = 0; dx < node.localRect.width; dx++) {
         put(absX + dx, absY + dy, " ", fillPaint);
