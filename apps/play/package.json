@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@monowind/ascii": "workspace:*",
+    "@monowind/themes": "workspace:*",
     "monowind": "workspace:*"
   },
   "devDependencies": {

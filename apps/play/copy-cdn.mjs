@@ -18,6 +18,23 @@ for (const file of ["cdn.js", "cdn.js.map"]) {
     new URL(`./ascii-${file}`, import.meta.url),
   );
 }
+// Theme css + their woff fonts (class-scoped; the switcher toggles
+// classes on the preview host).
+cpSync(
+  new URL("../../packages/themes/themes", import.meta.url),
+  new URL("./themes", import.meta.url),
+  {
+    recursive: true,
+  },
+);
+cpSync(
+  new URL("../../packages/themes/fonts", import.meta.url),
+  new URL("./fonts", import.meta.url),
+  {
+    recursive: true,
+    filter: (source) => !source.includes("LICENSES"),
+  },
+);
 // The full font catalog, for loadFont's same-origin path (typing
 // font="slant" in the playground lazy-loads it).
 cpSync(

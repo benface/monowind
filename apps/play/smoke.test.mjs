@@ -61,6 +61,26 @@ const restored = await page.evaluate(() =>
   /EDITED/.test(document.getElementById("source").value ?? ""),
 );
 
+// Theme switcher: class-scoped themes reach the iframe; selecting dos
+// re-themes the preview host (bg, quantized palette) and persists in
+// the query string.
+await page.selectOption("#theme", "dos");
+await page.waitForFunction(() => {
+  const doc = document.getElementById("preview")?.contentDocument;
+  const root = doc?.querySelector("mono-wind");
+  if (!root?.classList.contains("theme-dos")) return false;
+  const cs = doc.defaultView.getComputedStyle(root);
+  return (
+    cs.backgroundColor === "rgb(0, 0, 0)" &&
+    cs.getPropertyValue("--color-red-500").trim() === "#ff5555"
+  );
+});
+const themed = true;
+const themeQueryPersisted = await page.evaluate(
+  () => new URLSearchParams(location.search).get("theme") === "dos",
+);
+await page.selectOption("#theme", "");
+
 // Grid selection is the default; the toggle switches to per-element text
 // AND writes the state into the URL query so a shared link restores it.
 await page.check("#select-text");
@@ -201,6 +221,8 @@ const result = {
   sampleRendered,
   asciiRendered,
   fontLazyLoaded,
+  themed,
+  themeQueryPersisted,
   restored,
   selectMode,
   selectQueryPersisted,
@@ -216,6 +238,8 @@ if (
   !sampleRendered ||
   !asciiRendered ||
   !fontLazyLoaded ||
+  !themed ||
+  !themeQueryPersisted ||
   !restored ||
   selectMode !== "text" ||
   selectQueryPersisted !== "text" ||

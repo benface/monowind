@@ -1,0 +1,35 @@
+/* @monowind/themes — teletype: hard-copy terminal: ink on paper, 7-bit borders
+ * Apply with class "theme-teletype" on a <mono-wind> or any wrapper. */
+@import "./teletype.palette.css";
+
+@layer base {
+  mono-wind.theme-teletype,
+  .theme-teletype mono-wind {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 15px;
+    line-height: 1;
+    background-color: #f5f1e6;
+    color: #20201c;
+    --mw-fg: #20201c;
+    --mw-bg: #f5f1e6;
+    --mw-border-glyphs: ascii;
+    /* ANSI ladder inverted for paper: SGR art assumes light-on-dark,
+     * so the bright end maps to the darkest ink. */
+    --mw-ansi-black: #f5f1e6;
+    --mw-ansi-red: #b0ab9c;
+    --mw-ansi-green: #7a766a;
+    --mw-ansi-yellow: #4a473e;
+    --mw-ansi-blue: #dad5c6;
+    --mw-ansi-magenta: #b0ab9c;
+    --mw-ansi-cyan: #7a766a;
+    --mw-ansi-white: #4a473e;
+    --mw-ansi-bright-black: #dad5c6;
+    --mw-ansi-bright-red: #7a766a;
+    --mw-ansi-bright-green: #4a473e;
+    --mw-ansi-bright-yellow: #20201c;
+    --mw-ansi-bright-blue: #4a473e;
+    --mw-ansi-bright-magenta: #4a473e;
+    --mw-ansi-bright-cyan: #20201c;
+    --mw-ansi-bright-white: #20201c;
+  }
+}

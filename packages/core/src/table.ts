@@ -1,4 +1,6 @@
 import { junctionGlyph, lineGlyph } from "./borders.ts";
+import { glyphSetFor } from "./glyphs.ts";
+import type { BorderGlyphSet } from "./glyphs.ts";
 import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
@@ -866,6 +868,7 @@ export function layoutTable(
       rowY,
       contentLeft,
       contentTop,
+      glyphSetFor(node.style.glyphSet),
     );
 
   // A top caption is already inside gridBottom (via gridTop).
@@ -910,6 +913,7 @@ function buildLatticeRuns(
   rowY: number[],
   contentLeft: number,
   contentTop: number,
+  set?: BorderGlyphSet,
 ): BorderRun[] {
   const C = structure.columnCount;
   const R = structure.rows.length;
@@ -927,7 +931,7 @@ function buildLatticeRuns(
       if (!seg) continue;
       // A segment narrower than its line paints from the line's start
       // (CSS centers collapsed borders; sub-cell centering can't).
-      const glyph = lineGlyph(seg.style, "v");
+      const glyph = lineGlyph(seg.style, "v", set);
       for (let t = 0; t < seg.width; t++)
         for (let yy = rowY[r]!; yy < rowY[r]! + rowHeights[r]!; yy++)
           out.push({
@@ -945,7 +949,7 @@ function buildLatticeRuns(
     for (let c = 0; c < C; c++) {
       const seg = segments[c];
       if (!seg) continue;
-      const glyph = lineGlyph(seg.style, "h");
+      const glyph = lineGlyph(seg.style, "h", set);
       for (let t = 0; t < seg.width; t++)
         out.push({
           glyph,
@@ -975,7 +979,14 @@ function buildLatticeRuns(
           ? b
           : a,
       );
-      const glyph = junctionGlyph(style, up !== null, down !== null, left !== null, right !== null);
+      const glyph = junctionGlyph(
+        style,
+        up !== null,
+        down !== null,
+        left !== null,
+        right !== null,
+        set,
+      );
       // Thick lines fill the whole crossing block with the junction glyph.
       for (let t = 0; t < chrome.vLines[i]!; t++)
         for (let u = 0; u < chrome.hLines[j]!; u++)

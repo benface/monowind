@@ -1,0 +1,7 @@
+@font-face {
+  /* "Px437 IBM VGA 8x16" from the Ultimate Oldschool PC Font Pack
+   * (int10h.org, CC BY-SA 4.0 — see LICENSES). Native bitmap size
+   * 16px: keep font-size at integer multiples for crisp cells. */
+  font-family: "Web IBM VGA 8x16";
+  src: url("./WebPlus_IBM_VGA_8x16.woff") format("woff");
+}

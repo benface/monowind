@@ -374,6 +374,10 @@ export interface CellStyle {
    * page — translucency blends with what's behind the host, never with
    * covered cells (deviation; front paint wins a cell as always). */
   opacity: number;
+  /** The border glyph SET name from `--mw-border-glyphs` (`null` =
+   * default) — the theming vocabulary borders/lattices/rules resolve
+   * through (specs/theming.md); resolved on the decoration's owner. */
+  glyphSet: string | null;
   /** Authored `z-index` (`null` = auto). Browser stacking is native;
    * the renderers walk children in this order (stable, document-order
    * ties) so decorations and plain text agree with it at overlaps. */
@@ -647,6 +651,7 @@ export function defaultCellStyle(): CellStyle {
     borderSpacingY: 0,
     captionSide: "top",
     verticalAlign: "start",
+    glyphSet: null,
     opacity: 1,
     zIndex: null,
     latticeBorder: null,

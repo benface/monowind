@@ -1,0 +1,34 @@
+/* @monowind/themes — dos-blue: the Norton/Turbo Vision look — light gray on VGA blue
+ * Apply with class "theme-dos-blue" on a <mono-wind> or any wrapper. */
+@import "./dos-blue.palette.css";
+@import "../fonts/vga-font.css";
+
+@layer base {
+  mono-wind.theme-dos-blue,
+  .theme-dos-blue mono-wind {
+    font-family: "Web IBM VGA 8x16", ui-monospace, monospace;
+    font-size: 16px;
+    line-height: 1;
+    background-color: #0000aa;
+    color: #aaaaaa;
+    --mw-fg: #aaaaaa;
+    --mw-bg: #0000aa;
+    --mw-border-glyphs: cp437;
+    --mw-ansi-black: #000000;
+    --mw-ansi-red: #aa0000;
+    --mw-ansi-green: #00aa00;
+    --mw-ansi-yellow: #aa5500;
+    --mw-ansi-blue: #0000aa;
+    --mw-ansi-magenta: #aa00aa;
+    --mw-ansi-cyan: #00aaaa;
+    --mw-ansi-white: #aaaaaa;
+    --mw-ansi-bright-black: #555555;
+    --mw-ansi-bright-red: #ff5555;
+    --mw-ansi-bright-green: #55ff55;
+    --mw-ansi-bright-yellow: #ffff55;
+    --mw-ansi-bright-blue: #5555ff;
+    --mw-ansi-bright-magenta: #ff55ff;
+    --mw-ansi-bright-cyan: #55ffff;
+    --mw-ansi-bright-white: #ffffff;
+  }
+}

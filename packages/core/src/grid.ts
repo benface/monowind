@@ -1,4 +1,5 @@
 import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
+import { glyphSetFor } from "./glyphs.ts";
 import type { GapStrip } from "./borders.ts";
 import type { RuleSegment } from "./borders.ts";
 import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
@@ -326,6 +327,7 @@ export function layoutGrid(
       ),
     );
     node.decorationRuns = collectGapRuleRuns({
+      glyphs: glyphSetFor(style.glyphSet),
       ruleX: style.ruleX,
       ruleY: style.ruleY,
       vertical,

@@ -1,4 +1,5 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
+import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, onLeafRegistryChange } from "./leaf.ts";
 import { hitChain } from "./pointer.ts";
 import { renderPlainText } from "./plain-text.ts";
@@ -141,6 +142,7 @@ export class MonoWindElement extends HTMLElementBase {
   #cellMetrics: CellMetrics | null = null;
   #lastLayout: LayoutNode | null = null;
   #unsubscribeLeafRegistry: (() => void) | null = null;
+  #unsubscribeGlyphRegistry: (() => void) | null = null;
 
   /** (Re-)observe the light DOM; re-run when the leaf registry adds
    * observed attributes to the filter. `observe` on the same target
@@ -222,6 +224,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.#observeLightDom();
       this.#scheduleLayout();
     });
+    this.#unsubscribeGlyphRegistry = onGlyphRegistryChange(() => this.#scheduleLayout());
 
     // Fonts can finish loading after our first layout (the first layout then
     // used fallback-font metrics), which would leave decorations positioned
@@ -280,6 +283,8 @@ export class MonoWindElement extends HTMLElementBase {
     this.#mutationObserver = null;
     this.#unsubscribeLeafRegistry?.();
     this.#unsubscribeLeafRegistry = null;
+    this.#unsubscribeGlyphRegistry?.();
+    this.#unsubscribeGlyphRegistry = null;
     document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
     for (const evt of DYNAMIC_RELAYOUT_EVENTS) {
       this.removeEventListener(evt, this.#scheduleDynamicRelayout);

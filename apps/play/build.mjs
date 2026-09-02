@@ -21,3 +21,6 @@ for (const file of [
 cpSync(new URL("./fonts", import.meta.url), new URL("./dist/fonts", import.meta.url), {
   recursive: true,
 });
+cpSync(new URL("./themes", import.meta.url), new URL("./dist/themes", import.meta.url), {
+  recursive: true,
+});

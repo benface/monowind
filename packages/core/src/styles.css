@@ -31,10 +31,33 @@
      * this stays deterministic — just taller. */
     line-height: normal;
     letter-spacing: 0;
+    /* The grid needs every glyph at one advance: synthetic bold widens
+     * them in Safari (faces with a real bold are unaffected); synthetic
+     * oblique only slants, so style synthesis stays allowed. */
+    font-synthesis: style;
     /* Themable fg / bg pair for the focus-invert default. System
      * colors honor the viewer's color scheme; authors override. */
     --mw-fg: canvastext;
     --mw-bg: canvas;
+    /* ANSI-16 theme tokens (specs/theming.md): what SGR-colored ascii
+     * art and effect filters resolve against, so a "red" follows the
+     * theme. Defaults follow the VS Code terminal palette. */
+    --mw-ansi-black: #000000;
+    --mw-ansi-red: #cd3131;
+    --mw-ansi-green: #0dbc79;
+    --mw-ansi-yellow: #e5e510;
+    --mw-ansi-blue: #2472c8;
+    --mw-ansi-magenta: #bc3fbc;
+    --mw-ansi-cyan: #11a8cd;
+    --mw-ansi-white: #e5e5e5;
+    --mw-ansi-bright-black: #666666;
+    --mw-ansi-bright-red: #f14c4c;
+    --mw-ansi-bright-green: #23d18b;
+    --mw-ansi-bright-yellow: #f5f543;
+    --mw-ansi-bright-blue: #3b8eea;
+    --mw-ansi-bright-magenta: #d670d6;
+    --mw-ansi-bright-cyan: #29b8db;
+    --mw-ansi-bright-white: #ffffff;
   }
 
   /* Normalize native form controls so they don't borrow browser chrome that

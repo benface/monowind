@@ -1,0 +1,36 @@
+/* @monowind/themes — c64: Commodore 64, light blue on blue with
+ * PETSCII-style rounded corners. Apply with class "theme-c64" on a
+ * <mono-wind> or any wrapper. No period font ships (the canonical C64
+ * faces forbid redistribution) — bring your own via @font-face and
+ * set font-family on the themed host. */
+@import "./c64.palette.css";
+
+@layer base {
+  mono-wind.theme-c64,
+  .theme-c64 mono-wind {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    line-height: 1;
+    background-color: #40318d;
+    color: #7869c4;
+    --mw-fg: #7869c4;
+    --mw-bg: #40318d;
+    --mw-border-glyphs: rounded;
+    --mw-ansi-black: #000000;
+    --mw-ansi-red: #883932;
+    --mw-ansi-green: #55a049;
+    --mw-ansi-yellow: #8b5429;
+    --mw-ansi-blue: #40318d;
+    --mw-ansi-magenta: #8b3f96;
+    --mw-ansi-cyan: #67b6bd;
+    --mw-ansi-white: #9f9f9f;
+    --mw-ansi-bright-black: #505050;
+    --mw-ansi-bright-red: #b86962;
+    --mw-ansi-bright-green: #94e089;
+    --mw-ansi-bright-yellow: #bfce72;
+    --mw-ansi-bright-blue: #7869c4;
+    --mw-ansi-bright-magenta: #8b3f96;
+    --mw-ansi-bright-cyan: #67b6bd;
+    --mw-ansi-bright-white: #ffffff;
+  }
+}

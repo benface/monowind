@@ -16,6 +16,7 @@ packages/*/LICENSE
 /apps/**/ascii-cdn.js
 /apps/**/ascii-cdn.js.map
 /apps/play/fonts/
+/apps/play/themes/
 /apps/**/sort.js
 /apps/**/sort.js.map
 

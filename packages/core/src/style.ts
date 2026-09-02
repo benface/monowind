@@ -300,6 +300,7 @@ export function readCellStyle(
     textAlign: readTextAlign(el, cs),
     textIndent: readTextIndent(cs, rootFontSizePx),
     opacity: readOpacity(cs.opacity),
+    glyphSet: cs.getPropertyValue("--mw-border-glyphs").trim() || null,
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
     ruleX:

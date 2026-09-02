@@ -233,6 +233,13 @@ describe("paragraph flow", () => {
     );
     expect(art).toBe(["aaa │ccc", "bbb │"].join("\n"));
   });
+
+  it("renders column rules through the container's glyph set", () => {
+    const art = plainText(
+      `<div style="column-count: 2; column-gap: 4px; --mw-rule-x-width: 1px; --mw-border-glyphs: ascii; width: 36px"><div>aaa bbb</div><div>ccc</div></div>`,
+    );
+    expect(art).toBe(["aaa |ccc", "bbb |"].join("\n"));
+  });
 });
 
 // Throughout the atomic-path suites below, a paint-only background on

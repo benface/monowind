@@ -42,6 +42,20 @@ describe("gap rules", () => {
     expect(art).toBe(["a │b", "──┼──", "c │d"].join("\n"));
   });
 
+  it("renders rules, tees, and junctions through the container's glyph set", () => {
+    // The set is resolved on the decoration's owner (the container).
+    const teed = plainText(
+      `<div style="display: flex; width: 28px; border: 1px solid; --mw-rule-x-width: 1px; --mw-border-glyphs: ascii"><div>aa</div><div>bb</div></div>`,
+    );
+    expect(teed).toBe(["+--+--+", "|aa|bb|", "+--+--+"].join("\n"));
+    const crossed = plainText(
+      `<div style="display: grid; grid-template-columns: 8px 8px; column-gap: 4px; row-gap: 4px; --mw-rule-x-width: 1px; --mw-rule-y-width: 1px; --mw-border-glyphs: ascii">
+        <div>a</div><div>b</div><div>c</div><div>d</div>
+      </div>`,
+    );
+    expect(crossed).toBe(["a |b", "--+--", "c |d"].join("\n"));
+  });
+
   it("draws row rules across a flex column at full width", () => {
     const art = plainText(
       `<div style="display: flex; flex-direction: column; --mw-rule-y-width: 1px; width: 20px"><div>one</div><div>two</div></div>`,

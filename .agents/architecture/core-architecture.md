@@ -162,6 +162,10 @@ All three share one core. Concretely, the planned packages:
   color through `--mw-ansi-*` theme tokens, and its own CDN bundle
   (`dist/cdn.js`, loaded next to core's — external `monowind` mapped to
   the shared global so the registries stay singular).
+- **`@monowind/themes`** (`packages/themes`) — class-scoped themes modeled
+  on real systems (DOS/VGA, C64, phosphor terminals, teletype): quantized
+  Tailwind palettes, period fonts (int10h pack, CC BY-SA), ANSI tokens,
+  and border glyph sets via the core theming contract (specs/theming.md).
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_

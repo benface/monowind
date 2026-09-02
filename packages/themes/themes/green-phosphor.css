@@ -1,0 +1,34 @@
+/* @monowind/themes — green-phosphor: P1 green monochrome terminal
+ * Apply with class "theme-green-phosphor" on a <mono-wind> or any wrapper. */
+@import "./green-phosphor.palette.css";
+@import "../fonts/vga-font.css";
+
+@layer base {
+  mono-wind.theme-green-phosphor,
+  .theme-green-phosphor mono-wind {
+    font-family: "Web IBM VGA 8x16", ui-monospace, monospace;
+    font-size: 16px;
+    line-height: 1;
+    background-color: #000000;
+    color: #0adb53;
+    --mw-fg: #0adb53;
+    --mw-bg: #000000;
+    --mw-border-glyphs: single;
+    --mw-ansi-black: #000000;
+    --mw-ansi-red: #00711d;
+    --mw-ansi-green: #00a83c;
+    --mw-ansi-yellow: #0adb53;
+    --mw-ansi-blue: #003b00;
+    --mw-ansi-magenta: #00711d;
+    --mw-ansi-cyan: #00a83c;
+    --mw-ansi-white: #0adb53;
+    --mw-ansi-bright-black: #003b00;
+    --mw-ansi-bright-red: #00a83c;
+    --mw-ansi-bright-green: #0adb53;
+    --mw-ansi-bright-yellow: #66ff84;
+    --mw-ansi-bright-blue: #0adb53;
+    --mw-ansi-bright-magenta: #0adb53;
+    --mw-ansi-bright-cyan: #66ff84;
+    --mw-ansi-bright-white: #c4ffd1;
+  }
+}

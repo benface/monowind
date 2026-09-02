@@ -1,0 +1,47 @@
+{
+  "name": "@monowind/themes",
+  "version": "0.2.0",
+  "description": "Themes for monowind modeled on real systems: DOS, C64, phosphor terminals — palettes, period fonts, era-correct border glyphs",
+  "keywords": [
+    "c64",
+    "dos",
+    "monowind",
+    "retro",
+    "terminal",
+    "themes",
+    "tui",
+    "vga"
+  ],
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/themes"
+  },
+  "files": [
+    "themes",
+    "fonts"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./themes/index.css",
+    "./amber": "./themes/amber.css",
+    "./bbs": "./themes/bbs.css",
+    "./c64": "./themes/c64.css",
+    "./dos": "./themes/dos.css",
+    "./dos-blue": "./themes/dos-blue.css",
+    "./green-phosphor": "./themes/green-phosphor.css",
+    "./teletype": "./themes/teletype.css",
+    "./themes/*": "./themes/*",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-palettes.mjs",
+    "test": "node scripts/validate.mjs",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\""
+  },
+  "devDependencies": {
+    "tailwindcss": "^4.3.3"
+  }
+}

@@ -1,4 +1,5 @@
 import { collectGapRuleRuns } from "./borders.ts";
+import { glyphSetFor } from "./glyphs.ts";
 import type { RuleSegment } from "./borders.ts";
 import { insetSegments } from "./flex.ts";
 import {
@@ -374,6 +375,7 @@ export function multicolLeafRuleRuns(
     }
   }
   node.decorationRuns = collectGapRuleRuns({
+    glyphs: glyphSetFor(style.glyphSet),
     ruleX: style.ruleX,
     ruleY: null,
     vertical: insetSegments(vertical, style.ruleInset),
@@ -928,6 +930,7 @@ export function layoutMulticol(
 
   if (style.ruleX && vertical.length > 0) {
     node.decorationRuns = collectGapRuleRuns({
+      glyphs: glyphSetFor(style.glyphSet),
       ruleX: style.ruleX,
       ruleY: null,
       vertical: insetSegments(vertical, style.ruleInset),

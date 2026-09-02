@@ -1,4 +1,5 @@
 import { percentToCells } from "./metrics.ts";
+import { glyphSetFor } from "./glyphs.ts";
 import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
 import type { GapSegment, GapStrip, RuleSegment } from "./borders.ts";
 import {
@@ -332,6 +333,7 @@ export function layoutFlexRow(
     // grid/multicol-only (css-gaps), so beyond intersection breaks the
     // bands only honor rule-inset (specs/gap-decorations.md "Segments").
     node.decorationRuns = collectGapRuleRuns({
+      glyphs: glyphSetFor(node.style.glyphSet),
       ruleX: node.style.ruleX,
       ruleY: node.style.ruleY,
       vertical: insetSegments(vertical, node.style.ruleInset),
@@ -549,6 +551,7 @@ export function layoutFlexColumn(
       if (bandSize > 0) horizontal.push({ bandStart, bandSize, start: 0, end: innerWidth });
     }
     node.decorationRuns = collectGapRuleRuns({
+      glyphs: glyphSetFor(node.style.glyphSet),
       ruleX: null,
       ruleY: node.style.ruleY,
       vertical: [],

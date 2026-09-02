@@ -1,0 +1,34 @@
+/* @monowind/themes — amber: P3 amber monochrome terminal
+ * Apply with class "theme-amber" on a <mono-wind> or any wrapper. */
+@import "./amber.palette.css";
+@import "../fonts/vga-font.css";
+
+@layer base {
+  mono-wind.theme-amber,
+  .theme-amber mono-wind {
+    font-family: "Web IBM VGA 8x16", ui-monospace, monospace;
+    font-size: 16px;
+    line-height: 1;
+    background-color: #000000;
+    color: #ffb000;
+    --mw-fg: #ffb000;
+    --mw-bg: #000000;
+    --mw-border-glyphs: single;
+    --mw-ansi-black: #000000;
+    --mw-ansi-red: #7a4a00;
+    --mw-ansi-green: #b87400;
+    --mw-ansi-yellow: #ffb000;
+    --mw-ansi-blue: #4a2d00;
+    --mw-ansi-magenta: #7a4a00;
+    --mw-ansi-cyan: #b87400;
+    --mw-ansi-white: #ffb000;
+    --mw-ansi-bright-black: #4a2d00;
+    --mw-ansi-bright-red: #b87400;
+    --mw-ansi-bright-green: #ffb000;
+    --mw-ansi-bright-yellow: #ffd24a;
+    --mw-ansi-bright-blue: #ffb000;
+    --mw-ansi-bright-magenta: #ffb000;
+    --mw-ansi-bright-cyan: #ffd24a;
+    --mw-ansi-bright-white: #ffefb3;
+  }
+}

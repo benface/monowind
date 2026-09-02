@@ -155,3 +155,25 @@
   inherits: false;
   initial-value: 0;
 }
+
+/* Border glyph sets (specs/theming.md): utilities for the inherited
+ * `--mw-border-glyphs` selector — which vocabulary border STYLES
+ * render through. Arbitrary sets: `[--mw-border-glyphs:myset]`. */
+@utility borders-default {
+  --mw-border-glyphs: default;
+}
+@utility borders-rounded {
+  --mw-border-glyphs: rounded;
+}
+@utility borders-ascii {
+  --mw-border-glyphs: ascii;
+}
+@utility borders-single {
+  --mw-border-glyphs: single;
+}
+@utility borders-blocks {
+  --mw-border-glyphs: blocks;
+}
+@utility borders-cp437 {
+  --mw-border-glyphs: cp437;
+}

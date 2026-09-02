@@ -85,6 +85,18 @@ theme-aware `--mw-ansi-*` tokens.
 [packages/ascii/README.md](packages/ascii/README.md) for setup per
 integration and the full font list.
 
+## Themes
+
+`@monowind/themes` ships class-scoped themes modeled on real systems —
+`dos`, `dos-blue`, `c64`, `green-phosphor`, `amber`, `teletype`, `bbs`:
+authentic palettes (every Tailwind color token quantized to the
+system's colors), period fonts, and era-correct border characters
+(`border-double` renders `+=+` on a teletype and downgrades to single
+lines on a phosphor terminal). Try the theme switcher in the
+[playground](https://play.monowind.benface.com); details in
+[packages/themes/README.md](packages/themes/README.md). Anyone can
+build a theme — it's one CSS file against the core theming contract.
+
 ## Structure
 
 This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):

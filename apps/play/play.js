@@ -9,7 +9,9 @@
 const source = document.getElementById("source");
 const previewFrame = document.getElementById("preview");
 const selectText = document.getElementById("select-text");
+const themeSelect = document.getElementById("theme");
 const selectTextLabel = document.getElementById("select-text-label");
+const themeLabel = document.getElementById("theme-label");
 const desktopSlot = document.getElementById("toggle-slot-desktop");
 const mobileSlot = document.getElementById("toggle-slot-mobile");
 const tidyButton = document.getElementById("tidy");
@@ -22,14 +24,14 @@ const main = document.querySelector("main");
 const versionLabel = document.getElementById("version");
 if (globalThis.monowind?.version) versionLabel.textContent = `v${globalThis.monowind.version}`;
 
-const SAMPLE = `<div class="@container mx-auto flex max-w-128 flex-col border border-emerald-400 rule-emerald-400 rule-y">
+const SAMPLE = `<div class="mx-auto flex max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
   <mono-ascii font="small" effect="metal" class="mx-auto max-w-full overflow-clip py-1">monowind</mono-ascii>
   <div class="flex items-center justify-between bg-emerald-400 px-2 py-1 text-black">
-    <div class="font-bold">◆ MONOWIND DAILY</div>
+    <div class="font-bold">§ MONOWIND DAILY</div>
     <div>issue 001</div>
   </div>
-  <div class="columns-1 gap-5 px-3 py-1 rule-neutral-500 rule-dashed rule-x @md:columns-2">
-    <h1 class="mb-1 text-center font-bold text-yellow-300 [column-span:all]">◇ A polite theft on Maple Street ◇</h1>
+  <div class="columns-1 gap-5 px-3 py-1 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
+    <h1 class="mb-1 text-center font-bold text-yellow-300 [column-span:all]">· A polite theft on Maple Street ·</h1>
     <p>A raccoon walked into the corner bakery at <span class="text-sky-300">6:47 AM</span> this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.</p>
     <p class="mt-1">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway. The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
     <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
@@ -37,10 +39,10 @@ const SAMPLE = `<div class="@container mx-auto flex max-w-128 flex-col border bo
   </div>
   <div class="flex items-center justify-between px-2 py-1 text-neutral-400">
     <div class="flex gap-3">
-      <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">★ star</button>
-      <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">→ share</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">* star</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">» share</button>
     </div>
-    <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">✎ edit me</button>
+    <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">¶ edit me</button>
   </div>
 </div>`;
 
@@ -116,6 +118,7 @@ const previewShell = `<!doctype html>
 <base href="${new URL("./", location.href).href}">
 <script src="cdn.js"></script>
 <script src="ascii-cdn.js"></script>
+<link rel="stylesheet" href="themes/index.css">
 <style>
   html { color-scheme: dark; background: #171717; }
   body { margin: 0; padding: 1rem; color: #e5e5e5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
@@ -140,6 +143,29 @@ const previewReady = new Promise((resolve) => {
     { once: true },
   );
 });
+
+// --- Theme switcher: class-scoped themes (all css preloaded in the
+// --- iframe; fonts download on first use). State rides the same query
+// --- string as the select toggle.
+
+const applyTheme = (theme) => {
+  if (!previewRoot) return;
+  previewRoot.className = theme ? `theme-${theme}` : "";
+};
+themeSelect.addEventListener("change", () => {
+  applyTheme(themeSelect.value);
+  const url = new URL(location.href);
+  if (themeSelect.value) url.searchParams.set("theme", themeSelect.value);
+  else url.searchParams.delete("theme");
+  history.replaceState(null, "", url);
+});
+{
+  const initial = new URLSearchParams(location.search).get("theme") ?? "";
+  if ([...themeSelect.options].some((option) => option.value === initial)) {
+    themeSelect.value = initial;
+  }
+  previewReady.then(() => applyTheme(themeSelect.value));
+}
 
 const render = () => {
   if (previewRoot) previewRoot.innerHTML = source.value;
@@ -265,16 +291,18 @@ const tidy = (html) => {
 };
 
 // --- Layout: stacked (the mobile breakpoint) vs. side-by-side. The
-// --- select-mode toggle also moves between headers depending on which,
-// --- since the header has no room on a narrow viewport.
+// --- theme select and select-mode toggle also move between the header
+// --- and a bar beside the preview depending on which, since the
+// --- header has no room on a narrow viewport.
 
 const stackedQuery = matchMedia("(max-width: 767.98px)");
-const placeSelectToggle = () => {
+const placeHeaderControls = () => {
   const target = stackedQuery.matches ? mobileSlot : desktopSlot;
+  if (themeLabel.parentNode !== target) target.appendChild(themeLabel);
   if (selectTextLabel.parentNode !== target) target.appendChild(selectTextLabel);
 };
-stackedQuery.addEventListener("change", placeSelectToggle);
-placeSelectToggle();
+stackedQuery.addEventListener("change", placeHeaderControls);
+placeHeaderControls();
 
 // --- Draggable split: the divider sets the editor pane's share of the
 // --- main axis (width, or height in the stacked mobile layout).

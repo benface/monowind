@@ -1,0 +1,10 @@
+/* @monowind/themes — every theme in one import. Themes are
+ * class-scoped, so loading all of them costs nothing until a
+ * "theme-*" class opts a host in. */
+@import "./amber.css";
+@import "./bbs.css";
+@import "./c64.css";
+@import "./dos.css";
+@import "./dos-blue.css";
+@import "./green-phosphor.css";
+@import "./teletype.css";

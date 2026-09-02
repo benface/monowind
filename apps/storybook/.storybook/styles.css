@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "monowind";
 @import "@monowind/ascii";
+@import "@monowind/themes";
 @import "../../../assets/fonts/jetbrains-mono.css";
 @import "../../../assets/fonts/dejavu-sans-mono.css";
 
@@ -33,7 +34,12 @@ html.dark .docs-story {
   background: var(--color-bg-dark) !important;
 }
 
-mono-wind {
+/* Preview default font — themed hosts keep their theme's period
+ * font (a theme's base-layer font-family would lose to this
+ * unlayered rule, correctly: user CSS beats themes). */
+mono-wind:where(:not([class*="theme-"])) {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+mono-wind {
   font-variant-ligatures: none;
 }
