@@ -72,10 +72,10 @@ gate) to keep grid-mode hover working:
 
 `@monowind/ascii` adds `<mono-ascii>`: FIGlet/TOIlet banner text
 rendered on the grid, with the semantic string intact for screen
-readers and text-mode selection. Fonts are per-module imports (or
-`registerAsciiFont` with your own `.flf`/`.tlf` data); SGR-colored
-fonts and the `effect` attribute (`rainbow`, `metal`) paint through
-theme-aware `--mw-ansi-*` tokens.
+readers; selecting over the banner selects the art itself. Fonts are
+per-module imports (or `registerAsciiFont` with your own
+`.flf`/`.tlf` data); SGR-colored fonts and the `effect` attribute
+(`rainbow`, `metal`) paint through theme-aware `--mw-ansi-*` tokens.
 
 ```html
 <mono-ascii font="small" class="text-emerald-400">monowind</mono-ascii>

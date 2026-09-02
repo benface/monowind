@@ -28,9 +28,16 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   call, warns once, and the leaf renders nothing that pass (the light
   DOM and the rest of the grid are unaffected).
 - The LIGHT DOM stays untouched: the element's real children remain
-  in the accessibility tree and in `select="text"` semantics; the
-  grid stays `aria-hidden`. A leaf's semantic content is what screen
-  readers hear and what text-mode selection copies.
+  in the accessibility tree; the grid stays `aria-hidden`. A leaf's
+  semantic content is what screen readers hear and what text-mode
+  selection copies. A plugin whose art should be the selectable text
+  instead owns that in its OWN shadow root: a transparent transcript
+  of the art (the host inherits the engine's typography lock, so a
+  plain `pre` aligns with the grid cell-for-cell) with the slotted
+  semantic children visually hidden and `user-select: none` — native
+  selection/copy then read real text with real newlines in every kind
+  of sweep, and the AT still hears the light DOM (`<mono-ascii>` does
+  exactly this). The engine has no selection role beyond the lock.
 - Colors in runs are CSS `<color>` STRINGS, vars welcome
   (`var(--mw-ansi-red)`), resolved at paint time against the host —
   themes restyle existing content with no re-render.

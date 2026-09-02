@@ -9,7 +9,9 @@ the `<mono-ascii>` element plus a library of 44 clearly-licensed fonts.
 
 The banner renders as art on the monowind grid while the light DOM
 keeps the semantic string — screen readers hear `monowind`, never
-glyph soup, and `select="text"` copies the real text. Utilities style
+glyph soup, while selecting over the banner selects the art itself
+(a transparent transcript in the element's shadow; the string never
+leaks into copied text). Utilities style
 the whole banner (colors, transitions, `hover:` — everything monowind
 supports); it behaves like a replaced element (shrink-wrapped to the
 art, so `mx-auto` centers it and `w-full` stretches it).

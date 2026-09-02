@@ -30,10 +30,9 @@ const SHADOW_TEMPLATE = `
   #grid { position: absolute; inset: 0; margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
-  /* Full invert on selection (TUI-native, matches focus-visible).
-   * Both fields spelled out — setting only color makes some engines
-   * drop the OS default background. */
-  ::selection { color: var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
+  /* Selection invert — mirror of the canonical rule in styles.css
+   * (which explains the field choices); update together. */
+  ::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
 </style>
 <div id="viewport">
   <pre id="grid" aria-hidden="true"></pre>

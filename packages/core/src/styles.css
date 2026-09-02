@@ -159,12 +159,19 @@ mono-wind:not([data-mw-ready]) {
   visibility: hidden !important;
 }
 
-/* Full invert on selection. Both fields spelled out — setting only
- * `color` makes some engines drop the OS default background. Native
- * copy still yields the real text (the DOM the browser reads). The
- * shadow grid mirrors this rule inside element.ts. */
+/* Full invert on selection — THE CANONICAL RULE; shadow scopes can't
+ * share it, so it's restated in element.ts (the grid) and in
+ * @monowind/ascii's transcript: update all three together. Both
+ * fields spelled out — setting only `color` makes some engines drop
+ * the OS default background. The text-shadow is the ink in Safari:
+ * it paints selection text with the element's text-fill-color — which
+ * the invisibility lock holds transparent — so a zero-offset shadow
+ * draws the glyph copy that `color` draws in other engines (where the
+ * identical-color shadow hides beneath it). Native copy still yields
+ * the real text (the DOM the browser reads). */
 mono-wind:not([measuring]) *::selection {
   color: var(--mw-bg, canvas) !important;
+  text-shadow: 0 0 0 var(--mw-bg, canvas) !important;
   background: var(--mw-fg, canvastext) !important;
 }
 /* Focus-invert already flipped the element's colors, so re-flipping in
@@ -172,6 +179,7 @@ mono-wind:not([measuring]) *::selection {
  * the selection. Swap them back for the focused element. */
 mono-wind:not([measuring]) :focus-visible::selection {
   color: var(--mw-fg, canvastext) !important;
+  text-shadow: 0 0 0 var(--mw-fg, canvastext) !important;
   background: var(--mw-bg, canvas) !important;
 }
 

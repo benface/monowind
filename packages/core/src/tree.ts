@@ -235,12 +235,11 @@ function buildRendererLeaf(
     style.width = { kind: "max-content" };
   }
   // One cell per UTF-16 unit — consistent with the run mapping below
-  // (astral glyph art is out of scope; fonts are BMP in practice).
-  const intrinsicWidth = longestLineAdvance(
-    text,
-    Array.from({ length: text.length }, () => 1),
-    style.tracking,
-  );
+  // (astral glyph art is out of scope; fonts are BMP in practice) —
+  // plus tracking, applied uniformly so the art stretches coherently
+  // (columns stay aligned across rows, like letter-spacing on a pre).
+  const advances = Array.from({ length: text.length }, () => 1 + style.tracking);
+  const intrinsicWidth = longestLineAdvance(text, advances, style.tracking);
   const intrinsicHeight = lines.length;
   const node: LayoutNode = {
     source: root,
@@ -253,6 +252,7 @@ function buildRendererLeaf(
     unclampedHeight: 0,
     resolvedPadding: zeroInsets(),
   };
+  if (style.tracking > 0) node.advances = advances;
   const runs = content?.runs ?? [];
   if (runs.length > 0 && text.length > 0) {
     // Line start offsets into the joined text (newlines included).

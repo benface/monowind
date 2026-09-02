@@ -44,6 +44,26 @@ describe("leaf renderers", () => {
     expect(rows[1]![0]).toMatchObject({ text: "A", backgroundColor: "var(--x)" });
   });
 
+  it("applies tracking uniformly to art cells (columns stay aligned)", () => {
+    registerLeafRenderer({
+      tag: "test-tracked",
+      render: () => ({ lines: ["AB", "CD"] }),
+    });
+    const el = document.createElement("test-tracked");
+    // 0.4px at 16px font = 1 cell of tracking (0.025em per cell).
+    el.style.letterSpacing = "0.4px";
+    document.body.appendChild(el);
+    const node = buildTree(el, 16)!;
+    el.remove();
+    // Trailing gap doesn't count toward the line width, as with text.
+    expect(node.intrinsicWidth).toBe(3);
+    const root = makeNode({ children: [node] });
+    layoutRoot(root, 10);
+    const rows = renderCellSegments(root);
+    expect(rows[0]!.map((s) => s.text).join("")).toBe("A B");
+    expect(rows[1]!.map((s) => s.text).join("")).toBe("C D");
+  });
+
   it("survives a throwing renderer: warns, renders nothing, layout intact", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     registerLeafRenderer({

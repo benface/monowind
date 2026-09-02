@@ -41,13 +41,41 @@ const HTMLElementBase = (
   typeof HTMLElement === "undefined" ? class {} : HTMLElement
 ) as typeof HTMLElement;
 
+/* The shadow pairs the two representations (grid glyphs stay the
+ * visible paint): a transparent art transcript that overlays the grid
+ * cell-for-cell — the host inherits the engine's typography lock, so
+ * the pre aligns by construction — and the slotted semantic string,
+ * visually hidden for the accessibility tree. Selection and copy read
+ * the transcript natively (real text, real newlines, in every
+ * sweep — drags, overshoots, select-all); the string never leaks into
+ * a copy. */
+// No whitespace between top-level nodes: the host inherits the
+// engine's white-space: pre lock, so stray template newlines would
+// render as real empty lines above the transcript.
+const SHADOW_TEMPLATE = `<style>
+  :host { display: block; }
+  #mirror { margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; color: transparent; }
+  /* The engine's light-DOM ::selection invert cannot pierce this
+   * shadow; mirror of the canonical rule in core's styles.css. */
+  #mirror::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
+  .alt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; user-select: none; -webkit-user-select: none; }
+</style><pre id="mirror" aria-hidden="true"></pre><span class="alt"><slot></slot></span>`;
+
 /** `<mono-ascii>`: renders its text content as ascii art. The `font`
  * ATTRIBUTE names a registered font (default: "standard"); the `font`
  * PROPERTY takes a parsed font object directly and wins over the
- * attribute. The light DOM keeps the semantic text (a11y,
- * select="text"). */
+ * attribute. The light DOM keeps the semantic text (a11y); the shadow
+ * transcript is what select="text" selects and copies. */
 export class MonoAsciiElement extends HTMLElementBase {
   #font: AsciiFont | null = null;
+  #mirror: HTMLElement | null = null;
+
+  constructor() {
+    super();
+    const shadow = this.attachShadow({ mode: "open" });
+    shadow.innerHTML = SHADOW_TEMPLATE;
+    this.#mirror = shadow.getElementById("mirror");
+  }
 
   get font(): AsciiFont | null {
     return this.#font;
@@ -57,9 +85,23 @@ export class MonoAsciiElement extends HTMLElementBase {
     this.#font = font;
     invalidateLeaves();
   }
+
+  /** Keep the transcript in step with the art (called from the leaf
+   * renderer each pass — the shadow is invisible to the engine, so
+   * the sync never feeds back into layout). */
+  syncMirror(lines: string[]): void {
+    const text = lines.join("\n");
+    if (this.#mirror && this.#mirror.textContent !== text) this.#mirror.textContent = text;
+  }
 }
 
 function renderLeaf(el: Element): LeafContent {
+  const content = renderContent(el);
+  (el as Partial<MonoAsciiElement>).syncMirror?.(content.lines);
+  return content;
+}
+
+function renderContent(el: Element): LeafContent {
   // The banner is the normalized textContent: trimmed, all whitespace
   // (newlines included) collapsed — a one-line banner by contract.
   const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();

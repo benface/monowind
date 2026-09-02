@@ -56,6 +56,17 @@ export const Banner: StoryObj = {
     // Semantic text intact in the light DOM.
     const banner = canvasElement.querySelector("mono-ascii")!;
     expect(banner.textContent).toBe("monowind");
+    // The shadow transcript: the art as transparent real text (real
+    // newlines) overlaying the grid — what select="text" selects and
+    // copies natively; the slotted semantic string is visually hidden
+    // and unselectable, so it stays accessibility-only.
+    const mirror = banner.shadowRoot!.getElementById("mirror")!;
+    expect(mirror.textContent).toContain("_ __ ___   ___  _ __   ___");
+    expect(mirror.textContent).toContain("\n");
+    expect(getComputedStyle(mirror).color).toBe("rgba(0, 0, 0, 0)");
+    const alt = banner.shadowRoot!.querySelector(".alt")!;
+    const altStyle = getComputedStyle(alt) as CSSStyleDeclaration & { webkitUserSelect?: string };
+    expect(altStyle.userSelect || altStyle.webkitUserSelect).toBe("none");
   },
 };
 

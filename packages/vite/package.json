@@ -1,6 +1,6 @@
 {
   "name": "@monowind/vite",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Zero-config Vite plugin for monowind — Tailwind included, no Tailwind setup required",
   "keywords": [
     "monowind",

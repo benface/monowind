@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ascii",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "FIGlet/TOIlet ascii-art banner text for monowind: the <mono-ascii> element and a font library",
   "keywords": [
     "ascii-art",
