@@ -18,7 +18,7 @@ export default meta;
 export const LightText: StoryObj = {
   render: () => html`
     <mono-wind select="text">
-      <p data-select-target class="max-w-64">
+      <p data-test="target" class="max-w-64">
         A raccoon walked into the corner bakery and took one long look at the display case.
       </p>
     </mono-wind>
@@ -28,7 +28,7 @@ export const LightText: StoryObj = {
 export const Banner: StoryObj = {
   render: () => html`
     <mono-wind select="text">
-      <mono-ascii data-select-target font="small" class="text-emerald-400">monowind</mono-ascii>
+      <mono-ascii data-test="target" font="small" class="text-emerald-400">monowind</mono-ascii>
     </mono-wind>
   `,
 };

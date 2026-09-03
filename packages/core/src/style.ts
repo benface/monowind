@@ -5,6 +5,8 @@ import { leafRendererFor } from "./leaf.ts";
 import { warnOnce } from "./warn.ts";
 import type {
   AlignItems,
+  Overflow,
+  OverflowAxis,
   BorderStyle,
   CellLength,
   CellMetrics,
@@ -259,17 +261,17 @@ export function readCellStyle(
       bottom: mapBorderStyle(cs.borderBottomStyle),
       left: mapBorderStyle(cs.borderLeftStyle),
     },
-    // Treat `hidden` and `clip` the same — both keep content inside the
-    // box. Normalized to `clip` internally since that's the more precise
-    // semantic for what we do (no scroll container, cheaper). Longhands
-    // (`overflow-x`/`overflow-y`) are honored: setting just one axis to
-    // hidden or clip still marks the element as clipping. `auto` and
-    // `scroll` are left as "visible" here — real scrolling is deferred to
-    // the scrolling milestone.
-    overflow:
-      isClipping(cs.overflow) || isClipping(cs.overflowX) || isClipping(cs.overflowY)
-        ? "clip"
-        : "visible",
+    overflow: readOverflow(cs),
+    scrollbarWidth: readScrollbarWidth(el, cs),
+    scrollbarColor: readScrollbarColor(cs.scrollbarColor),
+    overscroll: {
+      x: (cs.overscrollBehaviorX || "auto") === "auto",
+      y: (cs.overscrollBehaviorY || "auto") === "auto",
+    },
+    scrollbarSize: {
+      x: readCells(cs.getPropertyValue("--mw-scrollbar-x-size")),
+      y: readCells(cs.getPropertyValue("--mw-scrollbar-y-size")),
+    },
     // `nowrap` and `pre` disable soft wrapping; `pre` additionally makes
     // the tree builder preserve the source's spaces and newlines
     // (specs/cell-model.md). Readable via getComputedStyle because the
@@ -394,6 +396,82 @@ function readAnimatedBackground(
 
 function isClipping(value: string): boolean {
   return value === "hidden" || value === "clip";
+}
+
+/** Authored `scrollbar-width`, cached from the first CLEAN read: once
+ * the element carries data-mw-scroll our own hiding lock sets it to
+ * none, and Firefox never re-resolves the computed value when the
+ * lock's [measuring] gate flips — so the pre-lock value is the truth
+ * (authored changes after the first layout won't re-read there;
+ * documented deviation). */
+const scrollbarWidthCache = new WeakMap<Element, "auto" | "none">();
+let scrollbarWidthReadable: boolean | null = null;
+
+/** Environments with forced overlay scrollbars (headless Firefox
+ * among them) compute `scrollbar-width: none` on EVERY element — a
+ * pristine probe reading `none` means reads carry no authored signal,
+ * so the engine ignores the property there instead of hiding every
+ * bar. */
+function scrollbarWidthReadsTrustworthy(doc: Document): boolean {
+  if (scrollbarWidthReadable !== null) return scrollbarWidthReadable;
+  if (!doc.body) return true; // decide later, on a real read
+  const probe = doc.createElement("div");
+  probe.style.cssText = "position: absolute; width: 0; height: 0; overflow: auto";
+  doc.body.appendChild(probe);
+  scrollbarWidthReadable = getComputedStyle(probe).scrollbarWidth !== "none";
+  probe.remove();
+  return scrollbarWidthReadable;
+}
+
+function readScrollbarWidth(el: Element, cs: CSSStyleDeclaration): "auto" | "none" {
+  if (!scrollbarWidthReadsTrustworthy(el.ownerDocument)) return "auto";
+  if (el.hasAttribute("data-mw-scroll")) {
+    const cached = scrollbarWidthCache.get(el);
+    if (cached !== undefined) return cached;
+  }
+  const value: "auto" | "none" = cs.scrollbarWidth === "none" ? "none" : "auto";
+  scrollbarWidthCache.set(el, value);
+  return value;
+}
+
+/** `scrollbar-color: <thumb> <track>` — two computed colors, split at
+ * the top parenthesis level (rgb()/color() carry inner spaces). */
+function readScrollbarColor(value: string): { thumb: string; track: string } | null {
+  const v = (value ?? "").trim();
+  if (!v || v === "auto") return null;
+  let depth = 0;
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i]!;
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === " " && depth === 0) {
+      return { thumb: v.slice(0, i), track: v.slice(i + 1).trim() };
+    }
+  }
+  return null;
+}
+
+/** A `<integer>` custom property in cells, at least one. */
+function readCells(value: string): number {
+  return Math.max(1, Math.floor(Number(value) || 1));
+}
+
+function overflowAxis(value: string): OverflowAxis {
+  if (isClipping(value)) return "clip";
+  if (value === "auto" || value === "scroll") return value;
+  return "visible";
+}
+
+/** Per-axis overflow (specs/scrolling.md). Longhands read first (the
+ * shorthand sets both in real browsers; happy-dom may leave them "",
+ * hence the fallback), then the CSS coercion: one non-visible axis
+ * forces the other's `visible` to compute `auto`. */
+function readOverflow(cs: CSSStyleDeclaration): Overflow {
+  let x = overflowAxis(cs.overflowX || cs.overflow);
+  let y = overflowAxis(cs.overflowY || cs.overflow);
+  if (x !== "visible" && y === "visible") y = "auto";
+  if (y !== "visible" && x === "visible") x = "auto";
+  return { x, y };
 }
 
 /** The screen-reader-only pattern (Tailwind `sr-only` and friends): an

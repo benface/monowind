@@ -195,7 +195,23 @@ function positionElement(node: LayoutNode): void {
   setVar(el, "--mw-y", String(rect.y));
   setVar(el, "--mw-w", String(rect.width));
   setVar(el, "--mw-h", String(rect.height));
-  setFlag(el, "data-mw-clip", overflow === "clip");
+  setFlag(el, "data-mw-clip", overflow.x === "clip" || overflow.y === "clip");
+  setFlag(el, "data-mw-scroll", node.scrollRange !== undefined);
+  if (node.scrollRange) {
+    // Native range == engine range by construction: a 1px ::after
+    // spacer (companion CSS) ends at exactly max + box cells, so
+    // scrollHeight - clientHeight lands on the engine's max in every
+    // engine (browsers disagree about end padding in the scrollable
+    // overflow area). An axis with no range parks the spacer in the
+    // first cell — a box outside the padding box (at -1px) is dropped
+    // from the overflow area on BOTH axes.
+    const { maxX, maxY } = node.scrollRange;
+    setVar(el, "--mw-se-x", String(maxX > 0 ? maxX + node.localRect.width : 1));
+    setVar(el, "--mw-se-y", String(maxY > 0 ? maxY + node.localRect.height : 1));
+  } else {
+    clearVar(el, "--mw-se-x");
+    clearVar(el, "--mw-se-y");
+  }
   // The browser insets content by border + padding; the engine has already
   // allocated cells for both. We expose them separately so the companion CSS
   // reads naturally, and the CSS sums them into the actual `padding` (since

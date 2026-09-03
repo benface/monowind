@@ -11,15 +11,15 @@
  */
 import { __unstable__loadDesignSystem } from "tailwindcss";
 import themeCss from "tailwindcss/theme.css?raw";
-import rulesCss from "./rules.css?inline";
+import utilitiesCss from "./utilities.css?inline";
 
 type DesignSystem = Awaited<ReturnType<typeof __unstable__loadDesignSystem>>;
 let designSystem: DesignSystem | null = null;
-// Include rules.css so its @utility declarations (rule-*, rule-x-*,
+// Include utilities.css so its @utility declarations (rule-*, rule-x-*,
 // rule-y-*) register with the design system — otherwise the sorter
 // treats them as unknown and floats them to the front. Sorting is a
 // no-op for the few ms until the load resolves.
-void __unstable__loadDesignSystem(`${themeCss}\n${rulesCss}`).then((loaded) => {
+void __unstable__loadDesignSystem(`${themeCss}\n${utilitiesCss}`).then((loaded) => {
   designSystem = loaded;
 });
 

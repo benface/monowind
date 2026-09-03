@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { distributeInteger, resolveFlexMainAxis } from "../src/flex.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { renderPlainText } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
 
 describe("distributeInteger", () => {
@@ -851,10 +852,88 @@ describe("flex item min/max and sizing through layoutRoot", () => {
     expect(other.localRect.width).toBe(4);
   });
 
+  it("max-height caps a column's used main size: a scroll-container item shrinks to fit", () => {
+    const header = makeNode({ text: "head" });
+    const body = makeNode({
+      style: { overflow: { x: "visible", y: "auto" }, flexShrink: 1 },
+      text: "one two three four five six seven eight",
+    });
+    const footer = makeNode({ text: "foot" });
+    const column = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        maxHeight: 4,
+        width: { kind: "cells", value: 5 },
+      },
+      children: [header, body, footer],
+    });
+    const root = makeNode({ children: [column] });
+    layoutRoot(root, 6);
+    // Natural content is 10 rows; the cap holds the column at 4 with
+    // the body flexed down to the 2 rows left and scrolling the rest.
+    expect(column.localRect.height).toBe(4);
+    expect(body.localRect.height).toBe(2);
+    expect(body.scrollRange!.maxY).toBeGreaterThan(0);
+    expect(footer.localRect.y).toBe(3);
+  });
+
+  it("max-height caps a row's line cross size: a stretched scroll-container item shrinks", () => {
+    const body = makeNode({
+      style: { overflow: { x: "visible", y: "auto" }, flexShrink: 1 },
+      text: "one two three four five six seven eight",
+    });
+    const side = makeNode({ text: "x" });
+    const row = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        maxHeight: 4,
+        width: { kind: "cells", value: 8 },
+      },
+      children: [body, side],
+    });
+    const root = makeNode({ children: [row] });
+    layoutRoot(root, 10);
+    // The body wraps to many rows; the cap clamps the single line's
+    // cross size (css-flexbox §9.4), so both stretched items are 4 tall
+    // and the body scrolls the rest.
+    expect(row.localRect.height).toBe(4);
+    expect(body.localRect.height).toBe(4);
+    expect(side.localRect.height).toBe(4);
+    expect(body.scrollRange!.maxY).toBeGreaterThan(0);
+  });
+
+  it("a definite row height shrinks stretched items to the line (content overflows)", () => {
+    const tall = makeNode({ style: { flexShrink: 1 }, text: "one two three four five six" });
+    const row = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        height: { kind: "cells", value: 2 },
+        width: { kind: "cells", value: 5 },
+      },
+      children: [tall],
+    });
+    const root = makeNode({ children: [row] });
+    layoutRoot(root, 6);
+    // css-flexbox §9.4.8: a single line's cross size is the definite
+    // inner size; `min-height: auto` is 0 in the cross axis, so the
+    // stretched item is 2 tall and its six rows of text overflow.
+    expect(row.localRect.height).toBe(2);
+    expect(tall.localRect.height).toBe(2);
+    expect(renderPlainText(root).split("\n").length).toBeGreaterThan(2);
+  });
+
   it("truncate in a flex row: non-visible overflow disables the automatic minimum", () => {
     const truncated = makeNode({
       text: "a very long truncatable label",
-      style: { flexShrink: 1, whiteSpace: "nowrap", overflow: "clip", textOverflow: "ellipsis" },
+      style: {
+        flexShrink: 1,
+        whiteSpace: "nowrap",
+        overflow: { x: "clip", y: "clip" },
+        textOverflow: "ellipsis",
+      },
     });
     const fixed = makeNode({ text: "xxxxxxxxxx", style: {} });
     const container = makeNode({

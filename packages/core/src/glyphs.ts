@@ -31,6 +31,9 @@ export interface GlyphTable {
   teeRight?: string;
   /** `┼` — all four arms. */
   cross?: string;
+  /** Scrollbar gutter ink (specs/scrolling.md); defaults `░` / `█`. */
+  scrollTrack?: string;
+  scrollThumb?: string;
 }
 
 export type BorderGlyphSet = Partial<Record<BorderStyle, GlyphTable>>;
@@ -151,7 +154,8 @@ function tableFrom(junctions: readonly string[]): GlyphTable {
 }
 
 /** Every role drawn with one glyph, for sets with no junction geometry. */
-const uniformTable = (glyph: string): GlyphTable => tableFrom(new Array(16).fill(glyph));
+const uniformTable = (glyph: string): GlyphTable =>
+  tableFrom(Array.from({ length: 16 }, () => glyph));
 
 /* === Built-in sets ==================================================== */
 
@@ -169,7 +173,7 @@ registerBorderGlyphs("rounded", {
 // Teletype: 7-bit ASCII only. `double` keeps emphasis via `=`.
 const asciiTable: GlyphTable = { ...uniformTable("+"), h: "-", v: "|" };
 registerBorderGlyphs("ascii", {
-  solid: asciiTable,
+  solid: { ...asciiTable, scrollTrack: "|", scrollThumb: "#" },
   double: { ...asciiTable, h: "=" },
   dashed: asciiTable,
   dotted: { ...asciiTable, h: ".", v: ":" },
@@ -189,6 +193,15 @@ registerBorderGlyphs("single", {
 // don't exist in the codepage (bitmap fonts lack them — a fallback
 // font would break the grid), so they downgrade to solid.
 registerBorderGlyphs("cp437", { dashed: lightTable, dotted: lightTable });
+
+/** Gutter ink through the owner's set — solid-table roles, defaults
+ * `░` / `█` (specs/scrolling.md). */
+export function scrollGlyphs(set: BorderGlyphSet | undefined): { track: string; thumb: string } {
+  return {
+    track: set?.solid?.scrollTrack ?? "\u2591",
+    thumb: set?.solid?.scrollThumb ?? "\u2588",
+  };
+}
 
 // BBS/ANSI-art flavor: CP437 blocks, styles mapped to shade density.
 registerBorderGlyphs("blocks", {

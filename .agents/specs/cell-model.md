@@ -104,10 +104,19 @@ relative rescaling).
 ## Overflow
 
 `overflow: hidden` and `overflow: clip` (either axis longhand too) both mark
-the element as clipping — content stays inside the engine-allocated box.
-Internally normalized to `clip` (no scroll container, cheaper, the precise
-semantic for what we do). `auto` and `scroll` are treated as `visible` until
-the scrolling milestone.
+the element as clipping — content stays inside the engine-allocated box,
+normalized to `clip` internally (no scroll container, cheaper, the precise
+semantic for what we do). `auto` and `scroll` make the element a SCROLL
+CONTAINER: native scroll physics on the light element, cell-quantized
+mirroring on the grid, engine-drawn bars — specs/scrolling.md is the full
+contract.
+
+Visible overflow paints past the host, as CSS paints it past any box: the
+grid is sized to the INK extent while the host keeps its in-flow height, so
+a box's overflowing rows overlay what follows (later siblings paint on top,
+per paint order), and the host's background follows the ink — the host is
+the canvas, as a document's root background covers its overflow. Ink above
+or left of the host has no cells and is dropped (deviation).
 
 ## Typography
 

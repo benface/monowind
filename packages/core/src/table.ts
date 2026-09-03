@@ -1,4 +1,5 @@
 import { junctionGlyph, lineGlyph } from "./borders.ts";
+import { scrollGutter } from "./types.ts";
 import { glyphSetFor } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { percentToCells } from "./metrics.ts";
@@ -611,7 +612,8 @@ export function tableUsedOuterWidth(
     style.border.left +
     style.border.right +
     resolveLength(style.padding.left, availableWidth) +
-    resolveLength(style.padding.right, availableWidth);
+    resolveLength(style.padding.right, availableWidth) +
+    scrollGutter(style).right;
 
   // Percent inflation (css-tables-3 style, probed): each percent column
   // demands max ÷ p, the rest demand sum ÷ (1 − Σp); Σp ≥ 100% demands

@@ -28,6 +28,7 @@ import {
 import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
 import type { TableData } from "./table.ts";
 import { walkPositioned } from "./positioning.ts";
+import { scrollGutter, scrollsAxis } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import type {
   CellLength,
@@ -61,7 +62,14 @@ export function layoutRoot(root: LayoutNode, availableWidth: number): { height: 
   // by flow layout; place them against their containing blocks, and apply
   // relative offsets. Runs top-down so ancestor rects are final first.
   walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], cache);
-  return { height: root.localRect.height };
+  // The host keeps its in-flow height; the grid covers the INK — visible
+  // overflow paints past the host like CSS paints it past any box
+  // (specs/cell-model.md "Overflow").
+  const height = root.localRect.height;
+  const ink = contentExtent(root);
+  root.localRect.width = Math.max(root.localRect.width, ink.x);
+  root.localRect.height = Math.max(height, ink.y);
+  return { height };
 }
 
 /** absolute / fixed boxes are out of normal flow. */
@@ -111,7 +119,14 @@ export function layoutNode(
   parentY: number,
   widthMode: SizingMode,
   cache: IntrinsicCache,
-  forced?: { width?: number | undefined; height?: number | undefined },
+  forced?: {
+    width?: number | undefined;
+    height?: number | undefined;
+    /** Second-pass auto-gutter reservation (see the scrollRange block):
+     * an overflowing `auto` axis re-lays out once WITH its gutter and
+     * keeps it regardless of the new extent — no oscillation. */
+    gutter?: { right: boolean; bottom: boolean };
+  },
 ): void {
   const style = node.style;
   const forcedHeight = forced?.height;
@@ -121,6 +136,7 @@ export function layoutNode(
   delete node.multicolGeometry;
   delete node.multicolFlow;
   delete node.multicolFlowSpan;
+  delete node.textExtent;
 
   // Width is clamped to min/max BEFORE laying out content — wrapping and
   // child sizing must see the constrained width, not the raw resolved one.
@@ -135,10 +151,13 @@ export function layoutNode(
   // Percent padding resolves against the containing block's width (CSS: all
   // four sides use the inline size) — `availableWidth` is that width here.
   // Stored on the node because the renderers need the resolved cells too.
+  const gutter = scrollGutter(style);
+  if (forced?.gutter?.right) gutter.right = style.scrollbarSize.y;
+  if (forced?.gutter?.bottom) gutter.bottom = style.scrollbarSize.x;
   const padding: Insets = {
     top: resolveLength(style.padding.top, availableWidth),
-    right: resolveLength(style.padding.right, availableWidth),
-    bottom: resolveLength(style.padding.bottom, availableWidth),
+    right: resolveLength(style.padding.right, availableWidth) + gutter.right,
+    bottom: resolveLength(style.padding.bottom, availableWidth) + gutter.bottom,
     left: resolveLength(style.padding.left, availableWidth),
   };
   node.resolvedPadding = padding;
@@ -166,8 +185,6 @@ export function layoutNode(
   // adds grow space but never triggers shrink. Everywhere: only a DEFINITE
   // content height is the basis for children's percent heights, per CSS.
   const heightIsDefinite = forcedHeight !== undefined || outerHeightExplicit !== undefined;
-  const definiteInnerHeight =
-    heightIsDefinite && Number.isFinite(inner.height) ? inner.height : undefined;
 
   // `height` and `max-height` both RESTRICT multicol column heights
   // (css-multicol §7), unlike other displays where max-height only clamps
@@ -180,67 +197,76 @@ export function layoutNode(
           maxHeight - style.border.top - style.border.bottom - padding.top - padding.bottom,
         );
 
-  let contentHeight: number;
-  if (laysOutAsTextLeaf(node)) {
-    contentHeight = layoutTextLeaf(
-      node,
-      inner.width,
-      inner.height,
-      definiteInnerHeight,
-      maxInnerHeight,
-      padding,
-      cache,
-    );
-  } else if (style.display === "flex" && style.flexDirection === "row") {
-    contentHeight = layoutFlexRow(
-      node,
-      inner.width,
-      inner.height,
-      definiteInnerHeight,
-      style.border,
-      padding,
-      cache,
-    );
-  } else if (style.display === "flex" && style.flexDirection === "column") {
-    contentHeight = layoutFlexColumn(
-      node,
-      inner.width,
-      inner.height,
-      heightIsDefinite,
-      style.border,
-      padding,
-      cache,
-    );
-  } else if (style.display === "grid") {
-    contentHeight = layoutGrid(node, inner.width, inner.height, style.border, padding, cache);
-  } else if (style.display === "table") {
-    contentHeight = layoutTable(
-      node,
-      inner.width,
-      definiteInnerHeight,
-      style.border,
-      padding,
-      cache,
-    );
-  } else if (style.display === "multicol") {
-    contentHeight = layoutMulticol(
-      node,
-      inner.width,
-      definiteInnerHeight,
-      maxInnerHeight,
-      style.border,
-      padding,
-      cache,
-    );
-  } else {
-    contentHeight = layoutBlock(
-      node,
-      inner.width,
-      definiteInnerHeight,
-      style.border,
-      padding,
-      cache,
-    );
+  // Content layout against an inner height and whether it is definite.
+  // Flex and grid containers size their content against a definite
+  // height, and a `max-height` on an indefinite one caps the USED size,
+  // not just the box (css-flexbox §9.2 / §9.4, css-grid §11.1): content
+  // past the cap re-flexes against it — a scroll-container item
+  // (automatic minimum 0) shrinks and scrolls.
+  const isLeaf = laysOutAsTextLeaf(node);
+  const layoutContent = (innerHeight: number, definite: boolean): number => {
+    const definiteInner = definite && Number.isFinite(innerHeight) ? innerHeight : undefined;
+    if (isLeaf) {
+      return layoutTextLeaf(
+        node,
+        inner.width,
+        innerHeight,
+        definiteInner,
+        maxInnerHeight,
+        padding,
+        cache,
+      );
+    }
+    if (style.display === "flex" && style.flexDirection === "row") {
+      return layoutFlexRow(
+        node,
+        inner.width,
+        innerHeight,
+        definiteInner,
+        style.border,
+        padding,
+        cache,
+      );
+    }
+    if (style.display === "flex") {
+      return layoutFlexColumn(
+        node,
+        inner.width,
+        innerHeight,
+        definite,
+        style.border,
+        padding,
+        cache,
+      );
+    }
+    if (style.display === "grid") {
+      return layoutGrid(node, inner.width, innerHeight, style.border, padding, cache);
+    }
+    if (style.display === "table") {
+      return layoutTable(node, inner.width, definiteInner, style.border, padding, cache);
+    }
+    if (style.display === "multicol") {
+      return layoutMulticol(
+        node,
+        inner.width,
+        definiteInner,
+        maxInnerHeight,
+        style.border,
+        padding,
+        cache,
+      );
+    }
+    return layoutBlock(node, inner.width, definiteInner, style.border, padding, cache);
+  };
+  let contentHeight = layoutContent(inner.height, heightIsDefinite);
+  const capsUsedHeight = !isLeaf && (style.display === "flex" || style.display === "grid");
+  if (
+    capsUsedHeight &&
+    !heightIsDefinite &&
+    maxInnerHeight !== undefined &&
+    contentHeight > maxInnerHeight
+  ) {
+    contentHeight = layoutContent(maxInnerHeight, true);
   }
 
   const naturalHeight =
@@ -273,6 +299,47 @@ export function layoutNode(
   }
 
   node.localRect = { x: parentX, y: parentY, width: outerWidth, height: finalHeight };
+
+  // Scroll geometry (specs/scrolling.md): content extent and max
+  // offset, from the ENGINE's layout — never native scrollHeight.
+  if (scrollsAxis(style.overflow.x) || scrollsAxis(style.overflow.y)) {
+    const extent = contentExtent(node);
+    const sizeX = Math.max(0, extent.x - style.border.left - padding.left);
+    const sizeY = Math.max(0, extent.y - style.border.top - padding.top);
+    const contentW = Math.max(
+      0,
+      outerWidth - style.border.left - style.border.right - padding.left - padding.right,
+    );
+    const contentH = Math.max(
+      0,
+      finalHeight - style.border.top - style.border.bottom - padding.top - padding.bottom,
+    );
+    node.scrollRange = {
+      sizeX,
+      sizeY,
+      maxX: scrollsAxis(style.overflow.x) ? Math.max(0, sizeX - contentW) : 0,
+      maxY: scrollsAxis(style.overflow.y) ? Math.max(0, sizeY - contentH) : 0,
+    };
+    // CSS parity for `auto`: reserve the gutter only when content
+    // actually overflows — decided on the FIRST pass and kept even if
+    // the narrower re-layout no longer overflows (browsers' own
+    // anti-oscillation rule).
+    if (!forced?.gutter && style.scrollbarWidth !== "none") {
+      const needY = style.overflow.y === "auto" && node.scrollRange.maxY > 0;
+      const needX = style.overflow.x === "auto" && node.scrollRange.maxX > 0;
+      if (needY || needX) {
+        layoutNode(node, availableWidth, availableHeight, parentX, parentY, widthMode, cache, {
+          ...forced,
+          gutter: { right: needY, bottom: needX },
+        });
+        return;
+      }
+    }
+    node.scrollGutterCells = { right: gutter.right, bottom: gutter.bottom };
+  } else {
+    delete node.scrollRange;
+    delete node.scrollGutterCells;
+  }
 }
 
 /**
@@ -330,6 +397,14 @@ function layoutTextLeaf(
       geometry = leafLineGeometry(node, innerWidth);
     }
     contentHeight = geometry.totalRows;
+    node.textExtent = {
+      width: geometry.spans.reduce(
+        (max, span) =>
+          Math.max(max, lineAdvance(span.start, span.end, node.advances, style.tracking)),
+        0,
+      ),
+      rows: geometry.totalRows,
+    };
     // Content alignment of the anonymous text item, quantized to whole
     // cells (specs/cell-model.md): a flex/grid element whose content is
     // bare text centers/ends it by folding the leftover into the
@@ -726,6 +801,43 @@ function resolveWidth(
   return mode === "shrink" ? Math.min(available, intrinsicOuterWidth(node, cache)) : available;
 }
 
+/** How far a box's content reaches past its border-box origin, in
+ * cells: children's own scrollable extents plus its text's extent —
+ * CSS scrollable overflow counts descendants' overflow unless a box
+ * clips it (`scrollableExtent`). */
+function contentExtent(node: LayoutNode): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  for (const child of node.children) {
+    if (child.style.position === "fixed") continue;
+    const extent = scrollableExtent(child);
+    x = Math.max(x, child.localRect.x + extent.x);
+    y = Math.max(y, child.localRect.y + extent.y);
+  }
+  if (node.textExtent) {
+    const { border } = node.style;
+    const padding = node.resolvedPadding;
+    x = Math.max(x, border.left + padding.left + node.textExtent.width);
+    y = Math.max(y, border.top + padding.top + node.textExtent.rows);
+  }
+  return { x, y };
+}
+
+/** A box's contribution to its parent's scrollable overflow: its own
+ * box, grown by its content's overflow on each axis it leaves
+ * visible. */
+function scrollableExtent(node: LayoutNode): { x: number; y: number } {
+  const { width, height } = node.localRect;
+  const clipsX = node.style.overflow.x !== "visible";
+  const clipsY = node.style.overflow.y !== "visible";
+  if (clipsX && clipsY) return { x: width, y: height };
+  const content = contentExtent(node);
+  return {
+    x: clipsX ? width : Math.max(width, content.x),
+    y: clipsY ? height : Math.max(height, content.y),
+  };
+}
+
 function tableMinOuterWidth(node: LayoutNode, available: number, cache: IntrinsicCache): number {
   const style = node.style;
   return (
@@ -733,7 +845,8 @@ function tableMinOuterWidth(node: LayoutNode, available: number, cache: Intrinsi
     style.border.left +
     style.border.right +
     resolveLength(style.padding.left, available) +
-    resolveLength(style.padding.right, available)
+    resolveLength(style.padding.right, available) +
+    scrollGutter(style).right
   );
 }
 
@@ -782,7 +895,8 @@ export function intrinsicOuterWidth(node: LayoutNode, cache: IntrinsicCache): nu
     style.border.left +
     style.border.right +
     intrinsicCells(style.padding.left) +
-    intrinsicCells(style.padding.right);
+    intrinsicCells(style.padding.right) +
+    scrollGutter(style).right;
   cache.maxContent.set(node, result);
   return result;
 }
@@ -824,7 +938,8 @@ export function minContentOuterWidth(node: LayoutNode, cache: IntrinsicCache): n
     style.border.left +
     style.border.right +
     intrinsicCells(style.padding.left) +
-    intrinsicCells(style.padding.right);
+    intrinsicCells(style.padding.right) +
+    scrollGutter(style).right;
   cache.minContent.set(node, result);
   return result;
 }

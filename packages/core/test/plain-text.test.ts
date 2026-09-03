@@ -19,6 +19,18 @@ function plainText(root: LayoutNode, availableWidth: number): string {
   return renderPlainText(root);
 }
 
+describe("visible overflow", () => {
+  it("paints past the host's in-flow rows, under what follows", () => {
+    const tall = makeNode({ style: { height: { kind: "cells", value: 2 } }, text: "aa bb cc dd" });
+    const next = makeNode({ text: "xy" });
+    const root = makeNode({ children: [tall, next] });
+    // Two in-flow rows for the host; four rows of ink on the grid, with
+    // the sibling painting over the overflow (CSS paint order).
+    expect(layoutRoot(root, 2).height).toBe(3);
+    expect(renderPlainText(root).split("\n")).toEqual(["aa", "bb", "xy", "dd"]);
+  });
+});
+
 describe("renderPlainText golden outputs", () => {
   it("renders the motivating example: bordered flex row, justify-between, items-center", () => {
     const container = makeNode({
@@ -52,7 +64,7 @@ describe("renderPlainText golden outputs", () => {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
         padding: { top: 0, right: 1, bottom: 0, left: 1 },
         whiteSpace: "nowrap",
-        overflow: "clip",
+        overflow: { x: "clip", y: "clip" },
         textOverflow: "ellipsis",
       },
       text: "hello wonderful world",
@@ -68,7 +80,7 @@ describe("renderPlainText golden outputs", () => {
       style: {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
         whiteSpace: "nowrap",
-        overflow: "clip",
+        overflow: { x: "clip", y: "clip" },
       },
       text: "hello world",
     });

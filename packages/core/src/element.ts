@@ -1,8 +1,8 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, onLeafRegistryChange } from "./leaf.ts";
-import { hitChain } from "./pointer.ts";
-import { renderPlainText } from "./plain-text.ts";
+import { hitChain, hitStack } from "./pointer.ts";
+import { renderPlainText, thumbSpan } from "./plain-text.ts";
 import { paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
@@ -15,7 +15,7 @@ import type { CellMetrics, LayoutNode } from "./types.ts";
 const SHADOW_TEMPLATE = `
 <style>
   :host { display: block; position: relative; contain: layout style; }
-  #viewport { position: relative; width: 100%; height: 100%; }
+  #viewport { position: relative; width: 100%; height: 100%; background: inherit; }
   /* When the host hides its own dropped direct text (visibility, see
    * styles.css), the render layer must not sink with it. Scoped to that
    * state so an authored 'invisible' on the host stays intact. */
@@ -27,7 +27,14 @@ const SHADOW_TEMPLATE = `
    * elements opt back into pointer-events via styles.css so clicks
    * still work. In select="text" the grid is inert to events and drag
    * selects the light DOM natively. */
-  #grid { position: absolute; inset: 0; margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  /* Sized by the engine's ink extent (element.ts), not the host box:
+   * visible overflow paints past the host (specs/cell-model.md
+   * "Overflow"), and the host's background follows it there — the
+   * host is the canvas, as the root element's background covers a
+   * document's overflow — inherited through #viewport, the shadow
+   * parent. (A translucent host background paints repeatedly inside
+   * the box.) */
+  #grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
   /* Selection invert — mirror of the canonical rule in styles.css
@@ -74,6 +81,18 @@ const SAMPLED_TRANSITION = /^(color|opacity|border-(top|right|bottom|left)-color
  * event never arrives (subtree torn down mid-fade) must not pin a rAF
  * loop forever. */
 const SAMPLING_VALVE_MS = 30_000;
+
+/* Wheel-gesture model (specs/scrolling.md "Gesture latching"). */
+/** Ticks further apart than this begin a new gesture — and settle. */
+const WHEEL_QUIESCE_MS = 200;
+/** Pointer jitter that still counts as stationary. */
+const WHEEL_POINTER_SLOP_PX = 3;
+/** An undecided first tick this small is eaten, not latched. */
+const WHEEL_LEAD_IN_PX = 4;
+/** Non-increasing ticks that confirm momentum. */
+const INERTIA_TICKS = 8;
+/** Settle debounce where `scrollend` is missing (older Safari). */
+const SETTLE_FALLBACK_MS = 160;
 
 // Import-safe outside the browser (SSR, Node scripts using renderPlainText):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
@@ -142,6 +161,24 @@ export class MonoWindElement extends HTMLElementBase {
   #lastLayout: LayoutNode | null = null;
   #unsubscribeLeafRegistry: (() => void) | null = null;
   #unsubscribeGlyphRegistry: (() => void) | null = null;
+  #paintPending = false;
+  /** Scroll containers of the LAST layout (specs/scrolling.md). */
+  #scrollNodes: LayoutNode[] = [];
+  #settleTimers = new Map<Element, ReturnType<typeof setTimeout>>();
+  /** Last routed-wheel activity per scroll container: each scrollBy is a separate
+   * PROGRAMMATIC scroll, so the browser fires scrollend between wheel
+   * ticks — mid-gesture settles would keep snapping small deltas back
+   * (the "resistance"). Recent activity suppresses them; the wheel
+   * quiesce timer settles instead. */
+  #routedWheelAt = new WeakMap<Element, number>();
+  /** What the current wheel gesture is LATCHED to — a scroll container, or the
+   * page (`el: null`): chaining is a gesture-START decision (native
+   * scroll-chaining semantics), so mid-gesture boundary hits stay on
+   * the scroll container and a scroll container sliding under the pointer never captures a
+   * page gesture. `mag`/`decayed` track the delta trend (see
+   * #onWheel). */
+  #wheelLatch: WheelLatch | null = null;
+  #thumbDrag: ThumbDrag | null = null;
 
   /** (Re-)observe the light DOM; re-run when the leaf registry adds
    * observed attributes to the filter. `observe` on the same target
@@ -257,10 +294,15 @@ export class MonoWindElement extends HTMLElementBase {
     // states"): under select="grid" the light DOM is pointer-events:
     // none, so :hover/:active can't match — the engine hit-tests the
     // pointer's cell and marks the chain with data-mw-hover /
-    // data-mw-active (rules.css retargets the Tailwind variants).
+    // data-mw-active (utilities.css retargets the Tailwind variants).
     this.addEventListener("pointermove", this.#onPointerMove);
     this.addEventListener("pointerleave", this.#onPointerLeave);
     this.addEventListener("pointerdown", this.#onPointerDown);
+    // Scroll events don't bubble — capture catches every light-DOM
+    // container's scroll (specs/scrolling.md).
+    this.addEventListener("scroll", this.#onScroll, { capture: true, passive: true });
+    this.addEventListener("scrollend", this.#onScrollEnd, { capture: true });
+    this.addEventListener("wheel", this.#onWheel, { passive: false });
     // Release on the window: a selection drag routinely ends outside
     // the host, and the press state must thaw wherever it ends.
     window.addEventListener("pointerup", this.#onPointerUp);
@@ -295,6 +337,13 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("pointermove", this.#onPointerMove);
     this.removeEventListener("pointerleave", this.#onPointerLeave);
     this.removeEventListener("pointerdown", this.#onPointerDown);
+    this.removeEventListener("scroll", this.#onScroll, { capture: true });
+    this.removeEventListener("scrollend", this.#onScrollEnd, { capture: true });
+    this.removeEventListener("wheel", this.#onWheel);
+    for (const timer of this.#settleTimers.values()) clearTimeout(timer);
+    this.#settleTimers.clear();
+    this.#thumbDrag = null;
+    this.#wheelLatch = null;
     window.removeEventListener("pointerup", this.#onPointerUp);
     window.removeEventListener("pointercancel", this.#onPointerUp);
     document.removeEventListener("scroll", this.#onAnyScroll, { capture: true });
@@ -319,17 +368,376 @@ export class MonoWindElement extends HTMLElementBase {
   #gridOrigin: { left: number; top: number } | null = null;
   static #hoverCapable = typeof matchMedia === "undefined" ? null : matchMedia("(hover: hover)");
 
+  /** Paint-only pass (specs/scrolling.md): reruns paintGrid from the
+   * last layout with current scroll offsets — no measuring, no
+   * layout. Scroll events coalesce into one frame. */
+  #schedulePaint(): void {
+    // A queued layout repaints (and re-syncs offsets) itself.
+    if (this.#paintPending || this.#layoutPending) return;
+    this.#paintPending = true;
+    // rAF, with a timeout backstop: headless/backgrounded Firefox can
+    // throttle rAF into never firing, freezing scroll mirroring.
+    let done = false;
+    const run = (): void => {
+      if (done) return;
+      done = true;
+      this.#paintPending = false;
+      const metrics = this.#cellMetrics;
+      if (!this.isConnected || !this.#lastLayout || !metrics) return;
+      this.#syncScrollOffsets(metrics);
+      this.#paintHeld = !paintGrid(this.#lastLayout, this.#grid, this.#pressing);
+      // The cells under a stationary pointer changed with the scroll.
+      this.#updatePointerStates();
+    };
+    requestAnimationFrame(run);
+    setTimeout(run, 50);
+  }
+
+  /** Per-container offsets for the paint: from the pre-mask snapshot during
+   * a layout pass (native reads are clamped inside the mask; pins
+   * resolve to the NEW max), from the live position on a scroll
+   * repaint. */
+  #syncScrollOffsets(metrics: CellMetrics, snapshot?: ScrollSnapshot): void {
+    for (const node of this.#scrollNodes) {
+      const el = node.source as HTMLElement;
+      const { maxX, maxY } = node.scrollRange!;
+      const entry = snapshot?.get(el);
+      node.scroll = entry
+        ? {
+            x: entry.pinX ? maxX : Math.min(entry.x, maxX),
+            y: entry.pinY ? maxY : Math.min(entry.y, maxY),
+          }
+        : {
+            x: scrollCells(el, "x", metrics.width, maxX),
+            y: scrollCells(el, "y", metrics.height, maxY),
+          };
+    }
+  }
+
+  /** Snapshot of every scroll container's native position, taken BEFORE the
+   * measuring mask goes on: the mask collapses container geometry (the
+   * range spacer is off) and browsers clamp native positions during
+   * that reflow — Chromium eagerly, Firefox lazily — so any read inside
+   * the pass is wrong. Bottom-stick rides along: a scroll container settled at a
+   * real end (pre-layout max > 0) re-pins to the NEW max. */
+  #captureScrollState(): ScrollSnapshot {
+    const snapshot: ScrollSnapshot = new Map();
+    const metrics = this.#cellMetrics;
+    if (!metrics) return snapshot;
+    for (const node of this.#scrollNodes) {
+      const el = node.source as HTMLElement;
+      const { maxX, maxY } = node.scrollRange!;
+      const x = scrollCells(el, "x", metrics.width, maxX);
+      const y = scrollCells(el, "y", metrics.height, maxY);
+      snapshot.set(el, {
+        top: el.scrollTop,
+        left: el.scrollLeft,
+        x,
+        y,
+        pinX: maxX > 0 && x >= maxX,
+        pinY: maxY > 0 && y >= maxY,
+      });
+    }
+    return snapshot;
+  }
+
+  /** Write the snapshot back after the unmask (pins to the native
+   * ceiling — the new max). Unconditional writes (a same-value
+   * assignment is an event-free no-op), then a READ-BACK: Firefox
+   * holds post-reflow scroll clamping in a lazy state where a later
+   * same-looking write coalesces with the pending clamp into "no
+   * change" — no scroll event, and the container desyncs. Reading forces
+   * the state to commit, so the next real write fires its event. */
+  #restoreScrollPositions(snapshot: ScrollSnapshot): void {
+    for (const node of this.#scrollNodes) {
+      const el = node.source as HTMLElement;
+      const entry = snapshot.get(el);
+      if (!entry) continue;
+      el.scrollTop = entry.pinY ? el.scrollHeight : entry.top;
+      el.scrollLeft = entry.pinX ? el.scrollWidth : entry.left;
+      void el.scrollTop;
+      void el.scrollLeft;
+    }
+  }
+
+  #onScroll = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || target === this) return;
+    if (!target.hasAttribute("data-mw-scroll")) return;
+    this.#schedulePaint();
+    // Settle fallback where scrollend never fires (older Safari).
+    if (!("onscrollend" in window)) {
+      clearTimeout(this.#settleTimers.get(target));
+      this.#settleTimers.set(
+        target,
+        setTimeout(() => this.#settle(target), SETTLE_FALLBACK_MS),
+      );
+    }
+  };
+
+  #onScrollEnd = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || target === this) return;
+    if (!target.hasAttribute("data-mw-scroll")) return;
+    // Mid-gesture scrollends: routed wheel ticks and thumb drags
+    // settle on quiesce/release instead (see #routedWheelAt).
+    if (Date.now() - (this.#routedWheelAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
+    this.#settle(target);
+  };
+
+  /** Snap the native position to the cell multiple, clamped to the
+   * ENGINE's range — idempotent (its own scroll event changes no
+   * cell). The max cell settles on the native CEILING, not the
+   * multiple: leftover native room would latch the next text-mode
+   * gesture to an invisible scroll instead of chaining. */
+  #settle(el: HTMLElement): void {
+    if (this.#thumbDrag?.el === el) return; // release settles
+    // Repaint unconditionally: scroll events can coalesce away under
+    // load (observed in Firefox), and the settle is the gesture's
+    // reliable terminal signal — a current grid makes this a no-op.
+    this.#schedulePaint();
+    const metrics = this.#cellMetrics;
+    const node = this.#scrollNodes.find((candidate) => candidate.source === el);
+    if (!metrics || !node) return;
+    const range = node.scrollRange!;
+    // Round (not floor): a gesture ending at 15.7 cells means row 16.
+    const snap = (px: number, size: number, max: number, ceiling: number): number => {
+      const cells = Math.min(Math.max(0, Math.round(px / size)), max);
+      return cells === max ? ceiling : cells * size;
+    };
+    const top = snap(el.scrollTop, metrics.height, range.maxY, el.scrollHeight - el.clientHeight);
+    const left = snap(el.scrollLeft, metrics.width, range.maxX, el.scrollWidth - el.clientWidth);
+    if (Math.abs(el.scrollTop - top) > 0.5 || Math.abs(el.scrollLeft - left) > 0.5) {
+      el.scrollTo({ top, left, behavior: "instant" });
+    }
+  }
+
+  /** Grid-mode wheel routing (specs/scrolling.md): the light DOM is
+   * pointer-inert, so the engine hit-tests the cell and scrolls the
+   * nearest consuming container — chaining OUTWARD per axis, since
+   * programmatic scrollBy never chains natively. preventDefault only
+   * for ticks a scroll container owns, so page scrolling survives. */
+  #onWheel = (event: Event): void => {
+    if (this.getAttribute("select") !== "grid") return;
+    const layout = this.#lastLayout;
+    const metrics = this.#cellMetrics;
+    if (!layout || !metrics || this.#scrollNodes.length === 0) return;
+    const e = event as WheelEvent;
+    // Chromium marks every tick after an uncanceled first one in a
+    // native scroll sequence non-cancelable: the page owns that gesture.
+    if (!e.cancelable) return;
+    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
+    const scale = e.deltaMode === 1 ? metrics.height : e.deltaMode === 2 ? this.clientHeight : 1;
+    const dx = e.deltaX * scale;
+    const dy = e.deltaY * scale;
+    const now = Date.now();
+    const mag = Math.abs(dx) + Math.abs(dy);
+    // Safari marks gesture phases with zero-delta ticks: a boundary.
+    if (mag === 0) {
+      this.#wheelLatch = null;
+      return;
+    }
+    // Native room decides (the native ceiling IS the engine's max);
+    // an axis without engine range never consumes.
+    const canMove = (node: LayoutNode): boolean => {
+      const range = node.scrollRange!;
+      const el = node.source as HTMLElement;
+      if (dy !== 0 && range.maxY > 0) {
+        if (
+          (dy > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 0.5) ||
+          (dy < 0 && el.scrollTop > 0.5)
+        )
+          return true;
+      }
+      if (dx !== 0 && range.maxX > 0) {
+        if (
+          (dx > 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5) ||
+          (dx < 0 && el.scrollLeft > 0.5)
+        )
+          return true;
+      }
+      return false;
+    };
+    // Gesture boundaries without native phase info: a gesture ends
+    // when ticks quiesce or the delta RISES after confirmed inertia —
+    // momentum never rises (it often repeats a delta: 3, 3, 2, 2, 1…),
+    // finger ticks wobble — so a scroll container at its end hands a new push to
+    // the page instead of blocking until the inertia dies. Confirmed
+    // inertia STICKS: a new push usually starts below the momentum it
+    // interrupts, and only its second tick rises. Momentum follows the
+    // pointer (its ticks land wherever the cursor went), so after a
+    // move a same-axis tick that continues the decay is still the old
+    // gesture; any rise or a new dominant axis is the new one.
+    const latch = this.#wheelLatch;
+    const axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    const rise = latch !== null && mag > latch.mag * 1.25 + 1;
+    const moved =
+      latch !== null &&
+      (Math.abs(e.clientX - latch.x) > WHEEL_POINTER_SLOP_PX ||
+        Math.abs(e.clientY - latch.y) > WHEEL_POINTER_SLOP_PX);
+    const inertia = latch !== null && latch.decayed >= INERTIA_TICKS;
+    const held =
+      latch !== null &&
+      now - latch.at < WHEEL_QUIESCE_MS &&
+      axis === latch.axis &&
+      (moved ? mag <= latch.mag : !(inertia && rise));
+    let target: LayoutNode | null = null;
+    if (held) {
+      const smooth = mag <= latch.mag && mag >= latch.mag * 0.5;
+      latch.decayed = smooth ? latch.decayed + 1 : inertia ? latch.decayed : 0;
+      latch.mag = mag;
+      latch.at = now;
+      if (!latch.el) return; // the page's gesture
+      target = this.#scrollNodes.find((node) => node.source === latch.el) ?? null;
+    }
+    if (!target) {
+      const stack = hitStack(layout, col, row);
+      for (let i = stack.length - 1; i >= 0; i--) {
+        const node = stack[i]!.node;
+        if (!node.scrollRange) continue;
+        if (canMove(node)) {
+          target = node;
+          break;
+        }
+        // At its boundary already: chain outward only if this scroll container's
+        // overscroll-behavior allows it on the gesture's axis.
+        const overscroll = node.style.overscroll;
+        if ((dy !== 0 && !overscroll.y) || (dx !== 0 && !overscroll.x)) {
+          target = node; // contain/none: the gesture stays here, inert
+          break;
+        }
+      }
+      // A swipe's first tick often carries only a tiny cross-axis
+      // delta; over a scroll container that cannot consume it, it decides nothing
+      // yet: eaten (keeping the sequence cancelable), unlatched — the
+      // next, decisive tick picks the scroll container.
+      if (!target && mag < WHEEL_LEAD_IN_PX) {
+        e.preventDefault();
+        return;
+      }
+      this.#wheelLatch = {
+        el: target ? (target.source as HTMLElement) : null,
+        x: e.clientX,
+        y: e.clientY,
+        axis,
+        at: now,
+        mag,
+        decayed: 0,
+      };
+    }
+    if (!target) return; // the page's gesture
+    e.preventDefault();
+    if (!canMove(target)) return; // latched at the boundary: consume, no chain
+    const el = target.source as HTMLElement;
+    const range = target.scrollRange!;
+    const apply: ScrollToOptions = { behavior: "instant" };
+    if (dy !== 0 && range.maxY > 0) apply.top = dy;
+    if (dx !== 0 && range.maxX > 0) apply.left = dx;
+    el.scrollBy(apply);
+    // One gesture, not N programmatic scrolls: suppress the per-tick
+    // scrollend settles and settle after quiesce.
+    this.#routedWheelAt.set(el, now);
+    clearTimeout(this.#settleTimers.get(el));
+    this.#settleTimers.set(
+      el,
+      setTimeout(() => this.#settle(el), WHEEL_QUIESCE_MS),
+    );
+  };
+
+  /** The grid cell under a client point. The origin is cached until
+   * the next layout or page scroll invalidates it. */
+  #cellAt(clientX: number, clientY: number, metrics: CellMetrics): { col: number; row: number } {
+    if (!this.#gridOrigin) {
+      const rect = this.#grid.getBoundingClientRect();
+      this.#gridOrigin = { left: rect.left, top: rect.top };
+    }
+    return {
+      col: Math.floor((clientX - this.#gridOrigin.left) / metrics.width),
+      row: Math.floor((clientY - this.#gridOrigin.top) / metrics.height),
+    };
+  }
+
+  /** A pointerdown on a visible gutter bar begins a thumb drag —
+   * engine-routed in BOTH modes (the gutter is grid ink; there is no
+   * native scrollbar). Proportional: the draggable track maps onto
+   * the scroll range. */
+  #gutterDragAt(clientX: number, clientY: number): ThumbDrag | null {
+    const layout = this.#lastLayout;
+    const metrics = this.#cellMetrics;
+    if (!layout || !metrics || this.#scrollNodes.length === 0) return null;
+    const { col, row } = this.#cellAt(clientX, clientY, metrics);
+    const stack = hitStack(layout, col, row);
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const { node, x, y } = stack[i]!;
+      const range = node.scrollRange;
+      if (!range) continue;
+      const style = node.style;
+      const gutter = node.scrollGutterCells;
+      if (!gutter || (gutter.right === 0 && gutter.bottom === 0)) continue;
+      const el = node.source as HTMLElement;
+      const innerTop = y + style.border.top;
+      const innerLeft = x + style.border.left;
+      const innerBottom = y + node.localRect.height - style.border.bottom;
+      const innerRight = x + node.localRect.width - style.border.right;
+      if (
+        gutter.right > 0 &&
+        range.maxY > 0 &&
+        col >= innerRight - gutter.right &&
+        col < innerRight &&
+        row >= innerTop &&
+        row < innerBottom
+      ) {
+        const trackLen = innerBottom - innerTop - gutter.bottom;
+        const thumbLen = thumbSpan(trackLen, range.sizeY, range.maxY, 0).len;
+        const draggablePx = Math.max(1, (trackLen - thumbLen) * metrics.height);
+        return {
+          el,
+          axis: "y",
+          startClient: clientY,
+          startPx: el.scrollTop,
+          factor: (range.maxY * metrics.height) / draggablePx,
+        };
+      }
+      if (
+        gutter.bottom > 0 &&
+        range.maxX > 0 &&
+        row >= innerBottom - gutter.bottom &&
+        row < innerBottom &&
+        col >= innerLeft &&
+        col < innerRight
+      ) {
+        const trackLen = innerRight - innerLeft - gutter.right;
+        const thumbLen = thumbSpan(trackLen, range.sizeX, range.maxX, 0).len;
+        const draggablePx = Math.max(1, (trackLen - thumbLen) * metrics.width);
+        return {
+          el,
+          axis: "x",
+          startClient: clientX,
+          startPx: el.scrollLeft,
+          factor: (range.maxX * metrics.width) / draggablePx,
+        };
+      }
+    }
+    return null;
+  }
+
   #onPointerMove = (event: Event): void => {
     const { clientX, clientY } = event as PointerEvent;
+    const drag = this.#thumbDrag;
+    if (drag) {
+      const delta = (drag.axis === "y" ? clientY : clientX) - drag.startClient;
+      const target = drag.startPx + delta * drag.factor;
+      if (drag.axis === "y") drag.el.scrollTop = target;
+      else drag.el.scrollLeft = target;
+      return;
+    }
     this.#hoverClient = { x: clientX, y: clientY };
     // High-frequency path: skip the update while the pointer stays in
     // the same cell (state can only change with the cell — relayouts
     // and scrolls have their own refresh calls).
-    const origin = this.#gridOrigin;
     const metrics = this.#cellMetrics;
-    if (origin && metrics) {
-      const col = Math.floor((clientX - origin.left) / metrics.width);
-      const row = Math.floor((clientY - origin.top) / metrics.height);
+    if (metrics) {
+      const { col, row } = this.#cellAt(clientX, clientY, metrics);
       if (col === this.#hoverCol && row === this.#hoverRow) return;
     }
     this.#updatePointerStates();
@@ -343,6 +751,17 @@ export class MonoWindElement extends HTMLElementBase {
   #onPointerDown = (event: Event): void => {
     const e = event as PointerEvent;
     if (!e.isPrimary || e.button !== 0) return;
+    // A finger on the gutter pans the container natively instead
+    // (styles.css "Touch panning"); the thumb drag is a mouse/pen gesture.
+    const drag = e.pointerType === "touch" ? null : this.#gutterDragAt(e.clientX, e.clientY);
+    if (drag) {
+      this.#thumbDrag = drag;
+      e.preventDefault();
+      // Keep tracking past the host's edge, like a native thumb
+      // (synthetic events have no pointer to capture).
+      if (e.isTrusted) this.setPointerCapture(e.pointerId);
+      return;
+    }
     this.#hoverClient = { x: e.clientX, y: e.clientY };
     this.#pressing = true;
     this.#updatePointerStates(true);
@@ -350,6 +769,11 @@ export class MonoWindElement extends HTMLElementBase {
 
   #onPointerUp = (event: Event): void => {
     if (!(event as PointerEvent).isPrimary) return;
+    if (this.#thumbDrag) {
+      this.#settle(this.#thumbDrag.el);
+      this.#thumbDrag = null;
+      return;
+    }
     if (!this.#pressing && !this.#pressTarget) return;
     this.#pressing = false;
     this.#pressTarget = null;
@@ -357,8 +781,13 @@ export class MonoWindElement extends HTMLElementBase {
     if (this.#paintHeld) this.#scheduleLayout();
   };
 
-  #onAnyScroll = (): void => {
+  #onAnyScroll = (event: Event): void => {
     if (!this.#hoverClient) return;
+    // Container scrolls are #onScroll's: hover refreshes in the paint frame
+    // AFTER the offsets sync (a per-event refresh here would read
+    // stale offsets), and a container's scroll never moves the grid itself.
+    const target = event.target;
+    if (target instanceof HTMLElement && target.hasAttribute("data-mw-scroll")) return;
     this.#gridOrigin = null;
     this.#updatePointerStates();
   };
@@ -380,13 +809,10 @@ export class MonoWindElement extends HTMLElementBase {
       this.getAttribute("select") === "grid" &&
       (this.#pressing || MonoWindElement.#hoverCapable?.matches)
     ) {
-      if (!this.#gridOrigin) {
-        const rect = this.#grid.getBoundingClientRect();
-        this.#gridOrigin = { left: rect.left, top: rect.top };
-      }
-      this.#hoverCol = Math.floor((this.#hoverClient.x - this.#gridOrigin.left) / metrics.width);
-      this.#hoverRow = Math.floor((this.#hoverClient.y - this.#gridOrigin.top) / metrics.height);
-      chain = hitChain(layout, this.#hoverCol, this.#hoverRow);
+      const { col, row } = this.#cellAt(this.#hoverClient.x, this.#hoverClient.y, metrics);
+      this.#hoverCol = col;
+      this.#hoverRow = row;
+      chain = hitChain(layout, col, row);
     } else {
       this.#hoverCol = NaN;
       this.#hoverRow = NaN;
@@ -573,6 +999,9 @@ export class MonoWindElement extends HTMLElementBase {
     // strings, which would misclassify every element and misfire author
     // warnings. Reconnection schedules a fresh layout.
     if (!this.isConnected) return;
+    // Container positions are read before the mask and written back after
+    // it (specs/scrolling.md); bottom-stick resolves in between.
+    const scrollState = this.#captureScrollState();
     // Snapshot each textarea's content-area width in cells BEFORE the
     // measuring attribute goes on. Inside measuring the engine's width
     // rule is off — the textarea reverts to its browser-default width
@@ -683,6 +1112,8 @@ export class MonoWindElement extends HTMLElementBase {
       // before clearing the measuring attribute so the browser only
       // paints the final state.
       render(virtualRoot);
+      this.#scrollNodes = collectScrollContainers(virtualRoot);
+      this.#syncScrollOffsets(metrics, scrollState);
       // Style-only paints patch nodes in place (drag anchors survive);
       // a STRUCTURAL rebuild while a primary press holds a selection
       // anchor in the grid is deferred to release — a drag in flight
@@ -691,6 +1122,13 @@ export class MonoWindElement extends HTMLElementBase {
       // capture-and-restore).
       this.#paintHeld = !paintGrid(virtualRoot, this.#grid, this.#pressing);
       this.#lastLayout = virtualRoot;
+      // The grid box is the ink extent in engine cells: a glyph a
+      // fallback font draws wider still overhangs as ink, but the box
+      // (and the background it inherits) never grows from it.
+      const gridWidth = `${virtualRoot.localRect.width * metrics.width}px`;
+      const gridHeight = `${virtualRoot.localRect.height * metrics.height}px`;
+      if (this.#grid.style.width !== gridWidth) this.#grid.style.width = gridWidth;
+      if (this.#grid.style.height !== gridHeight) this.#grid.style.height = gridHeight;
 
       // (6) Size the host to match content rows (content-driven height).
       // Under border-box (Tailwind's preflight default) the height must
@@ -721,6 +1159,12 @@ export class MonoWindElement extends HTMLElementBase {
       this.removeAttribute("measuring");
       void getComputedStyle(this).transitionProperty;
       this.removeAttribute("settling");
+      // Restore native container positions AFTER the unmask — the browser
+      // re-clamps them when the mask lifts (Firefox lazily), so any
+      // earlier write gets wiped. The grid already painted from the
+      // same snapshot; a changed native position fires its scroll
+      // event into a same-cell repaint.
+      this.#restoreScrollPositions(scrollState);
       // Drain the records our own writes queued (takeRecords is
       // synchronous). Deferring this to a microtask would open a window
       // where a USER mutation gets dropped with the engine's own.
@@ -759,4 +1203,62 @@ declare global {
   interface HTMLElementTagNameMap {
     "mono-wind": MonoWindElement;
   }
+}
+
+/** Pre-layout native container positions, by element (specs/scrolling.md):
+ * px, the cells they meant under the OLD range, and end pins. */
+type ScrollSnapshot = Map<
+  HTMLElement,
+  { top: number; left: number; x: number; y: number; pinX: boolean; pinY: boolean }
+>;
+
+interface WheelLatch {
+  /** The latched scroll container; null = the page. */
+  el: HTMLElement | null;
+  x: number;
+  y: number;
+  /** The gesture's dominant axis at its start. */
+  axis: "x" | "y";
+  at: number;
+  /** Last tick's |delta| and how many ticks it has decayed smoothly
+   * (sticky once INERTIA_TICKS confirm momentum). */
+  mag: number;
+  decayed: number;
+}
+
+/** An in-flight scrollbar-thumb drag (specs/scrolling.md). */
+interface ThumbDrag {
+  el: HTMLElement;
+  axis: "x" | "y";
+  startClient: number;
+  startPx: number;
+  factor: number;
+}
+
+/** Native scroll position → whole-cell offset within the engine's
+ * range (specs/scrolling.md). At the native ceiling the scroll container IS at
+ * max: the spacer ends at the engine's edge, but scrollHeight and
+ * clientHeight round independently, so the ceiling can sit a pixel
+ * either side of the multiple. The one-pixel tolerance below is
+ * load-bearing too: browsers pixel-snap scroll positions, so with a
+ * fractional cell size a scroll container never parks on an exact multiple —
+ * floor() alone would sit one cell short of every settle target.
+ * (A scroll container still at 0 never reads as "at max", whatever its ceiling —
+ * the spacer may not have applied yet.) */
+function scrollCells(el: HTMLElement, axis: "x" | "y", cellSize: number, max: number): number {
+  const px = axis === "y" ? el.scrollTop : el.scrollLeft;
+  const ceiling =
+    axis === "y" ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+  if (max > 0 && px > 0 && px >= ceiling - 1) return max;
+  return Math.min(Math.max(0, Math.floor((px + 1) / cellSize)), max);
+}
+
+function collectScrollContainers(root: LayoutNode): LayoutNode[] {
+  const out: LayoutNode[] = [];
+  const visit = (node: LayoutNode): void => {
+    if (node.scrollRange) out.push(node);
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return out;
 }

@@ -134,7 +134,14 @@ and auto-margin shares.
 
 `min/max-width` clamp the width BEFORE content layout — wrapping and child
 sizing see the constrained width. `min/max-height` clamp the final height
-after layout (content height is an output; overflow handles the spill).
+after layout (content height is an output; overflow handles the spill) —
+except that a container's `max-height` also caps its USED size — a
+column's main size (css-flexbox §9.2), a single-line row's cross size
+(§9.4.8): content past the cap re-flexes against it, so a
+scroll-container item (automatic minimum 0) shrinks to fit and scrolls.
+In the cross axis, `min-height: auto` is 0: a single line's cross size IS
+a definite inner height, and stretched items shrink to it (content
+overflows) as well as grow.
 Clamp order: `max` first, then `min` — an inconsistent `min > max` resolves
 to `min`, per CSS. A container's `min-height` also feeds the flex algorithm
 as a bounded inner height so alignment and stretch see it (step 5), but as

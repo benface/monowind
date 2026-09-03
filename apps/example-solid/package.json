@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@monowind/vite": "workspace:*",
-    "@solidjs/vite-plugin": "3.0.0-next.36",
+    "@solidjs/vite-plugin": "3.0.0-next.37",
     "playwright": "^1.62.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2"

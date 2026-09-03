@@ -38,6 +38,19 @@ import { defineMonoWind } from "monowind";
 defineMonoWind();
 ```
 
+## Scrolling
+
+`overflow-y-auto` (or `-scroll`, either axis) makes the element a
+scroll container: the browser owns the scroll physics — wheel, touch,
+keyboard, `scrollIntoView`, `scrollTop` — while the engine mirrors it
+on the grid in whole-cell steps and draws the scrollbar as characters
+(track `░`, thumb `█`, draggable; themable via glyph sets;
+`scrollbar-color` honored and defaulting to `currentColor` like borders,
+`scrollbar-width: none` honored, thickness via
+`scrollbar-<n>` cells, per bar with `scrollbar-x-<n>` /
+`scrollbar-y-<n>`). Scroll containers pinned to the bottom stay pinned as content
+grows — chat logs need no code.
+
 ## Border & rule glyphs
 
 Border styles render through a **glyph set** — swap the characters

@@ -1,6 +1,7 @@
 import { collectBorderRuns, paintOrderedChildren } from "./borders.ts";
 import type { BorderRun } from "./borders.ts";
 import { leafLineGeometry } from "./layout.ts";
+import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
 import type { LayoutNode } from "./types.ts";
@@ -16,7 +17,8 @@ import type { LayoutNode } from "./types.ts";
  * way the browser would paint it (same border-run and word-wrap code), minus
  * colors and fonts.
  *
- * Content that overflows the root box is clipped at the grid edges.
+ * The grid covers the layout's ink extent (layoutRoot grows the root
+ * to it); ink above or left of the origin has no cells and is dropped.
  */
 export function renderPlainText(root: LayoutNode): string {
   return renderGrids(root)
@@ -214,14 +216,38 @@ function walk(
     }
   }
 
+  // Overflow (specs/scrolling.md): a clipping/scrolling axis culls the
+  // node's CONTENT ink (text and children — own decorations paint
+  // unclipped) at the PADDING box, per CSS: padding cells sit blank at
+  // the scroll extremes but content flows through them mid-scroll. A
+  // reserved gutter cell stays excluded (the bar owns it). Nested
+  // containers compose: the wrapped put chains to the parent's.
+  const padding = node.resolvedPadding;
+  const gutter = node.scrollGutterCells;
+  const clipsX = style.overflow.x !== "visible";
+  const clipsY = style.overflow.y !== "visible";
+  const scrolledX = absX - (node.scroll?.x ?? 0);
+  const scrolledY = absY - (node.scroll?.y ?? 0);
+  let contentPut = put;
+  if (clipsX || clipsY) {
+    const x0 = absX + style.border.left;
+    const y0 = absY + style.border.top;
+    const x1 = absX + node.localRect.width - style.border.right - (gutter?.right ?? 0);
+    const y1 = absY + node.localRect.height - style.border.bottom - (gutter?.bottom ?? 0);
+    contentPut = (x, y, glyph, paint) => {
+      if (clipsX && (x < x0 || x >= x1)) return;
+      if (clipsY && (y < y0 || y >= y1)) return;
+      put(x, y, glyph, paint);
+    };
+  }
+
   const hasInFlowChildren = node.children.some(
     (child) =>
       !child.inlineBox && child.style.position !== "absolute" && child.style.position !== "fixed",
   );
   if (!hasInFlowChildren && node.text) {
-    const padding = node.resolvedPadding;
-    const contentX = absX + style.border.left + padding.left;
-    const contentY = absY + style.border.top + padding.top;
+    const contentX = scrolledX + style.border.left + padding.left;
+    const contentY = scrolledY + style.border.top + padding.top;
     const contentWidth =
       node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
     // A multicol leaf paints its layout-computed fragmentation (line →
@@ -243,7 +269,7 @@ function walk(
       // CSS, `<br>` doesn't re-indent, so only spans[0] is charged).
       const indent = i === 0 ? style.textIndent : 0;
       const truncated =
-        style.whiteSpace !== "normal" && style.overflow === "clip"
+        style.whiteSpace !== "normal" && style.overflow.x === "clip"
           ? truncateSpan(node.text, span, alignWidth - indent, node.advances, style)
           : { end: span.end, ellipsis: false };
       // Each character advances by its own cell count (tracking gaps).
@@ -273,21 +299,100 @@ function walk(
           const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
           if (node.text[k] === INLINE_PAD) {
             if (entry?.backgroundColor) {
-              put(x + dx, row + dy, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
+              contentPut(
+                x + dx,
+                row + dy,
+                " ",
+                alphaPaint({ backgroundColor: entry.backgroundColor }),
+              );
             }
           } else {
-            put(x + dx, row + dy, node.text[k]!, entry ? inlinePaints![inlineIndex] : leafPaint);
+            contentPut(
+              x + dx,
+              row + dy,
+              node.text[k]!,
+              entry ? inlinePaints![inlineIndex] : leafPaint,
+            );
           }
         }
         x += advanceOf(k, k + 1, node.advances);
       }
-      if (truncated.ellipsis) put(x, row, "…", leafPaint);
+      if (truncated.ellipsis) contentPut(x, row, "…", leafPaint);
     }
   }
 
   for (const child of paintOrderedChildren(node)) {
-    walk(child, absX, absY, put, alpha * child.style.opacity);
+    walk(child, scrolledX, scrolledY, contentPut, alpha * child.style.opacity);
   }
+
+  // Scrollbars last, over content (specs/scrolling.md): every
+  // reserved gutter paints track + thumb (full-length when nothing
+  // overflows — the `scroll` case; an `auto` gutter exists only with
+  // overflow). The shared corner cell of two bars stays blank.
+  const range = node.scrollRange;
+  if (range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
+    const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
+    const innerTop = absY + style.border.top;
+    const innerLeft = absX + style.border.left;
+    const innerBottom = absY + node.localRect.height - style.border.bottom;
+    const innerRight = absX + node.localRect.width - style.border.right;
+    // `scrollbar-color: auto` means the container's own color (its
+    // currentColor, like borders) — not the inherited grid default.
+    const barPaint = (color: string | undefined): CellPaint | undefined =>
+      alphaPaint(color ? { color } : undefined);
+    const trackPaint = barPaint(style.scrollbarColor?.track ?? style.color);
+    const thumbPaint = barPaint(style.scrollbarColor?.thumb ?? style.color);
+    if (gutter.right > 0) {
+      const trackLen = innerBottom - innerTop - gutter.bottom;
+      const { at: thumbAt, len: thumbLen } = thumbSpan(
+        trackLen,
+        range.sizeY,
+        range.maxY,
+        node.scroll?.y ?? 0,
+      );
+      for (let dx = 0; dx < gutter.right; dx++) {
+        const x = innerRight - gutter.right + dx;
+        for (let i = 0; i < trackLen; i++) {
+          const isThumb = i >= thumbAt && i < thumbAt + thumbLen;
+          put(x, innerTop + i, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
+        }
+      }
+    }
+    if (gutter.bottom > 0) {
+      const trackLen = innerRight - innerLeft - gutter.right;
+      const { at: thumbAt, len: thumbLen } = thumbSpan(
+        trackLen,
+        range.sizeX,
+        range.maxX,
+        node.scroll?.x ?? 0,
+      );
+      for (let dy = 0; dy < gutter.bottom; dy++) {
+        const y = innerBottom - gutter.bottom + dy;
+        for (let i = 0; i < trackLen; i++) {
+          const isThumb = i >= thumbAt && i < thumbAt + thumbLen;
+          put(innerLeft + i, y, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
+        }
+      }
+    }
+  }
+}
+
+/** Thumb geometry on a bar `trackLen` cells long: proportional to the
+ * visible fraction, but shrunk until every scroll offset gets its own
+ * thumb position (`trackLen − max` cells at most, one at least) — so a
+ * scrollable bar always shows track, and each step moves the thumb
+ * while the track has room. Shared with thumb dragging (element.ts). */
+export function thumbSpan(
+  trackLen: number,
+  size: number,
+  max: number,
+  offset: number,
+): { at: number; len: number } {
+  const frac = size > 0 ? Math.min(1, trackLen / size) : 1;
+  let len = Math.max(1, Math.round(frac * trackLen));
+  if (max > 0) len = Math.max(1, Math.min(len, trackLen - max));
+  const at = max > 0 ? Math.round((Math.min(offset, max) / max) * (trackLen - len)) : 0;
+  return { at, len };
 }
 
 /**

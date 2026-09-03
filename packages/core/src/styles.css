@@ -13,7 +13,7 @@
  * out so cdn.ts can hand them to the in-browser compiler (this file is
  * plain CSS there). Imports must precede all rules, per @import
  * syntax. */
-@import "./rules.css";
+@import "./utilities.css";
 @import "./variants.css";
 
 @layer base {
@@ -72,6 +72,20 @@
     line-height: inherit;
     text-align: inherit;
     appearance: none;
+  }
+
+  /* Engine-drawn scrollbar ink defaults to currentColor, thumb and
+   * track alike — like borders (specs/scrolling.md); `auto` paints
+   * uncolored. Tailwind's scrollbar-thumb-* / scrollbar-track-*
+   * utilities compose through its --tw-scrollbar-* variables
+   * (registered with a transparent initial), so seeding those keeps
+   * the other half visible when only one is set. The property itself
+   * stays untouched: it inherits into native scrollers (textareas,
+   * shadow trees), where equal thumb and track colors would hide the
+   * thumb. */
+  mono-wind * {
+    --tw-scrollbar-thumb: currentColor;
+    --tw-scrollbar-track: currentColor;
   }
 
   /* Form controls render their value/caret/selection natively — the
@@ -149,6 +163,45 @@ mono-wind[select="grid"] * {
 mono-wind[select="grid"]
   :is(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
   pointer-events: auto !important;
+}
+/* Touch panning (specs/scrolling.md): where the primary pointer is a
+ * finger, scroll containers take pointer events in grid mode so a
+ * drag pans them NATIVELY (physics, momentum, chaining) — their
+ * children stay inert, so the touch lands on the container itself.
+ * The trade: no grid selection starts inside one on those devices. */
+@media (pointer: coarse) {
+  mono-wind[select="grid"] [data-mw-scroll] {
+    pointer-events: auto !important;
+  }
+}
+
+/* Scroll containers (specs/scrolling.md): the gutter ink IS the
+ * scrollbar — native bars hidden. Measuring-gated so the authored
+ * scrollbar-width/-color stay readable during the style pass. */
+mono-wind:not([measuring]) [data-mw-scroll] {
+  scrollbar-width: none !important;
+}
+mono-wind:not([measuring]) [data-mw-scroll]::-webkit-scrollbar {
+  display: none;
+}
+/* The scroll-range spacer: pins the native scrollable overflow to the
+ * ENGINE's range (--mw-se-* = max + box, written by render.ts) so
+ * scrollTop can reach exactly the engine's max — browsers disagree
+ * about end padding in scrollable overflow, and without this the
+ * native ceiling can sit below the engine's, stranding the last
+ * rows. It ends EXACTLY at the edge, no overhang: any native room
+ * past the max would latch a native (text-mode) gesture to an
+ * invisible scroll. Rounding can still put the ceiling a pixel either
+ * side of max, so the engine reads "at the ceiling" as "at max". An
+ * axis without range parks the spacer in the first cell (render.ts). */
+mono-wind:not([measuring]) [data-mw-scroll]::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  left: calc(var(--mw-se-x, 0) * var(--mw-cw, 1px) - 1px);
+  top: calc(var(--mw-se-y, 0) * var(--mw-ch, 1px) - 1px);
+  width: 1px;
+  height: 1px;
 }
 
 /* Hide the host until the first layout completes to avoid the flash of raw

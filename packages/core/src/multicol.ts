@@ -422,6 +422,8 @@ function isFragmentableLeaf(child: LayoutNode, container: CellStyle): boolean {
     insets.left === 0 &&
     style.backgroundColor === undefined &&
     !style.backgroundClear &&
+    style.overflow.x === "visible" &&
+    style.overflow.y === "visible" &&
     (style.width === undefined || style.width.kind === "auto") &&
     (style.height === undefined || style.height.kind === "auto") &&
     (style.minWidth === "auto" || style.minWidth === 0 || style.minWidth === undefined) &&

@@ -13,7 +13,7 @@
 import "@tailwindcss/browser";
 import { invalidateLeaves, registerLeafRenderer } from "./leaf.ts";
 import { defineMonoWind } from "./element.ts";
-import rulesCss from "./rules.css?inline";
+import utilitiesCss from "./utilities.css?inline";
 import companionCss from "./styles.css?inline";
 import variantsCss from "./variants.css?inline";
 
@@ -28,7 +28,7 @@ document.head.appendChild(style);
 const rules = document.createElement("style");
 rules.setAttribute("type", "text/tailwindcss");
 rules.setAttribute("data-monowind-rules", "");
-rules.textContent = `${rulesCss}\n${variantsCss}`;
+rules.textContent = `${utilitiesCss}\n${variantsCss}`;
 document.head.appendChild(rules);
 
 defineMonoWind();

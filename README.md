@@ -30,7 +30,9 @@ forms, and accessibility semantics stay fully intact.
 > areas included), multi-column (`columns-*`, balancing, spanners,
 > column rules), and table layout (collapsed borders as shared
 > box-drawing lattices), gap decorations (`rule-*` separators with
-> junction glyphs), text wrap, and margins work. The unified-render
+> junction glyphs), text wrap, margins, and scrolling
+> (`overflow-auto`/`-scroll` scroll containers with native physics and engine-drawn
+> TUI scrollbars) work. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and

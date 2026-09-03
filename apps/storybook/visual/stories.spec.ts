@@ -27,11 +27,20 @@ for (const story of stories) {
     // cursor differs (text-select over the grid in `select=grid`) and
     // that would flicker some goldens.
     await page.goto(`/iframe.html?id=${story.id}&viewMode=story&globals=select:text`);
-    // Wait for every <mono-wind> to finish its first layout, then for fonts
-    // (a late font load triggers a relayout), then one more settle frame.
+    // Wait for every <mono-wind> to finish its first layout, for the
+    // story's play function to finish (a play that scrolls or dispatches
+    // events must not be caught mid-way), then for fonts (a late font
+    // load triggers a relayout), then one more settle frame.
     await page.waitForFunction(() => {
       const hosts = [...document.querySelectorAll("mono-wind")];
       return hosts.length > 0 && hosts.every((host) => host.hasAttribute("data-mw-ready"));
+    });
+    await page.waitForFunction(() => {
+      const preview = (window as { __STORYBOOK_PREVIEW__?: { storyRenders: { phase: string }[] } })
+        .__STORYBOOK_PREVIEW__;
+      return preview?.storyRenders.every((render) =>
+        ["finished", "errored", "aborted"].includes(render.phase),
+      );
     });
     await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(150);

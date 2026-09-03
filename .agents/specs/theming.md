@@ -68,6 +68,9 @@ truth.
   `░`), `cp437` (double survives; dashed/dotted downgrade to solid —
   the codepage has no dashed line glyphs, and a fallback font would
   break the bitmap grid).
+- Glyph tables also carry the scrollbar roles `scrollTrack` /
+  `scrollThumb` (defaults `░` / `█`; `ascii` maps `|` / `#`) —
+  specs/scrolling.md.
 - ANSI defaults live in core's companion (`mono-wind` base block);
   `@monowind/ascii` no longer ships duplicates.
 - Authoring sugar shipped: `borders-default/rounded/ascii/single/blocks/cp437`

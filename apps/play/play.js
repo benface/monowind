@@ -24,20 +24,22 @@ const main = document.querySelector("main");
 const versionLabel = document.getElementById("version");
 if (globalThis.monowind?.version) versionLabel.textContent = `v${globalThis.monowind.version}`;
 
-const SAMPLE = `<div class="mx-auto flex max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
-  <mono-ascii font="small" effect="metal" class="mx-auto max-w-full overflow-clip py-1">monowind</mono-ascii>
-  <div class="flex items-center justify-between bg-emerald-400 px-2 py-1 text-black">
+const SAMPLE = `<div class="mx-auto flex max-h-[96vh] max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
+  <mono-ascii font="small" effect="metal" class="mx-auto max-w-full shrink-0 overflow-clip py-1">monowind</mono-ascii>
+  <div class="flex shrink-0 items-center justify-between bg-emerald-400 px-2 py-1 text-black">
     <div class="font-bold">§ MONOWIND DAILY</div>
     <div>issue 001</div>
   </div>
-  <div class="columns-1 gap-5 px-3 py-1 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
-    <h1 class="mb-1 text-center font-bold text-yellow-300 [column-span:all]">· A polite theft on Maple Street ·</h1>
-    <p>A raccoon walked into the corner bakery at <span class="text-sky-300">6:47 AM</span> this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.</p>
-    <p class="mt-1">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway. The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
-    <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
-    <p class="mt-1">Regulars are asked to keep their eyes open, their bread bags zipped, and their expectations reasonable.</p>
+  <div class="overflow-y-auto">
+    <div class="columns-1 gap-5 px-3 py-1 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
+      <h1 class="mb-1 text-center font-bold text-yellow-300 [column-span:all]">· A polite theft on Maple Street ·</h1>
+      <p>A raccoon walked into the corner bakery at <span class="text-sky-300">6:47 AM</span> this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.</p>
+      <p class="mt-1">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway. The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
+      <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
+      <p class="mt-1">Regulars are asked to keep their eyes open, their bread bags zipped, and their expectations reasonable.</p>
+    </div>
   </div>
-  <div class="flex items-center justify-between px-2 py-1 text-neutral-400">
+  <div class="flex shrink-0 items-center justify-between px-2 py-1 text-neutral-400">
     <div class="flex gap-3">
       <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">* star</button>
       <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">» share</button>
@@ -410,10 +412,50 @@ const runTidy = () => {
 };
 tidyButton.addEventListener("click", runTidy);
 
-// Cmd/Ctrl+S in the editor tidies instead of invoking the browser's
-// save dialog — the muscle-memory "format on save".
+// Editor keys. Tab indents (two spaces, the sample's unit) instead of
+// leaving the editor, Shift+Tab outdents; a multi-line selection shifts
+// every line it touches. execCommand keeps the native undo stack
+// (setRangeText doesn't). Escape releases focus so keyboard users can
+// still tab past the editor. Cmd/Ctrl+S tidies instead of invoking the
+// browser's save dialog — the muscle-memory "format on save".
+const INDENT = "  ";
+const insertText = (text) => {
+  if (!document.execCommand("insertText", false, text)) {
+    source.setRangeText(text, source.selectionStart, source.selectionEnd, "end");
+    onInput();
+  }
+};
+const shiftIndent = (outdent) => {
+  const { value, selectionStart: start, selectionEnd: end } = source;
+  if (!outdent && start === end) {
+    insertText(INDENT);
+    return;
+  }
+  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+  const lastLineBreak = value.indexOf("\n", Math.max(start, end - 1));
+  const blockEnd = lastLineBreak === -1 ? value.length : lastLineBreak;
+  const shifted = value
+    .slice(lineStart, blockEnd)
+    .split("\n")
+    .map((line) => (outdent ? line.replace(/^ {1,2}/, "") : INDENT + line))
+    .join("\n");
+  const block = value.slice(lineStart, blockEnd);
+  source.setSelectionRange(lineStart, blockEnd);
+  insertText(shifted);
+  // A selection stays selected (for repeated shifts); a bare caret
+  // keeps its place, less what the outdent removed before it.
+  if (start === end) {
+    const caret = Math.max(lineStart, start - (block.length - shifted.length));
+    source.setSelectionRange(caret, caret);
+  } else source.setSelectionRange(lineStart, lineStart + shifted.length);
+};
 source.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "s") {
+  if (event.key === "Tab") {
+    event.preventDefault();
+    shiftIndent(event.shiftKey);
+  } else if (event.key === "Escape") {
+    source.blur();
+  } else if ((event.metaKey || event.ctrlKey) && event.key === "s") {
     event.preventDefault();
     runTidy();
   }

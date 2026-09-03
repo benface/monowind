@@ -324,8 +324,8 @@ describe("percent spacing", () => {
 
 describe("overflow", () => {
   it("carries overflow: clip through to CellStyle so the CSS override applies", () => {
-    const container = makeNode({ style: { overflow: "clip" } });
-    expect(container.style.overflow).toBe("clip");
+    const container = makeNode({ style: { overflow: { x: "clip", y: "clip" } } });
+    expect(container.style.overflow).toEqual({ x: "clip", y: "clip" });
   });
 });
 

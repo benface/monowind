@@ -68,7 +68,20 @@ export type AlignItems = "start" | "center" | "end" | "stretch";
 export type AlignContent = JustifyContent;
 export type AlignSelf = "auto" | "start" | "center" | "end" | "stretch";
 export type BorderStyle = "solid" | "double" | "dashed" | "dotted";
-export type Overflow = "visible" | "clip";
+/** Per-axis overflow state. `hidden` reads as `"clip"` (no scroll
+ * container, cheaper — the precise semantic for what the engine
+ * does); `auto` and `scroll` are both scroll containers
+ * (`scrollsAxis`), differing only in the gutter — `scroll` reserves
+ * it always, `auto` only once content overflows. */
+export type OverflowAxis = "visible" | "clip" | "auto" | "scroll";
+
+export function scrollsAxis(axis: OverflowAxis): boolean {
+  return axis === "auto" || axis === "scroll";
+}
+export interface Overflow {
+  x: OverflowAxis;
+  y: OverflowAxis;
+}
 export type Position = "static" | "relative" | "absolute" | "fixed" | "sticky";
 /** `nowrap` disables soft wrapping; `pre` additionally preserves the
  * source's spaces and newlines (specs/cell-model.md). Everything else
@@ -183,6 +196,20 @@ export interface InheritedTracks {
   sizes: number[];
   gapBefore: number[];
   gap: number;
+}
+
+/** The gutters an explicit `scroll` axis reserves unconditionally
+ * (specs/scrolling.md): the rightmost columns for y, the bottom rows
+ * for x, `scrollbarSize` thick. Folded into padding wherever padding
+ * cells are derived, so content-box math, intrinsic sizes, and the
+ * native overlay (--mw-p*) agree. `auto` axes reserve only on
+ * overflow, in layoutNode's second pass — never here. */
+export function scrollGutter(style: CellStyle): { right: number; bottom: number } {
+  if (style.scrollbarWidth === "none") return { right: 0, bottom: 0 };
+  return {
+    right: style.overflow.y === "scroll" ? style.scrollbarSize.y : 0,
+    bottom: style.overflow.x === "scroll" ? style.scrollbarSize.x : 0,
+  };
 }
 
 /** One run of identical border glyphs, in absolute cell coordinates. */
@@ -307,6 +334,21 @@ export interface CellStyle {
   borderStyle: PerSide<BorderStyle>;
   borderColor: PerSide<string | undefined>;
   overflow: Overflow;
+  /** `scrollbar-width: none` suppresses the gutter and bar entirely;
+   * `thin` and `auto` both defer to `scrollbarSize`
+   * (specs/scrolling.md). */
+  scrollbarWidth: "auto" | "none";
+  /** Bar thickness in cells per axis — `x` the horizontal bar's
+   * height, `y` the vertical bar's width (`--mw-scrollbar-x/y-size`,
+   * the scrollbar-*, scrollbar-x-*, scrollbar-y-* utilities; default
+   * 1). */
+  scrollbarSize: { x: number; y: number };
+  /** `scrollbar-color` thumb/track ink; `null` = currentColor pair. */
+  scrollbarColor: { thumb: string; track: string } | null;
+  /** Per-axis `overscroll-behavior`: whether a boundary gesture may
+   * CHAIN to an ancestor scroller (the grid-mode wheel router's
+   * gesture-start decision; the native path honors it natively). */
+  overscroll: { x: boolean; y: boolean };
   whiteSpace: WhiteSpace;
   /** CSS `tab-size` in cells — tab stops for preserved (`pre`) text,
    * expanded by the tree builder from each hard line's start. */
@@ -520,6 +562,22 @@ export interface LayoutNode {
    * against this: an explicit cell height tallens the box (and floors
    * the row), but `vertical-align` centers the CONTENT, per CSS. */
   naturalContentHeight?: number;
+  /** A text leaf's ink extent in content cells (widest line, rows) —
+   * written by the leaf pass; scrollable-overflow accounting reads it
+   * instead of re-wrapping. */
+  textExtent?: { width: number; rows: number };
+  /** Scroll geometry (specs/scrolling.md), written by layoutNode on
+   * containers with a scroll axis: content extent and the derived
+   * max offset, both in cells. Absent elsewhere. */
+  scrollRange?: { sizeX: number; sizeY: number; maxX: number; maxY: number };
+  /** Current scroll offset in cells (paint-time input, written by the
+   * element from native scrollTop/scrollLeft; absent = 0/0). */
+  scroll?: { x: number; y: number };
+  /** The gutter cells this container actually reserved — `scroll`
+   * axes always, `auto` axes only when content overflows (the layout
+   * second pass). Paint, hit-testing, and thumb drags read THIS, not
+   * the style. */
+  scrollGutterCells?: { right: number; bottom: number };
   /** Padding with percentages resolved to cells — written by layoutNode
    * (percent resolves against the containing block width, which only
    * layout knows); the renderers read this, never `style.padding`. */
@@ -628,7 +686,11 @@ export function defaultCellStyle(): CellStyle {
     gapY: 0,
     border: zeroInsets(),
     borderStyle: { top: "solid", right: "solid", bottom: "solid", left: "solid" },
-    overflow: "visible",
+    overflow: { x: "visible", y: "visible" },
+    scrollbarWidth: "auto",
+    scrollbarSize: { x: 1, y: 1 },
+    overscroll: { x: true, y: true },
+    scrollbarColor: null,
     whiteSpace: "normal",
     tabSize: 8,
     lineGap: 0,

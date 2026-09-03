@@ -1175,3 +1175,32 @@ describe("named-line edge cases", () => {
     ).toEqual({ start: -1, span: 2 });
   });
 });
+
+describe("max-height on the container", () => {
+  it("caps the used height: fr rows shrink and a scroll-container item scrolls", () => {
+    const header = makeNode({ text: "head" });
+    const body = makeNode({
+      style: { overflow: { x: "visible", y: "auto" } },
+      text: "one two three four five six seven eight",
+    });
+    const footer = makeNode({ text: "foot" });
+    const grid = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateRows: tracks(auto(), fr(), auto()),
+        maxHeight: 4,
+        width: { kind: "cells", value: 5 },
+      },
+      children: [header, body, footer],
+    });
+    const root = makeNode({ children: [grid] });
+    layoutRoot(root, 6);
+    // Natural content is 10 rows; tracks re-size against the cap
+    // (css-grid §11.1): the fr row takes the 2 rows left and its
+    // scroll-container item (automatic minimum 0) scrolls the rest.
+    expect(grid.localRect.height).toBe(4);
+    expect(body.localRect.height).toBe(2);
+    expect(body.scrollRange!.maxY).toBeGreaterThan(0);
+    expect(footer.localRect.y).toBe(3);
+  });
+});

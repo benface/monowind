@@ -17,7 +17,7 @@ export default meta;
 const THEMES = ["dos", "dos-blue", "c64", "green-phosphor", "amber", "teletype", "bbs"] as const;
 
 const card = (theme: string) => html`
-  <mono-wind class="theme-${theme} p-1" data-theme-card=${theme}>
+  <mono-wind class="theme-${theme} p-1" data-test=${"theme-" + theme}>
     <div class="border px-1">
       <div class="font-bold">${theme}</div>
       <div class="text-red-500">red-500 quantized</div>
@@ -42,10 +42,10 @@ export const Gallery: StoryObj = {
     );
     const grid = (theme: string) =>
       canvasElement
-        .querySelector<HTMLElement>(`[data-theme-card="${theme}"]`)!
+        .querySelector<HTMLElement>(`[data-test="theme-${theme}"]`)!
         .shadowRoot!.getElementById("grid")!;
     const token = (theme: string, name: string) =>
-      getComputedStyle(canvasElement.querySelector(`[data-theme-card="${theme}"]`)!)
+      getComputedStyle(canvasElement.querySelector(`[data-test="theme-${theme}"]`)!)
         .getPropertyValue(name)
         .trim();
 
@@ -64,7 +64,7 @@ export const Gallery: StoryObj = {
         expect(grid("bbs").textContent).toContain("██");
         // The DOS themes wear the period bitmap font.
         expect(
-          getComputedStyle(canvasElement.querySelector('[data-theme-card="dos"]')!).fontFamily,
+          getComputedStyle(canvasElement.querySelector('[data-test="theme-dos"]')!).fontFamily,
         ).toContain("Web IBM VGA 8x16");
       },
       { timeout: 10_000 },

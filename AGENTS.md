@@ -30,6 +30,9 @@ interfaces (TUIs) on the web. Start with
   tools. Note: its docs/component-inventory tools are React-only for now
   (manifests aren't generated for web-components setups), so don't rely on
   those.
+- Test hooks in stories and DOM-based tests use `data-test="<name>"`
+  (queried as `[data-test="name"]`) — never ad-hoc attributes like
+  `data-pane` or `data-inner`, and `id` only for label/control wiring.
 - Keep comments terse. A comment earns its lines only by stating a
   non-obvious constraint or decision; one tight sentence usually suffices.
   No restating what the code does, no narrating history, no multi-sentence

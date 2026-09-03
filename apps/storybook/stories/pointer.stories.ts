@@ -7,7 +7,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
  * under select="grid" the light DOM is pointer-events: none, so
  * :hover/:active can never match — the engine hit-tests the pointer's
  * cell and marks the chain with data-mw-hover / data-mw-active, and
- * rules.css retargets the Tailwind variants to match either source.
+ * variants.css retargets the Tailwind variants to match either source.
  * The engine listens for plain pointer events, so synthetic dispatches
  * drive the whole path (unlike native :hover, which needs a trusted
  * pointer).

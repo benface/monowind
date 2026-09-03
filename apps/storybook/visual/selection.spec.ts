@@ -22,7 +22,7 @@ for (const id of FIXTURES) {
     // Drag corner to corner of the selectable region: the light element
     // itself, or the banner's shadow transcript.
     const box = await page.evaluate(() => {
-      const el = document.querySelector("[data-select-target]")!;
+      const el = document.querySelector('[data-test="target"]')!;
       const rect = (el.shadowRoot?.getElementById("mirror") ?? el).getBoundingClientRect();
       return { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
     });

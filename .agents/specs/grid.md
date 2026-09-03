@@ -134,7 +134,11 @@ final column widths).
    per CSS. The content height is the sum of row tracks plus gaps. The
    row axis counts as bounded whenever the inner height is finite — a
    `min-height` floor included, matching the flex line behavior
-   (`min-h-* content-*` and self-alignment work). The container's
+   (`min-h-* content-*` and self-alignment work). A `max-height` on an
+   indefinite container caps its USED height too (css-grid §11.1):
+   content past the cap re-sizes the tracks against it, and since an
+   item's minimum contribution is the automatic minimum (0 for a scroll
+   container), an `fr` row shrinks and the item scrolls. The container's
    min-content width instead sizes columns under the min-content
    constraint (no maximize; fr at its base).
 8. A definite container size smaller than the track sum simply overflows

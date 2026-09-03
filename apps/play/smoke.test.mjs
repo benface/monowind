@@ -151,6 +151,21 @@ const tidyWorks =
   tidied.includes("<!-- keep -->") &&
   tidied.includes("\n  <div>\n    <p>a <em>b</em> &lt;c></p>\n  </div>\n</div>");
 
+// Tab indents instead of leaving the editor: a multi-line selection
+// shifts every line, Shift+Tab shifts them back, a bare caret inserts
+// the indent unit.
+await page.fill("#source", "a\nb");
+await page.focus("#source");
+await page.evaluate(() => document.getElementById("source").select());
+await page.keyboard.press("Tab");
+const indented = await page.evaluate(() => document.getElementById("source").value);
+await page.keyboard.press("Shift+Tab");
+const outdented = await page.evaluate(() => document.getElementById("source").value);
+await page.evaluate(() => document.getElementById("source").setSelectionRange(0, 0));
+await page.keyboard.press("Tab");
+const caretIndented = await page.evaluate(() => document.getElementById("source").value);
+const tabIndents = indented === "  a\n  b" && outdented === "a\nb" && caretIndented === "  a\nb";
+
 // Synthesized pointer states reach the CDN path: rules.css (injected
 // as text/tailwindcss) retargets the hover: variant to match
 // data-mw-hover, so the in-browser compiler's output must too.
@@ -232,6 +247,7 @@ const result = {
   highlighted,
   sampleRoundTrips,
   tidyWorks,
+  tabIndents,
   hoverVariantCompiled,
 };
 if (
@@ -249,6 +265,7 @@ if (
   !highlighted ||
   !sampleRoundTrips ||
   !tidyWorks ||
+  !tabIndents ||
   !hoverVariantCompiled
 ) {
   console.error("play smoke test FAILED:", JSON.stringify(result, null, 2));

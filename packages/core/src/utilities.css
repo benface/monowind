@@ -177,3 +177,28 @@
 @utility borders-cp437 {
   --mw-border-glyphs: cp437;
 }
+
+/* Scrollbar thickness in cells (specs/scrolling.md): CSS
+ * scrollbar-width has no length form, so the size rides custom
+ * properties — one per bar (`x` the horizontal bar's height, `y` the
+ * vertical bar's width); the shorthand sets both, longhands win. */
+@utility scrollbar-* {
+  --mw-scrollbar-x-size: --value(integer);
+  --mw-scrollbar-y-size: --value(integer);
+}
+@utility scrollbar-x-* {
+  --mw-scrollbar-x-size: --value(integer);
+}
+@utility scrollbar-y-* {
+  --mw-scrollbar-y-size: --value(integer);
+}
+@property --mw-scrollbar-x-size {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 1;
+}
+@property --mw-scrollbar-y-size {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 1;
+}

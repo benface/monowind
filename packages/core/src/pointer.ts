@@ -9,14 +9,22 @@ import type { LayoutNode } from "./types.ts";
  * leaving every event on the grid (selection stays intact).
  */
 
-/** The elements under a cell, outermost first: the innermost node
- * whose border-box covers the cell, plus its ancestors — native
- * :hover marks the whole chain, so the synthesized attribute does
- * too. Overlapping siblings resolve to the TOPMOST in paint order
- * (z-index, document-order ties), matching what the grid shows at
- * that cell. */
-export function hitChain(root: LayoutNode, col: number, row: number): Element[] {
-  const chain: Element[] = [];
+export interface HitEntry {
+  node: LayoutNode;
+  /** The node's PAINTED border-box origin, in absolute cells
+   * (ancestor scroll offsets applied). */
+  x: number;
+  y: number;
+}
+
+/** The nodes under a cell with their painted origins, outermost
+ * first: the innermost node whose border-box covers the cell, plus
+ * its ancestors — native :hover marks the whole chain, so the
+ * synthesized attribute does too. Overlapping siblings resolve to the
+ * TOPMOST in paint order (z-index, document-order ties), matching
+ * what the grid shows at that cell. */
+export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[] {
+  const stack: HitEntry[] = [];
   let node = root;
   let x = root.localRect.x;
   let y = root.localRect.y;
@@ -35,10 +43,17 @@ export function hitChain(root: LayoutNode, col: number, row: number): Element[] 
         hit = child;
       }
     }
-    if (!hit) return chain;
-    chain.push(hit.source);
-    x += hit.localRect.x;
-    y += hit.localRect.y;
+    if (!hit) return stack;
+    stack.push({ node: hit, x: x + hit.localRect.x, y: y + hit.localRect.y });
+    // Descend with the hit's scroll applied: its children paint (and
+    // therefore hit) shifted by the offset (specs/scrolling.md).
+    x += hit.localRect.x - (hit.scroll?.x ?? 0);
+    y += hit.localRect.y - (hit.scroll?.y ?? 0);
     node = hit;
   }
+}
+
+/** The hit stack's elements — what the synthesized states mark. */
+export function hitChain(root: LayoutNode, col: number, row: number): Element[] {
+  return hitStack(root, col, row).map((entry) => entry.node.source);
 }

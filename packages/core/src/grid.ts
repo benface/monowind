@@ -142,7 +142,7 @@ export function layoutGrid(
       // content, matching CSS.
       const minW =
         child.style.minWidth === "auto"
-          ? child.style.overflow === "visible"
+          ? child.style.overflow.x === "visible"
             ? minContentOuterWidth(child, cache)
             : 0
           : (resolveLimit(child.style.minWidth, areaW) ?? 0);
@@ -156,8 +156,9 @@ export function layoutGrid(
   }
 
   // Row track sizing from the laid-out heights (at final column widths,
-  // the item's min- and max-content block contributions coincide) — or
-  // the parent's tracks when this axis is subgridded.
+  // an item's max-content block contribution IS its laid-out height; its
+  // minimum is the automatic minimum) — or the parent's tracks when this
+  // axis is subgridded.
   const rowSizing: SizingResult = inheritedRows
     ? sizingResultFromInherited(inheritedRows)
     : sizeTracks(
@@ -207,7 +208,7 @@ export function layoutGrid(
       // overflows instead of crushing it), unless overflow opts out.
       const minH =
         child.style.minHeight === "auto"
-          ? child.style.overflow === "visible"
+          ? child.style.overflow.y === "visible"
             ? child.localRect.height
             : 0
           : (resolveLimit(child.style.minHeight, areaH) ?? 0);
@@ -488,7 +489,14 @@ function rowSizingItems(
       return;
     }
     const height = child.localRect.height + fixedY(margin);
-    items.push({ start: p.row.start, span: p.row.span, min: height, max: height });
+    // The minimum contribution is the automatic minimum (CSS §11.5.1 /
+    // css-sizing): the content height while overflow is visible, 0 for
+    // a scroll container — so `fr` rows can shrink one against a cap.
+    const min =
+      child.style.minHeight === "auto" && child.style.overflow.y !== "visible"
+        ? fixedY(margin)
+        : height;
+    items.push({ start: p.row.start, span: p.row.span, min, max: height });
   });
   return items;
 }

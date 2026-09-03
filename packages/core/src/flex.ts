@@ -177,16 +177,20 @@ export function layoutFlexRow(
   });
 
   // Line heights and cross offsets (specs/flex.md step 9). A single nowrap
-  // line stretches to a bounded inner height so items-center / items-end
-  // have the enforced size to align against. A wrap-enabled ("multi-line",
-  // per CSS — even with one line) container distributes bounded leftover
-  // cross space per `align-content`: `stretch` grows the lines; the other
-  // keywords offset them with the shared justify math.
+  // line's cross size IS a definite inner height (css-flexbox §9.4.8 —
+  // stretched items shrink to it, content overflowing), and stretches to
+  // a min-height floor so items-center / items-end have the enforced size
+  // to align against. A wrap-enabled ("multi-line", per CSS — even with
+  // one line) container distributes bounded leftover cross space per
+  // `align-content`: `stretch` grows the lines; the other keywords offset
+  // them with the shared justify math.
   const rowHeights = lines.map((line) => line.height);
   const totalGapY = gapY * Math.max(0, lines.length - 1);
   let lineOffsets: number[];
   if (node.style.flexWrap === "nowrap") {
-    if (Number.isFinite(innerHeight)) rowHeights[0] = Math.max(innerHeight, rowHeights[0] ?? 0);
+    if (definiteInnerHeight !== undefined) rowHeights[0] = definiteInnerHeight;
+    else if (Number.isFinite(innerHeight))
+      rowHeights[0] = Math.max(innerHeight, rowHeights[0] ?? 0);
     lineOffsets = [0];
   } else {
     const naturalTotal = rowHeights.reduce((s, h) => s + h, 0);
@@ -218,9 +222,10 @@ export function layoutFlexRow(
     const y = lineOffsets[rowIndex]! + rowIndex * gapY;
 
     // Stretch phase: any item whose effective cross alignment is `stretch`
-    // (no explicit height, no auto cross-axis margins) grows to fill the
-    // row. Re-run layoutNode with the height forced so nested content that
-    // depends on the parent's height sees the final size.
+    // (no explicit height, no auto cross-axis margins) takes the row's
+    // height — grown or shrunk (`min-height: auto` is 0 in the cross
+    // axis; content overflows). Re-run layoutNode with the height forced
+    // so nested content that depends on the parent's height sees it.
     for (let i = 0; i < row.length; i++) {
       const child = row[i]!.node;
       const align = effectiveAlign(child, node);
@@ -235,7 +240,7 @@ export function layoutFlexRow(
         align === "stretch" &&
         !hasCrossAutoMargin &&
         !hasExplicitHeight &&
-        rowHeight > child.localRect.height
+        rowHeight !== child.localRect.height
       ) {
         const marginTop = itemMargin.top ?? 0;
         const marginBottom = itemMargin.bottom ?? 0;
@@ -422,7 +427,7 @@ export function layoutFlexColumn(
     // non-visible. Same rule as the row's min-content width.
     const autoMin =
       child.style.minHeight === "auto"
-        ? child.style.overflow === "visible"
+        ? child.style.overflow.y === "visible"
           ? child.localRect.height
           : 0
         : undefined;
@@ -862,7 +867,7 @@ export function effectiveJustify(style: CellStyle): CellStyle["justifyContent"] 
  */
 function flexItemMinWidth(child: LayoutNode, innerWidth: number, cache: IntrinsicCache): number {
   if (child.style.minWidth === "auto") {
-    return child.style.overflow === "visible" ? minContentOuterWidth(child, cache) : 0;
+    return child.style.overflow.x === "visible" ? minContentOuterWidth(child, cache) : 0;
   }
   return resolveLimit(child.style.minWidth, innerWidth) ?? 0;
 }
