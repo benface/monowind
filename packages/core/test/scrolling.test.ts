@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { quantizeScroll } from "../src/element.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText, thumbSpan } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
@@ -292,5 +293,30 @@ describe("scrolled paint", () => {
     // The inner scroll container is pushed down; the outer 2-row clip swallows
     // everything below row 1.
     expect(renderPlainText(root).split("\n").length).toBe(2);
+  });
+});
+
+describe("scroll quantization", () => {
+  // 16px cells, 10 cells of range, native ceiling exactly at max.
+  const q = (px: number, base: number) => quantizeScroll(px, 160, 16, 10, base);
+
+  it("keeps the shown cell within half a cell (no flip-flop at a half)", () => {
+    expect(q(56, 4)).toBe(4); // 3.5 cells, shown 4: stays
+    expect(q(56, 3)).toBe(3); // 3.5 cells, shown 3: stays
+    expect(q(63, 4)).toBe(4);
+  });
+
+  it("moves to the nearest cell, ties away from where it came from", () => {
+    expect(q(40, 0)).toBe(3); // +2.5 cells → 3
+    expect(q(56, 6)).toBe(3); // 6 → 3.5: −2.5 cells → 3 (not 4)
+    expect(q(41, 0)).toBe(3);
+    expect(q(38, 0)).toBe(2);
+  });
+
+  it("reads the native ceiling as max, clamps, and never reads 0 as max", () => {
+    expect(q(159, 5)).toBe(10);
+    expect(q(1000, 0)).toBe(10);
+    expect(q(-8, 2)).toBe(0);
+    expect(quantizeScroll(0, 0, 16, 10, 0)).toBe(0);
   });
 });

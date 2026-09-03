@@ -48,17 +48,24 @@ truth.
   scroll repaints are HELD like any structural repaint
   (`holdStructural`) and apply on release.
 - **Offsets are cell-quantized for ink; the native position settles to
-  match.** The grid paints at `floor((scrollTop + 1px) / cellHeight)`
-  (same for x; the pixel tolerance absorbs pixel-snapped positions,
-  and the native ceiling reads as max — see the first bullet) every
-  frame during a scroll — cheap through the existing signature/patch
-  paths. Mid-gesture the native (invisible) text may sit up to one
-  cell off the grid ink; on `scrollend` the engine snaps the native
-  scroll position to the nearest cell multiple (the max cell to the
-  ceiling), restoring exact overlay alignment (selection and
-  hit-testing read the settled state). The snap is idempotent — its
-  scroll event changes no cell and the follow-up settle no-ops. No
-  CSS scroll-snap — content has no per-row snap targets.
+  match.** The grid paints the cell it already shows while the native
+  position stays within half a cell of it (a wobble never flips a
+  row), and otherwise the cell NEAREST the position, ties broken away
+  from the shown cell — a 40px keyboard step against 16px cells is two and a half
+  cells and moves three in either direction, so Up and Down take the
+  same number of presses — and the native ceiling reads as max (see
+  the first bullet); every frame during a scroll, cheap through the
+  existing signature/patch paths. Mid-gesture the native (invisible)
+  text may sit up to half a cell off the grid ink; once scrolling has
+  gone quiet (`scrollend` plus a short debounce — a held key fires
+  scrollend after every step, and an instant settle would cut the next
+  step's animation short) the engine snaps the native position to the
+  cell the grid already shows — never a different cell, or the grid
+  would jump after the gesture (the max cell settles on the ceiling) —
+  restoring exact overlay alignment (selection and hit-testing read
+  the settled state). The snap is idempotent — its scroll event
+  changes no cell and the follow-up settle no-ops. No CSS scroll-snap
+  — content has no per-row snap targets.
 - **Mode-independent scrolling.** In `select="text"` the native path
   just works (the light DOM has pointer events). In `select="grid"`
   light elements are pointer-inert and wheel events land on the grid,
@@ -177,7 +184,11 @@ none` on EVERY element — a one-time pristine-probe detects that and
   leaking to an ancestor or the page — or the page, so a scroll container sliding
   under the stationary pointer never captures a page gesture
   (Chromium also marks such a sequence's later ticks non-cancelable,
-  which the router honors). The DOM exposes no gesture phases (Safari
+  which the router honors — unless nothing outside the host can scroll
+  that way, where routing is the only useful thing left; zero-delta
+  phase ticks — Safari's, and Chromium's momentum cancel when a finger
+  lands mid-inertia — end the latch and are canceled so the sequence
+  they open stays cancelable). The DOM exposes no gesture phases (Safari
   excepted: its zero-delta phase ticks end the latch), so a gesture
   ends when ticks quiesce (200ms), the pointer moves, or the delta
   RISES after an inertia-shaped decay — momentum never rises (it

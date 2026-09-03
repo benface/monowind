@@ -24,7 +24,7 @@ const main = document.querySelector("main");
 const versionLabel = document.getElementById("version");
 if (globalThis.monowind?.version) versionLabel.textContent = `v${globalThis.monowind.version}`;
 
-const SAMPLE = `<div class="mx-auto flex max-h-[96vh] max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
+const SAMPLE = `<div class="mx-auto flex max-h-[95vh] max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
   <mono-ascii font="small" effect="metal" class="mx-auto max-w-full shrink-0 overflow-clip py-1">monowind</mono-ascii>
   <div class="flex shrink-0 items-center justify-between bg-emerald-400 px-2 py-1 text-black">
     <div class="font-bold">§ MONOWIND DAILY</div>
@@ -126,7 +126,7 @@ const previewShell = `<!doctype html>
   body { margin: 0; padding: 1rem; color: #e5e5e5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
 </style>
 </head>
-<body><mono-wind id="root"></mono-wind></body>
+<body><mono-wind id="root" class="mx-auto"></mono-wind></body>
 </html>`;
 previewFrame.srcdoc = previewShell;
 
@@ -150,9 +150,12 @@ const previewReady = new Promise((resolve) => {
 // --- iframe; fonts download on first use). State rides the same query
 // --- string as the select toggle.
 
+// The host is centered: its width snaps to whole cells, so the
+// leftover under a cell shows as equal margins rather than a gap on
+// the right.
 const applyTheme = (theme) => {
   if (!previewRoot) return;
-  previewRoot.className = theme ? `theme-${theme}` : "";
+  previewRoot.className = theme ? `mx-auto theme-${theme}` : "mx-auto";
 };
 themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);

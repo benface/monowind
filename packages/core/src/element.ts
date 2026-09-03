@@ -91,6 +91,10 @@ const WHEEL_POINTER_SLOP_PX = 3;
 const WHEEL_LEAD_IN_PX = 4;
 /** Non-increasing ticks that confirm momentum. */
 const INERTIA_TICKS = 8;
+/** Settle only once scrolling has gone QUIET after `scrollend`: a held
+ * key fires scrollend after every step's animation, and an immediate
+ * (instant) settle would cut the next step's animation short. */
+const SETTLE_QUIESCE_MS = 100;
 /** Settle debounce where `scrollend` is missing (older Safari). */
 const SETTLE_FALLBACK_MS = 160;
 
@@ -179,6 +183,10 @@ export class MonoWindElement extends HTMLElementBase {
    * #onWheel). */
   #wheelLatch: WheelLatch | null = null;
   #thumbDrag: ThumbDrag | null = null;
+  /** Native scrollers outside the host (ancestors with scrollable
+   * overflow, then the page), collected per layout so a wheel tick
+   * never reads computed styles (see #outsideCanScroll). */
+  #outerScrollers: Element[] = [];
 
   /** (Re-)observe the light DOM; re-run when the leaf registry adds
    * observed attributes to the filter. `observe` on the same target
@@ -235,6 +243,7 @@ export class MonoWindElement extends HTMLElementBase {
 
     this.#resizeObserver = new ResizeObserver(() => this.#scheduleLayout());
     this.#resizeObserver.observe(this);
+    this.#observeSurroundings();
     // The probe too: a freshly inserted probe can transiently font-match
     // the FALLBACK at first layout even when the real font is already
     // loaded (WebKit; no fonts event ever follows). The swap changes the
@@ -407,11 +416,20 @@ export class MonoWindElement extends HTMLElementBase {
             x: entry.pinX ? maxX : Math.min(entry.x, maxX),
             y: entry.pinY ? maxY : Math.min(entry.y, maxY),
           }
-        : {
-            x: scrollCells(el, "x", metrics.width, maxX),
-            y: scrollCells(el, "y", metrics.height, maxY),
-          };
+        : this.#quantize(node, metrics);
     }
+  }
+
+  /** A container's native position in cells (see scrollCells), ties
+   * broken away from the last painted offset. */
+  #quantize(node: LayoutNode, metrics: CellMetrics): { x: number; y: number } {
+    const el = node.source as HTMLElement;
+    const { maxX, maxY } = node.scrollRange!;
+    const base = node.scroll ?? { x: 0, y: 0 };
+    return {
+      x: scrollCells(el, "x", metrics.width, maxX, base.x),
+      y: scrollCells(el, "y", metrics.height, maxY, base.y),
+    };
   }
 
   /** Snapshot of every scroll container's native position, taken BEFORE the
@@ -427,8 +445,7 @@ export class MonoWindElement extends HTMLElementBase {
     for (const node of this.#scrollNodes) {
       const el = node.source as HTMLElement;
       const { maxX, maxY } = node.scrollRange!;
-      const x = scrollCells(el, "x", metrics.width, maxX);
-      const y = scrollCells(el, "y", metrics.height, maxY);
+      const { x, y } = this.#quantize(node, metrics);
       snapshot.set(el, {
         top: el.scrollTop,
         left: el.scrollLeft,
@@ -442,22 +459,31 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   /** Write the snapshot back after the unmask (pins to the native
-   * ceiling — the new max). Unconditional writes (a same-value
-   * assignment is an event-free no-op), then a READ-BACK: Firefox
-   * holds post-reflow scroll clamping in a lazy state where a later
-   * same-looking write coalesces with the pending clamp into "no
-   * change" — no scroll event, and the container desyncs. Reading forces
-   * the state to commit, so the next real write fires its event. */
+   * ceiling — the new max). Firefox and WebKit hold post-reflow scroll
+   * clamping in a lazy state where a write that looks like the
+   * pre-clamp value coalesces with the pending clamp into "no
+   * change" — no scroll event, and the container desyncs. Reading
+   * FIRST commits the clamp, so the write is a real change (same-value
+   * writes are no-ops). */
   #restoreScrollPositions(snapshot: ScrollSnapshot): void {
     for (const node of this.#scrollNodes) {
       const el = node.source as HTMLElement;
       const entry = snapshot.get(el);
       if (!entry) continue;
-      el.scrollTop = entry.pinY ? el.scrollHeight : entry.top;
-      el.scrollLeft = entry.pinX ? el.scrollWidth : entry.left;
       void el.scrollTop;
       void el.scrollLeft;
+      el.scrollTop = entry.pinY ? el.scrollHeight : entry.top;
+      el.scrollLeft = entry.pinX ? el.scrollWidth : entry.left;
     }
+  }
+
+  /** Arm (or re-arm) a pane's settle for after `delay` of quiet. */
+  #settleAfter(el: HTMLElement, delay: number): void {
+    clearTimeout(this.#settleTimers.get(el));
+    this.#settleTimers.set(
+      el,
+      setTimeout(() => this.#settle(el), delay),
+    );
   }
 
   #onScroll = (event: Event): void => {
@@ -465,14 +491,12 @@ export class MonoWindElement extends HTMLElementBase {
     if (!(target instanceof HTMLElement) || target === this) return;
     if (!target.hasAttribute("data-mw-scroll")) return;
     this.#schedulePaint();
-    // Settle fallback where scrollend never fires (older Safari).
-    if (!("onscrollend" in window)) {
-      clearTimeout(this.#settleTimers.get(target));
-      this.#settleTimers.set(
-        target,
-        setTimeout(() => this.#settle(target), SETTLE_FALLBACK_MS),
-      );
-    }
+    // Routed wheel ticks keep their own quiesce timer (#onWheel).
+    if (Date.now() - (this.#routedWheelAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
+    // Still scrolling: a pending settle waits; without scrollend
+    // (older Safari) the pause after the last event settles instead.
+    clearTimeout(this.#settleTimers.get(target));
+    if (!("onscrollend" in window)) this.#settleAfter(target, SETTLE_FALLBACK_MS);
   };
 
   #onScrollEnd = (event: Event): void => {
@@ -482,14 +506,16 @@ export class MonoWindElement extends HTMLElementBase {
     // Mid-gesture scrollends: routed wheel ticks and thumb drags
     // settle on quiesce/release instead (see #routedWheelAt).
     if (Date.now() - (this.#routedWheelAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
-    this.#settle(target);
+    this.#settleAfter(target, SETTLE_QUIESCE_MS);
   };
 
-  /** Snap the native position to the cell multiple, clamped to the
-   * ENGINE's range — idempotent (its own scroll event changes no
-   * cell). The max cell settles on the native CEILING, not the
-   * multiple: leftover native room would latch the next text-mode
-   * gesture to an invisible scroll instead of chaining. */
+  /** Snap the native position to the cell the grid already SHOWS
+   * (the same quantization as the paint) — never a different cell,
+   * or the grid would visibly jump after the gesture. Idempotent: its
+   * own scroll event changes no cell. The max cell settles on the
+   * native CEILING, not the multiple: leftover native room would
+   * latch the next text-mode gesture to an invisible scroll instead
+   * of chaining. */
   #settle(el: HTMLElement): void {
     if (this.#thumbDrag?.el === el) return; // release settles
     // Repaint unconditionally: scroll events can coalesce away under
@@ -500,13 +526,11 @@ export class MonoWindElement extends HTMLElementBase {
     const node = this.#scrollNodes.find((candidate) => candidate.source === el);
     if (!metrics || !node) return;
     const range = node.scrollRange!;
-    // Round (not floor): a gesture ending at 15.7 cells means row 16.
-    const snap = (px: number, size: number, max: number, ceiling: number): number => {
-      const cells = Math.min(Math.max(0, Math.round(px / size)), max);
-      return cells === max ? ceiling : cells * size;
-    };
-    const top = snap(el.scrollTop, metrics.height, range.maxY, el.scrollHeight - el.clientHeight);
-    const left = snap(el.scrollLeft, metrics.width, range.maxX, el.scrollWidth - el.clientWidth);
+    // The painted cell: the settle lands where the grid already is.
+    const cells = node.scroll ?? this.#quantize(node, metrics);
+    const top =
+      cells.y === range.maxY ? el.scrollHeight - el.clientHeight : cells.y * metrics.height;
+    const left = cells.x === range.maxX ? el.scrollWidth - el.clientWidth : cells.x * metrics.width;
     if (Math.abs(el.scrollTop - top) > 0.5 || Math.abs(el.scrollLeft - left) > 0.5) {
       el.scrollTo({ top, left, behavior: "instant" });
     }
@@ -523,18 +547,23 @@ export class MonoWindElement extends HTMLElementBase {
     const metrics = this.#cellMetrics;
     if (!layout || !metrics || this.#scrollNodes.length === 0) return;
     const e = event as WheelEvent;
-    // Chromium marks every tick after an uncanceled first one in a
-    // native scroll sequence non-cancelable: the page owns that gesture.
-    if (!e.cancelable) return;
-    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
     const scale = e.deltaMode === 1 ? metrics.height : e.deltaMode === 2 ? this.clientHeight : 1;
     const dx = e.deltaX * scale;
     const dy = e.deltaY * scale;
+    // Chromium marks every tick after an uncanceled first one in a
+    // native scroll sequence non-cancelable: the page owns that
+    // gesture — unless nothing outside the host can scroll that way,
+    // where routing is the only thing the tick can usefully do.
+    if (!e.cancelable && this.#outsideCanScroll(dx, dy)) return;
+    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
     const now = Date.now();
     const mag = Math.abs(dx) + Math.abs(dy);
-    // Safari marks gesture phases with zero-delta ticks: a boundary.
+    // Zero-delta ticks mark gesture phases (Safari's, and Chromium's
+    // momentum cancel when a finger lands mid-inertia): a boundary.
+    // Canceled, so a sequence they open stays cancelable.
     if (mag === 0) {
       this.#wheelLatch = null;
+      e.preventDefault();
       return;
     }
     // Native room decides (the native ceiling IS the engine's max);
@@ -637,12 +666,34 @@ export class MonoWindElement extends HTMLElementBase {
     // One gesture, not N programmatic scrolls: suppress the per-tick
     // scrollend settles and settle after quiesce.
     this.#routedWheelAt.set(el, now);
-    clearTimeout(this.#settleTimers.get(el));
-    this.#settleTimers.set(
-      el,
-      setTimeout(() => this.#settle(el), WHEEL_QUIESCE_MS),
-    );
+    this.#settleAfter(el, WHEEL_QUIESCE_MS);
   };
+
+  /** Whether a native scroller outside the host has room in the
+   * delta's direction (offset reads only — the list is per layout). */
+  #outsideCanScroll(dx: number, dy: number): boolean {
+    return this.#outerScrollers.some(
+      (el) =>
+        (dy > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 0.5) ||
+        (dy < 0 && el.scrollTop > 0.5) ||
+        (dx > 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5) ||
+        (dx < 0 && el.scrollLeft > 0.5),
+    );
+  }
+
+  /** The host's width is capped to whole cells (styles.css), so a
+   * growing slot no longer resizes the host: observe the parent (a
+   * growing container) and the siblings (a flex or grid slot that
+   * grows because a sibling shrank). Re-run per layout — observe() is
+   * idempotent, and new siblings join. */
+  #observeSurroundings(): void {
+    const parent = this.parentElement;
+    if (!parent || !this.#resizeObserver) return;
+    this.#resizeObserver.observe(parent);
+    for (const sibling of parent.children) {
+      if (sibling !== this) this.#resizeObserver.observe(sibling);
+    }
+  }
 
   /** The grid cell under a client point. The origin is cached until
    * the next layout or page scroll invalidates it. */
@@ -1142,6 +1193,15 @@ export class MonoWindElement extends HTMLElementBase {
           : 0;
       const hostHeight = `${height * metrics.height + chrome}px`;
       if (this.style.height !== hostHeight) this.style.height = hostHeight;
+      // Cap the width to the columns laid out (specs/cell-model.md "Host
+      // sizing"); the companion applies it outside measuring.
+      const chromeX =
+        cs.boxSizing === "border-box"
+          ? padX + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0)
+          : 0;
+      const hostWidth = `${availableCols * metrics.width + chromeX}px`;
+      if (this.style.getPropertyValue("--mw-host-w") !== hostWidth)
+        this.style.setProperty("--mw-host-w", hostWidth);
 
       // (7) Reveal the host now that layout is done — kills the FOUC where
       // the browser paints raw flex/block layout before the engine runs.
@@ -1180,6 +1240,17 @@ export class MonoWindElement extends HTMLElementBase {
           this.#startSamplingLoop();
         } else {
           this.#scheduleLayout();
+        }
+      }
+      // Surroundings, outside the mask so the reads are authored values:
+      // the resize signals a capped host needs, and the native scrollers
+      // a page-owned wheel sequence may still have room in.
+      this.#observeSurroundings();
+      this.#outerScrollers = [];
+      const scrolling = document.scrollingElement ?? document.documentElement;
+      for (let el = this.parentElement; el; el = el.parentElement) {
+        if (el === scrolling || /auto|scroll/.test(getComputedStyle(el).overflow)) {
+          this.#outerScrollers.push(el);
         }
       }
       // The layout may have moved content under a stationary pointer —
@@ -1235,22 +1306,43 @@ interface ThumbDrag {
   factor: number;
 }
 
-/** Native scroll position → whole-cell offset within the engine's
- * range (specs/scrolling.md). At the native ceiling the scroll container IS at
- * max: the spacer ends at the engine's edge, but scrollHeight and
- * clientHeight round independently, so the ceiling can sit a pixel
- * either side of the multiple. The one-pixel tolerance below is
- * load-bearing too: browsers pixel-snap scroll positions, so with a
- * fractional cell size a scroll container never parks on an exact multiple —
- * floor() alone would sit one cell short of every settle target.
- * (A scroll container still at 0 never reads as "at max", whatever its ceiling —
- * the spacer may not have applied yet.) */
-function scrollCells(el: HTMLElement, axis: "x" | "y", cellSize: number, max: number): number {
+/** A container's native position on one axis, in cells (see
+ * quantizeScroll). */
+function scrollCells(
+  el: HTMLElement,
+  axis: "x" | "y",
+  cellSize: number,
+  max: number,
+  base: number,
+): number {
   const px = axis === "y" ? el.scrollTop : el.scrollLeft;
   const ceiling =
     axis === "y" ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+  return quantizeScroll(px, ceiling, cellSize, max, base);
+}
+
+/** Native scroll position → whole-cell offset within the engine's
+ * range (specs/scrolling.md). Within half a cell of `base` (the last
+ * painted offset) the shown cell stays — a wobble never flips it;
+ * beyond that, the NEAREST cell, ties away from `base`, so a keyboard
+ * step of two and a half cells moves three in either direction. At
+ * the native `ceiling` the container IS at max: the spacer ends at the
+ * engine's edge, but scrollHeight and clientHeight round
+ * independently, so the ceiling can sit a pixel either side of the
+ * multiple. (A container still at 0 never reads as "at max", whatever
+ * its ceiling — the spacer may not have applied yet.) */
+export function quantizeScroll(
+  px: number,
+  ceiling: number,
+  cellSize: number,
+  max: number,
+  base: number,
+): number {
   if (max > 0 && px > 0 && px >= ceiling - 1) return max;
-  return Math.min(Math.max(0, Math.floor((px + 1) / cellSize)), max);
+  const delta = px / cellSize - base;
+  const cells =
+    Math.abs(delta) <= 0.5 ? base : base + Math.sign(delta) * Math.round(Math.abs(delta));
+  return Math.min(Math.max(0, cells), max);
 }
 
 function collectScrollContainers(root: LayoutNode): LayoutNode[] {

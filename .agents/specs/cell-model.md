@@ -115,8 +115,21 @@ Visible overflow paints past the host, as CSS paints it past any box: the
 grid is sized to the INK extent while the host keeps its in-flow height, so
 a box's overflowing rows overlay what follows (later siblings paint on top,
 per paint order), and the host's background follows the ink — the host is
-the canvas, as a document's root background covers its overflow. Ink above
-or left of the host has no cells and is dropped (deviation).
+the canvas, as a document's root background covers its overflow. Ink above or
+left of the host has no cells and is dropped (deviation).
+
+## Host sizing
+
+The host's used width is a whole number of cells: each layout measures the
+host's natural CSS width (its own `width`/`max-width`, its container, its
+flex slot) with the engine's rule lifted, lays out the columns that fit,
+and caps the box to exactly those columns plus its padding and border via
+an engine-owned `max-width` — so borders, backgrounds, and `mx-auto`
+centering land on the grid instead of a fractional edge. A cap rather than
+a width, so a shrinking container still shrinks the host natively; growth
+is caught by observing the host's parent (a growing container), its
+siblings (a flex or grid slot that grows because a sibling shrank), and
+the window. The height is engine-set from the content rows, as before.
 
 ## Typography
 

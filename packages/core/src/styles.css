@@ -204,6 +204,17 @@ mono-wind:not([measuring]) [data-mw-scroll]::after {
   height: 1px;
 }
 
+/* The host's used width is a whole number of cells (specs/cell-model.md
+ * "Host sizing"): the engine measures the natural CSS width with this
+ * rule lifted, then caps the box to the columns that fit — so borders,
+ * backgrounds, and `mx-auto` centering land on the grid. A cap, not a
+ * width, so a shrinking container still shrinks the host natively;
+ * !important because the cap never exceeds the natural width it was
+ * measured from, whatever max-width the author set (inline included). */
+mono-wind:not([measuring]) {
+  max-width: var(--mw-host-w) !important;
+}
+
 /* Hide the host until the first layout completes to avoid the flash of raw
  * browser-rendered content (flex without our decorations, elements at their
  * natural sizes). `visibility: hidden` preserves layout & measurability so

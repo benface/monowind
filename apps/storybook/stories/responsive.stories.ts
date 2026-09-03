@@ -1,4 +1,5 @@
 import { html } from "lit";
+import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
@@ -41,4 +42,44 @@ export const LayoutChange: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** The host's width snaps to whole cells (specs/cell-model.md "Host
+ * sizing"): here a flex item beside a sidebar, centered in its slot.
+ * Shrink the sidebar and the host grows into the freed columns. */
+export const HostWidth: StoryObj = {
+  render: () => html`
+    <div class="flex gap-2">
+      <div data-test="sidebar" class="w-64 shrink-0 bg-neutral-800 p-2 text-neutral-400">
+        sidebar
+      </div>
+      <mono-wind data-test="host" class="mx-auto min-w-0 flex-1 bg-neutral-900 text-neutral-200">
+        <div class="border border-emerald-400 px-1">
+          As wide as the columns that fit — the border ends on the last cell.
+        </div>
+      </mono-wind>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
+    const sidebar = canvasElement.querySelector<HTMLElement>('[data-test="sidebar"]')!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const cellWidth = () => parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cells = () => host.getBoundingClientRect().width / cellWidth();
+    const wholeCells = (n: number) => Math.abs(n - Math.round(n)) < 0.01;
+    await waitFor(() => expect(wholeCells(cells())).toBe(true), { timeout: 10_000 });
+    const before = Math.round(cells());
+    // A sibling shrinking grows the host's slot: observed, re-measured,
+    // still whole cells.
+    sidebar.style.width = "4rem";
+    await waitFor(
+      () => {
+        expect(Math.round(cells())).toBeGreaterThan(before);
+        expect(wholeCells(cells())).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
+    sidebar.style.width = "";
+    await waitFor(() => expect(Math.round(cells())).toBe(before), { timeout: 10_000 });
+  },
 };

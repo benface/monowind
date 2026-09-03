@@ -115,12 +115,12 @@ export const Overscroll: StoryObj = {
       canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
     // A fresh wheel tick over the box (gestures are latched by
     // pointer position and quiesce, so each tick waits out the window).
-    const wheel = async (name: string, deltaY: number): Promise<boolean> => {
+    const wheel = async (name: string, deltaY: number, cancelable = true): Promise<boolean> => {
       await new Promise((resolve) => setTimeout(resolve, 250));
       const rect = box(name).getBoundingClientRect();
       const event = new WheelEvent("wheel", {
         bubbles: true,
-        cancelable: true,
+        cancelable,
         clientX: rect.left + 40,
         clientY: rect.top + rect.height / 2,
         deltaY,
@@ -134,6 +134,21 @@ export const Overscroll: StoryObj = {
     expect(await wheel("none", -40)).toBe(true);
     // Wheeling down scrolls every box.
     expect(await wheel("auto", 40)).toBe(true);
+    // A zero-delta phase tick is a gesture boundary, canceled so the
+    // sequence it opens stays cancelable.
+    expect(await wheel("auto", 0)).toBe(true);
+    // A non-cancelable tick (a page-owned sequence) is left to the page
+    // while the page can take it, and routed once nothing outside the
+    // host can scroll that way: at the page top, an upward tick moves
+    // the box.
+    const auto = box("auto");
+    await waitFor(() => expect(auto.scrollTop).toBeGreaterThan(0), { timeout: 10_000 });
+    const scrolled = auto.scrollTop;
+    await wheel("auto", 40, false);
+    expect(auto.scrollTop).toBe(scrolled);
+    await wheel("auto", -40, false);
+    await waitFor(() => expect(auto.scrollTop).toBeLessThan(scrolled), { timeout: 10_000 });
+    auto.scrollTop = 0;
   },
 };
 
@@ -382,5 +397,25 @@ export const ScrollMirroring: StoryObj = {
     );
     box.scrollTop = 0;
     await waitFor(() => expect(grid.textContent).toContain("line 01"), { timeout: 10_000 });
+    // A position between cells (a keyboard step) paints the nearest
+    // cell, ties away from where it came from, and settles on that
+    // same cell — never a different one, which would jump a row.
+    box.scrollTop = cellHeight * 3.5;
+    await waitFor(
+      () => {
+        expect(grid.textContent).toContain("line 05");
+        expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
+      },
+      { timeout: 10_000 },
+    );
+    box.scrollTop = cellHeight * 1.5;
+    await waitFor(
+      () => {
+        expect(grid.textContent).toContain("line 02");
+        expect(Math.abs(box.scrollTop - cellHeight)).toBeLessThan(1);
+      },
+      { timeout: 10_000 },
+    );
+    box.scrollTop = 0;
   },
 };
