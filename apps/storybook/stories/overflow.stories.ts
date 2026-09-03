@@ -398,9 +398,11 @@ export const ScrollMirroring: StoryObj = {
     box.scrollTop = 0;
     await waitFor(() => expect(grid.textContent).toContain("line 01"), { timeout: 10_000 });
     // A position between cells (a keyboard step) paints the nearest
-    // cell, ties away from where it came from, and settles on that
-    // same cell — never a different one, which would jump a row.
-    box.scrollTop = cellHeight * 3.5;
+    // cell and settles on that same cell — never a different one,
+    // which would jump a row. Clear of the half: browsers snap
+    // scrollTop to whole pixels, and with a fractional cell height an
+    // exact half lands on either side (ties are unit-tested).
+    box.scrollTop = cellHeight * 3.7;
     await waitFor(
       () => {
         expect(grid.textContent).toContain("line 05");
@@ -408,7 +410,7 @@ export const ScrollMirroring: StoryObj = {
       },
       { timeout: 10_000 },
     );
-    box.scrollTop = cellHeight * 1.5;
+    box.scrollTop = cellHeight * 1.3;
     await waitFor(
       () => {
         expect(grid.textContent).toContain("line 02");

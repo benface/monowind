@@ -8,5 +8,17 @@ export function warnOnce(el: Element, message: string): void {
   if (!messages) warned.set(el, (messages = new Set()));
   if (messages.has(message)) return;
   messages.add(message);
-  console.warn(`[monowind] ${message}`, el);
+  console.warn(`[monowind] ${message}`, warnSubject(el));
+}
+
+/** The element for a warning: the reference itself in a browser (an
+ * inspectable link in DevTools), a one-line description under Node
+ * (tests), whose console would print the whole object graph. */
+export function warnSubject(el: Element): Element | string {
+  const node = (globalThis as { process?: { versions?: { node?: string } } }).process?.versions
+    ?.node;
+  if (!node) return el;
+  const id = el.id ? `#${el.id}` : "";
+  const classes = el.classList.length ? `.${Array.from(el.classList).join(".")}` : "";
+  return `<${el.tagName.toLowerCase()}${id}${classes}>`;
 }

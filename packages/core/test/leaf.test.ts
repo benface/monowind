@@ -97,7 +97,8 @@ describe("leaf renderers", () => {
     const node = buildTree(el, 16)!;
     expect(node.text).toBe("");
     expect(node.intrinsicWidth).toBe(0);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("renderer threw"), el);
+    // Under Node the element is described, not dumped (warnSubject).
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("renderer threw"), "<test-thrower>");
     warn.mockRestore();
   });
 

@@ -10,6 +10,7 @@ import { render } from "./render.ts";
 import { buildTree, DIRECT_TEXT_DROPPED, hasDirectText } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
 import { defaultCellStyle, zeroInsets } from "./types.ts";
+import { warnSubject } from "./warn.ts";
 import type { CellMetrics, LayoutNode } from "./types.ts";
 
 const SHADOW_TEMPLATE = `
@@ -968,7 +969,7 @@ export class MonoWindElement extends HTMLElementBase {
       if (next !== null) {
         console.warn(
           `[monowind] Ignoring unrecognized select="${next}". Expected "grid" (default) or "text".`,
-          this,
+          warnSubject(this),
         );
       }
       // Reflect the default so the attribute is the single source of
@@ -1132,7 +1133,7 @@ export class MonoWindElement extends HTMLElementBase {
       // tree.ts does for nested containers.
       if (hasDirectText(this)) {
         if (!this.hasAttribute("data-mw-dropped-text")) {
-          console.warn(`[monowind] ${DIRECT_TEXT_DROPPED}`, this);
+          console.warn(`[monowind] ${DIRECT_TEXT_DROPPED}`, warnSubject(this));
         }
         this.setAttribute("data-mw-dropped-text", "");
       } else {
