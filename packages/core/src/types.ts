@@ -350,7 +350,7 @@ export interface CellStyle {
    * (specs/scrolling.md). */
   scrollbarWidth: "auto" | "none";
   /** Bar thickness in cells per axis — `x` the horizontal bar's
-   * height, `y` the vertical bar's width (`--mw-scrollbar-x/y-size`,
+   * height, `y` the vertical bar's width (`--mw-scrollbar-size-x/y`,
    * the scrollbar-*, scrollbar-x-*, scrollbar-y-* utilities; default
    * 1). */
   scrollbarSize: { x: number; y: number };

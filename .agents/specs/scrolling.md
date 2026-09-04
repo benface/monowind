@@ -94,12 +94,16 @@ truth.
     overflows — CSS parity: layoutNode lays out once without the
     gutter, and an overflowing `auto` axis re-lays out WITH it,
     keeping it regardless of the narrower result (the browsers' own
-    one-pass anti-oscillation rule). An overflowing `auto` scroll container is
+    anti-oscillation rule). Since one axis's gutter can push the
+    other into overflow (a vertical bar narrowing a line that just
+    fit), the re-layout repeats while a newly overflowing `auto` axis
+    lacks its gutter — gutters only accrue, so at most one more pass.
+    An overflowing `auto` scroll container is
     then indistinguishable from `scroll` — track, thumb, drag, the
     lot; a fitting one reserves and paints nothing. Paint, drag, and
     hit-testing read the RESERVED gutter (`node.scrollGutterCells`),
     never the style.
-  - Bar THICKNESS is `--mw-scrollbar-x/y-size` cells per bar (the
+  - Bar THICKNESS is `--mw-scrollbar-size-x/y` cells per bar (the
     `scrollbar-<n>` shorthand and `scrollbar-x-<n>` / `scrollbar-y-<n>`
     longhands — `x` the horizontal bar's height, `y` the vertical
     bar's width; default 1) — CSS `scrollbar-width` has no length form
@@ -222,9 +226,9 @@ none` on EVERY element — a one-time pristine-probe detects that and
   cell settle-snap. Documented, revisit on demand.
 - **Hit-testing follows the ink.** `hitChain` applies each scroll
   container's cell offset while descending, so hover, active, cursor
-  mirroring, and future semantic selection see the element actually
-  under the pointer in a scrolled container. Cells in the gutter hit the
-  container itself.
+  mirroring, and semantic selection (`semantic-selection.md`) see the
+  element actually under the pointer in a scrolled container. Cells in
+  the gutter hit the container itself.
 
 ## Deviations (documented, like the cell model's running list)
 

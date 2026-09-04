@@ -441,7 +441,8 @@ Any API surprise degrades to the old behavior (selection collapses),
 never an error. **Deviations**: a selection reaching OUTSIDE the grid
 (e.g. select-all across the page) is not restored across structural
 rebuilds; restore assumes a forwards selection where the engine
-doesn't expose `Selection.direction`.
+doesn't expose `Selection.direction`. Multi-click gestures on the grid
+are specified in `semantic-selection.md`.
 
 ## Pointer states
 

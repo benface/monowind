@@ -195,6 +195,45 @@ describe("scrolled paint", () => {
     expect(rows[1]![7]).toBe("░");
   });
 
+  it("a gutter reserved for one axis can reveal overflow on the other", () => {
+    // A 12-cell line fits a 12-cell box exactly; the 4 rows overflow the
+    // 3-row height, and the vertical gutter that reserves narrows the
+    // content box to 11 — now the line overflows too, so both bars show.
+    const box = makeNode({
+      style: {
+        overflow: { x: "auto", y: "auto" },
+        width: { kind: "cells", value: 12 },
+        height: { kind: "cells", value: 3 },
+        whiteSpace: "nowrap",
+      },
+      text: "abcdefghijkl\nb\nc\nd",
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 12);
+    expect(box.scrollGutterCells).toEqual({ right: 1, bottom: 1 });
+    expect(box.scrollRange!.maxX).toBe(1);
+    expect(box.scrollRange!.maxY).toBeGreaterThan(0);
+  });
+
+  it("the reveal works the other way round: a horizontal gutter exposes vertical overflow", () => {
+    // 3 lines fit 3 rows exactly; the long line reserves the bottom
+    // gutter, leaving 2 rows, so the lines overflow and the vertical
+    // bar joins it.
+    const box = makeNode({
+      style: {
+        overflow: { x: "auto", y: "auto" },
+        width: { kind: "cells", value: 6 },
+        height: { kind: "cells", value: 3 },
+        whiteSpace: "nowrap",
+      },
+      text: "abcdefgh\nb\nc",
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 6);
+    expect(box.scrollGutterCells).toEqual({ right: 1, bottom: 1 });
+    expect(box.scrollRange!.maxY).toBe(1);
+  });
+
   it("a one-row overflow still shows a track cell beside the thumb", () => {
     // 6 visible of 7 rows rounds the thumb to the full track; the bar
     // must still tell "scrollable" from "fits".

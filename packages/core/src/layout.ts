@@ -320,13 +320,16 @@ export function layoutNode(
       maxY: scrollsAxis(style.overflow.y) ? Math.max(0, sizeY - contentH) : 0,
     };
     // CSS parity for `auto`: reserve the gutter only when content
-    // actually overflows — decided on the FIRST pass and kept even if
-    // the narrower re-layout no longer overflows (browsers' own
-    // anti-oscillation rule).
-    if (!forced?.gutter && style.scrollbarWidth !== "none") {
-      const needY = style.overflow.y === "auto" && node.scrollRange.maxY > 0;
-      const needX = style.overflow.x === "auto" && node.scrollRange.maxX > 0;
-      if (needY || needX) {
+    // actually overflows, and keep it even if the narrower re-layout no
+    // longer overflows (browsers' own anti-oscillation rule). One axis's
+    // gutter can push the OTHER axis into overflow, so the pass repeats
+    // while a newly overflowing axis lacks its gutter — gutters only
+    // accrue, so at most one more pass.
+    if (style.scrollbarWidth !== "none") {
+      const have = forced?.gutter ?? { right: false, bottom: false };
+      const needY = have.right || (style.overflow.y === "auto" && node.scrollRange.maxY > 0);
+      const needX = have.bottom || (style.overflow.x === "auto" && node.scrollRange.maxX > 0);
+      if (needY !== have.right || needX !== have.bottom) {
         layoutNode(node, availableWidth, availableHeight, parentX, parentY, widthMode, cache, {
           ...forced,
           gutter: { right: needY, bottom: needX },
