@@ -252,9 +252,10 @@ none` on EVERY element — a one-time pristine-probe detects that and
   in grid mode — their children stay inert, so a touch lands on the
   container and the browser pans it natively (physics, momentum,
   chaining, `overscroll-behavior`), mirrored on the grid like any
-  scroll. The trade, on those devices only: a long-press inside a
-  scroll container selects nothing (the light DOM is
-  `user-select: none` in grid mode), and the thumb drag stays a
+  scroll. A long-press inside a scroll container selects the ELEMENT's
+  text there (the container's subtree is `user-select: text` on those
+  devices — an element selection like a semantic one, copied by the
+  engine; specs/semantic-selection.md), and the thumb drag stays a
   mouse/pen gesture — a finger on the gutter pans. Fine-pointer
   devices are unchanged: the grid keeps every pointer event, and
   wheel routing plus the thumb cover scrolling. Both modes: the

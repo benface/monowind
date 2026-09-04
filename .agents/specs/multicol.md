@@ -302,6 +302,14 @@ padding, same as flex/grid.
 
 ## Deviations from CSS (running list)
 
+- **Firefox hit-tests a spanner's rows as its multicol container**
+  despite the container's `pointer-events: none` (the anonymous
+  column-span wrapper frame ignores it). The engine cannot reach the
+  anonymous frame, so it treats the event as a grid event at the same
+  coordinates (a "phantom target", specs/semantic-selection.md) — the
+  light DOM being locked explicitly — and grid-mode laid-out elements
+  carry the grid's text cursor so the spanner shows no arrow.
+
 1. **Decorated element children are atomic** (implicit `break-inside:
 avoid`): a child with a border, padding, background, explicit
    sizing, or non-text content never splits across columns, and one

@@ -149,6 +149,14 @@
     color: var(--mw-bg);
     caret-color: var(--mw-bg);
   }
+  /* Grid-mode light elements carry the grid's text cursor: Firefox
+   * hit-tests a multicol spanner's anonymous wrapper as its container
+   * despite `pointer-events: none`, and would show an arrow there.
+   * Interactives keep their own (UA and authored cursors win). */
+  mono-wind[select="grid"]
+    [data-mw-laid-out]:not(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
+    cursor: text;
+  }
 }
 
 /* === Modes and selection (engine-owned from here down) =============== */
@@ -156,7 +164,9 @@
 /* select="grid": pass pointer events through non-interactive light-DOM
  * elements so drag lands on the grid <pre> (native drag-selection of
  * the ASCII); interactives opt back into `auto` so clicks still work.
- * (The slot itself is pointer-events: none in the shadow CSS.) */
+ * (The slot itself is pointer-events: none in the shadow CSS.) The
+ * interactive list is mirrored by INTERACTIVE in element.ts and by the
+ * two rules below — change all of them together. */
 mono-wind[select="grid"] * {
   pointer-events: none !important;
 }
@@ -164,14 +174,39 @@ mono-wind[select="grid"]
   :is(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
   pointer-events: auto !important;
 }
+/* While a drag that began on the grid is in flight, interactives drop
+ * their pointer events too, so the native selection sweeps through
+ * their cells instead of stalling at their edge (a click is a press and
+ * release in place — unaffected). */
+mono-wind[select="grid"][data-mw-dragging]
+  :is(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
+  pointer-events: none !important;
+}
+/* The grid-mode selection lock, explicit on the light DOM: the shadow
+ * slot's `user-select: none` reaches slotted content in Chromium and
+ * WebKit but not Firefox, where a drag that strays onto a light element
+ * would select it. Lifted with a semantic selection
+ * (specs/semantic-selection.md). Editable controls keep their own
+ * selection (Firefox honors an explicit `none` on a text field's
+ * value; the slot's inherited value never reached it). */
+mono-wind[select="grid"]:not([data-mw-semantic-selection])
+  :not(input, textarea, [contenteditable], [contenteditable] *) {
+  user-select: none;
+  -webkit-user-select: none;
+}
 /* Touch panning (specs/scrolling.md): where the primary pointer is a
  * finger, scroll containers take pointer events in grid mode so a
  * drag pans them NATIVELY (physics, momentum, chaining) — their
  * children stay inert, so the touch lands on the container itself.
- * The trade: no grid selection starts inside one on those devices. */
+ * A long-press there selects the element's text (an element
+ * selection, copied by the engine like a semantic one). */
 @media (pointer: coarse) {
   mono-wind[select="grid"] [data-mw-scroll] {
     pointer-events: auto !important;
+  }
+  mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) {
+    user-select: text;
+    -webkit-user-select: text;
   }
 }
 

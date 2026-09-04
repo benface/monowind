@@ -439,9 +439,18 @@ selection is captured as flat character offsets (via
 `ShadowRoot.getSelection()` as the legacy fallback) and restored with
 `setBaseAndExtent` after — and while a primary press holds a
 selection anchor in the grid, the rebuild is deferred to release
-instead, because even a restored rebuild collapses Chromium's drag.
+instead, because even a restored rebuild collapses Chromium's drag —
+a NATIVE drag's, that is: an engine-driven grid drag
+(specs/semantic-selection.md) re-derives its points from flat offsets
+and needs no hold, so a press that blurs a focused control inside the
+host is taken over by one and the focus invert repaints at mousedown,
+not on release.
 Any API surprise degrades to the old behavior (selection collapses),
-never an error. **Deviations**: a selection reaching OUTSIDE the grid
+never an error. While a drag that began on the grid is in flight the
+host carries `data-mw-dragging`, under which interactive light elements
+drop their pointer events too, so the native sweep passes through their
+cells instead of stalling at their edge until the pointer is past them.
+**Deviations**: a selection reaching OUTSIDE the grid
 (e.g. select-all across the page) is not restored across structural
 rebuilds; restore assumes a forwards selection where the engine
 doesn't expose `Selection.direction`. Multi-click gestures on the grid

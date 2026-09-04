@@ -21,13 +21,13 @@ export const Input: StoryObj = {
         <div class="group relative">
           <label
             for="input"
-            class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:text-white dark:group-has-focus-visible:text-black"
+            class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:bg-(--mw-fg) group-has-focus-visible:text-(--mw-bg)"
             >Input</label
           >
           <input
             id="input"
             value="Input"
-            class="w-40 max-w-full border border-cyan-400 px-1 dark:focus-visible:border-black"
+            class="w-40 max-w-full border border-cyan-400 px-1 focus-visible:border-(--mw-bg)"
           />
         </div>
         <div class="flex items-center gap-1">
@@ -107,13 +107,13 @@ export const Textarea: StoryObj = {
         <div class="group relative">
           <label
             for="textarea"
-            class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:text-white dark:group-has-focus-visible:text-black"
+            class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:bg-(--mw-fg) group-has-focus-visible:text-(--mw-bg)"
             >Textarea</label
           >
           <textarea
             id="textarea"
             rows="1"
-            class="w-40 max-w-full border border-cyan-400 px-1 dark:focus-visible:border-black"
+            class="w-40 max-w-full border border-cyan-400 px-1 focus-visible:border-(--mw-bg)"
           >
 Textarea
 with multiple
@@ -176,12 +176,12 @@ export const Select: StoryObj = {
         <div class="group relative">
           <label
             for="select"
-            class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:text-white dark:group-has-focus-visible:text-black"
+            class="absolute top-0 left-1 bg-clear px-1 group-has-focus-visible:bg-(--mw-fg) group-has-focus-visible:text-(--mw-bg)"
             >Select</label
           >
           <select
             id="select"
-            class="w-40 max-w-full truncate border border-cyan-400 px-1 dark:focus-visible:border-black"
+            class="w-40 max-w-full truncate border border-cyan-400 px-1 focus-visible:border-(--mw-bg)"
           >
             <option>Select</option>
             <option>an</option>

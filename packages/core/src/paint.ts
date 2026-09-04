@@ -176,7 +176,7 @@ function flatOffset(target: HTMLElement, container: Node, offset: number): numbe
   return range.toString().length;
 }
 
-function nodeAtOffset(target: HTMLElement, offset: number): [Text, number] | null {
+export function nodeAtOffset(target: HTMLElement, offset: number): [Text, number] | null {
   let remaining = offset;
   let last: [Text, number] | null = null;
   for (const text of textNodesOf(target)) {

@@ -48,6 +48,45 @@ function copyText(host: HTMLElement): string {
   return event.clipboardData!.getData("text/plain");
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+interface PressInit {
+  pointerType?: string;
+  shiftKey?: boolean;
+  target?: Element;
+}
+
+/** A primary press at client coordinates: the pointerdown the engine
+ * reads the pointer type from, then the mousedown that carries the
+ * click count. Returns false when the engine took it (preventDefault). */
+function pressAt(target: Element, at: Point, detail: number, init: PressInit = {}): boolean {
+  const common = { bubbles: true, composed: true, cancelable: true, clientX: at.x, clientY: at.y };
+  target.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      ...common,
+      pointerType: init.pointerType ?? "mouse",
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+    }),
+  );
+  return target.dispatchEvent(
+    new MouseEvent("mousedown", {
+      ...common,
+      detail,
+      button: 0,
+      buttons: 1,
+      shiftKey: init.shiftKey ?? false,
+    }),
+  );
+}
+
+function release(): void {
+  window.dispatchEvent(new PointerEvent("pointerup", { pointerType: "mouse", isPrimary: true }));
+}
+
 /**
  * Semantic selection in grid mode (specs/semantic-selection.md):
  * double- and triple-click select the element's word or paragraph,
@@ -72,6 +111,8 @@ export const Semantic: StoryObj = {
         <p data-test="col-first">Column prose that splits across both columns of the box.</p>
         <p data-test="col-second" class="mt-1">Trailing prose.</p>
       </div>
+      <div data-test="box" class="mt-1 w-20 border p-1">boxed</div>
+      <p data-test="pointer" class="cursor-pointer">pointer cursor here</p>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
@@ -89,38 +130,9 @@ export const Semantic: StoryObj = {
       return { x: rect.left + (col + 0.5) * cellWidth, y: rect.top + (row + 0.5) * cellHeight };
     };
     const selection = () => document.getSelection()!.toString().trim();
-    const press = (
-      at: { x: number; y: number },
-      detail: number,
-      init: { pointerType?: string; shiftKey?: boolean } = {},
-    ) => {
-      const common = {
-        bubbles: true,
-        composed: true,
-        cancelable: true,
-        clientX: at.x,
-        clientY: at.y,
-      };
-      grid.dispatchEvent(
-        new PointerEvent("pointerdown", {
-          ...common,
-          pointerType: init.pointerType ?? "mouse",
-          isPrimary: true,
-          button: 0,
-          buttons: 1,
-        }),
-      );
-      grid.dispatchEvent(
-        new MouseEvent("mousedown", {
-          ...common,
-          detail,
-          button: 0,
-          buttons: 1,
-          shiftKey: init.shiftKey ?? false,
-        }),
-      );
-    };
-    const move = (at: { x: number; y: number }) =>
+    const press = (at: Point, detail: number, init: PressInit = {}) =>
+      pressAt(init.target ?? grid, at, detail, init);
+    const move = (at: Point) =>
       grid.dispatchEvent(
         new PointerEvent("pointermove", {
           bubbles: true,
@@ -132,12 +144,19 @@ export const Semantic: StoryObj = {
           buttons: 1,
         }),
       );
-    const release = () =>
-      window.dispatchEvent(
-        new PointerEvent("pointerup", { pointerType: "mouse", isPrimary: true }),
-      );
     const copied = () => copyText(host);
     const lifted = "data-mw-semantic-selection";
+    // The selection's start container as seen through the host's
+    // shadow (anchorNode is retargeted onto the host in Firefox).
+    const composedRange = (): AbstractRange | null => {
+      const sel = document.getSelection()!;
+      const composed = sel.getComposedRanges?.({ shadowRoots: [host.shadowRoot!] })[0];
+      if (composed) return composed;
+      const inner = (host.shadowRoot as { getSelection?: () => Selection | null }).getSelection?.();
+      const live = inner ?? sel;
+      return live.rangeCount > 0 ? live.getRangeAt(0) : null;
+    };
+    const composedStart = (): Node | null => composedRange()?.startContainer ?? null;
 
     // Triple-click: the paragraph, nothing beside it, the lock lifted.
     press(cell("first", 1, 0), 3);
@@ -162,8 +181,9 @@ export const Semantic: StoryObj = {
     expect(host).not.toHaveAttribute(lifted);
     release();
     document.getSelection()!.removeAllRanges();
-    // Triple-click on a gap cell selects nothing — never the grid.
-    press(cell("second", 1, -1), 3);
+    // Triple-click on a gap cell is left to the browser (its own
+    // gesture on the grid): not taken, selection untouched.
+    expect(press(cell("second", 1, -1), 3)).toBe(true);
     expect(selection()).toBe("");
     release();
     // The banner: its transcript.
@@ -171,15 +191,26 @@ export const Semantic: StoryObj = {
     expect(selection()).toBe(art.trim());
     expect(copied()).toBe(art);
     release();
-    // Double-click: a word; a blank cell: nothing; drag: word through word.
+    // Double-click: a word; a blank cell: the browser's; drag: word through word.
     press(cell("first", 7, 0), 2);
     expect(selection()).toBe("paragraph");
     move(cell("first", 30, 0));
     expect(selection()).toBe("paragraph with several words");
     expect(copied()).toBe("paragraph with several words");
     release();
-    press(cell("first", 39, 0), 2);
-    expect(selection()).toBe("");
+    expect(press(cell("first", 39, 0), 2)).toBe(true);
+    expect(host).not.toHaveAttribute(lifted);
+    release();
+    // Same for the paragraph gesture: a blank tail is not the paragraph,
+    // nor are a box's border and padding — only its characters.
+    expect(press(cell("first", 39, 0), 3)).toBe(true);
+    release();
+    expect(press(cell("box", 0, 0), 3)).toBe(true);
+    release();
+    expect(press(cell("box", 1, 1), 3)).toBe(true);
+    release();
+    press(cell("box", 2, 2), 3);
+    expect(selection()).toBe("boxed");
     release();
     press(cell("banner", 2, 1), 2);
     expect(selection()).toBe(art.trim());
@@ -229,6 +260,50 @@ export const Semantic: StoryObj = {
     press(cell("col-first", 1, 0), 2);
     expect(selection()).toBe("Column");
     release();
+    // A phantom target — a non-interactive light element that received
+    // the event by a browser quirk — is a grid event at its coordinates:
+    // the gestures work, and a plain press starts an engine-driven grid
+    // drag anchored in the shadow <pre>.
+    expect(press(cell("first", 1, 0), 3, { target: by("first") })).toBe(false);
+    expect(selection()).toBe(text("first"));
+    release();
+    expect(press(cell("first", 0, 0), 1, { target: by("first") })).toBe(false);
+    expect(grid.contains(composedStart())).toBe(true);
+    move(cell("second", 5, 0));
+    // The extent moved down the grid (toString() of a shadow selection
+    // is unreliable in Chromium; read the composed range instead).
+    const dragged = composedRange()!;
+    expect(grid.contains(dragged.endContainer)).toBe(true);
+    expect((dragged.endContainer as Text).data.startsWith("Second")).toBe(true);
+    // A pointer past the grid's rows and columns clamps to its end.
+    move(cell("pointer", 200, 40));
+    expect(grid.contains(composedRange()!.endContainer)).toBe(true);
+    release();
+    // Grid-mode light elements carry the text cursor; authored cursors win.
+    expect(getComputedStyle(by("first")).cursor).toBe("text");
+    expect(getComputedStyle(by("pointer")).cursor).toBe("pointer");
+    // A drag begun on the grid drops interactives' pointer events until
+    // release, so the native sweep passes through their cells.
+    press(cell("first", 1, 0), 1);
+    move(cell("second", 1, 0));
+    expect(host).toHaveAttribute("data-mw-dragging");
+    expect(getComputedStyle(by("input")).pointerEvents).toBe("none");
+    release();
+    expect(host).not.toHaveAttribute("data-mw-dragging");
+    expect(getComputedStyle(by("input")).pointerEvents).toBe("auto");
+    // A plain press that blurs a control is taken over (engine drag), so
+    // the focus invert repaints at mousedown rather than on release.
+    by("input").focus();
+    expect(press(cell("first", 0, 0), 1)).toBe(false);
+    expect(document.activeElement).not.toBe(by("input"));
+    expect(grid.contains(composedStart())).toBe(true);
+    await waitFor(() =>
+      expect(
+        Array.from(grid.querySelectorAll("span")).some((span) => span.style.backgroundColor !== ""),
+      ).toBe(false),
+    );
+    release();
+    document.getSelection()!.removeAllRanges();
     // A tap's compatibility mousedown is not a gesture.
     document.getSelection()!.removeAllRanges();
     press(cell("first", 1, 0), 3, { pointerType: "touch" });
@@ -285,5 +360,10 @@ export const Copy: StoryObj = {
     expect(copyOf("c1", "c2")).toBe("a\tb");
     expect(copyOf("c2", "c3")).toBe("b\nc");
     document.getSelection()!.removeAllRanges();
+    // The gestures are grid-mode only: a triple-click here is the browser's.
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const rect = canvasElement.querySelector('[data-test="p1"]')!.getBoundingClientRect();
+    expect(pressAt(grid, { x: rect.left + 4, y: rect.top + 4 }, 3)).toBe(true);
+    release();
   },
 };

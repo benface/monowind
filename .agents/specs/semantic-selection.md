@@ -63,24 +63,31 @@ selects a word or a paragraph.
   lines belong to their leaf. An atomic inline box (`inline-block`,
   `inline-flex`) is a leaf of its own: a gesture on its cells selects
   within it, and its parent paragraph's range includes it as a
-  descendant. Padding and border cells count as the leaf, as native
-  triple-click in a padded paragraph selects it; so does a blank cell
-  inside the content box (a short line's tail, an alignment gap). A
-  cell on no leaf — a gap, a container's padding, a border — selects
-  nothing.
+  descendant. Both gestures need a CHARACTER of the leaf painted at
+  the cell (a space between words counts; a banner's art cells count).
+  Anything else — a leaf's padding or border, a container's, a gap, a
+  short line's blank tail — is left to the browser's own gesture on
+  the grid: the grid LINE on a triple-click (a `<pre>` row is a
+  paragraph to the browser) and a glyph run on a double-click. One
+  rule, deliberately: text selects its element, everything else
+  behaves like the terminal it looks like. **Deviation** from native
+  triple-click, which selects a paragraph from its padding too.
 - **The grid-mode lock lifts while a semantic selection is live.** The
-  shadow rule `:host([select="grid"]) slot { user-select: none }` is
-  what makes the light DOM unselectable by gesture. _Verified_: in
-  Chromium and WebKit a range set into that content is also
-  inert programmatically — `Selection.toString()` is `""` and a copy
-  writes nothing — and after the lift the same range selects,
-  highlights, and copies; Firefox never applied the lock to
-  programmatic ranges (computed `user-select: auto`), so the lift is a
-  no-op there. The engine sets `data-mw-semantic-selection` on the
-  host BEFORE applying the range; the shadow stylesheet switches the
-  slot to `user-select: text` under that attribute. `pointer-events`
-  is untouched, so a plain drag still lands on the grid and selects it
-  as before. The attribute clears synchronously on the next plain
+  lock is `user-select: none` on the light DOM — the shadow rule
+  `:host([select="grid"]) slot { … }` plus an explicit companion rule
+  on every light element, because the slot's value reaches slotted
+  content in Chromium and WebKit but not Firefox (_verified_: computed
+  `auto` there, and a grid drag straying onto a light element — a
+  multicol spanner, see specs/multicol.md — selected it). _Verified_:
+  in Chromium and WebKit a range set into locked content is inert
+  programmatically — `Selection.toString()` is `""` and a copy writes
+  nothing — and after the lift the same range selects, highlights, and
+  copies. The engine sets `data-mw-semantic-selection` on the host
+  BEFORE applying the range; both rules yield under that attribute.
+  Editable controls are exempt from the explicit rule: Firefox honors
+  an explicit `none` on a field's value (_verified_), while the slot's
+  inherited value never reached it. `pointer-events` is untouched, so a
+  plain drag still lands on the grid and selects it as before. The attribute clears synchronously on the next plain
   `mousedown` on the grid (`detail === 1` — the drag that follows must
   not reach into a still-lifted light DOM while `selectionchange` is
   pending) and, as the catch-all, on `selectionchange` once the
@@ -109,8 +116,14 @@ selects a word or a paragraph.
   the engine listens for `mousedown` on the host (grid mode only, and
   only when the event path includes the grid — clicks landing on
   interactive elements, `pointer-events: auto` in grid mode, are the
-  light DOM's). `detail === 2` is a word gesture, `detail >= 3` a
-  paragraph gesture; the engine `preventDefault()`s the event —
+  light DOM's — or a PHANTOM target: a non-interactive light element
+  that received the event by a browser quirk, _verified_ Firefox
+  hit-testing a multicol spanner's rows as its container despite
+  `pointer-events: none`; it is a grid event at the same coordinates,
+  and a plain press there starts an engine-driven grid drag, since no
+  native selection can begin on locked content). `detail === 2` is a
+  word gesture, `detail >= 3` a paragraph gesture; the engine
+  `preventDefault()`s the event —
   stopping the browser's own word/whole-`<pre>` selection AND the
   native drag it would start — and owns the gesture until release.
   Mouse and pen only: a `mousedown` counts only when the most recent
@@ -138,8 +151,8 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   the element's closest `lang`; _verified_ present in all three
   engines), word-like or not — a double-click on a blank or a
   punctuation run selects that run, as Chromium does. A cell with no
-  character (an alignment gap, a short line's tail) selects nothing.
-  Both gestures are element selections, so copy means the same thing
+  character is the browser's, as for paragraphs. Both gestures are
+  element selections, so copy means the same thing
   whichever one made the selection; the grid's own segmentation of the
   row string is never used.
 - **Shift extends an existing element selection.** A semantic
@@ -183,9 +196,9 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   layout, innermost entry whose node has `text` and no in-flow children
   (the paint walk's own leaf test); its `source` is the element.
   Paragraph-flow multicol children share their container's box, so
-  `hitStack` tests them by their line fragments (specs/multicol.md). No
-  such entry → the gesture is still consumed (the whole-grid selection
-  must never appear) and the selection is emptied (`removeAllRanges`).
+  `hitStack` tests them by their line fragments (specs/multicol.md).
+  No such entry, or no character of it at the cell → the event is not
+  canceled and the browser's own gesture runs on the grid.
 - **Paragraph range.** `selectNodeContents(source)`, or of the leaf's
   `selectionTarget` when it has one. Extension:
   `setBaseAndExtent(anchorBoundary…, currentBoundary…)` with the
@@ -306,10 +319,17 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   the string covers both and still excludes the side one; `pointerup`
   ends the gesture; `removeAllRanges` followed by `selectionchange`
   clears the attribute. A `mousedown` with `detail: 3` on a gap cell
-  asserts an empty selection (never the whole grid). Word gesture:
+  asserts the event was not canceled and the selection untouched (the
+  browser's gesture); so does a triple-click on a bordered box's border
+  or padding cell, while one on its characters selects its text. A
+  pointer moved past the grid during an engine-driven drag clamps the
+  extent to the grid's end; grid-mode light elements compute
+  `cursor: text` while an authored `cursor-pointer` still wins; in
+  `select="text"` a triple-click on the grid is not canceled. Word
+  gesture:
   `detail: 2` on a cell inside a known word asserts the selection
-  string is that word; on a blank cell of the same line, an empty
-  selection; `pointermove` onto a later word asserts the string runs
+  string is that word; on a blank cell of the same line, not canceled;
+  `pointermove` onto a later word asserts the string runs
   from the first word to the second; a Shift+`mousedown` (`detail: 3`)
   on another paragraph asserts the selection now ends at that
   paragraph's boundary. Banner: `detail: 3` on the art asserts the
