@@ -21,6 +21,9 @@ accessibility semantics stay fully intact.
 </mono-wind>
 ```
 
+The host is a container like any element: `<mono-wind>hello</mono-wind>`
+lays its own text out too.
+
 ## With your own Tailwind (v4) build
 
 ```sh

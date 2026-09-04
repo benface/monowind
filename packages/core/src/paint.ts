@@ -103,9 +103,7 @@ function structureMatches(
       const bare = isBarePaint(row[i]!);
       if (bare !== (node.nodeType === Node.TEXT_NODE)) return false;
       if (node.textContent !== row[i]!.text) return false;
-      // Something else may have cleared the grid (the empty-content
-      // path replaceChildren's it) — stale detached nodes can't be
-      // patched.
+      // A node detached from the grid can't be patched.
       if (node.parentNode !== target) return false;
     }
   }

@@ -57,11 +57,14 @@ selects a word or a paragraph.
   node under the cell that carries text (`LayoutNode.text` — a `<p>`,
   `<li>`, `<h1>`, a `<div>` with direct text, a `<td>`, a custom leaf
   such as `<mono-ascii>`), taken from `hitStack` (pointer.ts), which
-  already applies scroll offsets. Leaves are elements — a container's
-  direct text is dropped (cell-model.md), so there are no anonymous
-  runs — and inline descendants (`<span>`, `<a>`, `<b>`) and `<br>`
-  lines belong to their leaf. An atomic inline box (`inline-block`,
-  `inline-flex`) is a leaf of its own: a gesture on its cells selects
+  already applies scroll offsets, or the root leaf itself when nothing
+  in the stack carries text (the host's own inline content,
+  host-leaf.md). Leaves are elements or the root — a container's
+  direct text next to block children is dropped (cell-model.md), so
+  there are no anonymous runs — and inline descendants (`<span>`,
+  `<a>`, `<b>`) and `<br>` lines belong to their leaf. An atomic
+  inline box (`inline-block`, `inline-flex`) is a leaf of its own: a
+  gesture on its cells selects
   within it, and its parent paragraph's range includes it as a
   descendant. Both gestures need a CHARACTER of the leaf painted at
   the cell (a space between words counts; a banner's art cells count).

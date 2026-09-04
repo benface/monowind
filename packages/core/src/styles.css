@@ -189,7 +189,10 @@ mono-wind[select="grid"][data-mw-dragging]
  * (specs/semantic-selection.md). Editable controls keep their own
  * selection (Firefox honors an explicit `none` on a text field's
  * value; the slot's inherited value never reached it). `:where()` keeps
- * the rule at base specificity so the coarse-pointer rule below wins. */
+ * the rule at base specificity so the coarse-pointer rule below wins.
+ * The host's own text (specs/host-leaf.md) takes the host's value in
+ * Firefox, so the leaf host is locked too. */
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))[data-mw-leaf],
 mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
   :where(:not(input, textarea, [contenteditable], [contenteditable] *)) {
   user-select: none;
@@ -269,6 +272,7 @@ mono-wind:not([data-mw-ready]) {
  * draws the glyph copy that `color` draws in other engines (where the
  * identical-color shadow hides beneath it). Native copy still yields
  * the real text (the DOM the browser reads). */
+mono-wind:not([measuring])[data-mw-leaf]::selection,
 mono-wind:not([measuring]) *::selection {
   color: var(--mw-bg, canvas) !important;
   text-shadow: 0 0 0 var(--mw-bg, canvas) !important;
@@ -373,7 +377,11 @@ mono-wind:not([measuring]) * {
  * the ink while computed `color` stays LIVE — authored transitions run
  * on it for real and the engine samples true mid-fade values (the
  * animation loop, element.ts). Decoration ink follows `color`, so it
- * needs its own transparent lock (the grid paints decorations). */
+ * needs its own transparent lock (the grid paints decorations).
+ * `[data-mw-leaf]` is the host with its own text as the root leaf
+ * (specs/host-leaf.md): every rule that shapes a leaf's native text
+ * carries this host variant — render.ts writes the host's flags. */
+mono-wind:not([measuring])[data-mw-leaf],
 mono-wind:not([measuring]) *:not(input):not(textarea):not(select) {
   -webkit-text-fill-color: transparent !important;
   text-decoration-color: transparent !important;
@@ -392,6 +400,7 @@ mono-wind:not([measuring]) select {
 /* Author-requested `white-space: nowrap` (or `pre`) — the engine sized this
  * box for unwrapped hard lines, so the browser must not wrap either. Wins
  * over the lock above on specificity. */
+mono-wind:not([measuring])[data-mw-nowrap],
 mono-wind:not([measuring]) [data-mw-nowrap] {
   white-space: nowrap !important;
 }
@@ -401,6 +410,8 @@ mono-wind:not([measuring]) [data-mw-nowrap] {
  * them too — on the leaf AND its inline descendants (the lock above would
  * collapse text inside nested spans). Later than the nowrap rule, so it
  * wins on the leaf itself at equal specificity. */
+mono-wind:not([measuring])[data-mw-pre],
+mono-wind:not([measuring])[data-mw-pre] *,
 mono-wind:not([measuring]) [data-mw-pre],
 mono-wind:not([measuring]) [data-mw-pre] * {
   white-space: pre !important;
@@ -604,6 +615,7 @@ mono-wind:not([measuring]) [data-mw-multicol-flow] {
  * root font size, not the cell width, so the transparent light-DOM
  * text drifts out from under the grid's paint. Rewrite it in cells so
  * the two agree — selection ranges land exactly where the glyphs are. */
+mono-wind:not([measuring])[data-mw-leaf],
 mono-wind:not([measuring]) [data-mw-laid-out],
 mono-wind:not([measuring]) [data-mw-multicol-flow] {
   text-indent: calc(var(--mw-ti, 0) * var(--mw-cw, 1px)) !important;
@@ -688,11 +700,11 @@ mono-wind:not([measuring]) [data-mw-inline-inset] {
 
 /* A container whose direct text was dropped (mixed text + block children,
  * cell-model deviation): the browser would paint that text unpositioned
- * over the laid-out children, so hide it. `visibility` is inherited AND
- * resettable, so the container's laid-out children come back — only in
- * this warned state, which is why the reset may also override an authored
- * `invisible` utility there. */
-mono-wind:not([measuring])[data-mw-dropped-text],
+ * over the laid-out children, so hide it — the host's own through its
+ * shadow slot (element.ts), a nested container's through itself.
+ * `visibility` is inherited AND resettable, so the laid-out children come
+ * back — only in this warned state, which is why the reset may also
+ * override an authored `invisible` utility there. */
 mono-wind:not([measuring]) [data-mw-dropped-text] {
   visibility: hidden !important;
 }
@@ -710,6 +722,7 @@ mono-wind:not([measuring]) [data-mw-table-hidden] {
 /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/
  * `end` all land on whole cells (offset = (W - N) × cell width); `center` and
  * `justify` produce fractional per-line offsets we can't snap to the grid. */
+mono-wind:not([measuring])[data-mw-text-align-blocked],
 mono-wind:not([measuring]) [data-mw-text-align-blocked] {
   text-align: start !important;
 }

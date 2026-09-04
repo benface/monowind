@@ -89,7 +89,7 @@
         id="editor"
         class="relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-neutral-950 [scrollbar-gutter:stable]"
       >
-        <div id="editor-inner" class="relative min-h-full">
+        <div id="editor-inner" class="relative flex min-h-full flex-col">
           <pre
             id="highlight"
             aria-hidden="true"
@@ -99,10 +99,10 @@
             id="source"
             spellcheck="false"
             aria-label="HTML source"
-            class="relative m-0 block min-h-full w-full resize-none overflow-hidden border-none bg-transparent p-4 font-[inherit] leading-normal break-words whitespace-pre-wrap text-transparent caret-neutral-200 outline-none"
+            class="relative m-0 block w-full grow resize-none overflow-hidden border-none bg-transparent p-4 font-[inherit] leading-normal break-words whitespace-pre-wrap text-transparent caret-neutral-200 outline-none"
           ></textarea>
         </div>
-        <div id="editor-actions" class="sticky bottom-3 z-10 -mt-9 mr-3 flex justify-end gap-2">
+        <div id="editor-actions" class="sticky bottom-3 z-10 ms-auto me-3 flex w-max gap-2">
           <button
             id="tidy"
             type="button"

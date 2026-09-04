@@ -1,8 +1,8 @@
 # Focus navigation implementation plan
 
 Status: **proposed** (2026-09-04). Spec: `.agents/specs/focus-navigation.md`
-(normative; this plan only sequences it). Ships with the unreleased
-touch-selection fix and the padded grid rows as the next patch.
+(normative; this plan only sequences it). Ships as its own patch after
+the host-as-a-leaf work (`2026-09-04-host-leaf.md`).
 
 ## Phases (each ends green: `pnpm check` + the visual sweep)
 

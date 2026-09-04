@@ -5,6 +5,59 @@ import { wrapLines } from "monowind";
  * hyphen-sensitive assertions gate on this. */
 export const isFirefox = navigator.userAgent.includes("Firefox");
 
+/** What a copy of the current selection puts on the clipboard as
+ * text/plain — via a synthetic copy event on the host. Read the
+ * EVENT's clipboardData: Firefox gives a dispatched event a
+ * DataTransfer of its own. */
+export function copyText(host: HTMLElement): string {
+  const event = new ClipboardEvent("copy", {
+    clipboardData: new DataTransfer(),
+    bubbles: true,
+    cancelable: true,
+  });
+  host.dispatchEvent(event);
+  return event.clipboardData!.getData("text/plain");
+}
+
+export interface Point {
+  x: number;
+  y: number;
+}
+export interface PressInit {
+  pointerType?: string;
+  shiftKey?: boolean;
+  target?: Element;
+}
+
+/** A primary press at client coordinates: the pointerdown the engine
+ * reads the pointer type from, then the mousedown that carries the
+ * click count. Returns false when the engine took it (preventDefault). */
+export function pressAt(target: Element, at: Point, detail: number, init: PressInit = {}): boolean {
+  const common = { bubbles: true, composed: true, cancelable: true, clientX: at.x, clientY: at.y };
+  target.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      ...common,
+      pointerType: init.pointerType ?? "mouse",
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+    }),
+  );
+  return target.dispatchEvent(
+    new MouseEvent("mousedown", {
+      ...common,
+      detail,
+      button: 0,
+      buttons: 1,
+      shiftKey: init.shiftKey ?? false,
+    }),
+  );
+}
+
+export function release(): void {
+  window.dispatchEvent(new PointerEvent("pointerup", { pointerType: "mouse", isPrimary: true }));
+}
+
 async function textLeaves(host: Element): Promise<HTMLElement[]> {
   // Generous timeout: three browser instances share the CPU (worse on CI
   // runners), so a rAF-driven relayout can easily outrun waitFor's

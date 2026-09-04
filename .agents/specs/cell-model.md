@@ -128,7 +128,9 @@ mirroring on the grid, engine-drawn bars — specs/scrolling.md is the full
 contract.
 
 Visible overflow paints past the host, as CSS paints it past any box: the
-grid is sized to the INK extent while the host keeps its in-flow height, so
+grid is sized to the INK extent along each visible axis (a root leaf
+under `truncate` keeps its box — specs/host-leaf.md) while the host
+keeps its in-flow height, so
 a box's overflowing rows overlay what follows (later siblings paint on top,
 per paint order), and the host's background follows the ink — the host is
 the canvas, as a document's root background covers its overflow. Ink above or
@@ -145,7 +147,10 @@ centering land on the grid instead of a fractional edge. A cap rather than
 a width, so a shrinking container still shrinks the host natively; growth
 is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
-the window. The height is engine-set from the content rows, as before.
+the window. The height is engine-set from the content rows, as before;
+a host with nothing to lay out is zero rows — its padding and border
+only, and an empty grid. The host's own inline content is the root
+leaf (specs/host-leaf.md), laid out inside the same content box.
 
 ## Typography
 
@@ -629,11 +634,12 @@ lines); the explicit zero `clip` rect still drops them.
    uses `justify-items`/`align-items`). The wrap is unchanged — the padded
    content box is exactly the widest line.
 7. Mixed direct text nodes + in-flow block-level element children in one
-   container don't get their text laid out (an all-inline mix does, and
-   out-of-flow children don't count — see Inline content). The dropped
+   container — the host included (specs/host-leaf.md) — don't get their
+   text laid out (an all-inline mix does, and out-of-flow children
+   don't count — see Inline content). The dropped
    text is HIDDEN (it would otherwise paint unpositioned over the laid-out
-   children) and the engine warns once with the fix: wrap each text
-   segment in its own element.
+   children; the host's own hides through its shadow slot) and the engine
+   warns once with the fix: wrap each text segment in its own element.
 8. `white-space: pre` DOES preserve whitespace: spaces and newlines
    survive as authored, tabs expand to `tab-size` stops (default 8)
    measured from each hard line's start, and browsers render the same

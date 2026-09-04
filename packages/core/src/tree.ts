@@ -2,8 +2,14 @@ import { intrinsicOuterWidth, makeIntrinsicCache } from "./layout.ts";
 import { leafRendererFor, renderLeafContent } from "./leaf.ts";
 import type { LeafRegistration } from "./leaf.ts";
 import { pxToCells } from "./metrics.ts";
-import { isTransparentColor, readCellStyle, trackingCells } from "./style.ts";
-import { zeroInsets } from "./types.ts";
+import {
+  isTransparentColor,
+  readCellStyle,
+  readOverflow,
+  readTextStyle,
+  trackingCells,
+} from "./style.ts";
+import { defaultCellStyle, zeroInsets } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import {
   eachObjectMarker,
@@ -13,7 +19,7 @@ import {
   OBJECT_REPLACEMENT,
   wrapLineCount,
 } from "./wrap.ts";
-import type { CellMetrics, CharSourceRun, LayoutNode, PerSide } from "./types.ts";
+import type { CellMetrics, CellStyle, CharSourceRun, LayoutNode, PerSide } from "./types.ts";
 
 /** Per-textarea content width in cells, captured by the host BEFORE
  * the measuring attribute goes on — the engine's width rule is off
@@ -39,6 +45,8 @@ export type TextareaWidths = Map<HTMLTextAreaElement, number>;
  * - Elements with at least one in-flow block-level element child become
  *   **containers** and recurse. Direct text nodes on containers (uncommon
  *   in utility-first markup) are not laid out — a documented deviation.
+ * - The host follows the same rule through `buildRootLeaf`
+ *   (specs/host-leaf.md).
  *
  * `cellMetrics` (measured by the host) is the basis for leading and
  * tracking; absent in headless tests (see readCellStyle).
@@ -61,143 +69,12 @@ export function buildTree(
 
   const elementChildren = Array.from(root.children);
   const roles = elementChildren.map(childRole);
+  const context = { rootFontSizePx, cellMetrics, textareaWidths };
 
   // Form controls are always leaves — descending into a <select>'s
   // <option>s would leak that text into the grid.
-  const tag = root.tagName;
-  const formControl = isFormControlTag(tag);
-
-  if (!roles.includes("block") || formControl) {
-    // Leaf: in-flow inline content forms the text run (atomic inline
-    // boxes ride it as U+FFFC markers); out-of-flow children become
-    // layout nodes for the positioning pass.
-    const run = extractLeafRun(root, style.tracking, {
-      rootFontSizePx,
-      rootLetterSpacingPx: cellMetrics?.letterSpacing ?? 0,
-      cellMetrics,
-      textareaWidths,
-      preserve: style.whiteSpace === "pre",
-      tabSize: style.tabSize,
-    });
-    const text = run.chars.join("");
-    // Intrinsic advances for the box markers use the boxes' max-content
-    // widths; layout overwrites them with the laid-out widths per pass.
-    if (run.boxes.length > 0) {
-      const cache = makeIntrinsicCache();
-      eachObjectMarker(run.chars, (charIndex, boxIndex) => {
-        run.advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
-      });
-    }
-    // Form controls with no explicit width would otherwise be 0 cells
-    // wide (their leaf is empty; the value renders natively). Intrinsic
-    // widths mirror the native ones: input's size attribute, textarea's
-    // cols, and a select's option labels — the longest by default, the
-    // SELECTED one under `field-sizing: content`, like the browser.
-    let intrinsicWidth = longestLineAdvance(text, run.advances, style.tracking);
-    if (formControl && intrinsicWidth === 0) {
-      // Number(): happy-dom (tests) returns these attributes as strings.
-      if (tag === "INPUT") intrinsicWidth = Number((root as HTMLInputElement).size) || 20;
-      else if (tag === "TEXTAREA")
-        intrinsicWidth = Number((root as HTMLTextAreaElement).cols) || 20;
-      else {
-        const select = root as HTMLSelectElement;
-        // .label ?? .textContent: happy-dom (tests) lacks option.label.
-        const labelOf = (option: HTMLOptionElement | undefined) =>
-          option?.label || option?.textContent || "";
-        const labels =
-          getComputedStyle(root).getPropertyValue("field-sizing") === "content"
-            ? [labelOf(select.selectedOptions[0])]
-            : Array.from(select.options, labelOf);
-        intrinsicWidth = Math.max(1, ...labels.map((label) => label.trim().length));
-      }
-    }
-    // Form controls always reserve at least one content row (native
-    // shows a caret-height field even empty). CSS `min-height` can't
-    // do it — it floors the outer box, which the border already
-    // exceeds.
-    const contentHeight = text.length > 0 ? countHardLines(text) : 0;
-    let intrinsicHeight: number;
-    if (tag === "TEXTAREA") {
-      const textarea = root as HTMLTextAreaElement;
-      const value = textarea.value ?? "";
-      // Row count = wrap the value against the textarea's current
-      // content-area width in cells (captured by the host pre-
-      // measuring so it reflects the engine-assigned width, not the
-      // browser default that applies while measuring is on). Pure
-      // and monotonic, so the box grows AND shrinks as the width
-      // changes — max-w-full under viewport resize, flex reflow,
-      // typing that wraps. Fallback for the first-ever layout (no
-      // snapshot yet): hard-line count only.
-      const contentCells = textareaWidths?.get(textarea);
-      // Unlike `<br>` (whose trailing break is dropped, per CSS),
-      // a textarea SHOWS the empty line after a trailing `\n` — that
-      // extra visible row is where the caret sits after Enter.
-      const trailingLine = value.endsWith("\n") ? 1 : 0;
-      const wrappedLines =
-        contentCells !== undefined && contentCells > 0
-          ? wrapLineCount(value, contentCells) + trailingLine
-          : value === ""
-            ? 0
-            : value.split(/\r\n?|\n/).length;
-      const rowsFloor =
-        getComputedStyle(root).getPropertyValue("field-sizing") === "content"
-          ? 1
-          : Number(textarea.rows) || 2;
-      const lines = Math.max(rowsFloor, wrappedLines);
-      // Leading: N lines occupy N + (N − 1) × gap rows, same as any
-      // laid-out leaf (specs/cell-model.md "Line height on the grid").
-      intrinsicHeight = lines + Math.max(0, lines - 1) * style.lineGap;
-    } else if (formControl) {
-      intrinsicHeight = Math.max(1, contentHeight);
-    } else {
-      intrinsicHeight = contentHeight;
-    }
-    // `children` in DOCUMENT order: paint-order ties (same z-index)
-    // resolve as CSS would — later DOM wins — and the atomic inline
-    // boxes come out in U+FFFC marker order (inlineBoxesOf). Direct
-    // boxes interleave with out-of-flow siblings by construction; a
-    // box nested in an inline ancestor is sorted into place.
-    const directBoxes = new Map<Element, LayoutNode>();
-    const nestedBoxes: LayoutNode[] = [];
-    for (const box of run.boxes) {
-      if (box.source.parentElement === root) directBoxes.set(box.source, box);
-      else nestedBoxes.push(box);
-    }
-    const children: LayoutNode[] = [];
-    for (let i = 0; i < elementChildren.length; i++) {
-      const el = elementChildren[i]!;
-      const box = directBoxes.get(el);
-      if (box) children.push(box);
-      else if (roles[i] === "out-of-flow") {
-        const child = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
-        if (child) children.push(child);
-      }
-    }
-    if (nestedBoxes.length > 0) {
-      children.push(...nestedBoxes);
-      children.sort((a, b) =>
-        a.source.compareDocumentPosition(b.source) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
-      );
-    }
-    const node: LayoutNode = {
-      source: root,
-      style,
-      children,
-      text,
-      intrinsicWidth,
-      intrinsicHeight,
-      localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
-      unclampedHeight: 0,
-      resolvedPadding: zeroInsets(),
-    };
-    if (run.advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = run.advances;
-    if (run.inlineElements.length > 0) {
-      node.inlineElements = run.inlineElements;
-      node.charInline = run.chars.map((_, i) => run.inlineIndex[i] ?? -1);
-    }
-    const charSource = charSourceRuns(run);
-    if (charSource.length > 0) node.charSource = charSource;
-    return node;
+  if (!roles.includes("block") || isFormControlTag(root.tagName)) {
+    return buildLeaf(root, style, elementChildren, roles, context);
   }
 
   const children: LayoutNode[] = [];
@@ -219,6 +96,194 @@ export function buildTree(
   };
   flagDroppedText(root, container);
   return container;
+}
+
+interface BuildContext {
+  rootFontSizePx: number;
+  cellMetrics: CellMetrics | undefined;
+  textareaWidths: TextareaWidths | undefined;
+}
+
+/** The host's own inline content as the ROOT leaf (specs/host-leaf.md):
+ * null when an element child is block-level (the host is a container)
+ * or there is no inline content at all (the empty root). The metrics
+ * probe is never part of the run. */
+export function buildRootLeaf(
+  host: Element,
+  rootFontSizePx: number,
+  cellMetrics?: CellMetrics,
+  textareaWidths?: TextareaWidths,
+): LayoutNode | null {
+  const nodes = Array.from(host.childNodes).filter(
+    (node) => !(node instanceof Element && node.hasAttribute("data-mw-probe")),
+  );
+  const elementChildren = nodes.filter((node): node is Element => node instanceof Element);
+  const roles = elementChildren.map(childRole);
+  if (roles.includes("block")) return null;
+  if (!hasDirectText(host) && !roles.includes("inline")) return null;
+  const style = rootLeafStyle(host, rootFontSizePx);
+  const context = { rootFontSizePx, cellMetrics, textareaWidths };
+  return buildLeaf(host, style, elementChildren, roles, context, nodes);
+}
+
+/** The root leaf's style: the virtual root's box (no padding, border,
+ * margin, or size — the host's own stay outside the grid) with the
+ * host's text properties. Tracking and line gap are zero by
+ * definition: the host's letter-spacing and line-height ARE the cell. */
+function rootLeafStyle(host: Element, rootFontSizePx: number): CellStyle {
+  const cs = getComputedStyle(host);
+  const style = { ...defaultCellStyle(), ...readTextStyle(host, cs, rootFontSizePx) };
+  // Truncation needs the clip; any other overflow stays the root's.
+  if (readOverflow(cs).x === "clip") style.overflow = { ...style.overflow, x: "clip" };
+  return style;
+}
+
+/** A leaf over `nodes` (the element's child nodes by default): in-flow
+ * inline content forms the text run (atomic inline boxes ride it as
+ * U+FFFC markers); out-of-flow children become layout nodes for the
+ * positioning pass. */
+function buildLeaf(
+  root: Element,
+  style: CellStyle,
+  elementChildren: Element[],
+  roles: ChildRole[],
+  context: BuildContext,
+  nodes?: ChildNode[],
+): LayoutNode {
+  const { rootFontSizePx, cellMetrics, textareaWidths } = context;
+  const tag = root.tagName;
+  const formControl = isFormControlTag(tag);
+  const run = extractLeafRun(
+    root,
+    style.tracking,
+    {
+      rootFontSizePx,
+      rootLetterSpacingPx: cellMetrics?.letterSpacing ?? 0,
+      cellMetrics,
+      textareaWidths,
+      preserve: style.whiteSpace === "pre",
+      tabSize: style.tabSize,
+    },
+    nodes,
+  );
+  const text = run.chars.join("");
+  // Intrinsic advances for the box markers use the boxes' max-content
+  // widths; layout overwrites them with the laid-out widths per pass.
+  if (run.boxes.length > 0) {
+    const cache = makeIntrinsicCache();
+    eachObjectMarker(run.chars, (charIndex, boxIndex) => {
+      run.advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
+    });
+  }
+  // Form controls with no explicit width would otherwise be 0 cells
+  // wide (their leaf is empty; the value renders natively). Intrinsic
+  // widths mirror the native ones: input's size attribute, textarea's
+  // cols, and a select's option labels — the longest by default, the
+  // SELECTED one under `field-sizing: content`, like the browser.
+  let intrinsicWidth = longestLineAdvance(text, run.advances, style.tracking);
+  if (formControl && intrinsicWidth === 0) {
+    // Number(): happy-dom (tests) returns these attributes as strings.
+    if (tag === "INPUT") intrinsicWidth = Number((root as HTMLInputElement).size) || 20;
+    else if (tag === "TEXTAREA") intrinsicWidth = Number((root as HTMLTextAreaElement).cols) || 20;
+    else {
+      const select = root as HTMLSelectElement;
+      // .label ?? .textContent: happy-dom (tests) lacks option.label.
+      const labelOf = (option: HTMLOptionElement | undefined) =>
+        option?.label || option?.textContent || "";
+      const labels =
+        getComputedStyle(root).getPropertyValue("field-sizing") === "content"
+          ? [labelOf(select.selectedOptions[0])]
+          : Array.from(select.options, labelOf);
+      intrinsicWidth = Math.max(1, ...labels.map((label) => label.trim().length));
+    }
+  }
+  // Form controls always reserve at least one content row (native
+  // shows a caret-height field even empty). CSS `min-height` can't
+  // do it — it floors the outer box, which the border already
+  // exceeds.
+  const contentHeight = text.length > 0 ? countHardLines(text) : 0;
+  let intrinsicHeight: number;
+  if (tag === "TEXTAREA") {
+    const textarea = root as HTMLTextAreaElement;
+    const value = textarea.value ?? "";
+    // Row count = wrap the value against the textarea's current
+    // content-area width in cells (captured by the host pre-
+    // measuring so it reflects the engine-assigned width, not the
+    // browser default that applies while measuring is on). Pure
+    // and monotonic, so the box grows AND shrinks as the width
+    // changes — max-w-full under viewport resize, flex reflow,
+    // typing that wraps. Fallback for the first-ever layout (no
+    // snapshot yet): hard-line count only.
+    const contentCells = textareaWidths?.get(textarea);
+    // Unlike `<br>` (whose trailing break is dropped, per CSS),
+    // a textarea SHOWS the empty line after a trailing `\n` — that
+    // extra visible row is where the caret sits after Enter.
+    const trailingLine = value.endsWith("\n") ? 1 : 0;
+    const wrappedLines =
+      contentCells !== undefined && contentCells > 0
+        ? wrapLineCount(value, contentCells) + trailingLine
+        : value === ""
+          ? 0
+          : value.split(/\r\n?|\n/).length;
+    const rowsFloor =
+      getComputedStyle(root).getPropertyValue("field-sizing") === "content"
+        ? 1
+        : Number(textarea.rows) || 2;
+    const lines = Math.max(rowsFloor, wrappedLines);
+    // Leading: N lines occupy N + (N − 1) × gap rows, same as any
+    // laid-out leaf (specs/cell-model.md "Line height on the grid").
+    intrinsicHeight = lines + Math.max(0, lines - 1) * style.lineGap;
+  } else if (formControl) {
+    intrinsicHeight = Math.max(1, contentHeight);
+  } else {
+    intrinsicHeight = contentHeight;
+  }
+  // `children` in DOCUMENT order: paint-order ties (same z-index)
+  // resolve as CSS would — later DOM wins — and the atomic inline
+  // boxes come out in U+FFFC marker order (inlineBoxesOf). Direct
+  // boxes interleave with out-of-flow siblings by construction; a
+  // box nested in an inline ancestor is sorted into place.
+  const directBoxes = new Map<Element, LayoutNode>();
+  const nestedBoxes: LayoutNode[] = [];
+  for (const box of run.boxes) {
+    if (box.source.parentElement === root) directBoxes.set(box.source, box);
+    else nestedBoxes.push(box);
+  }
+  const children: LayoutNode[] = [];
+  for (let i = 0; i < elementChildren.length; i++) {
+    const el = elementChildren[i]!;
+    const box = directBoxes.get(el);
+    if (box) children.push(box);
+    else if (roles[i] === "out-of-flow") {
+      const child = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
+      if (child) children.push(child);
+    }
+  }
+  if (nestedBoxes.length > 0) {
+    children.push(...nestedBoxes);
+    children.sort((a, b) =>
+      a.source.compareDocumentPosition(b.source) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+  }
+  const node: LayoutNode = {
+    source: root,
+    style,
+    children,
+    text,
+    intrinsicWidth,
+    intrinsicHeight,
+    localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
+    unclampedHeight: 0,
+    resolvedPadding: zeroInsets(),
+  };
+  if (run.advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = run.advances;
+  if (run.inlineElements.length > 0) {
+    node.inlineElements = run.inlineElements;
+    node.charInline = run.chars.map((_, i) => run.inlineIndex[i] ?? -1);
+  }
+  const charSource = charSourceRuns(run);
+  if (charSource.length > 0) node.charSource = charSource;
+  return node;
 }
 
 /** A registered leaf renderer's node (specs/leaf-renderers.md): the
@@ -352,7 +417,9 @@ function isAtomicInline(el: Element, display: string): boolean {
 /** Classify a direct child: skipped, out-of-flow box, text-run content
  * (plain inline AND atomic inline boxes), or in-flow block (which forces
  * container mode). */
-function childRole(el: Element): "none" | "out-of-flow" | "inline" | "block" {
+type ChildRole = "none" | "out-of-flow" | "inline" | "block";
+
+function childRole(el: Element): ChildRole {
   const cs = getComputedStyle(el);
   if (cs.display === "none") return "none";
   if (cs.position === "absolute" || cs.position === "fixed") return "out-of-flow";
@@ -409,7 +476,12 @@ interface RunContext {
  * at it. A `white-space: pre` leaf skips all of that: spaces and newlines
  * survive as authored and tabs expand to tab stops (see RunContext).
  */
-function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun {
+function extractLeafRun(
+  el: Element,
+  tracking: number,
+  ctx: RunContext,
+  nodes?: ChildNode[],
+): LeafRun {
   const run: LeafRun = {
     chars: [],
     advances: [],
@@ -419,7 +491,8 @@ function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun
     inlineElements: [],
     boxes: [],
   };
-  collectRun(el, tracking, ctx, run);
+  if (nodes) collectNodes(nodes, tracking, ctx, run);
+  else collectRun(el, tracking, ctx, run);
   if (ctx.preserve) {
     // A final newline gets no line box of its own — the wrap layer's
     // dropFinalBreakSpan rule (the HTML parser already ate the one right
@@ -430,6 +503,14 @@ function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun
 }
 
 function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun): void {
+  // Form controls render their value / caret / selection natively —
+  // leave the leaf empty so the grid doesn't double-render, and skip
+  // descending into their internals (e.g. <select>'s <option>s).
+  if (isFormControlTag(el.tagName)) return;
+  collectNodes(Array.from(el.childNodes), tracking, ctx, run);
+}
+
+function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run: LeafRun): void {
   // Cells since the current hard line began — the tab-stop basis.
   const column = (): number => {
     let cells = 0;
@@ -438,11 +519,7 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
     }
     return cells;
   };
-  // Form controls render their value / caret / selection natively —
-  // leave the leaf empty so the grid doesn't double-render, and skip
-  // descending into their internals (e.g. <select>'s <option>s).
-  if (isFormControlTag(el.tagName)) return;
-  for (const node of Array.from(el.childNodes)) {
+  for (const node of nodes) {
     if (node.nodeType === Node.TEXT_NODE) {
       if (ctx.preserve) {
         // `white-space: pre`: spaces and newlines survive as authored;

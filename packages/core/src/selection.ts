@@ -210,6 +210,43 @@ function requiredBreaks(node: LayoutNode): number {
   return node.source.tagName === "P" ? 2 : 1;
 }
 
+interface Point {
+  node: Node;
+  offset: number;
+}
+
+/** The DOM extent of a leaf's run — its first mapped character or
+ * inline box through its last; null for a run with neither. */
+export function leafExtent(leaf: LayoutNode): { start: Point; end: Point } | null {
+  const points: { start: Point; end: Point }[] = [];
+  const runs = leaf.charSource ?? [];
+  if (runs.length > 0) {
+    const first = runs[0]!;
+    const last = runs[runs.length - 1]!;
+    points.push({
+      start: { node: first.node, offset: first.offset },
+      end: { node: last.node, offset: last.offset + last.length },
+    });
+  }
+  for (const box of inlineBoxesOf(leaf)) {
+    const parent = box.source.parentNode;
+    if (!parent) continue;
+    const index = Array.prototype.indexOf.call(parent.childNodes, box.source);
+    points.push({
+      start: { node: parent, offset: index },
+      end: { node: parent, offset: index + 1 },
+    });
+  }
+  if (points.length === 0) return null;
+  const before = (a: Point, b: Point) => comparePoints(a.node, a.offset, b.node, b.offset) < 0;
+  let { start, end } = points[0]!;
+  for (const point of points.slice(1)) {
+    if (before(point.start, start)) start = point.start;
+    if (before(end, point.end)) end = point.end;
+  }
+  return { start, end };
+}
+
 /** A node whose text is painted: text and no in-flow children (the
  * paint walk's own test); renderer leaves included. */
 export function isTextLeaf(node: LayoutNode): boolean {

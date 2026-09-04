@@ -256,21 +256,14 @@ export function readCellStyle(
       x: readCells(cs.getPropertyValue("--mw-scrollbar-inset-x"), 0),
       y: readCells(cs.getPropertyValue("--mw-scrollbar-inset-y"), 0),
     },
-    // `nowrap` and `pre` disable soft wrapping; `pre` additionally makes
-    // the tree builder preserve the source's spaces and newlines
-    // (specs/cell-model.md). Readable via getComputedStyle because the
-    // companion stylesheet's white-space lock is gated on `:not([measuring])`.
-    whiteSpace: cs.whiteSpace === "pre" ? "pre" : cs.whiteSpace === "nowrap" ? "nowrap" : "normal",
-    tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
+    ...readTextStyle(el, cs, rootFontSizePx),
     // Both readable because the companion stylesheet's typography rewrite
     // is gated on `:not([measuring])`.
     lineGap: lineGapRows(cs.lineHeight, fontSizePx),
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
-    textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     color: cs.color,
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
-    textDecorationLine: cs.textDecorationLine,
     backgroundColor: readAnimatedBackground(el, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     borderColor: {
@@ -279,13 +272,6 @@ export function readCellStyle(
       bottom: cs.borderBottomColor,
       left: cs.borderLeftColor,
     },
-    // The forced-start rule is measuring-gated, so the computed value is
-    // the authored one (no echo); the legacy `align` attribute surfaces
-    // as `-webkit-center`/`-moz-center`. Inherited centering blocks each
-    // descendant individually — same net effect as CSS inheritance.
-    textAlignBlocked: authoredTextAlignBlocked(el, cs),
-    textAlign: readTextAlign(el, cs),
-    textIndent: readTextIndent(cs, rootFontSizePx),
     opacity: readOpacity(cs.opacity),
     glyphSet: cs.getPropertyValue("--mw-border-glyphs").trim() || null,
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
@@ -450,7 +436,7 @@ function overflowAxis(value: string): OverflowAxis {
  * shorthand sets both in real browsers; happy-dom may leave them "",
  * hence the fallback), then the CSS coercion: one non-visible axis
  * forces the other's `visible` to compute `auto`. */
-function readOverflow(cs: CSSStyleDeclaration): Overflow {
+export function readOverflow(cs: CSSStyleDeclaration): Overflow {
   let x = overflowAxis(cs.overflowX || cs.overflow);
   let y = overflowAxis(cs.overflowY || cs.overflow);
   if (x !== "visible" && y === "visible") y = "auto";
@@ -523,6 +509,41 @@ function readVerticalAlign(el: Element, cs: CSSStyleDeclaration): "start" | "cen
   if (value === "middle") return "center";
   if (value === "bottom") return "end";
   return "start";
+}
+
+/** The text properties a leaf takes from its own element — the host's
+ * contribution to the root leaf too (specs/host-leaf.md). */
+export function readTextStyle(
+  el: Element,
+  cs: CSSStyleDeclaration,
+  rootFontSizePx: number,
+): Pick<
+  CellStyle,
+  | "whiteSpace"
+  | "tabSize"
+  | "textOverflow"
+  | "textDecorationLine"
+  | "textAlignBlocked"
+  | "textAlign"
+  | "textIndent"
+> {
+  return {
+    // `nowrap` and `pre` disable soft wrapping; `pre` additionally makes
+    // the tree builder preserve the source's spaces and newlines
+    // (specs/cell-model.md). Readable via getComputedStyle because the
+    // companion stylesheet's white-space lock is gated on `:not([measuring])`.
+    whiteSpace: cs.whiteSpace === "pre" ? "pre" : cs.whiteSpace === "nowrap" ? "nowrap" : "normal",
+    tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
+    textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
+    textDecorationLine: cs.textDecorationLine,
+    // The forced-start rule is measuring-gated, so the computed value is
+    // the authored one (no echo); the legacy `align` attribute surfaces
+    // as `-webkit-center`/`-moz-center`. Inherited centering blocks each
+    // descendant individually — same net effect as CSS inheritance.
+    textAlignBlocked: authoredTextAlignBlocked(el, cs),
+    textAlign: readTextAlign(el, cs),
+    textIndent: readTextIndent(cs, rootFontSizePx),
+  };
 }
 
 /** Font sizes are locked to the root (cell-model deviation 3); the lock is

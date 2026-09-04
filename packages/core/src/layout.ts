@@ -64,11 +64,13 @@ export function layoutRoot(root: LayoutNode, availableWidth: number): { height: 
   walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], cache);
   // The host keeps its in-flow height; the grid covers the INK — visible
   // overflow paints past the host like CSS paints it past any box
-  // (specs/cell-model.md "Overflow").
+  // (specs/cell-model.md "Overflow"). A clipping axis keeps the box: the
+  // root leaf under `truncate` (specs/host-leaf.md) cuts at its width.
   const height = root.localRect.height;
   const ink = contentExtent(root);
-  root.localRect.width = Math.max(root.localRect.width, ink.x);
-  root.localRect.height = Math.max(height, ink.y);
+  const { overflow } = root.style;
+  if (overflow.x === "visible") root.localRect.width = Math.max(root.localRect.width, ink.x);
+  if (overflow.y === "visible") root.localRect.height = Math.max(height, ink.y);
   return { height };
 }
 

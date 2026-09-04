@@ -12,7 +12,11 @@ import { expect, test } from "@playwright/test";
  * all three engines (playwright.config projects) — they paint
  * selection ink differently, so each keeps its own golden.
  */
-const FIXTURES = ["test-selection--light-text", "test-selection--banner"];
+const FIXTURES = [
+  "test-selection--light-text",
+  "test-selection--banner",
+  "test-selection--host-text",
+];
 const MODES = ["text", "grid"];
 
 for (const id of FIXTURES) {
@@ -30,9 +34,9 @@ for (const id of FIXTURES) {
       }, mode);
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(150);
-      // Drag corner to corner of the light element (or the banner's
-      // shadow transcript): its text in "text", the grid under it in
-      // "grid".
+      // Drag corner to corner of the light element (the banner's shadow
+      // transcript, the host itself for its own text): its text in
+      // "text", the grid under it in "grid".
       const box = await page.evaluate(() => {
         const el = document.querySelector('[data-test="target"]')!;
         const rect = (el.shadowRoot?.getElementById("mirror") ?? el).getBoundingClientRect();

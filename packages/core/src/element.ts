@@ -7,6 +7,7 @@ import {
   classifySelection,
   comparePoints,
   isTextLeaf,
+  leafExtent,
   positionOf,
   selectionRangeThrough,
   serializeSelection,
@@ -17,7 +18,7 @@ import { nodeAtOffset, paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
-import { buildTree, DIRECT_TEXT_DROPPED, hasDirectText } from "./tree.ts";
+import { buildRootLeaf, buildTree, DIRECT_TEXT_DROPPED, hasDirectText } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
 import { defaultCellStyle, zeroInsets } from "./types.ts";
 import { warnSubject } from "./warn.ts";
@@ -27,10 +28,15 @@ const SHADOW_TEMPLATE = `
 <style>
   :host { display: block; position: relative; contain: layout style; }
   #viewport { position: relative; width: 100%; height: 100%; background: inherit; }
-  /* When the host hides its own dropped direct text (visibility, see
-   * styles.css), the render layer must not sink with it. Scoped to that
-   * state so an authored 'invisible' on the host stays intact. */
-  :host([data-mw-dropped-text]) #viewport { visibility: visible; }
+  /* The slot as a positioned box: the light DOM paints ABOVE the grid
+   * (the elements are absolute; the host's own in-flow text, specs/host-leaf.md,
+   * would otherwise sit under the <pre> and lose its selection ink) and
+   * laid-out elements position against it — the same origin as #viewport. */
+  slot { display: block; position: relative; }
+  /* The host's own dropped direct text (specs/cell-model.md deviation 7)
+   * hides through the slot; laid-out children re-declare visible in
+   * styles.css. */
+  :host([data-mw-dropped-text]) slot { visibility: hidden; }
   /* The unified grid: one <pre> with same-paint-run spans, cell-precise
    * (one monospace character = one cell). In select="grid" (the
    * default, reflected onto the attribute — see DEFAULT_SELECT) the
@@ -45,7 +51,10 @@ const SHADOW_TEMPLATE = `
    * document's overflow — inherited through #viewport, the shadow
    * parent. (A translucent host background paints repeatedly inside
    * the box.) */
-  #grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  /* The text-fill reset: the host's own invisibility lock (specs/host-leaf.md)
+   * inherits across the shadow boundary; currentColor stays a keyword
+   * at computed time, so every run keeps its own color. */
+  #grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; -webkit-text-fill-color: currentColor; }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
   /* A live semantic selection (specs/semantic-selection.md) lifts the
@@ -926,6 +935,41 @@ export class MonoWindElement extends HTMLElementBase {
     this.#semanticGesture = { unit, anchor };
   };
 
+  /** The root as a container over the element children. Direct text on
+   * it can't be laid out then — hidden and warned (cell-model deviation),
+   * as tree.ts does for nested containers. */
+  #buildRootContainer(
+    rootFontSizePx: number,
+    metrics: CellMetrics,
+    textareaWidths: TextareaWidths,
+  ): LayoutNode {
+    const children: LayoutNode[] = [];
+    for (const child of Array.from(this.children)) {
+      if (child === this.#probe) continue;
+      const node = buildTree(child, rootFontSizePx, metrics, textareaWidths);
+      if (node) children.push(node);
+    }
+    if (hasDirectText(this)) {
+      if (!this.hasAttribute("data-mw-dropped-text")) {
+        console.warn(`[monowind] ${DIRECT_TEXT_DROPPED}`, warnSubject(this));
+      }
+      this.setAttribute("data-mw-dropped-text", "");
+    } else {
+      this.removeAttribute("data-mw-dropped-text");
+    }
+    return {
+      source: this,
+      style: defaultCellStyle(),
+      children,
+      text: "",
+      intrinsicWidth: 0,
+      intrinsicHeight: 0,
+      localRect: { x: 0, y: 0, width: 0, height: 0 },
+      unclampedHeight: 0,
+      resolvedPadding: zeroInsets(),
+    };
+  }
+
   /** The focused element, when it is inside the host. */
   #focusedInside(): HTMLElement | null {
     const active = document.activeElement;
@@ -1030,23 +1074,40 @@ export class MonoWindElement extends HTMLElementBase {
     const stack = hitStack(layout, col, row);
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
-      if (!isTextLeaf(node)) continue;
-      const index = charIndexAtCell(node, x, y, col, row);
-      if (index === null) return null;
-      const target = leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source);
-      if (unit === "word" && !target) {
-        const word = wordAt(node, index);
-        const start = word && positionOf(node, word.start);
-        const end = word && positionOf(node, word.end);
-        if (start && end) return { start, end };
-      }
-      const container = target ?? node.source;
-      return {
-        start: { node: container, offset: 0 },
-        end: { node: container, offset: container.childNodes.length },
-      };
+      if (isTextLeaf(node)) return this.#leafUnit(node, x, y, col, row, unit);
     }
-    return null;
+    // The host's own text (specs/host-leaf.md): the root leaf lies under
+    // every cell no child covers.
+    return isTextLeaf(layout) ? this.#leafUnit(layout, 0, 0, col, row, unit) : null;
+  }
+
+  /** The word or paragraph of a text leaf at a cell; null off its
+   * characters. A paragraph is the element's contents — a custom leaf's
+   * selectionTarget's — or, for the root leaf, the run's own extent (the
+   * host's child list also holds the metrics probe). */
+  #leafUnit(
+    node: LayoutNode,
+    x: number,
+    y: number,
+    col: number,
+    row: number,
+    unit: "word" | "paragraph",
+  ): SelectionUnit | null {
+    const index = charIndexAtCell(node, x, y, col, row);
+    if (index === null) return null;
+    const target = leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source);
+    if (unit === "word" && !target) {
+      const word = wordAt(node, index);
+      const start = word && positionOf(node, word.start);
+      const end = word && positionOf(node, word.end);
+      if (start && end) return { start, end };
+    }
+    if (node === this.#lastLayout) return leafExtent(node);
+    const container = target ?? node.source;
+    return {
+      start: { node: container, offset: 0 },
+      end: { node: container, offset: container.childNodes.length },
+    };
   }
 
   /** A unit inside a custom leaf's shadow, as the light-tree range
@@ -1431,7 +1492,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.#cellMetrics = metrics;
 
       // (2) Available cells from the host's CONTENT box — authored padding
-      // on the host stays outside the grid (the shadow #viewport, which
+      // on the host stays outside the grid (the shadow slot box, which
       // laid-out children position against, already sits inside it).
       // clientWidth excludes the border; subtract the padding ourselves.
       const cs = getComputedStyle(this);
@@ -1439,43 +1500,13 @@ export class MonoWindElement extends HTMLElementBase {
       const availableCols = Math.max(0, Math.floor((this.clientWidth - padX) / metrics.width));
       if (availableCols === 0) return;
 
-      // (3) Build a tree from the light DOM. Root is a virtual container
-      // over the light-DOM children so we can lay them out as a block.
+      // (3) Build a tree from the light DOM: the host's own inline
+      // content is the root leaf (specs/host-leaf.md); with a block-level
+      // child the root is a virtual container over the element children.
       const rootFontSizePx = getRootFontSizePx();
-      const childNodes: LayoutNode[] = [];
-      for (const child of Array.from(this.children)) {
-        if (child === this.#probe) continue;
-        const node = buildTree(child, rootFontSizePx, metrics, textareaWidths);
-        if (node) childNodes.push(node);
-      }
-      // The host is a container like any other: direct text on it can't
-      // be laid out — hide it and warn (cell-model deviation), same as
-      // tree.ts does for nested containers.
-      if (hasDirectText(this)) {
-        if (!this.hasAttribute("data-mw-dropped-text")) {
-          console.warn(`[monowind] ${DIRECT_TEXT_DROPPED}`, warnSubject(this));
-        }
-        this.setAttribute("data-mw-dropped-text", "");
-      } else {
-        this.removeAttribute("data-mw-dropped-text");
-      }
-      if (childNodes.length === 0) {
-        this.#grid.replaceChildren();
-        this.#lastLayout = null;
-        this.setAttribute("data-mw-ready", "");
-        return;
-      }
-      const virtualRoot: LayoutNode = {
-        source: this,
-        style: defaultCellStyle(),
-        children: childNodes,
-        text: "",
-        intrinsicWidth: 0,
-        intrinsicHeight: 0,
-        localRect: { x: 0, y: 0, width: 0, height: 0 },
-        unclampedHeight: 0,
-        resolvedPadding: zeroInsets(),
-      };
+      const virtualRoot =
+        buildRootLeaf(this, rootFontSizePx, metrics, textareaWidths) ??
+        this.#buildRootContainer(rootFontSizePx, metrics, textareaWidths);
 
       // (4) Compute integer layout.
       const { height } = layoutRoot(virtualRoot, availableCols);

@@ -67,7 +67,8 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
     }
   }
 
-  if (!isRoot) positionElement(node);
+  if (isRoot) markRoot(node);
+  else positionElement(node);
   // A hidden table box (misparented content, <col>) hides its whole
   // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
@@ -82,6 +83,23 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
     else clearVar(el, "--mw-z");
     walk(child, false, inlineInsetElements);
   }
+}
+
+/** The host's flags when its own content is the root leaf
+ * (specs/host-leaf.md): the companion's host variants of the leaf
+ * typography rules key on them. No geometry — the host is its own box.
+ * A new leaf flag in positionElement that shapes native text needs a
+ * line here and a host variant in styles.css. */
+function markRoot(node: LayoutNode): void {
+  const el = node.source as HTMLElement;
+  const leaf = node.text.length > 0;
+  const { whiteSpace, textAlignBlocked, textIndent } = node.style;
+  setFlag(el, "data-mw-leaf", leaf);
+  setFlag(el, "data-mw-nowrap", leaf && whiteSpace !== "normal");
+  setFlag(el, "data-mw-pre", leaf && whiteSpace === "pre");
+  setFlag(el, "data-mw-text-align-blocked", leaf && textAlignBlocked);
+  if (leaf) setVar(el, "--mw-ti", String(textIndent));
+  else clearVar(el, "--mw-ti");
 }
 
 /**

@@ -166,6 +166,14 @@ await page.keyboard.press("Tab");
 const caretIndented = await page.evaluate(() => document.getElementById("source").value);
 const tabIndents = indented === "  a\n  b" && outdented === "a\nb" && caretIndented === "  a\nb";
 
+// A short source still fills the pane, so a click below the last line
+// lands in the textarea.
+const editorFilled = await page.evaluate(() => {
+  const editor = document.getElementById("editor");
+  const source = document.getElementById("source");
+  return Math.round(source.getBoundingClientRect().height) === editor.clientHeight;
+});
+
 // Synthesized pointer states reach the CDN path: rules.css (injected
 // as text/tailwindcss) retargets the hover: variant to match
 // data-mw-hover, so the in-browser compiler's output must too.
@@ -248,6 +256,7 @@ const result = {
   sampleRoundTrips,
   tidyWorks,
   tabIndents,
+  editorFilled,
   hoverVariantCompiled,
 };
 if (
@@ -266,6 +275,7 @@ if (
   !sampleRoundTrips ||
   !tidyWorks ||
   !tabIndents ||
+  !editorFilled ||
   !hoverVariantCompiled
 ) {
   console.error("play smoke test FAILED:", JSON.stringify(result, null, 2));
