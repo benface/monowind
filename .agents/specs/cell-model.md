@@ -428,6 +428,14 @@ instead of fading; CSS `animation` keyframes are not yet sampled
 
 ## Selection
 
+The grid's rows run the grid's full width — every row, blank ones
+included — so the `<pre>` is a rectangle of cells: a drag's highlight
+sweeps whole rows like a terminal instead of stopping at the last
+glyph, a copy is exactly the visible rectangle (alignment survives a
+paste into a fixed-width context), and a cell's flat text offset is
+`row × (width + 1) + col`. `renderPlainText` (the Node renderer,
+`toPlainText`) trims trailing blanks — goldens stay tidy there.
+
 A live grid selection survives repaints, by preserving node identity
 (paint.ts). A paint whose STRUCTURE matches the last one — same
 segment texts, same span/bare split, as during fades, which change

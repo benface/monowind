@@ -188,9 +188,10 @@ mono-wind[select="grid"][data-mw-dragging]
  * would select it. Lifted with a semantic selection
  * (specs/semantic-selection.md). Editable controls keep their own
  * selection (Firefox honors an explicit `none` on a text field's
- * value; the slot's inherited value never reached it). */
-mono-wind[select="grid"]:not([data-mw-semantic-selection])
-  :not(input, textarea, [contenteditable], [contenteditable] *) {
+ * value; the slot's inherited value never reached it). `:where()` keeps
+ * the rule at base specificity so the coarse-pointer rule below wins. */
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
+  :where(:not(input, textarea, [contenteditable], [contenteditable] *)) {
   user-select: none;
   -webkit-user-select: none;
 }

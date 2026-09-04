@@ -953,14 +953,14 @@ export class MonoWindElement extends HTMLElementBase {
     );
   }
 
-  /** The grid's flat text offset for a cell (rows are trailing-trimmed
-   * in the <pre>, so a blank tail clamps to the row's end). */
+  /** The grid's flat text offset for a cell: every row is painted at the
+   * grid's full width (cell-model.md "Selection"), so a row is
+   * `width + 1` characters with its newline. */
   #gridOffsetAt(col: number, row: number): number {
     const rows = this.#grid.textContent!.split("\n");
+    const width = rows[0]?.length ?? 0;
     const y = Math.max(0, Math.min(row, rows.length - 1));
-    let offset = 0;
-    for (let i = 0; i < y; i++) offset += rows[i]!.length + 1;
-    return offset + Math.max(0, Math.min(col, rows[y]?.length ?? 0));
+    return y * (width + 1) + Math.max(0, Math.min(col, width));
   }
 
   /** The grid text position under a client point: its flat offset and

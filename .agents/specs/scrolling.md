@@ -255,7 +255,10 @@ none` on EVERY element — a one-time pristine-probe detects that and
   scroll. A long-press inside a scroll container selects the ELEMENT's
   text there (the container's subtree is `user-select: text` on those
   devices — an element selection like a semantic one, copied by the
-  engine; specs/semantic-selection.md), and the thumb drag stays a
+  engine; specs/semantic-selection.md). That rule must out-cascade
+  the grid-mode lock, which `:where()` keeps at base specificity; a
+  story replays the coarse rule to pin the order, and the iOS
+  Simulator confirmed the long-press. The thumb drag stays a
   mouse/pen gesture — a finger on the gutter pans. Fine-pointer
   devices are unchanged: the grid keeps every pointer event, and
   wheel routing plus the thumb cover scrolling. Both modes: the

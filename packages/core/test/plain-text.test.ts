@@ -472,7 +472,10 @@ describe("inline fidelity in segments", () => {
     const node = buildTree(host.firstElementChild!, 16)!;
     layoutRoot(node, 15);
     const rows = renderCellSegments(node);
-    expect(rows[0]).toEqual([{ text: "click me", textDecorationLine: "underline" }]);
+    expect(rows[0]).toEqual([
+      { text: "click me", textDecorationLine: "underline" },
+      { text: "       " },
+    ]);
   });
 
   it("maps inline descendants' color/weight and relative insets per character", () => {
@@ -482,15 +485,18 @@ describe("inline fidelity in segments", () => {
     const node = buildTree(host.firstElementChild!, 16)!;
     layoutRoot(node, 10);
     const rows = renderCellSegments(node);
-    // Row 0: leaf text bare, "cd" red + bold (spaces always unstyled);
-    // "ef" shifted down one row by `top: 4px`, keeping its color.
+    // Row 0: leaf text bare, "cd" red + bold (spaces always unstyled),
+    // then the bare tail; "ef" shifted down one row by `top: 4px`,
+    // keeping its color.
     expect(rows[0]!.map((s) => [s.text, s.color, s.fontWeight])).toEqual([
       ["ab ", undefined, undefined],
       ["cd", "red", "700"],
+      ["     ", undefined, undefined],
     ]);
     expect(rows[1]!.map((s) => [s.text, s.color])).toEqual([
       ["      ", undefined],
       ["ef", "blue"],
+      ["  ", undefined],
     ]);
   });
 });
@@ -519,13 +525,13 @@ describe("inline element background", () => {
     layoutRoot(node, 10);
     const rows = renderCellSegments(node);
     // "a " bare, then the link: 1 pad cell + "go" + 1 pad cell all on
-    // red bg, then " b" bare.
+    // red bg, then " b" bare to the grid's edge.
     expect(rows[0]).toEqual([
       { text: "a " },
       { text: " ", backgroundColor: "red" },
       { text: "go", color: "blue", backgroundColor: "red" },
       { text: " ", backgroundColor: "red" },
-      { text: " b" },
+      { text: " b  " },
     ]);
   });
 });

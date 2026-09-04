@@ -14,6 +14,23 @@ function paintedTree(text: string, color: string): LayoutNode {
   return root;
 }
 
+describe("paintGrid rows", () => {
+  it("paints every row at the grid's full width, blank rows included", () => {
+    const target = document.createElement("pre");
+    const root = makeNode({
+      style: { display: "flex", flexDirection: "column" },
+      children: [
+        makeNode({ text: "hi", intrinsicWidth: 2 }),
+        makeNode({ style: { height: { kind: "cells", value: 1 } } }),
+        makeNode({ text: "hello world", intrinsicWidth: 11 }),
+      ],
+    });
+    layoutRoot(root, 11);
+    paintGrid(root, target);
+    expect(target.textContent!.split("\n")).toEqual(["hi         ", "           ", "hello world"]);
+  });
+});
+
 describe("paintGrid node identity", () => {
   it("patches styles in place when only paint values change", () => {
     const target = document.createElement("pre");

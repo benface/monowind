@@ -4,11 +4,13 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
  * Fixtures for the selection-invert visual regression
- * (visual/selection.spec.ts drags a real selection across them and
- * screenshots the painted result — per engine, because Safari paints
- * selection ink through text-fill-color and needs the text-shadow
- * fallback in the canonical ::selection rules). Hidden from the
- * sidebar and the story sweep; the spec targets them by id.
+ * (visual/selection.spec.ts drags a real selection across them in
+ * both select modes — set through the preview's Select toolbar
+ * global, which overrides any authored attribute — and screenshots
+ * the painted result, per engine, because Safari paints selection ink
+ * through text-fill-color and needs the text-shadow fallback in the
+ * canonical ::selection rules). Hidden from the sidebar and the story
+ * sweep; the spec targets them by id.
  */
 const meta: Meta = {
   title: "Test / Selection",
@@ -18,7 +20,7 @@ export default meta;
 
 export const LightText: StoryObj = {
   render: () => html`
-    <mono-wind select="text">
+    <mono-wind>
       <p data-test="target" class="max-w-64">
         A raccoon walked into the corner bakery and took one long look at the display case.
       </p>
@@ -28,7 +30,7 @@ export const LightText: StoryObj = {
 
 export const Banner: StoryObj = {
   render: () => html`
-    <mono-wind select="text">
+    <mono-wind>
       <mono-ascii data-test="target" font="small" class="text-emerald-400">monowind</mono-ascii>
     </mono-wind>
   `,
@@ -113,6 +115,11 @@ export const Semantic: StoryObj = {
       </div>
       <div data-test="box" class="mt-1 w-20 border p-1">boxed</div>
       <p data-test="pointer" class="cursor-pointer">pointer cursor here</p>
+      <div class="mt-1 h-4 w-40 overflow-y-auto border px-1">
+        <p data-test="scrolled">Inside a scroll container, selectable by long-press on touch.</p>
+        <p class="mt-1">Filler so the box scrolls.</p>
+        <p class="mt-1">More filler.</p>
+      </div>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
@@ -319,6 +326,23 @@ export const Semantic: StoryObj = {
     document.getSelection()!.selectAllChildren(grid);
     expect(copied()).toBe("");
     document.getSelection()!.removeAllRanges();
+    // Every grid row is painted at the full width — the visible rectangle.
+    const rows = grid.textContent!.split("\n");
+    expect(new Set(rows.map((row) => row.length)).size).toBe(1);
+    // The coarse-pointer rule (a scroll container's subtree is
+    // selectable, for long-press) must out-cascade the lock: the runner
+    // has no coarse pointer, so the rule is replayed without its media
+    // query — same selector, same source order — and must win.
+    const coarse = document.createElement("style");
+    coarse.textContent =
+      'mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) { user-select: text; -webkit-user-select: text; }';
+    document.head.appendChild(coarse);
+    try {
+      const style = getComputedStyle(by("scrolled"));
+      expect(style.userSelect || style.webkitUserSelect).toBe("text");
+    } finally {
+      coarse.remove();
+    }
   },
 };
 

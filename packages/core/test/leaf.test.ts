@@ -7,7 +7,7 @@ import {
 } from "../src/leaf.ts";
 import { buildTree } from "../src/tree.ts";
 import { layoutRoot } from "../src/layout.ts";
-import { renderCellSegments } from "../src/plain-text.ts";
+import { renderCellSegments, renderPlainText } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
 
 /** Public leaf-renderer API (specs/leaf-renderers.md): registered
@@ -59,9 +59,7 @@ describe("leaf renderers", () => {
     expect(node.intrinsicWidth).toBe(3);
     const root = makeNode({ children: [node] });
     layoutRoot(root, 10);
-    const rows = renderCellSegments(root);
-    expect(rows[0]!.map((s) => s.text).join("")).toBe("A B");
-    expect(rows[1]!.map((s) => s.text).join("")).toBe("C D");
+    expect(renderPlainText(root)).toBe("A B\nC D");
   });
 
   it("absolute + overflow-clip leaf is not dropped as sr-only", () => {

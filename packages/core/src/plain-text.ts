@@ -45,9 +45,10 @@ export interface CellPaint {
   opacity?: string;
 }
 
-/** One row of same-paint runs. Joining every segment's text reproduces
- * the `renderPlainText` row, so a copy from the DOM adapter (paint.ts)
- * still yields the pure text. */
+/** One row of same-paint runs. Joining every segment's text gives the
+ * row at the grid's full width (specs/cell-model.md "Selection"): the
+ * <pre> is a rectangle of cells, so a drag's highlight sweeps whole
+ * rows and a copy is the visible rectangle. */
 export interface CellSegment extends CellPaint {
   text: string;
 }
@@ -60,16 +61,12 @@ export function renderCellSegments(root: LayoutNode): CellSegment[][] {
   return grid.map((row, y) => rowSegments(row, paints[y]!));
 }
 
-/** One rendered row → its same-paint runs. Trims the blank tail so it
- * doesn't emit useless spans — but a trailing space with a painted
- * BACKGROUND is visible ink (a borderless focus-invert fill is nothing
- * but spaces) and must stay. Painted spaces INSIDE a run stay too
- * (underline spans an inline run's inner spaces). */
+/** One rendered row → its same-paint runs. Painted spaces stay in
+ * their run (underline spans an inline run's inner spaces; a
+ * borderless focus-invert fill is nothing but spaces). */
 function rowSegments(row: string[], paints: (CellPaint | undefined)[]): CellSegment[] {
-  let end = row.length;
-  while (end > 0 && row[end - 1] === " " && paints[end - 1]?.backgroundColor === undefined) end--;
   const segments: CellSegment[] = [];
-  for (let x = 0; x < end; x++) {
+  for (let x = 0; x < row.length; x++) {
     const paint = paints[x];
     const last = segments[segments.length - 1];
     if (last && samePaint(last, paint)) last.text += row[x]!;

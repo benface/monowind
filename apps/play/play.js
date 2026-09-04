@@ -41,10 +41,10 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
   </div>
   <div class="flex shrink-0 items-center justify-between px-2 py-1 text-neutral-400">
     <div class="flex gap-3">
-      <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">* star</button>
-      <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">» share</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">* star</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">» share</button>
     </div>
-    <button class="cursor-pointer not-focus-visible:text-sky-300 not-focus-visible:hover:text-sky-200">¶ edit me</button>
+    <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">¶ edit me</button>
   </div>
 </div>`;
 
