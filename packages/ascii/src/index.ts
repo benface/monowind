@@ -144,6 +144,7 @@ export function defineMonoAscii(): void {
     tag: "mono-ascii",
     observedAttributes: ["font", "effect"],
     render: renderLeaf,
+    selectionTarget: (el) => el.shadowRoot?.getElementById("mirror") ?? null,
   });
 }
 

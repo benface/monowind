@@ -191,11 +191,28 @@ export interface GridAutoFlow {
  * the first and last tracks are shrunk by the subgrid's own margin,
  * border, and padding on that side, so its items still land on the
  * parent's lines. `gap` is the parent's gutter. */
+/** One run of a leaf's character → source map (see `LayoutNode.charSource`). */
+export interface CharSourceRun {
+  index: number;
+  length: number;
+  node: Text;
+  offset: number;
+}
+
 export interface InheritedTracks {
   positions: number[];
   sizes: number[];
   gapBefore: number[];
   gap: number;
+}
+
+/** A leaf's atomic inline boxes in MARKER order — the order of its
+ * U+FFFC characters, which is document order (`children` is built in
+ * document order). Every marker ↔ box pairing (layout widths and line
+ * placement, copy splicing, boundary points inside a box) reads it here
+ * and nowhere else. */
+export function inlineBoxesOf(node: LayoutNode): LayoutNode[] {
+  return node.children.filter((child) => child.inlineBox);
 }
 
 /** The gutter band each axis's bar occupies when reserved
@@ -473,6 +490,9 @@ export interface CellStyle {
 export interface LayoutNode {
   source: Element;
   style: CellStyle;
+  /** In document order (tree.ts): paint-order ties resolve later-wins,
+   * and a leaf's atomic inline boxes are in marker order — see
+   * `inlineBoxesOf`, the one place that pairing is read. */
   children: LayoutNode[];
   /** The leaf's text run (inline descendants included, `<br>` as `\n`).
    * Empty for containers — their direct text nodes are not laid out. */
@@ -530,6 +550,12 @@ export interface LayoutNode {
    * rendering maps colors, font styling, and relative inset shifts from
    * it. */
   charInline?: number[];
+  /** Where each character of `text` came from, as runs of consecutive
+   * characters (specs/semantic-selection.md): `text[index + k]` is
+   * `node.data[offset + k]` for `k < length`. Characters with no source
+   * position (`<br>` newlines, inline-box and padding markers) fall
+   * between runs; renderer leaves have no map. */
+  charSource?: CharSourceRun[];
   /** True on an atomic inline-level box (`inline-flex`/`inline-block`/
    * `inline-grid`) riding its parent leaf's text run as a single
    * unbreakable unit: the leaf's run holds an OBJECT REPLACEMENT

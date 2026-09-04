@@ -1,6 +1,10 @@
 # Semantic selection implementation plan
 
-Status: **proposed** (2026-09-04). Spec: `.agents/specs/semantic-selection.md`
+Status: **implemented** (2026-09-04), all six phases. The real-clipboard
+checks passed in all three engines (Playwright key events). The
+click-count-under-`preventDefault()` check needs real OS clicks and is
+the first thing to try in the playground: a triple-click that selects
+the paragraph is the proof. Spec: `.agents/specs/semantic-selection.md`
 (normative; this plan only sequences it). Engine facts the spec marks
 _verified_ were established with a throwaway Playwright fixture on the
 CDN bundle; the plan re-checks nothing already settled there.
@@ -57,8 +61,11 @@ number; node: Text; offset: number; length: number }[]` — one run per
   legacy `ShadowRoot.getSelection()` fallback — the same API path
   paint.ts `captureSelection` uses; extract it there and reuse) and
   classifies it: `"grid"` (inside `#grid`), `"light"` (both points in
-  the host's light DOM), `"leaf-shadow"` (both points in one leaf's
-  shadow root), or `"outside"`. Never classify from `getRangeAt(0)`
+  the host's light DOM), or `"outside"`. (As built: no separate
+  `"leaf-shadow"` kind — `getComposedRanges` retargets a selection
+  inside a custom leaf's shadow onto that leaf's host, which is exactly
+  the light range around the leaf, so it classifies as `"light"` and
+  serializes as that leaf whole.) Never classify from `getRangeAt(0)`
   alone: a shadow selection retargets its points onto the host, which
   a naive `host.contains` test reads as light DOM.
 - `serializeSelection(root: LayoutNode, range, kind): string | null`
@@ -157,7 +164,9 @@ anchor: { start: Point; end: Point } } | null`, set on `mousedown`,
   anchor-far-edge → current-far-edge by `compareDocumentPosition`; no
   unit → leave the selection. Points in a leaf's shadow cannot pair
   with light-tree points: any extension involving a shadow-rooted leaf
-  uses the host element's light-tree edges for that leaf.
+  uses light-tree edges around that leaf — the neighbors' content
+  edges, since Firefox maps a point on the host itself into the
+  host's shadow slot (found by the banner-anchored story step).
 
 ### 5. Word gesture
 
@@ -275,6 +284,8 @@ the manual spot-checks alone:
 | Touch compat `mousedown` guard                                                            | step 10                                                                            |
 | Selection invert paint                                                                    | existing `visual/selection.spec.ts` (unchanged rule)                               |
 | Composed-range helper extraction from paint.ts                                            | existing `paint.test.ts` stays green (behavior-preserving)                         |
+| Paragraph-flow multicol children hit by line fragment                                     | `pointer.test.ts`; `Semantic` story multicol steps                                 |
+| Backward drag, banner-anchored extension, cross-paragraph words                           | `Semantic` story steps (added when the map was checked)                            |
 | a11y                                                                                      | the story sweep's per-story axe pass covers the new stories                        |
 
 Manual only (real clipboard and real OS clicks): ⌘C after each

@@ -28,7 +28,7 @@ import {
 import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
 import type { TableData } from "./table.ts";
 import { walkPositioned } from "./positioning.ts";
-import { scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
+import { inlineBoxesOf, scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import type {
   CellLength,
@@ -368,7 +368,7 @@ function layoutTextLeaf(
     // its own content) and resolve its U+FFFC marker's advance to the
     // laid-out width, so the wrap below treats it as an unbreakable
     // unit of exactly that many cells.
-    const boxes = node.children.filter((child) => child.inlineBox);
+    const boxes = inlineBoxesOf(node);
     eachObjectMarker(node.text, (charIndex, boxIndex) => {
       const box = boxes[boxIndex]!;
       layoutNode(box, innerWidth, undefined, 0, 0, "shrink", cache);
@@ -588,7 +588,7 @@ export function leafLineMetrics(
   node: LayoutNode,
   spans: LineSpan[],
 ): { heights: number[]; textOffsets: number[] } {
-  const boxes = node.children.filter((child) => child.inlineBox);
+  const boxes = inlineBoxesOf(node);
   const heights: number[] = [];
   const textOffsets: number[] = [];
   let boxIndex = 0;

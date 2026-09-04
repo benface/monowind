@@ -1,6 +1,7 @@
 # Semantic selection in grid mode
 
-Status: **proposed** (2026-09-04) — spec first, implementation to follow.
+Status: **implemented** (2026-09-04) — engine (selection.ts, the gesture
+handlers in element.ts, the leaf hook), stories, and this spec agree.
 Engine facts below marked _verified_ were established on 2026-09-04
 against the CDN bundle in Chromium, Firefox, and WebKit (Playwright).
 Scope: `select="grid"` only for the gestures; the copy serialization
@@ -180,7 +181,9 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
 
 - **Hit → leaf → element.** `hitStack(layout, col, row)` from the last
   layout, innermost entry whose node has `text` and no in-flow children
-  (the paint walk's own leaf test); its `source` is the element. No
+  (the paint walk's own leaf test); its `source` is the element.
+  Paragraph-flow multicol children share their container's box, so
+  `hitStack` tests them by their line fragments (specs/multicol.md). No
   such entry → the gesture is still consumed (the whole-grid selection
   must never appear) and the selection is emptied (`removeAllRanges`).
 - **Paragraph range.** `selectNodeContents(source)`, or of the leaf's
@@ -188,7 +191,11 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   `setBaseAndExtent(anchorBoundary…, currentBoundary…)` with the
   boundaries chosen by `compareDocumentPosition` as described above;
   a boundary inside a custom leaf's shadow cannot pair with one in the
-  light tree, so extension uses the host's light-tree edges instead.
+  light tree, so extension uses light-tree edges around the host —
+  the previous sibling's content end and the next sibling's start,
+  not points on the host's parent: _verified_ Firefox's
+  `getComposedRanges` re-expresses a point on the host itself inside
+  the host's shadow slot, which would read as outside the light DOM.
 - **Cell → character.** The leaf's line geometry (`leafLineGeometry`,
   or the multicol leaf's stored fragmentation) with its per-character
   advances gives, for a cell inside the leaf, the index into
@@ -275,12 +282,14 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   for paragraphs separated by margins). Cheap to revisit if it feels
   sticky.
 
-## Still to check during implementation
+## Verified after implementation
 
-- Firefox and WebKit highlight of a wholly contained shadow host
-  (extension across a banner) — Chromium _verified_ to invert the art.
-- Firefox touch event order (no touch synthesis available); the guard
-  is order-based, so an unexpected order fails safe (no gesture).
+- Firefox and WebKit invert a wholly contained banner (an extension
+  across `<mono-ascii>`), like Chromium.
+- A real ⌘C after each gesture pastes exactly the engine's text, in all
+  three engines.
+- Firefox touch event order stays unprobed (no touch synthesis); the
+  guard is order-based, so an unexpected order fails safe (no gesture).
 
 ## Testing
 
@@ -288,8 +297,7 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   host laid out as a flex row of a column holding two stacked `<p>`s
   and a third `<p>` beside them (so the side paragraph is never between
   the stacked ones in DOM order), plus a `<mono-ascii>` and a trailing
-  `<p>`. A real click focuses the document first (Firefox paints no
-  selection otherwise). The play dispatches `mousedown` with
+  `<p>`, and a two-column paragraph flow. The play dispatches `mousedown` with
   `detail: 3` on a cell of the first paragraph and asserts
   `document.getSelection().toString()` equals that paragraph's
   `innerText`, that the host carries `data-mw-semantic-selection`, and

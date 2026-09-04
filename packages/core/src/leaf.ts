@@ -56,6 +56,10 @@ export interface LeafRegistration {
    * host's mutation-observer filter; `class`/`style` and character
    * data are always observed). */
   observedAttributes?: string[];
+  /** The node whose contents a semantic gesture ON the leaf selects
+   * (specs/semantic-selection.md) — a shadow transcript that sits
+   * under the art, say. Absent: the leaf's light contents. */
+  selectionTarget?: (el: Element) => Node | null;
 }
 
 const leaves = new Map<string, LeafRegistration>();

@@ -170,7 +170,10 @@ companion quantizes each child's margins to cells and leaves its width
 auto (the native column width); each child carries the engine's
 per-line fragment map (`multicolGeometry`) in container-content
 coordinates — and NEVER the container's native-columns rule (a flow
-child sub-columning itself was the one bug this shipped with).
+child sub-columning itself was the one bug this shipped with). The
+children share the container's box as their `localRect`, so cell
+hit-testing (hover, semantic selection) reads the fragment map instead
+of the box: a cell belongs to the child whose line covers it.
 
 **In-flow spanners**: a spanner among fragmentable children splits the
 flow into SEGMENTS that each balance independently, the spanner (a

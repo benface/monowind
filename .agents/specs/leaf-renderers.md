@@ -58,7 +58,10 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
 
 ## Resolved design (as implemented)
 
-- `registerLeafRenderer({ tag, render, observedAttributes })`;
+- `registerLeafRenderer({ tag, render, observedAttributes, selectionTarget })`;
+  `selectionTarget(el)` names the node whose contents a semantic
+  gesture on the leaf selects (specs/semantic-selection.md) —
+  `<mono-ascii>` returns its shadow transcript;
   renderers are RECOMPUTED each layout pass — caching is the
   renderer's own business. Invalidation for out-of-DOM inputs (a font
   finished loading, …) is `invalidateLeaves()`: relayouts every

@@ -222,7 +222,6 @@ function walk(
   // the scroll extremes but content flows through them mid-scroll. A
   // reserved gutter cell stays excluded (the bar owns it). Nested
   // containers compose: the wrapped put chains to the parent's.
-  const padding = node.resolvedPadding;
   const gutter = node.scrollGutterCells;
   const clipsX = style.overflow.x !== "visible";
   const clipsY = style.overflow.y !== "visible";
@@ -246,79 +245,27 @@ function walk(
       !child.inlineBox && child.style.position !== "absolute" && child.style.position !== "fixed",
   );
   if (!hasInFlowChildren && node.text) {
-    const contentX = scrolledX + style.border.left + padding.left;
-    const contentY = scrolledY + style.border.top + padding.top;
-    const contentWidth =
-      node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
-    // A multicol leaf paints its layout-computed fragmentation (line →
-    // column map); other leaves recompute the single-column geometry.
-    const multicol = node.multicolGeometry;
-    const { spans, textY } = multicol ?? leafLineGeometry(node, contentWidth);
-    // Alignment and truncation act within one column of a multicol leaf,
-    // against the tracked wrap width — the browser's own alignment
-    // includes the trailing letter-spacing gap, so the engine ends lines
-    // at `width − tracking` to sit under it.
-    const alignWidth = multicol ? Math.max(1, multicol.columnWidth - style.tracking) : contentWidth;
     const leafPaint = alphaPaint(textPaint(style));
     const inlinePaints = node.inlineElements?.map((entry) => alphaPaint(textPaint(entry)));
-    for (let i = 0; i < spans.length; i++) {
-      const span = spans[i]!;
-      const row = contentY + textY[i]!;
-      // First-line indent: reduces usable width for truncation and
-      // alignment, and shifts the paint origin by the same amount (per
-      // CSS, `<br>` doesn't re-indent, so only spans[0] is charged).
-      const indent = i === 0 ? style.textIndent : 0;
-      const truncated =
-        style.whiteSpace !== "normal" && style.overflow.x === "clip"
-          ? truncateSpan(node.text, span, alignWidth - indent, node.advances, style)
-          : { end: span.end, ellipsis: false };
-      // Each character advances by its own cell count (tracking gaps).
-      // `text-align: end` offsets each line to the content box's right
-      // edge; `center` to floor((W − line) / 2). Whole cells; a line
-      // at or over the width stays at start, matching truncation.
-      const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
-      const leftover = Math.max(0, alignWidth - indent - lineWidth);
-      const alignOffset =
-        style.textAlign === "end"
-          ? leftover
-          : style.textAlign === "center"
-            ? Math.floor(leftover / 2)
-            : 0;
-      let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset + indent;
-      for (let k = span.start; k < truncated.end; k++) {
-        // U+FFFC marks an embedded inline box (its cells are drawn by
-        // the box's own walk). INLINE_PAD marks a blank inline-padding
-        // cell: no glyph, but its element's background still fills it.
-        if (node.text[k] !== OBJECT_REPLACEMENT) {
-          const inlineIndex = node.charInline?.[k] ?? -1;
-          const entry = inlineIndex >= 0 ? node.inlineElements![inlineIndex] : undefined;
-          // Inline relative shifts, whole cells (specs/positioning.md):
-          // the over-constrained sides resolve like CSS (top/left win).
-          const insets = entry?.insets;
-          const dx = insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0;
-          const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
-          if (node.text[k] === INLINE_PAD) {
-            if (entry?.backgroundColor) {
-              contentPut(
-                x + dx,
-                row + dy,
-                " ",
-                alphaPaint({ backgroundColor: entry.backgroundColor }),
-              );
-            }
-          } else {
-            contentPut(
-              x + dx,
-              row + dy,
-              node.text[k]!,
-              entry ? inlinePaints![inlineIndex] : leafPaint,
-            );
+    forEachLeafCell(
+      node,
+      scrolledX,
+      scrolledY,
+      (k, x, y) => {
+        const inlineIndex = node.charInline?.[k] ?? -1;
+        const entry = inlineIndex >= 0 ? node.inlineElements![inlineIndex] : undefined;
+        // INLINE_PAD marks a blank inline-padding cell: no glyph, but
+        // its element's background still fills it.
+        if (node.text[k] === INLINE_PAD) {
+          if (entry?.backgroundColor) {
+            contentPut(x, y, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
           }
+        } else {
+          contentPut(x, y, node.text[k]!, entry ? inlinePaints![inlineIndex] : leafPaint);
         }
-        x += advanceOf(k, k + 1, node.advances);
-      }
-      if (truncated.ellipsis) contentPut(x, row, "…", leafPaint);
-    }
+      },
+      (x, y) => contentPut(x, y, "…", leafPaint),
+    );
   }
 
   for (const child of paintOrderedChildren(node)) {
@@ -360,6 +307,121 @@ function walk(
       }
     }
   }
+}
+
+/** The cells a leaf's text occupies: the per-line placement — line
+ * geometry (a multicol leaf's stored fragmentation, else recomputed),
+ * first-line indent, alignment, truncation, inline relative shifts,
+ * per-character advances — in ONE place, so mapping a cell back to a
+ * character (charIndexAtCell) cannot drift from the paint. `absX/absY`
+ * is the leaf's border-box origin with its own scroll applied; U+FFFC
+ * markers are skipped (their boxes paint themselves). */
+function forEachLeafCell(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+  onChar: (index: number, x: number, y: number, advance: number) => void,
+  onEllipsis?: (x: number, y: number) => void,
+): void {
+  const style = node.style;
+  const padding = node.resolvedPadding;
+  const contentX = absX + style.border.left + padding.left;
+  const contentY = absY + style.border.top + padding.top;
+  const contentWidth =
+    node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
+  const multicol = node.multicolGeometry;
+  const { spans, textY } = multicol ?? leafLineGeometry(node, contentWidth);
+  // Alignment and truncation act within one column of a multicol leaf,
+  // against the tracked wrap width — the browser's own alignment
+  // includes the trailing letter-spacing gap, so the engine ends lines
+  // at `width − tracking` to sit under it.
+  const alignWidth = multicol ? Math.max(1, multicol.columnWidth - style.tracking) : contentWidth;
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i]!;
+    const row = contentY + textY[i]!;
+    // First-line indent reduces the usable width and shifts the origin
+    // (per CSS, `<br>` doesn't re-indent, so only spans[0] is charged).
+    const indent = i === 0 ? style.textIndent : 0;
+    const truncated =
+      style.whiteSpace !== "normal" && style.overflow.x === "clip"
+        ? truncateSpan(node.text, span, alignWidth - indent, node.advances, style)
+        : { end: span.end, ellipsis: false };
+    // `text-align: end` offsets each line to the content box's right
+    // edge; `center` to floor((W − line) / 2). Whole cells; a line at
+    // or over the width stays at start, matching truncation.
+    const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
+    const leftover = Math.max(0, alignWidth - indent - lineWidth);
+    const alignOffset =
+      style.textAlign === "end"
+        ? leftover
+        : style.textAlign === "center"
+          ? Math.floor(leftover / 2)
+          : 0;
+    let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset + indent;
+    for (let k = span.start; k < truncated.end; k++) {
+      const advance = advanceOf(k, k + 1, node.advances);
+      if (node.text[k] !== OBJECT_REPLACEMENT) {
+        // Inline relative shifts, whole cells (specs/positioning.md):
+        // the over-constrained sides resolve like CSS (top/left win).
+        const insets = node.inlineElements?.[node.charInline?.[k] ?? -1]?.insets;
+        const dx = insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0;
+        const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
+        onChar(k, x + dx, row + dy, advance);
+      }
+      x += advance;
+    }
+    if (truncated.ellipsis) onEllipsis?.(x, row);
+  }
+}
+
+/** Whether a cell lies on one of a fragmented leaf's line boxes — the
+ * hit test for paragraph-flow multicol children, whose `localRect` is
+ * the shared container box (specs/multicol.md): each line covers its
+ * column's width and the rows down to the next line in that column
+ * (its own line box when it is the column's last). */
+export function leafLineCovers(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+  col: number,
+  row: number,
+): boolean {
+  const geometry = node.multicolGeometry;
+  if (!geometry) return false;
+  const style = node.style;
+  const padding = node.resolvedPadding;
+  const x = col - (absX + style.border.left + padding.left);
+  const y = row - (absY + style.border.top + padding.top);
+  const { lineX, lineY } = geometry;
+  for (let i = 0; i < lineY.length; i++) {
+    if (x < lineX[i]! || x >= lineX[i]! + geometry.columnWidth) continue;
+    const next = i + 1 < lineY.length && lineX[i + 1] === lineX[i] ? lineY[i + 1]! : undefined;
+    const bottom = next ?? lineY[i]! + 1 + style.lineGap;
+    if (y >= lineY[i]! && y < bottom) return true;
+  }
+  return false;
+}
+
+/** The index into `node.text` of the character painted at a cell, or
+ * null for a blank cell (specs/semantic-selection.md). `absX/absY` is
+ * the leaf's painted border-box origin as hitStack reports it. */
+export function charIndexAtCell(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+  col: number,
+  row: number,
+): number | null {
+  let found: number | null = null;
+  forEachLeafCell(
+    node,
+    absX - (node.scroll?.x ?? 0),
+    absY - (node.scroll?.y ?? 0),
+    (k, x, y, advance) => {
+      if (found === null && y === row && col >= x && col < x + advance) found = k;
+    },
+  );
+  return found;
 }
 
 /** Where a container's bars paint, in absolute cells from its

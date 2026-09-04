@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { layoutRoot } from "../src/layout.ts";
+import { renderPlainText } from "../src/plain-text.ts";
 import { hitChain } from "../src/pointer.ts";
+import { buildTree } from "../src/tree.ts";
 import { makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -55,5 +58,27 @@ describe("hitChain", () => {
     hidden.tableHidden = true;
     const root = box("root", [0, 0, 10, 2], { children: [hidden] });
     expect(hitChain(root, 1, 0)).toEqual([]);
+  });
+});
+
+describe("hitChain in a paragraph-flow multicol container", () => {
+  it("hits the paragraph whose line fragment is under the cell, not the last one", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="column-count: 2; column-gap: 4px; width: 36px"><p>aaa bbb</p><p>ccc ddd</p></div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host, 16)!;
+    layoutRoot(root, 60);
+    const rows = renderPlainText(root).split("\n");
+    const [first, second] = Array.from(host.querySelectorAll("p"));
+    const cellOf = (glyph: string) => {
+      const row = rows.findIndex((line) => line.includes(glyph));
+      return { col: rows[row]!.indexOf(glyph), row };
+    };
+    const a = cellOf("aaa");
+    const d = cellOf("ddd");
+    expect(hitChain(root, a.col, a.row).at(-1)).toBe(first);
+    expect(hitChain(root, d.col, d.row).at(-1)).toBe(second);
+    // A cell in the gap between the columns hits the container only.
+    expect(hitChain(root, a.col + 4, a.row).at(-1)).toBe(host.firstElementChild);
   });
 });

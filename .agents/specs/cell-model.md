@@ -262,7 +262,10 @@ its interior is a normal layout subtree on the grid (`inline-flex`
 really is a flex container inside). A box taller than one row GROWS its
 line, per CSS line-box growth: the box is `vertical-align: top`, the
 line's text stays on the line's first row, and later lines shift down.
-**Deviation:** the box's margins are ignored. A BLOCK-level element
+The leaf's boxes are paired with its markers by ORDER — the leaf's
+children are built in document order, so a box nested in an inline
+ancestor sorts into place — through one accessor (`inlineBoxesOf`),
+never by ad-hoc filtering. **Deviation:** the box's margins are ignored. A BLOCK-level element
 nested inside a run is skipped with a warning.
 CSS blockification then falls out for free: an authored `block`/`flex` on
 a `<span>` makes it a layout node; `position: absolute`/`fixed` blockifies

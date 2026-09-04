@@ -13,7 +13,7 @@ import {
   OBJECT_REPLACEMENT,
   wrapLineCount,
 } from "./wrap.ts";
-import type { CellMetrics, LayoutNode, PerSide } from "./types.ts";
+import type { CellMetrics, CharSourceRun, LayoutNode, PerSide } from "./types.ts";
 
 /** Per-textarea content width in cells, captured by the host BEFORE
  * the measuring attribute goes on — the engine's width rule is off
@@ -152,10 +152,11 @@ export function buildTree(
     } else {
       intrinsicHeight = contentHeight;
     }
-    // `children` in DOM order so paint-order ties (same z-index)
-    // resolve as CSS would — later DOM wins. Direct atomic-inline
-    // boxes interleave with out-of-flow siblings; nested boxes paint
-    // via their inline ancestor's tree and just get appended.
+    // `children` in DOCUMENT order: paint-order ties (same z-index)
+    // resolve as CSS would — later DOM wins — and the atomic inline
+    // boxes come out in U+FFFC marker order (inlineBoxesOf). Direct
+    // boxes interleave with out-of-flow siblings by construction; a
+    // box nested in an inline ancestor is sorted into place.
     const directBoxes = new Map<Element, LayoutNode>();
     const nestedBoxes: LayoutNode[] = [];
     for (const box of run.boxes) {
@@ -172,7 +173,12 @@ export function buildTree(
         if (child) children.push(child);
       }
     }
-    children.push(...nestedBoxes);
+    if (nestedBoxes.length > 0) {
+      children.push(...nestedBoxes);
+      children.sort((a, b) =>
+        a.source.compareDocumentPosition(b.source) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+      );
+    }
     const node: LayoutNode = {
       source: root,
       style,
@@ -189,6 +195,8 @@ export function buildTree(
       node.inlineElements = run.inlineElements;
       node.charInline = run.chars.map((_, i) => run.inlineIndex[i] ?? -1);
     }
+    const charSource = charSourceRuns(run);
+    if (charSource.length > 0) node.charSource = charSource;
     return node;
   }
 
@@ -360,6 +368,10 @@ interface LeafRun {
   chars: string[];
   /** Cells each character occupies: `1 + tracking` of its innermost element. */
   advances: number[];
+  /** Per character: the source Text node and offset (`null`/-1 for
+   * `<br>` newlines and markers). Compacted into `charSource` runs. */
+  sourceNode: (Text | null)[];
+  sourceOffset: number[];
   /** Per character: index into `inlineElements` (-1 = direct leaf text). */
   inlineIndex: number[];
   inlineElements: NonNullable<LayoutNode["inlineElements"]>;
@@ -398,7 +410,15 @@ interface RunContext {
  * survive as authored and tabs expand to tab stops (see RunContext).
  */
 function extractLeafRun(el: Element, tracking: number, ctx: RunContext): LeafRun {
-  const run: LeafRun = { chars: [], advances: [], inlineIndex: [], inlineElements: [], boxes: [] };
+  const run: LeafRun = {
+    chars: [],
+    advances: [],
+    sourceNode: [],
+    sourceOffset: [],
+    inlineIndex: [],
+    inlineElements: [],
+    boxes: [],
+  };
   collectRun(el, tracking, ctx, run);
   if (ctx.preserve) {
     // A final newline gets no line box of its own — the wrap layer's
@@ -428,32 +448,43 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
         // `white-space: pre`: spaces and newlines survive as authored;
         // tabs expand to the next `tabSize` stop (spaces are pushed
         // untracked — tab stops are grid columns, not glyphs).
-        for (const ch of (node.textContent ?? "").replace(/\r\n?/g, "\n")) {
-          if (ch === "\n") {
-            run.chars.push("\n");
-            run.advances.push(0);
+        const text = node.textContent ?? "";
+        let offset = 0;
+        for (const ch of text) {
+          const at = offset;
+          offset += ch.length;
+          if (ch === "\r") {
+            if (text[offset] === "\n") continue; // CRLF: the LF carries the break
+            pushChar(run, "\n", 0, node as Text, at);
+          } else if (ch === "\n") {
+            pushChar(run, "\n", 0, node as Text, at);
           } else if (ch === "\t") {
             const target = (Math.floor(column() / ctx.tabSize) + 1) * ctx.tabSize;
             for (let cells = column(); cells < target; cells++) {
-              run.chars.push(" ");
-              run.advances.push(1);
+              pushChar(run, " ", 1, node as Text, at);
             }
           } else {
-            run.chars.push(ch);
-            run.advances.push(1 + tracking);
+            pushChar(run, ch, 1 + tracking, node as Text, at);
           }
         }
       } else {
-        for (const ch of (node.textContent ?? "").replace(/[ \t\r\n\f]+/g, " ")) {
-          run.chars.push(ch);
-          run.advances.push(1 + tracking);
+        // Collapsible white space (space/tab/CR/LF/FF) folds to one
+        // space that keeps the first collapsed character's offset.
+        let offset = 0;
+        let inSpace = false;
+        for (const ch of node.textContent ?? "") {
+          const collapsible =
+            ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === "\f";
+          if (!collapsible) pushChar(run, ch, 1 + tracking, node as Text, offset);
+          else if (!inSpace) pushChar(run, " ", 1 + tracking, node as Text, offset);
+          inSpace = collapsible;
+          offset += ch.length;
         }
       }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const child = node as Element;
       if (child.tagName === "BR") {
-        run.chars.push("\n");
-        run.advances.push(0);
+        pushChar(run, "\n", 0, null, -1);
         continue;
       }
       // Reads happen during the measure pass, so authored values are visible.
@@ -467,8 +498,7 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
         const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics, ctx.textareaWidths);
         if (box) {
           box.inlineBox = true;
-          run.chars.push(OBJECT_REPLACEMENT);
-          run.advances.push(1);
+          pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
           run.boxes.push(box);
         }
         continue;
@@ -508,8 +538,7 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
       // Pad cells belong to the element too (its bg must fill them).
       for (let i = 0; i < padLeft; i++) {
         run.inlineIndex[run.chars.length] = inlineIndex;
-        run.chars.push(INLINE_PAD);
-        run.advances.push(1);
+        pushChar(run, INLINE_PAD, 1, null, -1);
       }
       const start = run.chars.length;
       collectRun(child, childTracking, ctx, run);
@@ -519,8 +548,7 @@ function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun
         if (run.inlineIndex[i] === undefined) run.inlineIndex[i] = inlineIndex;
       for (let i = 0; i < padRight; i++) {
         run.inlineIndex[run.chars.length] = inlineIndex;
-        run.chars.push(INLINE_PAD);
-        run.advances.push(1);
+        pushChar(run, INLINE_PAD, 1, null, -1);
       }
     }
   }
@@ -555,6 +583,8 @@ function inlineInsets(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<
 function normalizeRun(run: LeafRun): LeafRun {
   const chars: string[] = [];
   const advances: number[] = [];
+  const sourceNode: (Text | null)[] = [];
+  const sourceOffset: number[] = [];
   const inlineIndex: number[] = [];
   const lineStart = () => {
     let i = chars.length;
@@ -565,6 +595,8 @@ function normalizeRun(run: LeafRun): LeafRun {
     while (chars.length > lineStart() && chars[chars.length - 1] === " ") {
       chars.pop();
       advances.pop();
+      sourceNode.pop();
+      sourceOffset.pop();
       inlineIndex.pop();
     }
   };
@@ -585,13 +617,51 @@ function normalizeRun(run: LeafRun): LeafRun {
     }
     chars.push(ch);
     advances.push(run.advances[i]!);
+    sourceNode.push(run.sourceNode[i] ?? null);
+    sourceOffset.push(run.sourceOffset[i] ?? -1);
     inlineIndex.push(run.inlineIndex[i] ?? -1);
   }
   trimLineEnd();
   // Edge `\n`s stay: every leading <br> creates a line box and all but
   // the final trailing one do (probed, all engines) — the wrap layer
   // drops exactly that last one (dropFinalBreakSpan).
-  return { chars, advances, inlineIndex, inlineElements: run.inlineElements, boxes: run.boxes };
+  return {
+    chars,
+    advances,
+    sourceNode,
+    sourceOffset,
+    inlineIndex,
+    inlineElements: run.inlineElements,
+    boxes: run.boxes,
+  };
+}
+
+function pushChar(run: LeafRun, ch: string, advance: number, source: Text | null, offset: number) {
+  run.chars.push(ch);
+  run.advances.push(advance);
+  run.sourceNode.push(source);
+  run.sourceOffset.push(offset);
+}
+
+/** Compact the per-character source map into runs (`LayoutNode.charSource`):
+ * a run grows while the next character continues the same Text node at
+ * the next offset. */
+function charSourceRuns(run: LeafRun): CharSourceRun[] {
+  const runs: CharSourceRun[] = [];
+  let index = 0;
+  for (let i = 0; i < run.chars.length; i++) {
+    const ch = run.chars[i]!;
+    const node = run.sourceNode[i];
+    const offset = run.sourceOffset[i]!;
+    const last = runs[runs.length - 1];
+    if (node) {
+      if (last && last.node === node && last.offset + last.length === offset)
+        last.length += ch.length;
+      else runs.push({ index, length: ch.length, node, offset });
+    }
+    index += ch.length;
+  }
+  return runs;
 }
 
 function longestLineAdvance(text: string, advances: number[], tracking: number): number {

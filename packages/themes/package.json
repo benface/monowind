@@ -1,6 +1,6 @@
 {
   "name": "@monowind/themes",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Themes for monowind modeled on real systems: DOS, C64, phosphor terminals — palettes, period fonts, era-correct border glyphs",
   "keywords": [
     "c64",

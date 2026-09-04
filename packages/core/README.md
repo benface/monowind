@@ -38,6 +38,17 @@ import { defineMonoWind } from "monowind";
 defineMonoWind();
 ```
 
+## Selection
+
+`select="grid"` (the default) selects the rendered grid: drag across
+the art and copy exactly what you see. Double- and triple-click select
+the element under the pointer — the word or the paragraph, as on any
+page — and drag extends word by word or paragraph by paragraph.
+`select="text"` selects the light DOM natively instead. In both modes
+a copy of light-DOM text is plain text laid out by the standard
+`innerText` rules (paragraphs separated by a blank line, table cells
+by tabs).
+
 ## Scrolling
 
 `overflow-y-auto` (or `-scroll`, either axis) makes the element a

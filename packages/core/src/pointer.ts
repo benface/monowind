@@ -1,4 +1,5 @@
 import { paintOrderedChildren } from "./borders.ts";
+import { leafLineCovers } from "./plain-text.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
@@ -34,14 +35,15 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
       if (child.tableHidden) continue;
       const cx = x + child.localRect.x;
       const cy = y + child.localRect.y;
-      if (
-        col >= cx &&
-        col < cx + child.localRect.width &&
-        row >= cy &&
-        row < cy + child.localRect.height
-      ) {
-        hit = child;
-      }
+      // A paragraph-flow multicol child shares the container's box with
+      // its siblings; its ink is where its line fragments are.
+      const inside = child.multicolFlow
+        ? leafLineCovers(child, cx, cy, col, row)
+        : col >= cx &&
+          col < cx + child.localRect.width &&
+          row >= cy &&
+          row < cy + child.localRect.height;
+      if (inside) hit = child;
     }
     if (!hit) return stack;
     stack.push({ node: hit, x: x + hit.localRect.x, y: y + hit.localRect.y });

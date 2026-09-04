@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderPlainText, renderCellSegments } from "../src/plain-text.ts";
+import { charIndexAtCell, renderPlainText, renderCellSegments } from "../src/plain-text.ts";
 import { collectBorderRuns } from "../src/borders.ts";
 import type { BorderRun } from "../src/borders.ts";
 import { layoutRoot } from "../src/layout.ts";
@@ -635,5 +635,97 @@ describe("opacity", () => {
     // opacity: 0 still paints its glyphs (transparent spans stay
     // selectable in grid mode), never drops them.
     expect(rows[1]![0]).toMatchObject({ text: "go", opacity: "0" });
+  });
+});
+
+describe("charIndexAtCell (specs/semantic-selection.md)", () => {
+  it("maps a cell back to the character the paint put there", () => {
+    const leaf = makeNode({
+      style: { width: { kind: "cells", value: 5 } },
+      text: "hello world",
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 5);
+    expect(renderPlainText(root)).toBe("hello\nworld");
+    expect(charIndexAtCell(leaf, 0, 0, 1, 1)).toBe(7);
+    expect(charIndexAtCell(leaf, 0, 0, 4, 0)).toBe(4);
+  });
+
+  it("honors alignment, indent, and padding, and reports blanks as null", () => {
+    const leaf = makeNode({
+      style: {
+        width: { kind: "cells", value: 10 },
+        textAlign: "center",
+        textIndent: 2,
+        padding: { top: 0, right: 0, bottom: 0, left: 1 },
+        border: { top: 1, right: 0, bottom: 0, left: 0 },
+      },
+      text: "ab",
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 10);
+    const row = renderPlainText(root).split("\n")[1]!;
+    const col = row.indexOf("a");
+    expect(charIndexAtCell(leaf, 0, 0, col, 1)).toBe(0);
+    expect(charIndexAtCell(leaf, 0, 0, col + 1, 1)).toBe(1);
+    expect(charIndexAtCell(leaf, 0, 0, 0, 1)).toBeNull();
+    expect(charIndexAtCell(leaf, 0, 0, col, 0)).toBeNull();
+  });
+
+  it("covers every cell of a tracked character and skips the ellipsis", () => {
+    const tracked = makeNode({
+      style: { width: { kind: "cells", value: 6 }, tracking: 1 },
+      text: "ab",
+    });
+    tracked.advances = [2, 2];
+    const root = makeNode({ children: [tracked] });
+    layoutRoot(root, 6);
+    expect(charIndexAtCell(tracked, 0, 0, 1, 0)).toBe(0);
+    expect(charIndexAtCell(tracked, 0, 0, 2, 0)).toBe(1);
+    const clipped = makeNode({
+      style: {
+        width: { kind: "cells", value: 4 },
+        whiteSpace: "nowrap",
+        overflow: { x: "clip", y: "visible" },
+        textOverflow: "ellipsis",
+      },
+      text: "abcdefgh",
+    });
+    const clippedRoot = makeNode({ children: [clipped] });
+    layoutRoot(clippedRoot, 4);
+    expect(renderPlainText(clippedRoot)).toBe("abc…");
+    expect(charIndexAtCell(clipped, 0, 0, 2, 0)).toBe(2);
+    expect(charIndexAtCell(clipped, 0, 0, 3, 0)).toBeNull();
+  });
+
+  it("applies the leaf's own scroll offset, as the paint does", () => {
+    const leaf = makeNode({
+      style: {
+        width: { kind: "cells", value: 4 },
+        whiteSpace: "nowrap",
+        overflow: { x: "scroll", y: "visible" },
+        scrollbarWidth: "none",
+      },
+      text: "abcdefgh",
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 4);
+    leaf.scroll = { x: 2, y: 0 };
+    expect(renderPlainText(root).split("\n")[0]).toBe("cdef");
+    expect(charIndexAtCell(leaf, 0, 0, 0, 0)).toBe(2);
+  });
+});
+
+describe("charIndexAtCell on a multicol leaf", () => {
+  it("follows the stored fragmentation, column by column", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="column-count: 2; column-gap: 4px; width: 36px">aaa bbb ccc ddd</div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 60);
+    expect(renderPlainText(node)).toBe(["aaa  ccc", "bbb  ddd"].join("\n"));
+    expect(charIndexAtCell(node, 0, 0, 5, 0)).toBe(8);
+    expect(charIndexAtCell(node, 0, 0, 0, 1)).toBe(4);
+    expect(charIndexAtCell(node, 0, 0, 3, 0)).toBeNull();
   });
 });

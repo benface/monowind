@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { charIndexAt, positionOf } from "../src/selection.ts";
 import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD } from "../src/wrap.ts";
+import { inlineBoxesOf } from "../src/types.ts";
 import type { PerSide } from "../src/types.ts";
 
 /**
@@ -290,5 +292,119 @@ describe("text-align end", () => {
     )!;
     layoutRoot(node, 10);
     expect(renderPlainText(node)).toBe("too long");
+  });
+});
+
+describe("character ↔ DOM position map (specs/semantic-selection.md)", () => {
+  const textNodes = (node: Element): Text[] => {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const out: Text[] = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) out.push(n as Text);
+    return out;
+  };
+
+  it("maps plain text one-to-one", () => {
+    const root = el("<div>hello</div>");
+    const node = buildTree(root, 16)!;
+    const [text] = textNodes(root);
+    expect(node.charSource).toEqual([{ index: 0, length: 5, node: text, offset: 0 }]);
+    expect(positionOf(node, 2)).toEqual({ node: text, offset: 2 });
+    expect(charIndexAt(node, text!, 3)).toBe(3);
+  });
+
+  it("keeps the first source character of collapsed whitespace, across nodes", () => {
+    const root = el("<div>  hello  <b> world </b>x</div>");
+    const node = buildTree(root, 16)!;
+    const [t1, t2, t3] = textNodes(root);
+    expect(node.text).toBe("hello world x");
+    expect(node.charSource).toEqual([
+      { index: 0, length: 6, node: t1, offset: 2 },
+      { index: 6, length: 6, node: t2, offset: 1 },
+      { index: 12, length: 1, node: t3, offset: 0 },
+    ]);
+    // Points in the leading blank land on the first character; the
+    // space kept between the words is the first node's.
+    expect(charIndexAt(node, t1!, 0)).toBe(0);
+    expect(charIndexAt(node, t1!, 1)).toBe(0);
+    expect(positionOf(node, 5)).toEqual({ node: t1, offset: 7 });
+    // The <b>'s own leading blank collapsed away: a point in it is the
+    // next character.
+    expect(charIndexAt(node, t2!, 0)).toBe(6);
+    expect(positionOf(node, node.text.length)).toEqual({ node: t3, offset: 1 });
+  });
+
+  it("gives <br> no position and trims the spaces before it", () => {
+    const root = el("<div>ab <br>cd</div>");
+    const node = buildTree(root, 16)!;
+    const [t1, t2] = textNodes(root);
+    expect(node.text).toBe("ab\ncd");
+    expect(node.charSource).toEqual([
+      { index: 0, length: 2, node: t1, offset: 0 },
+      { index: 3, length: 2, node: t2, offset: 0 },
+    ]);
+    expect(positionOf(node, 2)).toEqual({ node: t1, offset: 2 });
+    expect(positionOf(node, 3)).toEqual({ node: t2, offset: 0 });
+    // A point at the <br> itself (its parent, its child index) is the
+    // end of the line before it.
+    expect(charIndexAt(node, root, 1)).toBe(2);
+  });
+
+  it("skips padding markers and nested inline elements' boundaries", () => {
+    const root = el('<div>a <span style="padding: 0 4px">b</span> c</div>');
+    const node = buildTree(root, 16)!;
+    const [t1, t2, t3] = textNodes(root);
+    expect(node.text).toBe(`a ${INLINE_PAD}b${INLINE_PAD} c`);
+    expect(node.charSource).toEqual([
+      { index: 0, length: 2, node: t1, offset: 0 },
+      { index: 3, length: 1, node: t2, offset: 0 },
+      { index: 5, length: 2, node: t3, offset: 0 },
+    ]);
+    expect(charIndexAt(node, t2!, 0)).toBe(3);
+    expect(positionOf(node, 4)).toEqual({ node: t2, offset: 1 });
+  });
+
+  it("resolves a point inside an atomic inline box to its marker", () => {
+    const root = el('<div>ab <span style="display: inline-block">X</span> cd</div>');
+    const node = buildTree(root, 16)!;
+    const [, boxText] = textNodes(root);
+    expect(node.text).toBe("ab ￼ cd");
+    expect(charIndexAt(node, boxText!, 1)).toBe(3);
+    expect(positionOf(node, 4)).toEqual({ node: textNodes(root)[2], offset: 0 });
+  });
+
+  it("maps preserved text, newlines included", () => {
+    const root = el('<div style="white-space: pre">a\n b</div>');
+    const node = buildTree(root, 16)!;
+    const [text] = textNodes(root);
+    expect(node.text).toBe("a\n b");
+    expect(node.charSource).toEqual([{ index: 0, length: 4, node: text, offset: 0 }]);
+    expect(positionOf(node, 1)).toEqual({ node: text, offset: 1 });
+  });
+
+  it("round-trips every mapped index", () => {
+    const root = el(
+      '<div>  one <b>two  </b> <i>three</i>four<br>five  <span style="padding-left: 4px">six</span></div>',
+    );
+    const node = buildTree(root, 16)!;
+    for (const run of node.charSource!) {
+      for (let k = 0; k <= run.length; k++) {
+        const index = run.index + k;
+        const position = positionOf(node, index)!;
+        expect(charIndexAt(node, position.node, position.offset)).toBe(index);
+      }
+    }
+  });
+});
+
+describe("atomic inline boxes in marker order", () => {
+  it("sorts a box nested in an inline ancestor into its document position", () => {
+    const root = el(
+      '<p>a <b><span style="display: inline-block">NESTED</span></b> b <span style="display: inline-block">YY</span> c</p>',
+    );
+    const node = buildTree(root, 16)!;
+    expect(node.text).toBe("a ￼ b ￼ c");
+    expect(inlineBoxesOf(node).map((box) => box.text)).toEqual(["NESTED", "YY"]);
+    layoutRoot(node, 40);
+    expect(renderPlainText(node)).toBe("a NESTED b YY c");
   });
 });

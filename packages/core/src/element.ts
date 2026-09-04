@@ -1,8 +1,18 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
 import { onGlyphRegistryChange } from "./glyphs.ts";
-import { leafObservedAttributes, onLeafRegistryChange } from "./leaf.ts";
+import { leafObservedAttributes, leafRendererFor, onLeafRegistryChange } from "./leaf.ts";
 import { hitChain, hitStack } from "./pointer.ts";
-import { renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
+import { charIndexAtCell, renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
+import {
+  classifySelection,
+  comparePoints,
+  isTextLeaf,
+  positionOf,
+  selectionRangeThrough,
+  serializeSelection,
+  wordAt,
+} from "./selection.ts";
+import type { BoundaryPoints } from "./selection.ts";
 import { paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
@@ -38,6 +48,9 @@ const SHADOW_TEMPLATE = `
   #grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
+  /* A live semantic selection (specs/semantic-selection.md) lifts the
+   * lock so the element selection copies; pointer events stay off. */
+  :host([select="grid"][data-mw-semantic-selection]) slot { user-select: text; -webkit-user-select: text; }
   /* Selection invert — mirror of the canonical rule in styles.css
    * (which explains the field choices); update together. */
   ::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
@@ -52,6 +65,27 @@ const SHADOW_TEMPLATE = `
  * it is absent or unrecognized so every stylesheet keys on an explicit
  * value — the single place the default lives. */
 const DEFAULT_SELECT = "grid";
+
+/** Set on the host while an element selection made by a semantic
+ * gesture is live (specs/semantic-selection.md): the shadow stylesheet
+ * lifts the grid-mode user-select lock under it. */
+const SEMANTIC_SELECTION = "data-mw-semantic-selection";
+
+interface Point {
+  node: Node;
+  offset: number;
+}
+
+/** A selectable unit — a word's or paragraph's DOM range. */
+interface SelectionUnit {
+  start: Point;
+  end: Point;
+}
+
+interface SemanticGesture {
+  unit: "word" | "paragraph";
+  anchor: SelectionUnit;
+}
 
 const DYNAMIC_RELAYOUT_EVENTS = [
   "pointerover",
@@ -184,6 +218,11 @@ export class MonoWindElement extends HTMLElementBase {
    * #onWheel). */
   #wheelLatch: WheelLatch | null = null;
   #thumbDrag: ThumbDrag | null = null;
+  /** The last primary pointerdown's type: a `mousedown` counts as a
+   * semantic gesture only after a mouse or pen (a tap's compatibility
+   * mousedown follows a touch pointerdown). */
+  #lastPointerType = "";
+  #semanticGesture: SemanticGesture | null = null;
   /** Native scrollers outside the host (ancestors with scrollable
    * overflow, then the page), collected per layout so a wheel tick
    * never reads computed styles (see #outsideCanScroll). */
@@ -313,6 +352,14 @@ export class MonoWindElement extends HTMLElementBase {
     this.addEventListener("scroll", this.#onScroll, { capture: true, passive: true });
     this.addEventListener("scrollend", this.#onScrollEnd, { capture: true });
     this.addEventListener("wheel", this.#onWheel, { passive: false });
+    // A selection in the light DOM copies as the engine's plain text
+    // (specs/semantic-selection.md): the browsers' serializers lose
+    // block breaks for the out-of-flow boxes the render uses.
+    this.addEventListener("copy", this.#onCopy);
+    // Multi-click gestures (specs/semantic-selection.md): the click
+    // count rides mousedown (PointerEvent.detail is 0).
+    this.addEventListener("mousedown", this.#onMouseDown);
+    document.addEventListener("selectionchange", this.#onSelectionChange);
     // Release on the window: a selection drag routinely ends outside
     // the host, and the press state must thaw wherever it ends.
     window.addEventListener("pointerup", this.#onPointerUp);
@@ -350,6 +397,9 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("scroll", this.#onScroll, { capture: true });
     this.removeEventListener("scrollend", this.#onScrollEnd, { capture: true });
     this.removeEventListener("wheel", this.#onWheel);
+    this.removeEventListener("copy", this.#onCopy);
+    this.removeEventListener("mousedown", this.#onMouseDown);
+    document.removeEventListener("selectionchange", this.#onSelectionChange);
     for (const timer of this.#settleTimers.values()) clearTimeout(timer);
     this.#settleTimers.clear();
     this.#thumbDrag = null;
@@ -776,6 +826,9 @@ export class MonoWindElement extends HTMLElementBase {
       else drag.el.scrollLeft = target;
       return;
     }
+    const gesture = this.#semanticGesture;
+    if (gesture && (event as PointerEvent).buttons & 1)
+      this.#extendSemantic(gesture, clientX, clientY);
     this.#hoverClient = { x: clientX, y: clientY };
     // High-frequency path: skip the update while the pointer stays in
     // the same cell (state can only change with the cell — relayouts
@@ -788,6 +841,169 @@ export class MonoWindElement extends HTMLElementBase {
     this.#updatePointerStates();
   };
 
+  #onCopy = (event: Event): void => {
+    const { clipboardData } = event as ClipboardEvent;
+    const layout = this.#lastLayout;
+    const range = this.#elementSelection();
+    if (!clipboardData || !layout || !range) return;
+    clipboardData.setData("text/plain", serializeSelection(layout, range));
+    event.preventDefault();
+  };
+
+  /** Double- and triple-click on the grid select the element's word or
+   * paragraph (specs/semantic-selection.md); a plain click ends a
+   * semantic selection's lift synchronously, ahead of selectionchange. */
+  #onMouseDown = (event: Event): void => {
+    const e = event as MouseEvent;
+    if (e.button !== 0 || this.getAttribute("select") !== "grid") return;
+    if (!e.composedPath().includes(this.#grid)) return;
+    if (e.detail <= 1) {
+      if (e.detail === 1) this.removeAttribute(SEMANTIC_SELECTION);
+      return;
+    }
+    if (this.#lastPointerType !== "mouse" && this.#lastPointerType !== "pen") return;
+    // Ours from here: no native word/whole-grid selection, no native
+    // drag. A canceled mousedown moves no focus, so move it as the
+    // click would have (a focused control would otherwise keep the
+    // copy command).
+    e.preventDefault();
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && this.contains(active)) {
+      active.blur();
+    }
+    const unit = e.detail === 2 ? "word" : "paragraph";
+    const selection = document.getSelection();
+    const layout = this.#lastLayout;
+    const metrics = this.#cellMetrics;
+    if (!selection || !layout || !metrics) return;
+    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
+    const target = this.#unitAt(col, row, unit);
+    if (!target) {
+      selection.removeAllRanges();
+      this.#semanticGesture = null;
+      return;
+    }
+    this.#liftLock(target);
+    // Shift extends the existing element selection from its anchor.
+    const anchor: SelectionUnit =
+      e.shiftKey && selection.anchorNode && this.#elementSelection()
+        ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
+        : target;
+    this.#selectThrough(selection, anchor, target);
+    this.#semanticGesture = { unit, anchor };
+  };
+
+  /** Drag extension: the anchor unit through the unit under the pointer,
+   * in DOM order (base at the anchor's far edge, so the browser's
+   * selection direction matches the drag). */
+  #extendSemantic(gesture: SemanticGesture, clientX: number, clientY: number): void {
+    const metrics = this.#cellMetrics;
+    const selection = document.getSelection();
+    if (!metrics || !selection) return;
+    const { col, row } = this.#cellAt(clientX, clientY, metrics);
+    const current = this.#unitAt(col, row, gesture.unit);
+    if (current) this.#selectThrough(selection, gesture.anchor, current);
+  }
+
+  /** Select from the anchor unit through `unit`: the anchor's far edge
+   * becomes the base, so the browser's selection direction matches the
+   * gesture. Points inside a custom leaf's shadow cannot pair with
+   * light-tree points, so each side is expressed at light-tree edges
+   * unless both are the same shadow unit. */
+  #selectThrough(selection: Selection, anchor: SelectionUnit, unit: SelectionUnit): void {
+    if (sameUnit(anchor, unit)) {
+      selectBetween(selection, unit.start, unit.end);
+      return;
+    }
+    const from = this.#lightEdges(anchor);
+    const to = this.#lightEdges(unit);
+    const forward =
+      comparePoints(from.start.node, from.start.offset, to.start.node, to.start.offset) <= 0;
+    if (forward) selectBetween(selection, from.start, to.end);
+    else selectBetween(selection, from.end, to.start);
+  }
+
+  /** The word or paragraph under a cell: the innermost hit text leaf,
+   * its selectionTarget's contents for a custom leaf, a Segmenter word
+   * mapped to DOM positions for the word gesture (falling back to the
+   * paragraph where the text has no positions). */
+  #unitAt(col: number, row: number, unit: "word" | "paragraph"): SelectionUnit | null {
+    const layout = this.#lastLayout;
+    if (!layout) return null;
+    const stack = hitStack(layout, col, row);
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const { node, x, y } = stack[i]!;
+      if (!isTextLeaf(node)) continue;
+      const target = leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source);
+      if (unit === "word" && !target) {
+        const index = charIndexAtCell(node, x, y, col, row);
+        if (index === null) return null;
+        const word = wordAt(node, index);
+        const start = word && positionOf(node, word.start);
+        const end = word && positionOf(node, word.end);
+        if (start && end) return { start, end };
+      }
+      const container = target ?? node.source;
+      return {
+        start: { node: container, offset: 0 },
+        end: { node: container, offset: container.childNodes.length },
+      };
+    }
+    return null;
+  }
+
+  /** A unit inside a custom leaf's shadow, as the light-tree range
+   * around its host; a light unit unchanged. The edges sit at the
+   * neighbors' content ends rather than on the parent: a point on this
+   * host itself comes back from Firefox's getComposedRanges re-expressed
+   * inside the shadow slot, which would read as outside the light DOM. */
+  #lightEdges(unit: SelectionUnit): SelectionUnit {
+    const root = unit.start.node.getRootNode();
+    if (!(root instanceof ShadowRoot) || root === this.#grid.getRootNode()) return unit;
+    const host = root.host;
+    const parent = host.parentNode;
+    if (!parent) return unit;
+    const index = Array.prototype.indexOf.call(parent.childNodes, host);
+    const before = host.previousSibling;
+    const after = host.nextSibling;
+    return {
+      start: isPlainNode(before)
+        ? {
+            node: before,
+            offset: before instanceof Text ? before.length : before.childNodes.length,
+          }
+        : { node: parent, offset: index },
+      end: isPlainNode(after) ? { node: after, offset: 0 } : { node: parent, offset: index + 1 },
+    };
+  }
+
+  /** Lift the grid-mode lock before the range is set — a forced style
+   * resolution on the unit's element, so the range only ever lands in
+   * selectable content. */
+  #liftLock(unit: SelectionUnit): void {
+    this.setAttribute(SEMANTIC_SELECTION, "");
+    const node = unit.start.node;
+    const element = node instanceof Element ? node : node.parentElement;
+    if (element) void getComputedStyle(element).userSelect;
+  }
+
+  /** The document selection when it is a non-collapsed range in this
+   * host's light DOM (a custom leaf's shadow selection reads as the
+   * light range around its host); null otherwise. */
+  #elementSelection(): BoundaryPoints | null {
+    const range = selectionRangeThrough(this.#grid.getRootNode() as ShadowRoot);
+    if (!range || classifySelection(this, this.#grid, range) !== "light") return null;
+    const collapsed =
+      range.startContainer === range.endContainer && range.startOffset === range.endOffset;
+    return collapsed ? null : range;
+  }
+
+  /** The lift ends once the selection left the light DOM or collapsed. */
+  #onSelectionChange = (): void => {
+    if (!this.hasAttribute(SEMANTIC_SELECTION)) return;
+    if (!this.#elementSelection()) this.removeAttribute(SEMANTIC_SELECTION);
+  };
+
   #onPointerLeave = (): void => {
     this.#hoverClient = null;
     this.#updatePointerStates();
@@ -796,6 +1012,7 @@ export class MonoWindElement extends HTMLElementBase {
   #onPointerDown = (event: Event): void => {
     const e = event as PointerEvent;
     if (!e.isPrimary || e.button !== 0) return;
+    this.#lastPointerType = e.pointerType;
     // A finger pans natively (styles.css "Touch panning") and must not
     // relayout before release (see #scheduleDynamicRelayout): no thumb
     // drag, no synthesized press.
@@ -816,6 +1033,7 @@ export class MonoWindElement extends HTMLElementBase {
 
   #onPointerUp = (event: Event): void => {
     if (!(event as PointerEvent).isPrimary) return;
+    this.#semanticGesture = null;
     if (this.#thumbDrag) {
       this.#settle(this.#thumbDrag.el);
       this.#thumbDrag = null;
@@ -1354,6 +1572,30 @@ export function quantizeScroll(
 function isTouchInProgress(event: Event): boolean {
   return (
     event instanceof PointerEvent && event.pointerType === "touch" && event.type !== "pointerup"
+  );
+}
+
+/** A light node that can hold a boundary point of its own: anything
+ * but another shadow host. */
+function isPlainNode(node: Node | null): node is Node {
+  return node !== null && !(node instanceof Element && node.shadowRoot);
+}
+
+/** A collapsed unit — an existing selection's anchor, for Shift. */
+function pointUnit(point: Point): SelectionUnit {
+  return { start: point, end: point };
+}
+
+function selectBetween(selection: Selection, base: Point, extent: Point): void {
+  selection.setBaseAndExtent(base.node, base.offset, extent.node, extent.offset);
+}
+
+function sameUnit(a: SelectionUnit, b: SelectionUnit): boolean {
+  return (
+    a.start.node === b.start.node &&
+    a.start.offset === b.start.offset &&
+    a.end.node === b.end.node &&
+    a.end.offset === b.end.offset
   );
 }
 

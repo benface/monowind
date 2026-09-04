@@ -1,5 +1,6 @@
 import { applyCellPaint, isBarePaint, renderCellSegments, samePaint } from "./plain-text.ts";
 import type { CellSegment } from "./plain-text.ts";
+import { selectionRangeThrough } from "./selection.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
@@ -119,30 +120,16 @@ interface SavedSelection {
   backward: boolean;
 }
 
-/** The document Selection sees shadow content in every engine we
- * support (`getComposedRanges` on Firefox/WebKit and standards-path
- * Chromium; `ShadowRoot.getSelection()` as the legacy Chromium
- * fallback) — verified 2026-09-01, see the synthesized-pointer-states
- * plan. Anything unexpected degrades to the old behavior (selection
- * lost), never an error. */
+/** Anything unexpected degrades to the old behavior (selection lost),
+ * never an error. */
 function captureSelection(target: HTMLElement, allowCollapsed: boolean): SavedSelection | null {
   try {
     const selection = target.ownerDocument.getSelection();
     if (!selection) return null;
     const shadowRoot = target.getRootNode();
     if (!(shadowRoot instanceof ShadowRoot)) return null;
-    let range: { startContainer: Node; startOffset: number; endContainer: Node; endOffset: number };
-    if (selection.getComposedRanges) {
-      const ranges = selection.getComposedRanges({ shadowRoots: [shadowRoot] });
-      if (ranges.length === 0) return null;
-      range = ranges[0]!;
-    } else {
-      const shadowSelection = (
-        shadowRoot as { getSelection?: () => Selection | null }
-      ).getSelection?.();
-      if (!shadowSelection || shadowSelection.rangeCount === 0) return null;
-      range = shadowSelection.getRangeAt(0);
-    }
+    const range = selectionRangeThrough(shadowRoot);
+    if (!range) return null;
     const start = flatOffset(target, range.startContainer, range.startOffset);
     const end = flatOffset(target, range.endContainer, range.endOffset);
     if (start === null || end === null) return null;
