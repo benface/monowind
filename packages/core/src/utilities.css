@@ -183,22 +183,46 @@
  * properties — one per bar (`x` the horizontal bar's height, `y` the
  * vertical bar's width); the shorthand sets both, longhands win. */
 @utility scrollbar-* {
-  --mw-scrollbar-x-size: --value(integer);
-  --mw-scrollbar-y-size: --value(integer);
+  --mw-scrollbar-size-x: --value(integer);
+  --mw-scrollbar-size-y: --value(integer);
 }
 @utility scrollbar-x-* {
-  --mw-scrollbar-x-size: --value(integer);
+  --mw-scrollbar-size-x: --value(integer);
 }
 @utility scrollbar-y-* {
-  --mw-scrollbar-y-size: --value(integer);
+  --mw-scrollbar-size-y: --value(integer);
 }
-@property --mw-scrollbar-x-size {
+@property --mw-scrollbar-size-x {
   syntax: "<integer>";
   inherits: false;
   initial-value: 1;
 }
-@property --mw-scrollbar-y-size {
+@property --mw-scrollbar-size-y {
   syntax: "<integer>";
   inherits: false;
   initial-value: 1;
+}
+/* Cells kept clear around the bars (specs/scrolling.md) as room for the
+ * author's own arrow buttons: `-x` moves the vertical bar inward and
+ * insets the horizontal one's ends, `-y` the mirror; two bars still
+ * meet at one blank corner cell. */
+@utility scrollbar-inset-* {
+  --mw-scrollbar-inset-x: --value(integer);
+  --mw-scrollbar-inset-y: --value(integer);
+}
+@utility scrollbar-inset-x-* {
+  --mw-scrollbar-inset-x: --value(integer);
+}
+@utility scrollbar-inset-y-* {
+  --mw-scrollbar-inset-y: --value(integer);
+}
+@property --mw-scrollbar-inset-x {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --mw-scrollbar-inset-y {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
 }

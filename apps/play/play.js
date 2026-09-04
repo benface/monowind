@@ -24,7 +24,7 @@ const main = document.querySelector("main");
 const versionLabel = document.getElementById("version");
 if (globalThis.monowind?.version) versionLabel.textContent = `v${globalThis.monowind.version}`;
 
-const SAMPLE = `<div class="mx-auto flex max-h-[95vh] max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
+const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-h-24 max-w-120 flex-col border border-emerald-400 rule-emerald-400 rule-y">
   <mono-ascii font="small" effect="metal" class="mx-auto max-w-full shrink-0 overflow-clip py-1">monowind</mono-ascii>
   <div class="flex shrink-0 items-center justify-between bg-emerald-400 px-2 py-1 text-black">
     <div class="font-bold">§ MONOWIND DAILY</div>

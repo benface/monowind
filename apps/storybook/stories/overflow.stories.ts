@@ -177,6 +177,34 @@ export const Styled: StoryObj = {
         <div data-test="wide" class="h-6 w-24 overflow-y-scroll border px-1 scrollbar-2">
           ${LINES.map((line) => html`<div>${line}</div>`)}
         </div>
+        <div class="relative">
+          <div
+            data-test="arrows"
+            class="peer h-6 w-24 overflow-y-scroll border px-1 scrollbar-inset-y-1"
+          >
+            ${LINES.map((line) => html`<div>${line}</div>`)}
+          </div>
+          <button
+            tabindex="-1"
+            class="absolute top-1 right-1 size-1 cursor-pointer peer-focus-visible:text-white dark:peer-focus-visible:text-black"
+            @click=${(e: Event) =>
+              (e.currentTarget as HTMLElement).parentElement!.firstElementChild!.scrollBy({
+                top: -16,
+              })}
+          >
+            ↑
+          </button>
+          <button
+            tabindex="-1"
+            class="absolute right-1 bottom-1 size-1 cursor-pointer peer-focus-visible:text-white dark:peer-focus-visible:text-black"
+            @click=${(e: Event) =>
+              (e.currentTarget as HTMLElement).parentElement!.firstElementChild!.scrollBy({
+                top: 16,
+              })}
+          >
+            ↓
+          </button>
+        </div>
         <div
           data-test="overlay"
           class="h-6 w-24 scrollbar-track-transparent overflow-y-scroll border px-1 not-hover:scrollbar-thumb-transparent"
@@ -234,6 +262,19 @@ export const Styled: StoryObj = {
     // scrollbar-2: a two-cell gutter — the thumb doubles up.
     await waitFor(
       () => expect(grid.textContent!.split("\n").some((row) => row.includes("██"))).toBe(true),
+      { timeout: 10_000 },
+    );
+    // scrollbar-inset-y-1 frees the gutter's end cells for the author's
+    // arrow buttons: ↑ above the track, ↓ below it, in the bar column.
+    await waitFor(
+      () => {
+        const rows = grid.textContent!.split("\n");
+        const up = rows.findIndex((row) => row.includes("↑"));
+        const down = rows.findIndex((row) => row.includes("↓"));
+        expect(up).toBeGreaterThan(-1);
+        expect(down).toBe(up + 3);
+        expect(rows[up + 1]![rows[up]!.indexOf("↑")]).toBe("█");
+      },
       { timeout: 10_000 },
     );
     // An overlay-style bar: transparent ink until hovered. Hover is the
@@ -363,6 +404,54 @@ export const Nested: StoryObj = {
       { timeout: 10_000 },
     );
     inner.scrollTop = 0;
+  },
+};
+
+/** Test-only: a touch must not make the engine reflow anything before
+ * the finger lifts (specs/scrolling.md "Touch panning") — iOS decides
+ * which scroller owns a pan in the first frames, and a relayout under
+ * the finger abandons it. `pointercancel` is how iOS takes the pan. */
+export const TouchPan: StoryObj = {
+  tags: ["!dev"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="box" class="h-6 w-32 overflow-y-scroll border px-1">
+        ${LINES.map((line) => html`<button class="block hover:text-sky-300 active:text-rose-300">${line}</button>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let relayouts = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) if (record.attributeName === "measuring") relayouts++;
+    });
+    observer.observe(host, { attributes: true, attributeOldValue: true });
+    const rect = canvasElement.querySelector('[data-test="box"]')!.getBoundingClientRect();
+    const touch = (type: string, dy = 0) =>
+      host.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerType: "touch",
+          isPrimary: true,
+          clientX: rect.left + 20,
+          clientY: rect.top + 30 + dy,
+        }),
+      );
+    touch("pointerover");
+    touch("pointerdown");
+    touch("pointermove", -8);
+    touch("pointermove", -16);
+    touch("pointercancel", -16); // the browser takes the pan
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(relayouts).toBe(0);
+    expect(canvasElement.querySelector("[data-mw-active], [data-mw-hover]")).toBeNull();
+    // A lifted finger is the release: its relayout runs.
+    touch("pointerup");
+    await waitFor(() => expect(relayouts).toBeGreaterThan(0), { timeout: 10_000 });
+    observer.disconnect();
   },
 };
 

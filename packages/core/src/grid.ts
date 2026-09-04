@@ -6,7 +6,6 @@ import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack } from "./types.ts";
 import {
   clampSize,
-  intrinsicOuterWidth,
   isOutOfFlow,
   layoutNode,
   minContentOuterWidth,
@@ -14,8 +13,8 @@ import {
   resolveLength,
   resolveLimit,
   resolveMargin,
-  resolveSizeAgainst,
   resolveWidthLimit,
+  widthContribution,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
 import { alignCrossOffset, distributeInteger, effectiveAlign, mainAxisOffsets } from "./flex.ts";
@@ -821,24 +820,6 @@ function fixedX(margin: NullableInsets): number {
 
 function fixedY(margin: NullableInsets): number {
   return (margin.top ?? 0) + (margin.bottom ?? 0);
-}
-
-/** An item's outer width contribution to intrinsic track sizing: its
- * explicit width if fixed (percent behaves as auto, per intrinsic
- * contribution rules), else the min-/max-content outer width; clamped by
- * the item's own fixed min/max. */
-function widthContribution(child: LayoutNode, kind: "min" | "max", cache: IntrinsicCache): number {
-  const style = child.style;
-  let width: number | undefined;
-  if (style.width !== undefined && style.width.kind !== "auto" && style.width.kind !== "percent") {
-    width = resolveSizeAgainst(style.width, 0, child, cache);
-  }
-  if (width === undefined) {
-    width = kind === "min" ? minContentOuterWidth(child, cache) : intrinsicOuterWidth(child, cache);
-  }
-  const min = typeof style.minWidth === "number" ? style.minWidth : 0;
-  const max = typeof style.maxWidth === "number" ? style.maxWidth : undefined;
-  return Math.max(0, clampSize(width, min, max));
 }
 
 // ---------------------------------------------------------------------------

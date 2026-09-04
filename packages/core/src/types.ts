@@ -198,17 +198,28 @@ export interface InheritedTracks {
   gap: number;
 }
 
+/** The gutter band each axis's bar occupies when reserved
+ * (specs/scrolling.md): the bar's thickness plus the perpendicular
+ * inset that moves it inward — the rightmost columns for y, the
+ * bottom rows for x. */
+export function scrollGutterBands(style: CellStyle): { right: number; bottom: number } {
+  return {
+    right: style.scrollbarSize.y + style.scrollbarInset.x,
+    bottom: style.scrollbarSize.x + style.scrollbarInset.y,
+  };
+}
+
 /** The gutters an explicit `scroll` axis reserves unconditionally
- * (specs/scrolling.md): the rightmost columns for y, the bottom rows
- * for x, `scrollbarSize` thick. Folded into padding wherever padding
- * cells are derived, so content-box math, intrinsic sizes, and the
- * native overlay (--mw-p*) agree. `auto` axes reserve only on
- * overflow, in layoutNode's second pass — never here. */
+ * (specs/scrolling.md). Folded into padding wherever padding cells
+ * are derived, so content-box math, intrinsic sizes, and the native
+ * overlay (--mw-p*) agree. `auto` axes reserve only on overflow, in
+ * layoutNode's second pass — never here. */
 export function scrollGutter(style: CellStyle): { right: number; bottom: number } {
   if (style.scrollbarWidth === "none") return { right: 0, bottom: 0 };
+  const bands = scrollGutterBands(style);
   return {
-    right: style.overflow.y === "scroll" ? style.scrollbarSize.y : 0,
-    bottom: style.overflow.x === "scroll" ? style.scrollbarSize.x : 0,
+    right: style.overflow.y === "scroll" ? bands.right : 0,
+    bottom: style.overflow.x === "scroll" ? bands.bottom : 0,
   };
 }
 
@@ -343,6 +354,10 @@ export interface CellStyle {
    * the scrollbar-*, scrollbar-x-*, scrollbar-y-* utilities; default
    * 1). */
   scrollbarSize: { x: number; y: number };
+  /** Cells kept clear around the bars for the author's arrow buttons
+   * (`--mw-scrollbar-inset-x/y`, the scrollbar-inset-* utilities;
+   * default 0; specs/scrolling.md). */
+  scrollbarInset: { x: number; y: number };
   /** `scrollbar-color` thumb/track ink; `null` = currentColor pair. */
   scrollbarColor: { thumb: string; track: string } | null;
   /** Per-axis `overscroll-behavior`: whether a boundary gesture may
@@ -689,6 +704,7 @@ export function defaultCellStyle(): CellStyle {
     overflow: { x: "visible", y: "visible" },
     scrollbarWidth: "auto",
     scrollbarSize: { x: 1, y: 1 },
+    scrollbarInset: { x: 0, y: 0 },
     overscroll: { x: true, y: true },
     scrollbarColor: null,
     whiteSpace: "normal",

@@ -269,6 +269,53 @@ describe("scrolled paint", () => {
     expect(rows[0]!.slice(8, 10)).toBe("██");
   });
 
+  it("scrollbar-inset moves the bar inward and frees its ends", () => {
+    // inset-x 1: the vertical bar sits one column in from the right
+    // edge, the freed column blank; inset-y 1: its track starts a row
+    // down and ends a row up, the corner rows free for arrow buttons.
+    const box = makeNode({
+      style: {
+        overflow: { x: "visible", y: "scroll" },
+        scrollbarInset: { x: 1, y: 1 },
+        width: { kind: "cells", value: 5 },
+        height: { kind: "cells", value: 5 },
+      },
+      text: "a b c d e f g h i j",
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 5);
+    expect(box.resolvedPadding.right).toBe(2);
+    const rows = renderPlainText(root).split("\n");
+    // Column 3 is the bar (rows 1-3), column 4 stays blank everywhere.
+    expect(rows.map((row) => row[3] ?? " ").join("")).toMatch(/^ [█░]{3} $/);
+    expect(rows.every((row) => (row[4] ?? " ") === " ")).toBe(true);
+  });
+
+  it("with both bars, scrollbar-inset keeps them meeting at the corner", () => {
+    // inset-x/y 2: each track starts two cells in from its own edge and
+    // runs right up to the other axis's band, leaving the single corner
+    // cell between them blank however large the inset.
+    const box = makeNode({
+      style: {
+        overflow: { x: "scroll", y: "scroll" },
+        scrollbarInset: { x: 2, y: 2 },
+        width: { kind: "cells", value: 10 },
+        height: { kind: "cells", value: 8 },
+        whiteSpace: "nowrap",
+      },
+      text: "a b c d e f g h i j k l m n o p q r s t u v w x y z",
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 10);
+    const rows = renderPlainText(root).split("\n");
+    // Vertical bar in column 7 (10 − 1 − inset 2): rows 2..4, the row
+    // above the horizontal bar included.
+    expect(rows.map((row) => row[7] ?? " ").join("")).toMatch(/^ {2}[█░]{3} {3}$/);
+    // Horizontal bar in row 5 (8 − 1 − inset 2): columns 2..6, right up
+    // to the vertical band. Column 7 of that row is the blank corner.
+    expect(rows[5]!.padEnd(10)).toMatch(/^ {2}[█░]{5} {3}$/);
+  });
+
   it("nested clip composes: an inner scroll container cannot paint outside an outer clip", () => {
     const inner = makeNode({
       style: {

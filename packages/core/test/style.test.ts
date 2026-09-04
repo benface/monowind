@@ -264,3 +264,54 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
     }
   });
 });
+
+describe("mixed-unit calc()", () => {
+  const metrics = { width: 9, height: 18, letterSpacing: 0 };
+  const rows = Math.floor(window.innerHeight / 18);
+
+  it("evaluates each term by its own unit: viewport rows minus spacing cells", () => {
+    // 100vh → the rows that fit (floor, like h-screen); --spacing(2) → 2
+    // cells; the single computed px could not tell the two apart.
+    expect(read({ class: "max-h-[calc(100vh-(--spacing(2)))]" }, metrics).maxHeight).toBe(rows - 2);
+    expect(read({ class: "max-h-[calc(100vh_-_--spacing(2))]" }, metrics).maxHeight).toBe(rows - 2);
+    expect(read({ class: "min-h-[calc(50vh+2rem)]" }, metrics).minHeight).toBe(
+      Math.floor(window.innerHeight / 2 / 18) + 8,
+    );
+  });
+
+  it("reads inline calc() and sizes, with rem and px on the spacing scale", () => {
+    // 2rem = 8 cells, 4px = 1 cell at a 16px root; 3 * 0.5rem = 6 cells.
+    expect(read({ style: "max-height: calc(2rem + 4px)" }, metrics).maxHeight).toBe(9);
+    expect(read({ class: "h-[calc(3*0.5rem)]" }, metrics).height).toEqual({
+      kind: "cells",
+      value: 6,
+    });
+    expect(read({ class: "w-[calc((100vw-2rem)/2)]" }, metrics).width).toEqual({
+      kind: "cells",
+      value: Math.round((Math.floor(window.innerWidth / 9) - 8) / 2),
+    });
+  });
+
+  it("leaves terms it does not model to the computed value", () => {
+    // A percentage needs a layout basis: no per-term answer, so the
+    // (here absent) computed value decides.
+    expect(read({ class: "max-h-[calc(100%-2rem)]" }, metrics).maxHeight).toBeUndefined();
+  });
+
+  it("yields to a resolved keyword: an inactive variant leaves max-height at none", () => {
+    // The stylesheet stands in for the browser below `md`: the utility
+    // did not apply, so the computed `none` (not the class) is the truth
+    // — for a calc and for a viewport utility alike.
+    const sheet = document.createElement("style");
+    sheet.textContent = ".below-md { max-height: none; }";
+    document.head.appendChild(sheet);
+    try {
+      expect(
+        read({ class: "below-md md:max-h-[calc(100vh-2rem)]" }, metrics).maxHeight,
+      ).toBeUndefined();
+      expect(read({ class: "below-md md:max-h-screen" }, metrics).maxHeight).toBeUndefined();
+    } finally {
+      sheet.remove();
+    }
+  });
+});

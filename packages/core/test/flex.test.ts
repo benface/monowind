@@ -878,6 +878,30 @@ describe("flex item min/max and sizing through layoutRoot", () => {
     expect(footer.localRect.y).toBe(3);
   });
 
+  it("a min-height above the max-height is the used size the items flex against", () => {
+    const header = makeNode({ text: "head" });
+    const body = makeNode({
+      style: { overflow: { x: "visible", y: "auto" }, flexShrink: 1 },
+      text: "one two three four five six seven eight",
+    });
+    const column = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        maxHeight: 4,
+        minHeight: 6,
+        width: { kind: "cells", value: 5 },
+      },
+      children: [header, body],
+    });
+    const root = makeNode({ children: [column] });
+    layoutRoot(root, 6);
+    // min wins over max (CSS): the column is 6 tall and the body flexes
+    // to the 5 rows left, not to the 3 the max alone would give.
+    expect(column.localRect.height).toBe(6);
+    expect(body.localRect.height).toBe(5);
+  });
+
   it("max-height caps a row's line cross size: a stretched scroll-container item shrinks", () => {
     const body = makeNode({
       style: { overflow: { x: "visible", y: "auto" }, flexShrink: 1 },
@@ -1021,4 +1045,15 @@ describe("justify-content offsets through layoutRoot", () => {
     layoutRoot(root, 20);
     expect(b.localRect.x).toBe(2); // 4 - 2
   });
+});
+
+it("an auto-width item is as wide as its fixed-width child", () => {
+  // The child's definite width is its contribution to the parent's
+  // intrinsic size (CSS intrinsic contribution rules): a wrapper around
+  // a `w-24` box is 24 cells, not the box's text width.
+  const inner = makeNode({ style: { width: { kind: "cells", value: 24 } }, text: "hi" });
+  const wrapper = makeNode({ children: [inner] });
+  const root = makeNode({ style: { display: "flex", flexDirection: "row" }, children: [wrapper] });
+  layoutRoot(root, 40);
+  expect(wrapper.localRect.width).toBe(24);
 });

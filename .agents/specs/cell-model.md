@@ -50,6 +50,22 @@ section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
   detecting them otherwise would mean re-implementing the cascade over
   document.styleSheets.
 
+### Mixed-unit `calc()`
+
+An authored `calc()` (an arbitrary-value utility such as
+`max-h-[calc(100vh-(--spacing(2)))]`, `_` for spaces, or an inline style) is
+evaluated **per term** into cells, because the browser's single computed px
+has already lost what each term meant: viewport units convert through the
+measured cell like `h-screen` (the rows or columns that fit, floored),
+`rem` and `--spacing(N)` are exact cells on the spacing scale, `px` sits on
+the same scale, and `+ − * /` with parentheses combine them — so
+`100vh − --spacing(2)` is "the rows that fit, minus two". Applies to
+`w`/`h` and the four min/max limits, active-checked against the computed px
+like viewport utilities (an inactive variant resolves elsewhere and wins).
+A term outside that model (`%`, `em`, `var()`) leaves the whole value to
+the computed px, as before. Plain-stylesheet calc() shares the viewport
+deviation above.
+
 ### Rounding
 
 After conversion to cells, every value is rounded to the **nearest integer,

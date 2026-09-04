@@ -332,49 +332,86 @@ function walk(
   const range = node.scrollRange;
   if (range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
     const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
-    const innerTop = absY + style.border.top;
-    const innerLeft = absX + style.border.left;
-    const innerBottom = absY + node.localRect.height - style.border.bottom;
-    const innerRight = absX + node.localRect.width - style.border.right;
     // `scrollbar-color: auto` means the container's own color (its
     // currentColor, like borders) — not the inherited grid default.
     const barPaint = (color: string | undefined): CellPaint | undefined =>
       alphaPaint(color ? { color } : undefined);
     const trackPaint = barPaint(style.scrollbarColor?.track ?? style.color);
     const thumbPaint = barPaint(style.scrollbarColor?.thumb ?? style.color);
-    if (gutter.right > 0) {
-      const trackLen = innerBottom - innerTop - gutter.bottom;
-      const { at: thumbAt, len: thumbLen } = thumbSpan(
-        trackLen,
-        range.sizeY,
-        range.maxY,
-        node.scroll?.y ?? 0,
-      );
-      for (let dx = 0; dx < gutter.right; dx++) {
-        const x = innerRight - gutter.right + dx;
-        for (let i = 0; i < trackLen; i++) {
-          const isThumb = i >= thumbAt && i < thumbAt + thumbLen;
-          put(x, innerTop + i, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
+    const bars = scrollbarGeometry(node, absX, absY);
+    if (bars.y) {
+      const { col, row, thick, len } = bars.y;
+      const { at, len: thumbLen } = thumbSpan(len, range.sizeY, range.maxY, node.scroll?.y ?? 0);
+      for (let dx = 0; dx < thick; dx++) {
+        for (let i = 0; i < len; i++) {
+          const isThumb = i >= at && i < at + thumbLen;
+          put(col + dx, row + i, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
         }
       }
     }
-    if (gutter.bottom > 0) {
-      const trackLen = innerRight - innerLeft - gutter.right;
-      const { at: thumbAt, len: thumbLen } = thumbSpan(
-        trackLen,
-        range.sizeX,
-        range.maxX,
-        node.scroll?.x ?? 0,
-      );
-      for (let dy = 0; dy < gutter.bottom; dy++) {
-        const y = innerBottom - gutter.bottom + dy;
-        for (let i = 0; i < trackLen; i++) {
-          const isThumb = i >= thumbAt && i < thumbAt + thumbLen;
-          put(innerLeft + i, y, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
+    if (bars.x) {
+      const { col, row, thick, len } = bars.x;
+      const { at, len: thumbLen } = thumbSpan(len, range.sizeX, range.maxX, node.scroll?.x ?? 0);
+      for (let dy = 0; dy < thick; dy++) {
+        for (let i = 0; i < len; i++) {
+          const isThumb = i >= at && i < at + thumbLen;
+          put(col + i, row + dy, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
         }
       }
     }
   }
+}
+
+/** Where a container's bars paint, in absolute cells from its
+ * border-box origin (specs/scrolling.md): each bar sits at the inner
+ * edge of its reserved band (`scrollbar-inset` moves it inward, the
+ * freed cells stay blank), `thick` cells across; its track starts
+ * inset from its own edge and ends against the other axis's band, or
+ * inset from the far edge when there is none. Shared with thumb
+ * dragging (element.ts). */
+export function scrollbarGeometry(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+): { y?: Scrollbar; x?: Scrollbar } {
+  const gutter = node.scrollGutterCells;
+  if (!gutter) return {};
+  const { border, scrollbarSize: size, scrollbarInset: inset } = node.style;
+  const innerTop = absY + border.top;
+  const innerLeft = absX + border.left;
+  const innerBottom = absY + node.localRect.height - border.bottom;
+  const innerRight = absX + node.localRect.width - border.right;
+  // A track ends against the other axis's band when there is one (the
+  // corner cell between the bars stays blank), else inset from the edge.
+  const bottomEnd = gutter.bottom > 0 ? innerBottom - gutter.bottom : innerBottom - inset.y;
+  const rightEnd = gutter.right > 0 ? innerRight - gutter.right : innerRight - inset.x;
+  const bars: { y?: Scrollbar; x?: Scrollbar } = {};
+  if (gutter.right > 0) {
+    bars.y = {
+      col: innerRight - gutter.right,
+      row: innerTop + inset.y,
+      thick: Math.min(size.y, gutter.right),
+      len: Math.max(0, bottomEnd - innerTop - inset.y),
+    };
+  }
+  if (gutter.bottom > 0) {
+    bars.x = {
+      col: innerLeft + inset.x,
+      row: innerBottom - gutter.bottom,
+      thick: Math.min(size.x, gutter.bottom),
+      len: Math.max(0, rightEnd - innerLeft - inset.x),
+    };
+  }
+  return bars;
+}
+
+/** One bar: the cell its track starts at, its thickness across, and
+ * its length along its axis. */
+export interface Scrollbar {
+  col: number;
+  row: number;
+  thick: number;
+  len: number;
 }
 
 /** Thumb geometry on a bar `trackLen` cells long: proportional to the

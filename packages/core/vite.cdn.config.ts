@@ -26,5 +26,7 @@ export default defineConfig({
     sourcemap: true,
     target: "es2022",
     emptyOutDir: false,
+    // utilities.css?inline is Tailwind source compiled at runtime.
+    cssMinify: false,
   },
 });

@@ -51,6 +51,30 @@ export function readCellStyle(
   const classAttr = el.getAttribute("class") ?? "";
   const inlineStyle = (el as HTMLElement).style;
   warnAuthoredFontSize(el, classAttr, inlineStyle);
+  // A min/max limit: an authored calc() or viewport length first (their
+  // units carry intent the computed px has lost), then the computed px.
+  const limit = (property: string, resolved: string, prefix: string): SizeLimit | undefined =>
+    authoredCalcCells(
+      csm,
+      property,
+      resolved,
+      classAttr,
+      prefix,
+      inlineStyle,
+      metrics,
+      rootFontSizePx,
+    ) ??
+    viewportLimit(
+      csm,
+      property,
+      resolved,
+      classAttr,
+      prefix,
+      inlineStyle,
+      metrics,
+      rootFontSizePx,
+    ) ??
+    readLimit(resolved, rootFontSizePx);
 
   // Atomic inline-level boxes lay their CONTENT out like their block-level
   // counterparts (the tree builder blockifies the box itself onto its own
@@ -190,54 +214,10 @@ export function readCellStyle(
     gridRowEnd: parseGridLine(cs.getPropertyValue("grid-row-end")),
     width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle, metrics),
     height: readSize(csm, cs.height, "height", rootFontSizePx, classAttr, inlineStyle, metrics),
-    minWidth:
-      viewportLimit(
-        csm,
-        "min-width",
-        cs.minWidth,
-        classAttr,
-        "min-w",
-        inlineStyle,
-        metrics,
-        rootFontSizePx,
-      ) ??
-      readLimit(cs.minWidth, rootFontSizePx) ??
-      "auto",
-    minHeight:
-      viewportLimit(
-        csm,
-        "min-height",
-        cs.minHeight,
-        classAttr,
-        "min-h",
-        inlineStyle,
-        metrics,
-        rootFontSizePx,
-      ) ??
-      readLimit(cs.minHeight, rootFontSizePx) ??
-      "auto",
-    maxWidth:
-      viewportLimit(
-        csm,
-        "max-width",
-        cs.maxWidth,
-        classAttr,
-        "max-w",
-        inlineStyle,
-        metrics,
-        rootFontSizePx,
-      ) ?? readLimit(cs.maxWidth, rootFontSizePx),
-    maxHeight:
-      viewportLimit(
-        csm,
-        "max-height",
-        cs.maxHeight,
-        classAttr,
-        "max-h",
-        inlineStyle,
-        metrics,
-        rootFontSizePx,
-      ) ?? readLimit(cs.maxHeight, rootFontSizePx),
+    minWidth: limit("min-width", cs.minWidth, "min-w") ?? "auto",
+    minHeight: limit("min-height", cs.minHeight, "min-h") ?? "auto",
+    maxWidth: limit("max-width", cs.maxWidth, "max-w"),
+    maxHeight: limit("max-height", cs.maxHeight, "max-h"),
     padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     position: readPosition(cs.position),
@@ -269,8 +249,12 @@ export function readCellStyle(
       y: (cs.overscrollBehaviorY || "auto") === "auto",
     },
     scrollbarSize: {
-      x: readCells(cs.getPropertyValue("--mw-scrollbar-x-size")),
-      y: readCells(cs.getPropertyValue("--mw-scrollbar-y-size")),
+      x: readCells(cs.getPropertyValue("--mw-scrollbar-size-x")),
+      y: readCells(cs.getPropertyValue("--mw-scrollbar-size-y")),
+    },
+    scrollbarInset: {
+      x: readCells(cs.getPropertyValue("--mw-scrollbar-inset-x"), 0),
+      y: readCells(cs.getPropertyValue("--mw-scrollbar-inset-y"), 0),
     },
     // `nowrap` and `pre` disable soft wrapping; `pre` additionally makes
     // the tree builder preserve the source's spaces and newlines
@@ -451,9 +435,9 @@ function readScrollbarColor(value: string): { thumb: string; track: string } | n
   return null;
 }
 
-/** A `<integer>` custom property in cells, at least one. */
-function readCells(value: string): number {
-  return Math.max(1, Math.floor(Number(value) || 1));
+/** A `<integer>` custom property in cells, floored at `min`. */
+function readCells(value: string, min = 1): number {
+  return Math.max(min, Math.floor(Number(value) || min));
 }
 
 function overflowAxis(value: string): OverflowAxis {
@@ -879,6 +863,17 @@ function readSize(
   if (inlineViewport !== null) {
     return { kind: "cells", value: physicalCells(inlineViewport, key, metrics, rootFontSizePx) };
   }
+  const calc = authoredCalcCells(
+    csm,
+    key,
+    fallback,
+    classAttr,
+    key === "width" ? "w" : "h",
+    inlineStyle,
+    metrics,
+    rootFontSizePx,
+  );
+  if (calc !== undefined) return { kind: "cells", value: calc };
   // Class scan, every engine: computed values (Typed OM included)
   // resolve viewport units to plain px, indistinguishable from
   // spacing-scale lengths.
@@ -1027,6 +1022,143 @@ function physicalCells(
   return pxToCells(px, rootFontSizePx);
 }
 
+/** An authored `calc()` length, evaluated PER TERM into cells
+ * (specs/cell-model.md "Mixed-unit calc()"): viewport units through the
+ * measured cell like `h-screen`, `rem` and `--spacing(N)` on the
+ * spacing scale, `px` on the same scale — so `calc(100vh -
+ * --spacing(2))` is "the rows that fit, minus two", which the single
+ * computed px can no longer say. Sourced from the inline style or the
+ * arbitrary-value utility (`max-h-[calc(…)]`, `_` for spaces), and
+ * active-checked against the computed px like viewport utilities. A
+ * term the evaluator does not model (%, em, var()) leaves the value to
+ * the computed px. undefined = no authored calc. */
+function authoredCalcCells(
+  csm: StylePropertyMapReadOnly | null,
+  property: string,
+  resolvedValue: string,
+  classAttr: string,
+  utilityPrefix: string,
+  inlineStyle: CSSStyleDeclaration,
+  metrics: CellMetrics | undefined,
+  rootFontSizePx: number,
+): number | undefined {
+  const key = property.endsWith("width") ? "width" : "height";
+  const inline = inlineStyle.getPropertyValue(property).trim();
+  const fromInline = inline.startsWith("calc(");
+  // Six reads per element: the substring test spares the regex almost always.
+  if (!fromInline && !classAttr.includes("-[calc(")) return undefined;
+  const utility = new RegExp(`(?:^|[\\s:.[!])${utilityPrefix}-\\[(calc\\([^\\]]*\\))\\]`).exec(
+    classAttr,
+  );
+  const authored = fromInline ? inline : utility?.[1]?.replaceAll("_", " ");
+  if (!authored) return undefined;
+  const value = evaluateCalc(authored, key, metrics, rootFontSizePx);
+  if (!value || value.unitless) return undefined;
+  const cells = Math.max(0, roundHalfAwayFromZero(value.cells));
+  // The inline style wins by cascade; a class needs the active-check: an
+  // inactive variant or an overriding declaration resolves elsewhere — to
+  // other px, or to a keyword (`none`, `auto`). No resolved value at all
+  // (headless, stylesheet not loaded) trusts the class.
+  if (fromInline) return cells;
+  const resolvedText = (csm ? String(csm.get(property) ?? "") : resolvedValue).trim();
+  const resolved = parseFloat(resolvedText);
+  const agrees = Number.isFinite(resolved)
+    ? Math.abs(resolved - value.px) <= Math.abs(value.px) * 0.3
+    : resolvedText === "";
+  return agrees ? cells : undefined;
+}
+
+/** A calc term carried two ways: the engine's cells (per-unit
+ * semantics) and the px the browser computes (for the active-check). */
+interface CalcValue {
+  cells: number;
+  px: number;
+  unitless: boolean;
+}
+
+/** Recursive-descent evaluation of `calc()` arithmetic over lengths.
+ * null for anything outside the modeled units. */
+function evaluateCalc(
+  source: string,
+  key: "width" | "height",
+  metrics: CellMetrics | undefined,
+  rootFontSizePx: number,
+): CalcValue | null {
+  const tokens = source.match(/--spacing\(\s*-?[\d.]+\s*\)|calc|[\d.]+[a-z%]*|[()+\-*/]/g);
+  if (!tokens || tokens.join("").replace(/\s+/g, "") !== source.replace(/\s+/g, "")) return null;
+  let i = 0;
+  const peek = (): string | undefined => tokens[i];
+  const next = (): string | undefined => tokens[i++];
+  const length = (cells: number, px: number): CalcValue => ({ cells, px, unitless: false });
+  const term = (token: string): CalcValue | null => {
+    const spacing = /^--spacing\(\s*(-?[\d.]+)\s*\)$/.exec(token);
+    if (spacing) {
+      const n = parseFloat(spacing[1]!);
+      return length(n, (n * rootFontSizePx) / 4);
+    }
+    const match = /^([\d.]+)([a-z%]*)$/.exec(token);
+    if (!match) return null;
+    const amount = parseFloat(match[1]!);
+    const unit = match[2]!;
+    if (!Number.isFinite(amount)) return null;
+    if (unit === "") return { cells: amount, px: amount, unitless: true };
+    if (unit === "px") return length(amount / (rootFontSizePx / 4), amount);
+    if (unit === "rem") return length(amount * 4, amount * rootFontSizePx);
+    const viewport = viewportLengthPx(token);
+    if (viewport === null) return null;
+    return length(physicalCells(viewport, key, metrics, rootFontSizePx), viewport);
+  };
+  const combine = (op: string, a: CalcValue, b: CalcValue): CalcValue | null => {
+    if (op === "+" || op === "-") {
+      if (a.unitless !== b.unitless) return null;
+      const sign = op === "+" ? 1 : -1;
+      return { cells: a.cells + sign * b.cells, px: a.px + sign * b.px, unitless: a.unitless };
+    }
+    if (op === "*") {
+      if (!a.unitless && !b.unitless) return null;
+      const [n, v] = a.unitless ? [a, b] : [b, a];
+      return { cells: v.cells * n.cells, px: v.px * n.px, unitless: v.unitless && n.unitless };
+    }
+    if (!b.unitless || b.px === 0) return null;
+    return { cells: a.cells / b.cells, px: a.px / b.px, unitless: a.unitless };
+  };
+  const factor = (): CalcValue | null => {
+    const token = next();
+    if (token === undefined) return null;
+    if (token === "-") {
+      const value = factor();
+      return value && { cells: -value.cells, px: -value.px, unitless: value.unitless };
+    }
+    if (token === "calc") return next() === "(" ? group() : null;
+    if (token === "(") return group();
+    return term(token);
+  };
+  const group = (): CalcValue | null => {
+    const value = sum();
+    return next() === ")" ? value : null;
+  };
+  const product = (): CalcValue | null => {
+    let value = factor();
+    while (value && (peek() === "*" || peek() === "/")) {
+      const op = next()!;
+      const rhs = factor();
+      value = rhs ? combine(op, value, rhs) : null;
+    }
+    return value;
+  };
+  const sum = (): CalcValue | null => {
+    let value = product();
+    while (value && (peek() === "+" || peek() === "-")) {
+      const op = next()!;
+      const rhs = product();
+      value = rhs ? combine(op, value, rhs) : null;
+    }
+    return value;
+  };
+  const result = sum();
+  return i === tokens.length ? result : null;
+}
+
 /** Viewport-relative min/max limit, when one is authored. Class scan
  * (`min-h-screen`, `min-h-[95dvh]`, …) — computed values resolve
  * viewport units to plain px in every engine, so the class list is the
@@ -1056,9 +1188,11 @@ function viewportLimit(
   // viewport branch.
   const scanned = viewportUtilityPx(classAttr, utilityPrefix);
   if (scanned === null) return undefined;
-  const resolved = parseFloat(csm ? String(csm.get(property) ?? "") : resolvedValue);
+  const resolvedText = (csm ? String(csm.get(property) ?? "") : resolvedValue).trim();
+  const resolved = parseFloat(resolvedText);
   const agrees = Number.isFinite(resolved) && Math.abs(resolved - scanned) <= scanned * 0.3;
-  if (!agrees && Number.isFinite(resolved)) return undefined;
+  // A keyword (`none`, `auto`) is a resolved value too: the utility lost.
+  if (!agrees && resolvedText !== "") return undefined;
   return physicalCells(agrees ? resolved : scanned, key, metrics, rootFontSizePx);
 }
 

@@ -2,7 +2,7 @@ import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, onLeafRegistryChange } from "./leaf.ts";
 import { hitChain, hitStack } from "./pointer.ts";
-import { renderPlainText, thumbSpan } from "./plain-text.ts";
+import { renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
 import { paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
@@ -723,25 +723,18 @@ export class MonoWindElement extends HTMLElementBase {
       const { node, x, y } = stack[i]!;
       const range = node.scrollRange;
       if (!range) continue;
-      const style = node.style;
-      const gutter = node.scrollGutterCells;
-      if (!gutter || (gutter.right === 0 && gutter.bottom === 0)) continue;
       const el = node.source as HTMLElement;
-      const innerTop = y + style.border.top;
-      const innerLeft = x + style.border.left;
-      const innerBottom = y + node.localRect.height - style.border.bottom;
-      const innerRight = x + node.localRect.width - style.border.right;
+      const { y: yBar, x: xBar } = scrollbarGeometry(node, x, y);
       if (
-        gutter.right > 0 &&
+        yBar &&
         range.maxY > 0 &&
-        col >= innerRight - gutter.right &&
-        col < innerRight &&
-        row >= innerTop &&
-        row < innerBottom
+        col >= yBar.col &&
+        col < yBar.col + yBar.thick &&
+        row >= yBar.row &&
+        row < yBar.row + yBar.len
       ) {
-        const trackLen = innerBottom - innerTop - gutter.bottom;
-        const thumbLen = thumbSpan(trackLen, range.sizeY, range.maxY, 0).len;
-        const draggablePx = Math.max(1, (trackLen - thumbLen) * metrics.height);
+        const thumbLen = thumbSpan(yBar.len, range.sizeY, range.maxY, 0).len;
+        const draggablePx = Math.max(1, (yBar.len - thumbLen) * metrics.height);
         return {
           el,
           axis: "y",
@@ -751,16 +744,15 @@ export class MonoWindElement extends HTMLElementBase {
         };
       }
       if (
-        gutter.bottom > 0 &&
+        xBar &&
         range.maxX > 0 &&
-        row >= innerBottom - gutter.bottom &&
-        row < innerBottom &&
-        col >= innerLeft &&
-        col < innerRight
+        row >= xBar.row &&
+        row < xBar.row + xBar.thick &&
+        col >= xBar.col &&
+        col < xBar.col + xBar.len
       ) {
-        const trackLen = innerRight - innerLeft - gutter.right;
-        const thumbLen = thumbSpan(trackLen, range.sizeX, range.maxX, 0).len;
-        const draggablePx = Math.max(1, (trackLen - thumbLen) * metrics.width);
+        const thumbLen = thumbSpan(xBar.len, range.sizeX, range.maxX, 0).len;
+        const draggablePx = Math.max(1, (xBar.len - thumbLen) * metrics.width);
         return {
           el,
           axis: "x",
@@ -774,6 +766,7 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #onPointerMove = (event: Event): void => {
+    if (isTouchInProgress(event)) return; // see #scheduleDynamicRelayout
     const { clientX, clientY } = event as PointerEvent;
     const drag = this.#thumbDrag;
     if (drag) {
@@ -803,9 +796,11 @@ export class MonoWindElement extends HTMLElementBase {
   #onPointerDown = (event: Event): void => {
     const e = event as PointerEvent;
     if (!e.isPrimary || e.button !== 0) return;
-    // A finger on the gutter pans the container natively instead
-    // (styles.css "Touch panning"); the thumb drag is a mouse/pen gesture.
-    const drag = e.pointerType === "touch" ? null : this.#gutterDragAt(e.clientX, e.clientY);
+    // A finger pans natively (styles.css "Touch panning") and must not
+    // relayout before release (see #scheduleDynamicRelayout): no thumb
+    // drag, no synthesized press.
+    if (isTouchInProgress(e)) return;
+    const drag = this.#gutterDragAt(e.clientX, e.clientY);
     if (drag) {
       this.#thumbDrag = drag;
       e.preventDefault();
@@ -948,6 +943,12 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #scheduleDynamicRelayout = (event: Event): void => {
+    // A touch must not relayout before it is released: iOS decides
+    // which scroller owns a pan in the first frames, and a relayout
+    // reflows the light DOM under the finger, which abandons the pan
+    // to the page. Touch has no hover to reflect, and the release
+    // relayout picks up the tap's outcome.
+    if (isTouchInProgress(event)) return;
     // Focus moving onto or off a <select>: relayout NOW, while still
     // inside the event dispatch — the click's default action opens the
     // picker right after, and once it's open relayouts are held (see
@@ -1344,6 +1345,16 @@ export function quantizeScroll(
   const cells =
     Math.abs(delta) <= 0.5 ? base : base + Math.sign(delta) * Math.round(Math.abs(delta));
   return Math.min(Math.max(0, cells), max);
+}
+
+/** A touch pointer that has not been lifted — the phase in which the
+ * engine must not reflow anything (see #scheduleDynamicRelayout).
+ * `pointercancel` counts as in progress: iOS fires it the moment it
+ * takes the pan, and a relayout there kills the gesture. */
+function isTouchInProgress(event: Event): boolean {
+  return (
+    event instanceof PointerEvent && event.pointerType === "touch" && event.type !== "pointerup"
+  );
 }
 
 function collectScrollContainers(root: LayoutNode): LayoutNode[] {

@@ -28,7 +28,7 @@ import {
 import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
 import type { TableData } from "./table.ts";
 import { walkPositioned } from "./positioning.ts";
-import { scrollGutter, scrollsAxis } from "./types.ts";
+import { scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import type {
   CellLength,
@@ -152,8 +152,9 @@ export function layoutNode(
   // four sides use the inline size) — `availableWidth` is that width here.
   // Stored on the node because the renderers need the resolved cells too.
   const gutter = scrollGutter(style);
-  if (forced?.gutter?.right) gutter.right = style.scrollbarSize.y;
-  if (forced?.gutter?.bottom) gutter.bottom = style.scrollbarSize.x;
+  const bands = scrollGutterBands(style);
+  if (forced?.gutter?.right) gutter.right = bands.right;
+  if (forced?.gutter?.bottom) gutter.bottom = bands.bottom;
   const padding: Insets = {
     top: resolveLength(style.padding.top, availableWidth),
     right: resolveLength(style.padding.right, availableWidth) + gutter.right,
@@ -260,13 +261,11 @@ export function layoutNode(
   };
   let contentHeight = layoutContent(inner.height, heightIsDefinite);
   const capsUsedHeight = !isLeaf && (style.display === "flex" || style.display === "grid");
-  if (
-    capsUsedHeight &&
-    !heightIsDefinite &&
-    maxInnerHeight !== undefined &&
-    contentHeight > maxInnerHeight
-  ) {
-    contentHeight = layoutContent(maxInnerHeight, true);
+  if (capsUsedHeight && !heightIsDefinite && maxHeight !== undefined) {
+    // The USED size: max clamps, and a larger min wins over it (CSS).
+    const chromeY = style.border.top + style.border.bottom + padding.top + padding.bottom;
+    const usedInner = clampSize(contentHeight + chromeY, minHeight, maxHeight) - chromeY;
+    if (usedInner < contentHeight) contentHeight = layoutContent(Math.max(0, usedInner), true);
   }
 
   const naturalHeight =
@@ -914,11 +913,33 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
     const gap =
       Math.max(intrinsicCells(node.style.gapX), node.style.ruleX?.width ?? 0) *
       Math.max(0, inFlow.length - 1);
-    return inFlow.reduce((sum, c) => sum + intrinsicOuterWidth(c, cache), 0) + gap;
+    return inFlow.reduce((sum, c) => sum + widthContribution(c, "max", cache), 0) + gap;
   }
-  const widest = inFlow.reduce((max, c) => Math.max(max, intrinsicOuterWidth(c, cache)), 0);
+  const widest = inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "max", cache)), 0);
   if (node.style.display === "multicol") return multicolIntrinsicInnerWidth(node.style, widest);
   return widest;
+}
+
+/** A child's outer width contribution to its parent's intrinsic size: its
+ * explicit width if fixed (percent behaves as auto, per intrinsic
+ * contribution rules), else its min-/max-content outer width; clamped by
+ * its own fixed min/max. */
+export function widthContribution(
+  child: LayoutNode,
+  kind: "min" | "max",
+  cache: IntrinsicCache,
+): number {
+  const style = child.style;
+  let width: number | undefined;
+  if (style.width !== undefined && style.width.kind !== "auto" && style.width.kind !== "percent") {
+    width = resolveSizeAgainst(style.width, 0, child, cache);
+  }
+  if (width === undefined) {
+    width = kind === "min" ? minContentOuterWidth(child, cache) : intrinsicOuterWidth(child, cache);
+  }
+  const min = typeof style.minWidth === "number" ? style.minWidth : 0;
+  const max = typeof style.maxWidth === "number" ? style.maxWidth : undefined;
+  return Math.max(0, clampSize(width, min, max));
 }
 
 /**
@@ -963,9 +984,9 @@ function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
     const gap =
       Math.max(intrinsicCells(node.style.gapX), node.style.ruleX?.width ?? 0) *
       Math.max(0, inFlow.length - 1);
-    return inFlow.reduce((sum, c) => sum + minContentOuterWidth(c, cache), 0) + gap;
+    return inFlow.reduce((sum, c) => sum + widthContribution(c, "min", cache), 0) + gap;
   }
-  return inFlow.reduce((max, c) => Math.max(max, minContentOuterWidth(c, cache)), 0);
+  return inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "min", cache)), 0);
 }
 
 function shrinkSize(

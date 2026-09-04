@@ -105,6 +105,15 @@ truth.
     bar's width; default 1) — CSS `scrollbar-width` has no length form
     (`thin` and `auto` both mean the default; `none` still suppresses
     everything).
+  - `scrollbar-inset-<n>` / `-x-<n>` / `-y-<n>` (`--mw-scrollbar-inset-x/y`
+    cells, default 0) keep cells clear AROUND the bars, as room for
+    the author's own arrow buttons (absolutely positioned; the engine
+    draws none): `x` moves the vertical bar that many columns inward
+    (the band grows by it, the freed columns stay blank) and insets
+    both ends of the horizontal bar — except that a track always runs
+    up to the other axis's band when there is one, so two bars meet
+    at a single blank corner cell; `y` is the mirror. Paint and thumb
+    dragging share one bar-geometry helper.
   - Thumb length is proportional to the visible fraction, shrunk until
     every scroll offset gets its own thumb position (at most
     track − max cells, at least one) — a scrollable bar always shows
@@ -244,7 +253,14 @@ none` on EVERY element — a one-time pristine-probe detects that and
   `user-select: none` in grid mode), and the thumb drag stays a
   mouse/pen gesture — a finger on the gutter pans. Fine-pointer
   devices are unchanged: the grid keeps every pointer event, and
-  wheel routing plus the thumb cover scrolling.
+  wheel routing plus the thumb cover scrolling. Both modes: the
+  pointer handlers ignore a touch until it lifts — no hover synthesis,
+  no press chain, no dynamic relayout on `pointerover`/`pointerdown`/
+  `pointercancel` (iOS fires the cancel the moment it takes the pan).
+  iOS decides which scroller owns a pan in the first frames, and any
+  relayout reflows the light DOM under the finger, which abandons the
+  pan to the page (reproduced on the iOS Simulator). `pointerup` is
+  the release: its relayout picks up the tap's outcome.
 - **`scrollend`**: used where present; where missing (older Safari), a
   debounced settle timer (160ms after the last `scroll` event) snaps
   instead.

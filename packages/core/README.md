@@ -48,8 +48,9 @@ on the grid in whole-cell steps and draws the scrollbar as characters
 `scrollbar-color` honored and defaulting to `currentColor` like borders,
 `scrollbar-width: none` honored, thickness via
 `scrollbar-<n>` cells, per bar with `scrollbar-x-<n>` /
-`scrollbar-y-<n>`). Scroll containers pinned to the bottom stay pinned as content
-grows — chat logs need no code.
+`scrollbar-y-<n>`; `scrollbar-inset-<n>` keeps cells clear around
+the bars for your own arrow buttons). Scroll containers pinned to the
+bottom stay pinned as content grows — chat logs need no code.
 
 ## Border & rule glyphs
 
