@@ -80,7 +80,8 @@ below.
   redistribute (zipped fonts must be extracted first). SGR color
   escapes in fonts render as per-cell color, with the ANSI-16 palette
   mapped to `--mw-ansi-*` (override the tokens to retheme).
-- Content is a single line of text; whitespace collapses. Element
+- Content is a single line of text: spaces, tabs, and newlines fold
+  to one space, so a run of `&nbsp;` is the way to widen a gap. Element
   children are ignored (with a warning).
 
 ## Bundled fonts

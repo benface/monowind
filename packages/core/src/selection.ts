@@ -1,3 +1,4 @@
+import { leafRendererFor } from "./leaf.ts";
 import { inlineBoxesOf } from "./types.ts";
 import type { LayoutNode } from "./types.ts";
 import { INLINE_PAD, OBJECT_REPLACEMENT } from "./wrap.ts";
@@ -21,12 +22,59 @@ export function comparePoints(aNode: Node, aOffset: number, bNode: Node, bOffset
   return a.compareBoundaryPoints(a.START_TO_START, b);
 }
 
+/** A custom leaf's transcript: the node its `selectionTarget` names
+ * when that node holds the leaf's text verbatim (specs/leaf-renderers.md)
+ * — a text-mode drag, the painted highlight, and the copy then read
+ * positions in it as indices into `leaf.text`. */
+export function transcriptOf(leaf: LayoutNode): Node | null {
+  const target = leafRendererFor(leaf.source.tagName)?.selectionTarget?.(leaf.source) ?? null;
+  return target && target.textContent === leaf.text ? target : null;
+}
+
+/** The text node and offset `offset` code units into `container`'s
+ * text; past the end, the last node's end. */
+export function textPositionAt(container: Node, offset: number): [Text, number] | null {
+  let remaining = offset;
+  let last: [Text, number] | null = null;
+  for (const text of textNodesOf(container)) {
+    if (remaining <= text.data.length) return [text, remaining];
+    remaining -= text.data.length;
+    last = [text, text.data.length];
+  }
+  return last;
+}
+
+/** A boundary point inside `container` as code units into its text —
+ * a Range does the flattening: its string is exactly the text between
+ * the container's start and the point. Null outside it. */
+export function textOffsetOf(container: Node, node: Node, offset: number): number | null {
+  if (!container.contains(node)) return null;
+  const range = container.ownerDocument!.createRange();
+  range.selectNodeContents(container);
+  range.setEnd(node, offset);
+  return range.toString().length;
+}
+
+function* textNodesOf(container: Node): Generator<Text> {
+  const walker = container.ownerDocument!.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    yield node as Text;
+    node = walker.nextNode();
+  }
+}
+
 /** The index into `leaf.text` of the character at or after a DOM
  * boundary point: a point inside a collapsed whitespace run is that
  * run's space, a point past a node's mapped characters is the next
- * mapped index (or `text.length`), and a point inside an atomic inline
- * box's subtree is the box's U+FFFC marker. */
+ * mapped index (or `text.length`), a point inside an atomic inline
+ * box's subtree is the box's U+FFFC marker, and a point in a custom
+ * leaf's transcript its offset there. */
 export function charIndexAt(leaf: LayoutNode, container: Node, offset: number): number {
+  if (!leaf.charSource) {
+    const transcript = transcriptOf(leaf);
+    return (transcript && textOffsetOf(transcript, container, offset)) ?? 0;
+  }
   const boxes = inlineBoxesOf(leaf);
   const boxIndex = boxes.findIndex((box) => box.source.contains(container));
   if (boxIndex >= 0) {
@@ -53,8 +101,14 @@ export function charIndexAt(leaf: LayoutNode, container: Node, offset: number): 
 }
 
 /** The DOM position of `leaf.text[index]` (or of the end of the run
- * ending there); null for a character with no source position. */
+ * ending there) — in a custom leaf's transcript when it has one; null
+ * for a character with no source position. */
 export function positionOf(leaf: LayoutNode, index: number): { node: Text; offset: number } | null {
+  if (!leaf.charSource) {
+    const transcript = transcriptOf(leaf);
+    const at = transcript && textPositionAt(transcript, index);
+    return at && { node: at[0], offset: at[1] };
+  }
   const runs = leaf.charSource ?? [];
   let low = 0;
   let high = runs.length;
@@ -79,18 +133,22 @@ export interface BoundaryPoints {
 }
 
 /** The document Selection's first range as seen through `shadowRoot`
- * (`getComposedRanges` on Firefox/WebKit and standards-path Chromium;
- * `ShadowRoot.getSelection()` as the legacy Chromium fallback —
- * verified 2026-09-01). A selection inside some OTHER shadow root (a
- * custom leaf's transcript) comes back retargeted onto that root's
- * host, which is exactly the light-tree range around the leaf. Any API
- * surprise reads as no selection, never an error. */
-export function selectionRangeThrough(shadowRoot: ShadowRoot): BoundaryPoints | null {
+ * and the `leafRoots` (`getComposedRanges` on Firefox/WebKit and
+ * standards-path Chromium; `ShadowRoot.getSelection()` as the legacy
+ * Chromium fallback — verified 2026-09-01). A selection inside a shadow
+ * root not listed comes back retargeted onto that root's host, which
+ * is exactly the light-tree range around it; listing a custom leaf's
+ * transcript root keeps the points inside it. Any API surprise reads
+ * as no selection, never an error. */
+export function selectionRangeThrough(
+  shadowRoot: ShadowRoot,
+  leafRoots: ShadowRoot[] = [],
+): BoundaryPoints | null {
   try {
     const selection = shadowRoot.ownerDocument.getSelection();
     if (!selection) return null;
     if (selection.getComposedRanges) {
-      const ranges = selection.getComposedRanges({ shadowRoots: [shadowRoot] });
+      const ranges = selection.getComposedRanges({ shadowRoots: [shadowRoot, ...leafRoots] });
       return ranges[0] ?? null;
     }
     const shadowSelection = (
@@ -115,8 +173,55 @@ export function classifySelection(
 ): SelectionKind {
   const { startContainer: start, endContainer: end } = range;
   if (grid.contains(start) && grid.contains(end)) return "grid";
-  if (host.contains(start) && host.contains(end)) return "light";
+  if (withinHost(host, start) && withinHost(host, end)) return "light";
   return "outside";
+}
+
+/** `contains` through the shadow boundaries of the host's descendants:
+ * a node inside a custom leaf's shadow is within the host that holds
+ * the leaf; a node in the host's own shadow (the grid) is not. */
+function withinHost(host: Element, node: Node): boolean {
+  for (let current: Node | null = node; current;) {
+    if (host.contains(current)) return true;
+    const root = current.getRootNode();
+    current = root instanceof ShadowRoot && root.host !== host ? root.host : null;
+  }
+  return false;
+}
+
+/** The shadow roots of the custom leaves with transcripts under
+ * `root`, for `selectionRangeThrough`. */
+export function leafShadowRoots(root: LayoutNode): ShadowRoot[] {
+  const roots: ShadowRoot[] = [];
+  const visit = (node: LayoutNode): void => {
+    const shadow = transcriptOf(node)?.getRootNode();
+    if (shadow instanceof ShadowRoot) roots.push(shadow);
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return roots;
+}
+
+/** A range whose points lie inside a custom leaf's transcript: the
+ * leaf and the character range, or null for a light-tree range. */
+function transcriptRange(
+  root: LayoutNode,
+  points: BoundaryPoints,
+): { leaf: LayoutNode; start: number; end: number } | null {
+  const shadow = points.startContainer.getRootNode();
+  if (!(shadow instanceof ShadowRoot) || shadow.host === root.source) return null;
+  let found: LayoutNode | null = null;
+  const visit = (node: LayoutNode): void => {
+    if (found) return;
+    if (node.source === shadow.host) found = node;
+    else for (const child of node.children) visit(child);
+  };
+  visit(root);
+  if (!found) return null;
+  const leaf: LayoutNode = found;
+  const start = charIndexAt(leaf, points.startContainer, points.startOffset);
+  const end = charIndexAt(leaf, points.endContainer, points.endOffset);
+  return { leaf, start: Math.min(start, end), end: Math.max(start, end) };
 }
 
 /* === Painted selection =============================================== */
@@ -129,6 +234,11 @@ export function selectedRanges(
   root: LayoutNode,
   points: BoundaryPoints,
 ): Map<LayoutNode, { start: number; end: number }> {
+  const inTranscript = transcriptRange(root, points);
+  if (inTranscript) {
+    const { leaf, start, end } = inTranscript;
+    return end > start ? new Map([[leaf, { start, end }]]) : new Map();
+  }
   const range = root.source.ownerDocument!.createRange();
   range.setStart(points.startContainer, points.startOffset);
   range.setEnd(points.endContainer, points.endOffset);
@@ -171,6 +281,8 @@ type TextItem = { text: string } | { breaks: number };
  * engine's out-of-flow boxes; this restores what they would have
  * produced in flow. */
 export function serializeSelection(root: LayoutNode, points: BoundaryPoints): string {
+  const inTranscript = transcriptRange(root, points);
+  if (inTranscript) return inTranscript.leaf.text.slice(inTranscript.start, inTranscript.end);
   const range = root.source.ownerDocument!.createRange();
   range.setStart(points.startContainer, points.startOffset);
   range.setEnd(points.endContainer, points.endOffset);

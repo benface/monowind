@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { registerLeafRenderer } from "../src/leaf.ts";
-import { classifySelection, selectedRanges, serializeSelection, wordAt } from "../src/selection.ts";
+import {
+  charIndexAt,
+  classifySelection,
+  positionOf,
+  selectedRanges,
+  serializeSelection,
+  wordAt,
+} from "../src/selection.ts";
 import { buildTree } from "../src/tree.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -161,5 +168,56 @@ describe("selectedRanges", () => {
     const { host, root } = build("<p>x</p><test-art>art</test-art>");
     const ranges = selectedRanges(root, selectAll(host));
     expect(ranges.get(root.children[1]!)).toEqual({ start: 0, end: 5 });
+  });
+});
+
+describe("a custom leaf's transcript", () => {
+  function artLeaf(): { host: HTMLElement; root: LayoutNode; mirror: Text } {
+    registerLeafRenderer({
+      tag: "test-transcript",
+      render: () => ({ lines: ["AB", "CD"] }),
+      selectionTarget: (el) => el.shadowRoot?.getElementById("mirror") ?? null,
+    });
+    const { host, root } = build("<p>x</p><test-transcript>art</test-transcript>");
+    const el = host.querySelector("test-transcript")!;
+    const shadow = el.attachShadow({ mode: "open" });
+    const pre = document.createElement("pre");
+    pre.id = "mirror";
+    pre.textContent = "AB\nCD";
+    shadow.appendChild(pre);
+    return { host, root, mirror: pre.firstChild as Text };
+  }
+
+  it("maps characters to positions in the transcript and back", () => {
+    const { root, mirror } = artLeaf();
+    const leaf = root.children[1]!;
+    expect(positionOf(leaf, 4)).toEqual({ node: mirror, offset: 4 });
+    expect(positionOf(leaf, 5)).toEqual({ node: mirror, offset: 5 });
+    expect(charIndexAt(leaf, mirror, 3)).toBe(3);
+  });
+
+  it("serializes and ranges a selection inside the transcript by character", () => {
+    const { root, mirror } = artLeaf();
+    const leaf = root.children[1]!;
+    const inside = points(mirror, 1, mirror, 4);
+    expect(serializeSelection(root, inside)).toBe("B\nC");
+    expect(selectedRanges(root, inside).get(leaf)).toEqual({ start: 1, end: 4 });
+    expect(classifySelection(root.source, document.createElement("pre"), inside)).toBe("light");
+  });
+});
+
+describe("classifySelection through shadows", () => {
+  it("counts a custom leaf's shadow as the host's light DOM, and the host's own shadow as outside", () => {
+    const { host, root } = build("<p>x</p><test-transcript>art</test-transcript>");
+    const el = host.querySelector("test-transcript")!;
+    const mirror = document.createTextNode("AB\nCD");
+    el.attachShadow({ mode: "open" }).appendChild(mirror);
+    const grid = document.createElement("pre");
+    host.attachShadow({ mode: "open" }).appendChild(grid);
+    const gridText = grid.appendChild(document.createTextNode("grid"));
+    const [x] = texts(host);
+    expect(classifySelection(root.source, grid, points(mirror, 0, mirror, 2))).toBe("light");
+    expect(classifySelection(root.source, grid, points(gridText, 0, gridText, 2))).toBe("grid");
+    expect(classifySelection(root.source, grid, points(gridText, 0, x!, 1))).toBe("outside");
   });
 });

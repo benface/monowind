@@ -37,10 +37,11 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   semantic children visually hidden and `user-select: none` — a
   native range then reads real text with real newlines in every kind
   of sweep, and the AT still hears the light DOM (`<mono-ascii>` does
-  exactly this). The engine paints that selection on the grid over the
-  leaf's cells and copies the leaf's text itself
-  (specs/wide-characters.md, specs/semantic-selection.md); the
-  transcript's own highlight stays invisible, like the light DOM's.
+  exactly this). The engine paints that selection on the grid — the
+  selected characters, since the transcript holds the leaf's text
+  verbatim — and copies it itself (specs/wide-characters.md,
+  specs/semantic-selection.md); the transcript's own highlight stays
+  invisible, like the light DOM's.
 - Colors in runs are CSS `<color>` STRINGS, vars welcome
   (`var(--mw-ansi-red)`), resolved at paint time against the host —
   themes restyle existing content with no re-render.

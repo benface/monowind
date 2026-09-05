@@ -178,8 +178,9 @@ export const Semantic: StoryObj = {
     press(cell("box", 2, 2), 3);
     expect(selection()).toBe("boxed");
     release();
+    // A double-click on the banner: the art's line under the pointer.
     press(cell("banner", 2, 1), 2);
-    expect(selection()).toBe(art.trim());
+    expect(selection()).toBe(art.split("\n")[1]!.trim());
     release();
     // Focus leaves a control inside the host, as a native click would.
     by("input").focus();

@@ -204,7 +204,15 @@ copy event sees it in all three engines.
   already has. A pointer past the host's edge clamps to the nearest
   cell, so the extent runs to the start or end of the host's text.
   Keyboard extension (Shift+arrows, Shift+Home) stays the browser's, on
-  the range. Touch is untouched: a long-press selects natively, as the
+  the range. A custom leaf's transcript (specs/leaf-renderers.md) is
+  text like any other: its `selectionTarget` holds the leaf's text
+  verbatim, so a cell maps to a position in it and a drag inside the
+  leaf selects by character, with the highlight and the copy reading
+  the transcript range back as indices into the leaf's text; a drag
+  across the leaf's edge takes it whole (points in different trees
+  pair at light-tree edges), a double-click selects the art's line
+  under the pointer, and a triple-click the whole leaf — in both
+  modes. Touch is untouched: a long-press selects natively, as the
   pointer handlers ignore touch, and the engine paints what it selects.
   The browser is never asked which character sits under a mouse, so a
   drifted native glyph cannot pick its neighbor. What the native drag

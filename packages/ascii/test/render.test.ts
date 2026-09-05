@@ -66,3 +66,13 @@ describe("TLF (toilet) fonts", () => {
     }
   });
 });
+
+describe("spaces", () => {
+  it("draws a no-break space as the space glyph, so two of them widen the gap", () => {
+    const font = load("standard.flf");
+    const width = (text: string) => Math.max(...renderAscii(text, font).lines.map((l) => l.length));
+    expect(width("a b")).toBe(width("a b"));
+    expect(width("a  b")).toBeGreaterThan(width("a b"));
+    expect(renderAscii("a b", font).lines).toEqual(renderAscii("a b", font).lines);
+  });
+});

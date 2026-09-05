@@ -102,9 +102,11 @@ function renderLeaf(el: Element): LeafContent {
 }
 
 function renderContent(el: Element): LeafContent {
-  // The banner is the normalized textContent: trimmed, all whitespace
-  // (newlines included) collapsed — a one-line banner by contract.
-  const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+  // The banner is the textContent with CSS collapsible white space
+  // (space, tab, CR, LF, FF — newlines included) folded to one space
+  // and trimmed — a one-line banner by contract. A no-break space is a
+  // character: `&nbsp;` widens a gap the way it does in any text.
+  const text = (el.textContent ?? "").replace(/[ \t\r\n\f]+/g, " ").replace(/^ | $/g, "");
   if (el.children.length > 0 && !warnedChildren.has(el)) {
     warnedChildren.add(el);
     console.warn("[monowind] <mono-ascii> takes text only; element children are ignored.", el);

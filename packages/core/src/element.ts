@@ -9,16 +9,18 @@ import {
   comparePoints,
   isTextLeaf,
   leafExtent,
+  leafShadowRoots,
   positionOf,
   selectedRanges,
   selectionRangeThrough,
   serializeSelection,
+  textPositionAt,
   wordAt,
 } from "./selection.ts";
 import type { BoundaryPoints } from "./selection.ts";
 import { GlyphBoxes } from "./glyph-box.ts";
-import { INLINE_PAD } from "./wrap.ts";
-import { gridOffsetAt, nodeAtOffset, paintedCell, paintGrid } from "./paint.ts";
+import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
+import { gridOffsetAt, paintedCell, paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
@@ -1063,7 +1065,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (!metrics) return null;
     const { col, row } = this.#cellAt(clientX, clientY, metrics);
     const offset = gridOffsetAt(this.#grid, col, row);
-    const at = nodeAtOffset(this.#grid, offset);
+    const at = textPositionAt(this.#grid, offset);
     return at && { offset, at };
   }
 
@@ -1076,7 +1078,7 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #extendGridDrag(drag: { anchor: number }, clientX: number, clientY: number): void {
-    const base = nodeAtOffset(this.#grid, drag.anchor);
+    const base = textPositionAt(this.#grid, drag.anchor);
     const point = this.#gridPointAt(clientX, clientY);
     if (base && point) document.getSelection()?.setBaseAndExtent(...base, ...point.at);
   }
@@ -1103,8 +1105,12 @@ export class MonoWindElement extends HTMLElementBase {
       selectBetween(selection, unit.start, unit.end);
       return;
     }
-    const from = this.#lightEdges(anchor);
-    const to = this.#lightEdges(unit);
+    // Two units in one tree pair directly — a drag inside a custom
+    // leaf's transcript selects its characters; across trees, each side
+    // is expressed at light-tree edges.
+    const sameTree = anchor.start.node.getRootNode() === unit.start.node.getRootNode();
+    const from = sameTree ? anchor : this.#lightEdges(anchor);
+    const to = sameTree ? unit : this.#lightEdges(unit);
     const forward =
       comparePoints(from.start.node, from.start.offset, to.start.node, to.start.offset) <= 0;
     if (forward) selectBetween(selection, from.start, to.end);
@@ -1151,17 +1157,18 @@ export class MonoWindElement extends HTMLElementBase {
     if (unit !== "character") return this.#unitUnder(layout, col, row, unit);
     const { width, height } = layout.localRect;
     for (const { x, y, edge } of nearestCells(width, height, col, row)) {
-      // An inert element's cells are nobody's (the browser ignores the
-      // press there too).
       if (edge === "self") {
         const top = hitStack(layout, x, y).at(-1);
+        // An inert element's cells are nobody's (the browser ignores the
+        // press there too).
         if (top && isInert(top.node.source)) return null;
       }
-      // Only painted glyphs can be characters: blank cells cost a lookup,
+      // Only painted glyphs can be neighbors: blank cells cost a lookup,
       // not a hit test (a wide cluster's continuation cell is its
-      // cluster's, not blank).
+      // cluster's, not blank). The pressed cell itself is always hit
+      // tested — a space in a text run is a character.
       const cell = paintedCell(this.#grid, x, y);
-      if (cell === undefined || cell === " ") continue;
+      if (cell === undefined || (cell === " " && edge !== "self")) continue;
       const found = this.#unitUnder(layout, x, y, "character");
       if (!found) continue;
       return edge === "self" ? found : pointUnit(edge === "start" ? found.start : found.end);
@@ -1196,10 +1203,9 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** The character, word, or paragraph of a text leaf at a cell; null
    * off its characters (an inline padding cell is blank for a character).
-   * A paragraph is the element's contents — a custom leaf's
-   * selectionTarget's — or, for the root leaf, the run's own extent (the
-   * host's child list also holds the metrics probe); a character or word
-   * without DOM positions (a renderer leaf) is its paragraph. */
+   * A character is positioned through the leaf's source map or a custom
+   * leaf's transcript, a word on a custom leaf is the art's line; either
+   * without a position is the leaf's whole contents (#leafContents). */
   #leafUnit(
     node: LayoutNode,
     x: number,
@@ -1211,22 +1217,34 @@ export class MonoWindElement extends HTMLElementBase {
     const index = charIndexAtCell(node, x, y, col, row);
     if (index === null) return null;
     if (unit === "character" && node.text[index] === INLINE_PAD) return null;
-    const target = leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source);
-    if (unit === "character" && !target) {
+    if (unit === "character") {
+      // The cluster's continuation units; a hard break after it is not.
       let end = index + 1;
-      while (end < node.text.length && node.advances?.[end] === 0) end++;
+      while (end < node.text.length && node.advances?.[end] === 0 && node.text[end] !== "\n") end++;
       const start = positionOf(node, index);
       const after = positionOf(node, end);
       if (start && after) return { start, end: after };
     }
-    if (unit === "word" && !target) {
-      const word = wordAt(node, index);
-      const start = word && positionOf(node, word.start);
-      const end = word && positionOf(node, word.end);
+    if (unit === "word") {
+      // A custom leaf's word is the art's line under the pointer (its
+      // glyph runs are not words); a triple-click takes it whole.
+      const span = leafRendererFor(node.source.tagName)
+        ? hardLineSpans(node.text).find((line) => index >= line.start && index < line.end)
+        : wordAt(node, index);
+      const start = span && positionOf(node, span.start);
+      const end = span && positionOf(node, span.end);
       if (start && end) return { start, end };
     }
+    return this.#leafContents(node);
+  }
+
+  /** A leaf's whole contents as a unit: its selectionTarget's for a
+   * custom leaf, the run's own extent for the root leaf (the host's
+   * child list also holds the metrics probe), the element's otherwise. */
+  #leafContents(node: LayoutNode): SelectionUnit | null {
     if (node === this.#lastLayout) return leafExtent(node);
-    const container = target ?? node.source;
+    const container =
+      leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source) ?? node.source;
     return {
       start: { node: container, offset: 0 },
       end: { node: container, offset: container.childNodes.length },
@@ -1272,7 +1290,11 @@ export class MonoWindElement extends HTMLElementBase {
    * host's light DOM (a custom leaf's shadow selection reads as the
    * light range around its host); null otherwise. */
   #elementSelection(): BoundaryPoints | null {
-    const range = selectionRangeThrough(this.#grid.getRootNode() as ShadowRoot);
+    const layout = this.#lastLayout;
+    const range = selectionRangeThrough(
+      this.#grid.getRootNode() as ShadowRoot,
+      layout ? leafShadowRoots(layout) : [],
+    );
     if (!range || classifySelection(this, this.#grid, range) !== "light") return null;
     const collapsed =
       range.startContainer === range.endContainer && range.startOffset === range.endOffset;

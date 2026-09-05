@@ -23,6 +23,7 @@ export const Wide: StoryObj = {
     <mono-wind select="text">
       <p data-test="mixed" class="w-40">Latin 中文 한글 😀 ★ ✓ end of the line here.</p>
       <p data-test="second" class="mt-1 w-40">Second paragraph after the wide one.</p>
+      <mono-ascii data-test="banner" font="small" class="mt-1">hi</mono-ascii>
       <div data-test="box" class="mt-1 w-12 border px-1">日本語のテキスト</div>
       <textarea data-test="area" class="mt-1 w-12 border">日本語のテキストが折り返す</textarea>
     </mono-wind>
@@ -123,5 +124,35 @@ export const Wide: StoryObj = {
     document.getSelection()!.removeAllRanges();
     await nextFrame();
     await waitFor(() => expect(painted()).toBe(""));
+
+    // A banner's transcript is text like any other: a drag inside it
+    // selects by character, a drag across it takes it whole, a
+    // double-click selects its line, a triple-click all of it.
+    const art = by("banner").shadowRoot!.getElementById("mirror")!.textContent!;
+    const artLines = art.split("\n");
+    expect(press("banner", cell("banner", 2, 1), 1)).toBe(false);
+    move(cell("banner", 6, 1));
+    expect(copyText(host)).toBe(artLines[1]!.slice(2, 7));
+    await nextFrame();
+    await waitFor(() => expect(painted()).toBe(artLines[1]!.slice(2, 7)));
+    // Down a row: through the character under the pointer, in text order.
+    move(cell("banner", 1, 2));
+    expect(copyText(host)).toBe(artLines[1]!.slice(2) + "\n" + artLines[2]!.slice(0, 2));
+    release();
+    expect(press("second", cell("second", 0, 0), 1)).toBe(false);
+    move(cell("box", 1, 1));
+    expect(copyText(host)).toContain(artLines[0]!.trim());
+    release();
+    expect(press("second", cell("second", 38, 0), 1)).toBe(false);
+    move(cell("banner", 2, 1));
+    expect(copyText(host)).toContain(artLines[0]!.trim());
+    release();
+    // Double-click: the art's line under the pointer; triple: all of it.
+    press("banner", cell("banner", 2, 1), 2);
+    expect(copyText(host)).toBe(artLines[1]);
+    release();
+    press("banner", cell("banner", 2, 1), 3);
+    expect(copyText(host).trim()).toBe(art.trim());
+    release();
   },
 };

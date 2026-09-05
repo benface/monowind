@@ -29,7 +29,8 @@ export function renderAscii(text: string, font: AsciiFont): RenderedAscii {
   };
   let first = true;
   for (const ch of text) {
-    const glyph = font.glyphs.get(ch.codePointAt(0)!) ?? missing;
+    // A no-break space draws as the space glyph.
+    const glyph = font.glyphs.get(ch === "\u00a0" ? 0x20 : ch.codePointAt(0)!) ?? missing;
     const overlap = first ? 0 : smushAmount(rows, glyph, font);
     merge(rows, glyph, overlap, font);
     first = false;

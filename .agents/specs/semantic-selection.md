@@ -174,8 +174,12 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
 - **Custom leaves name their selectable node.** `LeafRegistration`
   (the `registerLeafRenderer` options) gains an optional
   `selectionTarget(el): Node | null`: the node whose contents a
-  gesture ON the leaf selects. `<mono-ascii>` returns its
-  shadow transcript (`#mirror`). _Verified_: a range over the
+  gesture ON the leaf selects — a triple-click all of it, a
+  double-click the art's line under the pointer (its glyph runs are
+  not words); when the node holds the leaf's text verbatim it also
+  positions a text-mode character drag (specs/wide-characters.md).
+  `<mono-ascii>` returns its shadow transcript (`#mirror`).
+  _Verified_: a range over the
   transcript's contents highlights the art and natively copies it in
   all three engines — it is what `select="text"` selects there today —
   whereas a range over the host's light contents highlights nothing

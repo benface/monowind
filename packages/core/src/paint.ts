@@ -1,7 +1,7 @@
 import type { GlyphBoxes } from "./glyph-box.ts";
 import { applyCellPaint, isBarePaint, renderGridRows, samePaint } from "./plain-text.ts";
 import type { CellSegment, RenderOptions } from "./plain-text.ts";
-import { selectionRangeThrough } from "./selection.ts";
+import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
@@ -226,8 +226,10 @@ function captureSelection(target: HTMLElement, allowCollapsed: boolean): SavedSe
     if (!(shadowRoot instanceof ShadowRoot)) return null;
     const range = selectionRangeThrough(shadowRoot);
     if (!range) return null;
-    const start = flatOffset(target, range.startContainer, range.startOffset);
-    const end = flatOffset(target, range.endContainer, range.endOffset);
+    // Null when a point is outside the grid (the selection reaches past
+    // it — restoring only our half would corrupt it).
+    const start = textOffsetOf(target, range.startContainer, range.startOffset);
+    const end = textOffsetOf(target, range.endContainer, range.endOffset);
     if (start === null || end === null) return null;
     if (start === end && !allowCollapsed) return null;
     // `direction` is unsupported in some engines; forward is the safe
@@ -242,8 +244,8 @@ function captureSelection(target: HTMLElement, allowCollapsed: boolean): SavedSe
 
 function restoreSelection(target: HTMLElement, saved: SavedSelection): void {
   try {
-    const start = nodeAtOffset(target, saved.start);
-    const end = nodeAtOffset(target, saved.end);
+    const start = textPositionAt(target, saved.start);
+    const end = textPositionAt(target, saved.end);
     if (!start || !end) return;
     // Chromium: restore through the shadow root's own selection — the
     // document-level restore leaves a live drag's internal anchor on
@@ -257,39 +259,6 @@ function restoreSelection(target: HTMLElement, saved: SavedSelection): void {
     }
   } catch {
     // Leave whatever the browser collapsed the selection to.
-  }
-}
-
-/** Boundary point → offset into the grid's flat text; null when the
- * point is outside the grid (the selection reaches past it — restoring
- * only our half would corrupt it). A Range does the flattening: its
- * string is exactly the text between the grid's start and the point. */
-function flatOffset(target: HTMLElement, container: Node, offset: number): number | null {
-  if (!target.contains(container)) return null;
-  const range = target.ownerDocument.createRange();
-  range.selectNodeContents(target);
-  range.setEnd(container, offset);
-  return range.toString().length;
-}
-
-export function nodeAtOffset(target: HTMLElement, offset: number): [Text, number] | null {
-  let remaining = offset;
-  let last: [Text, number] | null = null;
-  for (const text of textNodesOf(target)) {
-    if (remaining <= text.data.length) return [text, remaining];
-    remaining -= text.data.length;
-    last = [text, text.data.length];
-  }
-  // Offset past the new content (the grid shrank): clamp to the end.
-  return last;
-}
-
-function* textNodesOf(target: HTMLElement): Generator<Text> {
-  const walker = target.ownerDocument.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-  let node = walker.nextNode();
-  while (node) {
-    yield node as Text;
-    node = walker.nextNode();
   }
 }
 
