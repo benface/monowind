@@ -112,8 +112,8 @@ This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):
 - [Storybook](https://storybook.monowind.benface.com) — live examples of every
   supported feature, deployed from `apps/storybook`.
 - [Playground](https://play.monowind.benface.com) — edit HTML in the browser and
-  see the character grid update live; every document is a shareable URL.
-  Deployed from `apps/play`.
+  see the character grid update live; every document is a shareable URL, long
+  or short. Deployed from `apps/play`.
 
 ## Development
 
@@ -146,6 +146,9 @@ pnpm check-updates
 
 # Playground (live HTML editing through <mono-wind>, shareable URLs), port 5181
 pnpm --filter @monowind/play dev
+
+# same, wrapped in the Netlify CLI so the short-link functions run too, port 8888
+pnpm --filter @monowind/play dev:netlify
 
 # Example apps (each demonstrates one way to consume monowind):
 pnpm --filter @monowind/example-html dev       # CDN mode: one script tag

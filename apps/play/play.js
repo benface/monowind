@@ -1,16 +1,20 @@
 /**
  * monowind play: live HTML editing rendered through <mono-wind>, with
- * the document shareable as a URL. The engine's own MutationObserver
- * relayouts on every innerHTML swap, and the CDN bundle's Tailwind
- * browser compiler picks up new classes the same way — the editor only
- * has to move text around.
+ * the document shareable as a URL (the hash carries it; a Netlify
+ * function shortens it — netlify/functions). The engine's own
+ * MutationObserver relayouts on every innerHTML swap, and the CDN
+ * bundle's Tailwind browser compiler picks up new classes the same way
+ * — the editor only has to move text around.
  */
 
 const source = document.getElementById("source");
 const previewFrame = document.getElementById("preview");
 const selectText = document.getElementById("select-text");
 const themeSelect = document.getElementById("theme");
-const selectTextLabel = document.getElementById("select-text-label");
+const focusArrows = document.getElementById("focus-arrows");
+const optionsButton = document.getElementById("options");
+const optionsPopover = document.getElementById("options-popover");
+const optionsCell = document.getElementById("options-cell");
 const themeLabel = document.getElementById("theme-label");
 const desktopSlot = document.getElementById("toggle-slot-desktop");
 const mobileSlot = document.getElementById("toggle-slot-mobile");
@@ -99,7 +103,7 @@ const highlightTag = (open, name, attrs, close) => {
 
 const highlight = (text) => {
   return escapeHtml(text).replace(
-    /(&lt;!--[\s\S]*?(?:--&gt;|$))|(&lt;\/?)([\w-]+)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?>)/g,
+    /(&lt;!--[\s\S]*?(?:-->|$))|(&lt;\/?)([\w-]+)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?>)/g,
     (match, comment, open, name, attrs, close) =>
       comment !== undefined
         ? `<span class="tok-com">${comment}</span>`
@@ -159,10 +163,7 @@ const applyTheme = (theme) => {
 };
 themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
-  const url = new URL(location.href);
-  if (themeSelect.value) url.searchParams.set("theme", themeSelect.value);
-  else url.searchParams.delete("theme");
-  history.replaceState(null, "", url);
+  writeUrl();
 });
 {
   const initial = new URLSearchParams(location.search).get("theme") ?? "";
@@ -171,6 +172,28 @@ themeSelect.addEventListener("change", () => {
   }
   previewReady.then(() => applyTheme(themeSelect.value));
 }
+
+// --- The URL is derived from state: this page's path, the controls'
+// --- query (theme, select, focus — each written only when it is not
+// --- the default), and the document's hash — rewritten in place on
+// --- every change, so the address bar is always current. A share swaps
+// --- the short link in until the next change.
+
+const appPath = location.pathname;
+// The document as last encoded into the URL.
+let lastHash = location.hash;
+const MODES = [
+  { name: "select", toggle: selectText, on: "text", off: "grid" },
+  { name: "focus", toggle: focusArrows, on: "arrows", off: "tab" },
+];
+const stateQuery = () => {
+  const params = new URLSearchParams();
+  if (themeSelect.value) params.set("theme", themeSelect.value);
+  for (const { name, toggle, on } of MODES) if (toggle.checked) params.set(name, on);
+  const search = params.toString();
+  return search ? `?${search}` : "";
+};
+const writeUrl = () => history.replaceState(null, "", `${appPath}${stateQuery()}${lastHash}`);
 
 const render = () => {
   if (previewRoot) previewRoot.innerHTML = source.value;
@@ -194,7 +217,8 @@ const onInput = () => {
   render();
   clearTimeout(hashTimer);
   hashTimer = setTimeout(async () => {
-    history.replaceState(null, "", `#${await encodeHash(source.value)}`);
+    lastHash = `#${await encodeHash(source.value)}`;
+    writeUrl();
   }, 300);
 };
 
@@ -296,7 +320,7 @@ const tidy = (html) => {
 };
 
 // --- Layout: stacked (the mobile breakpoint) vs. side-by-side. The
-// --- theme select and select-mode toggle also move between the header
+// --- theme select and the options button also move between the header
 // --- and a bar beside the preview depending on which, since the
 // --- header has no room on a narrow viewport.
 
@@ -304,10 +328,60 @@ const stackedQuery = matchMedia("(max-width: 767.98px)");
 const placeHeaderControls = () => {
   const target = stackedQuery.matches ? mobileSlot : desktopSlot;
   if (themeLabel.parentNode !== target) target.appendChild(themeLabel);
-  if (selectTextLabel.parentNode !== target) target.appendChild(selectTextLabel);
+  // The cell holds the button and its popover, so Tab moves from one
+  // into the other wherever they land.
+  if (optionsCell.parentNode !== target) target.appendChild(optionsCell);
 };
 stackedQuery.addEventListener("change", placeHeaderControls);
 placeHeaderControls();
+
+// --- Options popover: the mode toggles behind the button, anchored
+// --- under its right edge by hand (CSS anchor positioning is not
+// --- universal yet) — before it shows, so it never paints elsewhere
+// --- first; light dismiss and Escape are native.
+optionsPopover.addEventListener("beforetoggle", (event) => {
+  if (event.newState !== "open") return;
+  const anchor = optionsButton.getBoundingClientRect();
+  optionsPopover.style.top = `${anchor.bottom + 4}px`;
+  optionsPopover.style.right = `${Math.max(8, innerWidth - anchor.right)}px`;
+});
+// Light dismiss covers pointers only, and stops at the preview iframe
+// (its clicks never reach this document): keyboard focus leaving the
+// popover, a press inside the iframe, focus leaving the page for it,
+// or a resize (the anchor moves) close the popover by hand.
+const closeOptions = () => {
+  if (optionsPopover.matches(":popover-open")) optionsPopover.hidePopover();
+};
+optionsPopover.addEventListener("focusout", (event) => {
+  const next = event.relatedTarget;
+  if (next && !optionsPopover.contains(next) && next !== optionsButton) closeOptions();
+});
+window.addEventListener("blur", closeOptions);
+window.addEventListener("resize", closeOptions);
+previewReady.then(() => {
+  previewFrame.contentDocument.addEventListener("pointerdown", closeOptions, true);
+});
+// Menu-button keyboard convention: Down opens with focus on the first
+// control, Up on the last, and the arrows walk the controls while open;
+// Enter, Space, and Escape (focus back on the button) are native.
+const optionControls = () => [...optionsPopover.querySelectorAll("input")];
+optionsButton.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  event.preventDefault();
+  if (!optionsPopover.matches(":popover-open")) optionsPopover.showPopover();
+  optionControls()
+    .at(event.key === "ArrowDown" ? 0 : -1)
+    .focus();
+});
+optionsPopover.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const controls = optionControls();
+  const index = controls.indexOf(document.activeElement);
+  if (index < 0) return;
+  event.preventDefault();
+  const step = event.key === "ArrowDown" ? 1 : controls.length - 1;
+  controls[(index + step) % controls.length].focus();
+});
 
 // --- Draggable split: the divider sets the editor pane's share of the
 // --- main axis (width, or height in the stacked mobile layout).
@@ -358,28 +432,17 @@ divider.addEventListener("keydown", (event) => {
 
 // --- Wiring.
 
-// Select mode lives in the URL query (`?select=text`) — separate from
-// the content-carrying hash so a re-shared link picks it up on load.
-const applySelectMode = () => {
-  const next = selectText.checked ? "text" : "grid";
-  // Guard: setAttribute schedules a relayout even when the value is
-  // unchanged, and this runs on every load (grid = default).
-  if (previewRoot && previewRoot.getAttribute("select") !== next) {
-    previewRoot.setAttribute("select", next);
+// Each mode toggle is a host attribute whose checked state is the
+// non-default value (MODES above).
+const applyModes = () => {
+  if (!previewRoot) return;
+  for (const { name, toggle, on, off } of MODES) {
+    const next = toggle.checked ? on : off;
+    // Guard: setting `select` schedules a relayout even when the value
+    // is unchanged, and this runs on every load (the defaults).
+    if (previewRoot.getAttribute(name) !== next) previewRoot.setAttribute(name, next);
   }
 };
-const writeSelectQuery = () => {
-  const params = new URLSearchParams(location.search);
-  if (selectText.checked) params.set("select", "text");
-  else params.delete("select");
-  const search = params.toString();
-  history.replaceState(
-    null,
-    "",
-    `${location.pathname}${search ? `?${search}` : ""}${location.hash}`,
-  );
-};
-
 const start = async () => {
   let initial = SAMPLE;
   if (location.hash.length > 1) {
@@ -389,20 +452,23 @@ const start = async () => {
       // Malformed hash: fall back to the sample.
     }
   }
-  if (new URLSearchParams(location.search).get("select") === "text") selectText.checked = true;
+  const params = new URLSearchParams(location.search);
+  for (const { name, toggle, on } of MODES) if (params.get(name) === on) toggle.checked = true;
   source.value = initial;
   await previewReady;
-  applySelectMode();
+  applyModes();
   render();
 };
 start();
 
 source.addEventListener("input", onInput);
 
-selectText.addEventListener("change", () => {
-  applySelectMode();
-  writeSelectQuery();
-});
+for (const { toggle } of MODES) {
+  toggle.addEventListener("change", () => {
+    applyModes();
+    writeUrl();
+  });
+}
 
 const runTidy = () => {
   const caret = source.selectionStart;
@@ -464,10 +530,38 @@ source.addEventListener("keydown", (event) => {
   }
 });
 
+// Share: the document rides the hash; a short link comes from the
+// share function (netlify/functions/share.mjs), which stores this
+// page's query + hash under a content id and redirects /s/<id> back
+// here. Without the backend (file://, a static dev server) the long
+// URL shares just as well.
+const shortLink = async (target) => {
+  const response = await fetch("/api/share", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ target }),
+  });
+  if (!response.ok) throw new Error(response.statusText);
+  return new URL(`/s/${(await response.json()).id}`, location.href).href;
+};
+// The last share, so repeated clicks on an unchanged document reuse the
+// link instead of asking again (the store is content-addressed anyway).
+let lastShare = null;
 copy.addEventListener("click", async () => {
-  history.replaceState(null, "", `#${await encodeHash(source.value)}`);
+  lastHash = `#${await encodeHash(source.value)}`;
+  writeUrl();
+  const target = `/${stateQuery()}${lastHash}`;
+  let link = location.href;
   try {
-    await navigator.clipboard.writeText(location.href);
+    if (lastShare?.target !== target) lastShare = { target, link: await shortLink(target) };
+    link = lastShare.link;
+    // The short link stands in for the address until the next change.
+    history.replaceState(null, "", link);
+  } catch {
+    // No backend: the long URL it is.
+  }
+  try {
+    await navigator.clipboard.writeText(link);
     copy.textContent = "copied!";
   } catch {
     // Clipboard unavailable (file://, denied permission) — the hash is
@@ -475,6 +569,6 @@ copy.addEventListener("click", async () => {
     copy.textContent = "failed";
   }
   setTimeout(() => {
-    copy.textContent = "copy link";
+    copy.textContent = "share";
   }, 1200);
 });

@@ -62,7 +62,9 @@ selects a word or a paragraph.
   host-leaf.md). Leaves are elements or the root — a container's
   direct text next to block children is dropped (cell-model.md), so
   there are no anonymous runs — and inline descendants (`<span>`,
-  `<a>`, `<b>`) and `<br>` lines belong to their leaf. An atomic
+  `<a>`, `<b>`) and `<br>` lines belong to their leaf. An `inert` leaf
+  yields no unit (its text is unselectable natively) — the browser's
+  grid gesture applies. An atomic
   inline box (`inline-block`, `inline-flex`) is a leaf of its own: a
   gesture on its cells selects
   within it, and its parent paragraph's range includes it as a

@@ -1,7 +1,8 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, leafRendererFor, onLeafRegistryChange } from "./leaf.ts";
-import { hitChain, hitStack } from "./pointer.ts";
+import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "./focus.ts";
+import { hitChain, hitStack, isInert } from "./pointer.ts";
 import { charIndexAtCell, renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
 import {
   classifySelection,
@@ -74,6 +75,11 @@ const SHADOW_TEMPLATE = `
  * it is absent or unrecognized so every stylesheet keys on an explicit
  * value — the single place the default lives. */
 const DEFAULT_SELECT = "grid";
+
+/** The `focus` attribute's default (specs/focus-navigation.md): Tab
+ * alone moves focus; `focus="arrows"` adds arrow-key navigation.
+ * Reflected like `select`. */
+const DEFAULT_FOCUS = "tab";
 
 /** Set on the host while an element selection made by a semantic
  * gesture is live (specs/semantic-selection.md): the shadow stylesheet
@@ -158,7 +164,7 @@ const HTMLElementBase = (
 ) as typeof HTMLElement;
 
 export class MonoWindElement extends HTMLElementBase {
-  static observedAttributes = ["select"];
+  static observedAttributes = ["select", "focus"];
 
   // Stylesheets can apply after a host's first layout (vite dev
   // injection, the CDN's in-browser Tailwind compile, HMR) — a pure
@@ -303,6 +309,7 @@ export class MonoWindElement extends HTMLElementBase {
     // attributeChangedCallback only fires on changes; an absent
     // attribute reflects its default here.
     if (!this.hasAttribute("select")) this.setAttribute("select", DEFAULT_SELECT);
+    if (!this.hasAttribute("focus")) this.setAttribute("focus", DEFAULT_FOCUS);
     // Before the observers connect, so its insertion isn't observed.
     if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
 
@@ -384,6 +391,7 @@ export class MonoWindElement extends HTMLElementBase {
     // Multi-click gestures (specs/semantic-selection.md): the click
     // count rides mousedown (PointerEvent.detail is 0).
     this.addEventListener("mousedown", this.#onMouseDown);
+    this.addEventListener("keydown", this.#onKeyDown);
     document.addEventListener("selectionchange", this.#onSelectionChange);
     // Release on the window: a selection drag routinely ends outside
     // the host, and the press state must thaw wherever it ends.
@@ -423,6 +431,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("scrollend", this.#onScrollEnd, { capture: true });
     this.removeEventListener("wheel", this.#onWheel);
     this.removeEventListener("copy", this.#onCopy);
+    this.removeEventListener("keydown", this.#onKeyDown);
     this.removeEventListener("mousedown", this.#onMouseDown);
     document.removeEventListener("selectionchange", this.#onSelectionChange);
     for (const timer of this.#settleTimers.values()) clearTimeout(timer);
@@ -699,7 +708,7 @@ export class MonoWindElement extends HTMLElementBase {
       const stack = hitStack(layout, col, row);
       for (let i = stack.length - 1; i >= 0; i--) {
         const node = stack[i]!.node;
-        if (!node.scrollRange) continue;
+        if (!node.scrollRange || isInert(node.source)) continue;
         if (canMove(node)) {
           target = node;
           break;
@@ -797,7 +806,7 @@ export class MonoWindElement extends HTMLElementBase {
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
       const range = node.scrollRange;
-      if (!range) continue;
+      if (!range || isInert(node.source)) continue;
       const el = node.source as HTMLElement;
       const { y: yBar, x: xBar } = scrollbarGeometry(node, x, y);
       if (
@@ -933,6 +942,33 @@ export class MonoWindElement extends HTMLElementBase {
         : target;
     this.#selectThrough(selection, anchor, target);
     this.#semanticGesture = { unit, anchor };
+  };
+
+  /** focus="arrows" (specs/focus-navigation.md): an unmodified arrow on a
+   * focused descendant whose control does not own it moves focus to the
+   * nearest focusable element beyond that edge and reveals it; nothing
+   * beyond leaves the key native (no wrap). */
+  #onKeyDown = (event: Event): void => {
+    const e = event as KeyboardEvent;
+    if (this.getAttribute("focus") !== "arrows") return;
+    const direction = directionOf(e.key);
+    if (!direction || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const layout = this.#lastLayout;
+    const target = e.target;
+    if (!layout || !(target instanceof Element) || target === this) return;
+    if (arrowIsNative(target, e.key, this.#openSelectPicker())) return;
+    const rects = focusableRects(layout);
+    const current = extentOf(rects, target);
+    if (!current) return;
+    const next = nextFocus(
+      direction,
+      current,
+      rects.filter((candidate) => candidate.element !== target),
+    );
+    if (!next) return;
+    e.preventDefault();
+    (next as HTMLElement).focus({ preventScroll: true });
+    next.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
   /** The root as a container over the element children. Direct text on
@@ -1074,7 +1110,10 @@ export class MonoWindElement extends HTMLElementBase {
     const stack = hitStack(layout, col, row);
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
-      if (isTextLeaf(node)) return this.#leafUnit(node, x, y, col, row, unit);
+      // An inert leaf's text is unselectable natively: no unit there.
+      if (isTextLeaf(node)) {
+        return isInert(node.source) ? null : this.#leafUnit(node, x, y, col, row, unit);
+      }
     }
     // The host's own text (specs/host-leaf.md): the root leaf lies under
     // every cell no child covers.
@@ -1346,6 +1385,19 @@ export class MonoWindElement extends HTMLElementBase {
   };
 
   attributeChangedCallback(name: string, _previous: string | null, next: string | null): void {
+    if (name === "focus") {
+      // Keyboard-only: no layout depends on it.
+      if (next !== "tab" && next !== "arrows") {
+        if (next !== null) {
+          console.warn(
+            `[monowind] Ignoring unrecognized focus="${next}". Expected "tab" (default) or "arrows".`,
+            warnSubject(this),
+          );
+        }
+        this.setAttribute("focus", DEFAULT_FOCUS);
+      }
+      return;
+    }
     if (name === "select" && next !== "text" && next !== "grid") {
       if (next !== null) {
         console.warn(

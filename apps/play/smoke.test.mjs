@@ -1,7 +1,9 @@
 /**
  * Smoke test for the playground: load it from disk, verify the sample
  * renders through the engine, then type new content and verify the live
- * update, the select toggle, and the shareable hash round-trip.
+ * update, the options popover and its mode toggles, the shareable hash
+ * round-trip (the short-link functions have their own unit test and
+ * need a backend — `pnpm dev:netlify`), the highlighter, and Tidy.
  */
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
@@ -81,8 +83,40 @@ const themeQueryPersisted = await page.evaluate(
 );
 await page.selectOption("#theme", "");
 
-// Grid selection is the default; the toggle switches to per-element text
+// The mode toggles live in a popover behind the options button. Grid
+// selection is the default; the toggle switches to per-element text
 // AND writes the state into the URL query so a shared link restores it.
+await page.click("#options");
+const optionsOpen = await page.evaluate(() =>
+  document.getElementById("options-popover").matches(":popover-open"),
+);
+// Light dismiss reaches into the preview iframe, whose clicks never
+// bubble to this document (a corner of it: the body's center can sit
+// under the open popover).
+await page
+  .frameLocator("#preview")
+  .locator("body")
+  .click({ position: { x: 20, y: 20 } });
+const optionsDismissed = await page.evaluate(
+  () => !document.getElementById("options-popover").matches(":popover-open"),
+);
+// Keyboard: Down on the button opens with focus on the first control,
+// Down again moves to the next, Escape closes and returns to the button.
+await page.focus("#options");
+await page.keyboard.press("ArrowDown");
+const openedByArrow = await page.evaluate(
+  () =>
+    document.getElementById("options-popover").matches(":popover-open") &&
+    document.activeElement.id === "select-text",
+);
+await page.keyboard.press("ArrowDown");
+await page.keyboard.press("Escape");
+const closedByEscape = await page.evaluate(
+  () =>
+    !document.getElementById("options-popover").matches(":popover-open") &&
+    document.activeElement.id === "options",
+);
+await page.click("#options");
 await page.check("#select-text");
 const selectMode = await page.evaluate(() =>
   document
@@ -105,25 +139,58 @@ await page.waitForFunction(
   { timeout: 10_000 },
 );
 const selectRestored = await page.evaluate(() => document.getElementById("select-text").checked);
-// The select-mode toggle lives in the header on desktop and reparents
-// to the mobile slot (between the panels) when the viewport shrinks.
-const desktopSlot = await page.evaluate(() =>
+// The focus-mode toggle rides the same query (`?focus=arrows`).
+await page.click("#options");
+await page.check("#focus-arrows");
+const focusMode = await page.evaluate(() =>
   document
-    .getElementById("toggle-slot-desktop")
-    .contains(document.getElementById("select-text-label")),
+    .getElementById("preview")
+    .contentDocument.querySelector("mono-wind")
+    .getAttribute("focus"),
+);
+const focusQueryPersisted = await page.evaluate(() =>
+  new URLSearchParams(location.search).get("focus"),
+);
+await page.goto(`${url}?focus=arrows`);
+await page.waitForFunction(
+  () =>
+    document
+      .getElementById("preview")
+      ?.contentDocument?.querySelector('mono-wind[focus="arrows"][data-mw-ready]'),
+  null,
+  { timeout: 10_000 },
+);
+const focusRestored = await page.evaluate(() => document.getElementById("focus-arrows").checked);
+// The options button lives in the header on desktop and reparents to
+// the mobile slot (between the panels) when the viewport shrinks.
+const desktopSlot = await page.evaluate(() =>
+  document.getElementById("toggle-slot-desktop").contains(document.getElementById("options")),
 );
 await page.setViewportSize({ width: 500, height: 800 });
 await page.waitForFunction(() =>
-  document
-    .getElementById("toggle-slot-mobile")
-    .contains(document.getElementById("select-text-label")),
+  document.getElementById("toggle-slot-mobile").contains(document.getElementById("options")),
 );
 const mobileSlot = true;
 
-// The highlight layer mirrors the source with token spans.
+// The highlight layer mirrors the source with token spans; a comment
+// ends at its `-->` rather than swallowing what follows.
 const highlighted = await page.evaluate(() =>
   document.querySelector("#highlight code").innerHTML.includes('class="tok-tag"'),
 );
+await page.fill("#source", "<!-- note --><div>after</div>");
+const commentClosed = await page.evaluate(() => {
+  const comment = document.querySelector("#highlight code .tok-com");
+  return comment?.textContent === "<!-- note -->" && comment.nextElementSibling !== null;
+});
+
+// Share writes the document into the hash and shows its feedback; with
+// no backend (file://) the long URL is what gets copied.
+await page.fill("#source", "<div>shared</div>");
+await page.click("#copy");
+await page.waitForFunction(() =>
+  /copied!|failed/.test(document.getElementById("copy").textContent),
+);
+const shared = await page.evaluate(() => location.hash.startsWith("#1."));
 
 // Sample round-trips through tidy unchanged — anything else means the
 // default HTML would visibly change on the first Tidy click.
@@ -247,12 +314,21 @@ const result = {
   themed,
   themeQueryPersisted,
   restored,
+  optionsOpen,
+  optionsDismissed,
+  openedByArrow,
+  closedByEscape,
   selectMode,
   selectQueryPersisted,
   selectRestored,
+  focusMode,
+  focusQueryPersisted,
+  focusRestored,
   desktopSlot,
   mobileSlot,
   highlighted,
+  commentClosed,
+  shared,
   sampleRoundTrips,
   tidyWorks,
   tabIndents,
@@ -266,12 +342,21 @@ if (
   !themed ||
   !themeQueryPersisted ||
   !restored ||
+  !optionsOpen ||
+  !optionsDismissed ||
+  !openedByArrow ||
+  !closedByEscape ||
   selectMode !== "text" ||
   selectQueryPersisted !== "text" ||
   !selectRestored ||
+  focusMode !== "arrows" ||
+  focusQueryPersisted !== "arrows" ||
+  !focusRestored ||
   !desktopSlot ||
   !mobileSlot ||
   !highlighted ||
+  !commentClosed ||
+  !shared ||
   !sampleRoundTrips ||
   !tidyWorks ||
   !tabIndents ||

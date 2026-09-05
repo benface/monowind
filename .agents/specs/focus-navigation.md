@@ -1,6 +1,7 @@
 # Focus navigation (`focus="arrows"`)
 
-Status: **proposed** (2026-09-04) — spec first, implementation to follow.
+Status: **implemented** (2026-09-04; plan
+`.agents/plans/2026-09-04-focus-navigation.md`).
 
 ## Why
 
@@ -23,18 +24,33 @@ arrow-key focus as an opt-in on top of Tab.
   hit-testing does): a candidate must lie entirely beyond the focused
   box's edge in the arrow's direction (Down: its first row below the
   focused box's last row; Right: its first column past the focused
-  box's last column; mirrored for Up and Left). Among
-  candidates, the smallest edge-to-edge distance along the arrow's axis
-  wins; ties prefer a box whose extent overlaps the focused box across
-  the other axis, then the smaller cross-axis distance, then document
+  box's last column; mirrored for Up and Left). Among candidates, one
+  whose extent overlaps the focused box across the other axis (aligned
+  with it) beats any that does not, however near — Down from a button
+  stays in its column instead of jumping to a nearer line of prose in
+  the next one; among equals the smallest edge-to-edge distance along
+  the arrow's axis wins, then the smaller cross-axis gap, then document
   order. No candidate → focus stays; nothing wraps (terminals don't).
 - **Focusable means focusable to the browser.** Candidates are the
-  host's laid-out elements whose `tabIndex` is non-negative — the DOM's
-  own answer, which covers `a[href]`, `button`, form controls,
-  `summary`, `contenteditable`, and authored `tabindex` alike, and is
-  `-1` for everything else — minus `disabled` and `inert` ones, hidden
-  ones (no laid-out box), and the focused element itself. Same set Tab
-  visits; the engine invents no focusability.
+  elements the layout knows — laid-out boxes, atomic inline boxes, and
+  the INLINE elements of every text leaf (a `<a>` inside a paragraph or
+  in the host's own text, host-leaf.md, is a run entry, not a node) —
+  whose `tabIndex` is non-negative: the DOM's own answer, which covers
+  `a[href]`, `button`, form controls, `summary`, `contenteditable`, and
+  authored `tabindex` alike, and is `-1` for everything else — minus
+  `disabled` and `inert` ones, hidden ones (no cells), and the focused
+  element itself. Same set Tab visits; the engine invents no
+  focusability. A box's rect is its painted border box; an inline
+  element has one rect per line it covers — the span of its characters'
+  cells there, padding cells included — so a wrapped link is reachable
+  from each of its lines, and the focused element's own extent is the
+  union of its rects.
+- **Scrolled-away candidates count.** Rects are painted cells with
+  every ancestor's scroll offset applied, as hit-testing does, and a
+  candidate scrolled out of its container's box keeps those shifted
+  cells: Down from the last visible row of a list reaches the next item
+  one row below, and the move scrolls it into view — a terminal list.
+  A candidate past the list's end loses to it on distance.
 - **Controls keep the arrows they use.** Inside an `<input>` of a
   textual type (text, search, url, tel, email, password, or no type),
   Left and Right stay the caret's; Up and Down navigate. All four
@@ -42,8 +58,10 @@ arrow-key focus as an opt-in on top of Tab.
   (they move the caret between lines), on a radio button (the group
   moves its own checked state with arrows — an accessibility contract),
   on a `<select multiple>` or one with `size > 1` (a listbox), and on
-  inputs of other types (`number`, `range`, `date`, `color`, …), whose
-  arrows have meaning. A single-choice `<select>` keeps every arrow
+  inputs whose arrows step a value (`number`, `range`, `date`, `color`,
+  …); the button-like inputs (`checkbox`, `submit`, `reset`, `button`,
+  `image`, `file`) have no arrows of their own and navigate on every
+  arrow. A single-choice `<select>` keeps every arrow
   while its picker is open and navigates on every arrow while closed —
   TUI dialogs open a list with Space or Enter and move between fields
   with arrows; the native "change the value with Up/Down while closed"
@@ -72,10 +90,12 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
   "native" by that element's kind (above) before doing any geometry.
 - Candidates and rects come from the last layout: a full walk with
   scroll offsets applied (as the paint walk descends), keeping nodes
-  whose `source` is focusable per the rule above; the focused
-  element's own rect from the same walk. A focused element the
-  layout does not know (focus inside a leaf renderer's shadow, say) →
-  native.
+  whose `source` is focusable per the rule above and, for every text
+  leaf, its focusable inline elements at one rect per line
+  (`forEachLeafCell` with `charInline`, the map the paint uses);
+  the focused element's own rect from the same walk. A focused element
+  the layout does not know (focus inside a leaf renderer's shadow, say)
+  → native.
 - Selection of the target is a pure function
   `nextFocus(direction, current: Rect, candidates: { rect, element }[])`
   in a new `packages/core/src/focus.ts`, testable in Node; the
@@ -100,12 +120,22 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
   hand-built rects — nearest wins, overlap beats a nearer-but-offset
   box only on equal distance, no candidate behind the edge, document
   order as the last tie-break.
+- Node, `focusableRects`: a laid-out button, an atomic inline box, two
+  links on one line of a paragraph and one wrapping onto the next
+  (inline rects from cells, one per line), a disabled button
+  and an inert subtree skipped, a scrolled container's child at its
+  shifted cells.
 - Storybook, hidden: a `focus="arrows"` host with a grid of buttons, a
-  text input, a textarea, a select, and a button inside a scroll
-  container; `keydown` events on the focused element move
-  `document.activeElement` as the rules say (Down from the input
-  navigates, Right in it stays; a textarea keeps all four; a select
-  closed navigates; a modifier stays native; Down into the scroll
-  container scrolls it — `scrollTop` grows); the default host ignores
-  arrows, and both hosts keep Tab. Runs in all three engines.
+  paragraph holding links (Right from the first link reaches the
+  second, Down the one on the next line), a text input, a textarea, a
+  select, and a list of buttons inside a scroll container; `keydown`
+  events on the focused element move `document.activeElement` as the
+  rules say (Down from the input navigates, Right in it stays; a
+  textarea keeps all four; a select closed navigates; a modifier stays
+  native; Down from the list's last visible button reaches the next one
+  and `scrollTop` grows); the default host ignores arrows, and both
+  hosts keep Tab. Runs in all three engines.
+- Storybook toolbar: a "Focus" global beside "Select" writes `focus`
+  onto every story's hosts, so any story with controls demonstrates
+  arrow-key navigation.
 - Visual: none.

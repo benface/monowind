@@ -50,15 +50,16 @@ addons.getChannel().on(UPDATE_GLOBALS, ({ globals }: { globals: Record<string, u
 // paints the canvas), so dark-system users otherwise start half-themed.
 applyTheme(systemTheme);
 
-// The select toggle, via the channel like the theme (a decorator
-// would also need a hook for re-applying after story navigation).
-// Starts true to match initialGlobals (the boot value emits no event).
-let gridSelect = true;
-function applySelect(): void {
-  // Explicit both ways: a removed attribute reflects back to the "grid"
-  // default, so "text" must be written, not implied by absence.
+// The select and focus toggles, via the channel like the theme (a
+// decorator would also need a hook for re-applying after story
+// navigation). Start at the defaults to match initialGlobals (the boot
+// value emits no event).
+const modes: Record<string, string> = { select: "grid", focus: "tab" };
+function applyModes(): void {
+  // Explicit both ways: a removed attribute reflects back to the
+  // default, so the other value must be written, not implied by absence.
   for (const host of document.querySelectorAll("mono-wind")) {
-    host.setAttribute("select", gridSelect ? "grid" : "text");
+    for (const [name, value] of Object.entries(modes)) host.setAttribute(name, value);
   }
 }
 // GLOBALS_UPDATED also covers values restored from the URL/session at
@@ -66,14 +67,18 @@ function applySelect(): void {
 addons.getChannel().on(GLOBALS_UPDATED, ({ globals }: { globals: Record<string, unknown> }) => {
   const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
   if (value !== undefined) applyTheme(value);
-  if (globals.select !== undefined) {
-    gridSelect = globals.select === "grid";
-    applySelect();
+  let changed = false;
+  for (const name of Object.keys(modes)) {
+    if (typeof globals[name] === "string") {
+      modes[name] = globals[name];
+      changed = true;
+    }
   }
+  if (changed) applyModes();
 });
 addons.getChannel().on(STORY_RENDERED, () => {
   // The event can precede the new canvas's paint; apply a frame later.
-  requestAnimationFrame(applySelect);
+  requestAnimationFrame(applyModes);
 });
 
 const preview: Preview = {
@@ -86,6 +91,18 @@ const preview: Preview = {
         items: [
           { value: "text", title: "Select element text" },
           { value: "grid", title: "Select whole grid" },
+        ],
+        dynamicTitle: true,
+      },
+    },
+    focus: {
+      description: "Keyboard focus: Tab only (default) or the arrow keys too",
+      toolbar: {
+        title: "Focus",
+        icon: "arrowdownalt",
+        items: [
+          { value: "tab", title: "Tab moves focus" },
+          { value: "arrows", title: "Arrow keys move focus too" },
         ],
         dynamicTitle: true,
       },
@@ -108,6 +125,7 @@ const preview: Preview = {
   initialGlobals: {
     backgrounds: { value: systemTheme },
     select: "grid",
+    focus: "tab",
   },
 };
 

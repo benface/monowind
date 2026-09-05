@@ -60,6 +60,8 @@ Then
 `gh release create vX.Y.Z --title vX.Y.Z --notes "…"` — the tag triggers
 `.github/workflows/release.yml`, which re-runs the checks, publishes every
 package to npm (trusted publishing, no tokens), and deploys the Storybook
-site to Netlify (`NETLIFY_AUTH_TOKEN` repo secret; Netlify never builds on
-its own). The two jobs are independently re-runnable: if only the deploy
-fails, re-run failed jobs — never re-publish a version.
+and playground sites to Netlify (`NETLIFY_AUTH_TOKEN` repo secret; Netlify
+never builds on its own; the playground deploy bundles its short-link
+functions, `apps/play/netlify/functions`). The jobs are independently
+re-runnable: if only a deploy fails, re-run failed jobs — never re-publish
+a version.

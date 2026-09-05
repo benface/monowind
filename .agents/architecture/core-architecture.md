@@ -107,7 +107,9 @@ and background.
 The `select` attribute on `<mono-wind>` switches drag-selection target:
 `select="grid"` (the default, reflected onto the attribute so the
 default lives in one place) selects the rendered ASCII grid directly,
-`select="text"` selects the semantic light DOM.
+`select="text"` selects the semantic light DOM. The `focus` attribute,
+reflected the same way, adds arrow-key focus navigation on the engine's
+geometry under `focus="arrows"` (specs/focus-navigation.md).
 
 The plan file `../plans/2026-08-30-unified-render-initiative.md`
 documents how this arrived; the code and specs (`../specs/cell-model.md`)
@@ -183,7 +185,9 @@ All three share one core. Concretely, the planned packages:
   the light DOM — its smoke test proves state → re-render → relayout),
   `play` (in-browser playground, → play.monowind.benface.com — live HTML
   editing through an iframe-isolated preview, shareable compressed-hash
-  URLs, Tidy formatting via `dist/sort.js`), with a docs/landing site
+  URLs plus `/s/<id>` short links from a Netlify function backed by
+  Blobs — `pnpm --filter @monowind/play dev:netlify` runs them locally —
+  Tidy formatting via `dist/sort.js`), with a docs/landing site
   (`website`, → monowind.benface.com) to come.
 - Per-framework packages: only if/when interactive components
   (`<mono-textarea>`, `<mono-scroll>`, …) happen. The component layer itself

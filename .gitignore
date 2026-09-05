@@ -20,8 +20,9 @@ packages/*/LICENSE
 /apps/**/sort.js
 /apps/**/sort.js.map
 
-# Local Netlify folder
+# Local Netlify folder, and the Deno lockfile its dev server writes
 .netlify
+deno.lock
 
 # husky auto-generated init dir
 .husky/_/

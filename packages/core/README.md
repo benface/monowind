@@ -52,6 +52,15 @@ a copy of light-DOM text is plain text laid out by the standard
 `innerText` rules (paragraphs separated by a blank line, table cells
 by tabs).
 
+## Keyboard focus
+
+Tab moves focus as on any page. `focus="arrows"` on `<mono-wind>` adds
+the arrow keys: from the focused element, an arrow moves focus to the
+nearest focusable element in that direction on the grid, the way a
+terminal form does. Controls keep the arrows they use — Left and Right
+in a text field, all four in a textarea, a radio group's own — a
+modifier makes any arrow native, and nothing wraps.
+
 ## Scrolling
 
 `overflow-y-auto` (or `-scroll`, either axis) makes the element a

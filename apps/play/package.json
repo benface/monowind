@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && vite --port 5181",
+    "dev:netlify": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && npx -y netlify-cli@27 dev --offline --no-open --port 8888 --functions netlify/functions --command \"vite --port 5181\" --target-port 5181",
     "build": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && node build.mjs",
-    "test": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && node smoke.test.mjs"
+    "test": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && node copy-cdn.mjs && node --test netlify/lib/short.test.mjs && node smoke.test.mjs"
   },
   "dependencies": {
     "@monowind/ascii": "workspace:*",
     "@monowind/themes": "workspace:*",
+    "@netlify/blobs": "^11.0.3",
     "monowind": "workspace:*"
   },
   "devDependencies": {

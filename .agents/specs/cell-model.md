@@ -484,7 +484,10 @@ to match either the pseudo-class or the attribute, preserving
 Tailwind's own `(hover: hover)` media gate; `group-*` and `peer-*`
 compose from the redefined variants automatically. The hovered
 element's computed `cursor` is mirrored onto the grid so
-`cursor-pointer` shows. Hover synthesis runs only under
+`cursor-pointer` shows. An `inert` subtree is absent for interaction,
+as natively: the chain stops at it (its ancestor is what hovers), and
+so do wheel routing, thumb drags, arrow-key focus
+(specs/focus-navigation.md), and the semantic gestures. Hover synthesis runs only under
 `select="grid"` on hover-capable pointers; active synthesis is not
 hover-gated (touch presses count). The chain re-derives on scroll and
 after every layout, so content moving under a stationary pointer

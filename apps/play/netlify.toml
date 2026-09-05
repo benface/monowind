@@ -15,5 +15,15 @@
 command = "pnpm --filter @monowind/play build"
 publish = "dist"
 
+# Short links (netlify/functions: share.mjs stores this site's own
+# location under a content id in Netlify Blobs, resolve.mjs redirects
+# /s/<id> to it). The CLI does not pick this directory up from inside
+# the workspace package, so `deploy` and a local `functions:serve` pass
+# it explicitly (`--functions netlify/functions`); it stays here for
+# `netlify build`.
+[functions]
+directory = "netlify/functions"
+node_bundler = "esbuild"
+
 [build.environment]
 NODE_VERSION = "24"

@@ -101,6 +101,10 @@ export const Overscroll: StoryObj = {
         <div data-test="none" class="h-6 max-w-full overflow-y-auto overscroll-none border px-1">
           [overscroll-none] wheeling at an end stays here; the page never moves. ${LOREM} ${LOREM}
         </div>
+        <div inert data-test="inert" class="h-6 max-w-full overflow-y-auto border px-1">
+          [inert] absent for interaction: wheeling here scrolls the page, as natively. ${LOREM}
+          ${LOREM}
+        </div>
       </div>
     </mono-wind>
     <div class="h-screen"></div>
@@ -137,6 +141,9 @@ export const Overscroll: StoryObj = {
     // A zero-delta phase tick is a gesture boundary, canceled so the
     // sequence it opens stays cancelable.
     expect(await wheel("auto", 0)).toBe(true);
+    // An inert box is skipped: the tick goes to the page.
+    expect(await wheel("inert", 40)).toBe(false);
+    expect(box("inert").scrollTop).toBe(0);
     // A non-cancelable tick (a page-owned sequence) is left to the page
     // while the page can take it, and routed once nothing outside the
     // host can scroll that way: at the page top, an upward tick moves

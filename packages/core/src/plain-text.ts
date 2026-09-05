@@ -4,7 +4,7 @@ import { leafLineGeometry } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
-import type { LayoutNode } from "./types.ts";
+import type { LayoutNode, Rect } from "./types.ts";
 
 /**
  * Render a laid-out tree as plain text ("ASCII art", though the border
@@ -419,6 +419,51 @@ export function charIndexAtCell(
     },
   );
   return found;
+}
+
+/** The cells a leaf's inline elements cover, one rect per element per
+ * row — the span of its characters and pad cells there, an outer
+ * element's including its inline descendants' — in run order then row
+ * order, elements without a cell left out (specs/focus-navigation.md).
+ * `absX/absY` as for charIndexAtCell. */
+export function inlineElementRects(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+): { element: Element; rect: Rect }[] {
+  const entries = node.inlineElements;
+  if (!entries || !node.charInline) return [];
+  // Each entry's own index plus the indices of the entries containing
+  // it: a character belongs to its innermost element and every ancestor.
+  const owners = entries.map((entry, i) =>
+    entries.flatMap((outer, j) => (j === i || outer.element.contains(entry.element) ? [j] : [])),
+  );
+  const rows = entries.map(() => new Map<number, { x0: number; x1: number }>());
+  forEachLeafCell(
+    node,
+    absX - (node.scroll?.x ?? 0),
+    absY - (node.scroll?.y ?? 0),
+    (k, x, y, advance) => {
+      const inner = node.charInline![k] ?? -1;
+      if (inner < 0) return;
+      for (const i of owners[inner]!) {
+        const span = rows[i]!.get(y);
+        if (!span) rows[i]!.set(y, { x0: x, x1: x + advance });
+        else {
+          span.x0 = Math.min(span.x0, x);
+          span.x1 = Math.max(span.x1, x + advance);
+        }
+      }
+    },
+  );
+  return entries.flatMap((entry, i) =>
+    [...rows[i]!]
+      .sort(([a], [b]) => a - b)
+      .map(([y, span]) => ({
+        element: entry.element,
+        rect: { x: span.x0, y, width: span.x1 - span.x0, height: 1 },
+      })),
+  );
 }
 
 /** Where a container's bars paint, in absolute cells from its

@@ -55,7 +55,21 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
   }
 }
 
-/** The hit stack's elements — what the synthesized states mark. */
+/** Inside an `inert` subtree: absent for user interaction, as natively
+ * — no hover, no wheel routing, no thumb drag, no focus, no text
+ * selection. */
+export function isInert(element: Element): boolean {
+  // Optional call: layout tests build nodes on bare stub sources.
+  return element.closest?.("[inert]") != null;
+}
+
+/** The hit stack's elements — what the synthesized states mark — cut
+ * at the first inert one, where native :hover stops too. */
 export function hitChain(root: LayoutNode, col: number, row: number): Element[] {
-  return hitStack(root, col, row).map((entry) => entry.node.source);
+  const chain: Element[] = [];
+  for (const entry of hitStack(root, col, row)) {
+    if (isInert(entry.node.source)) break;
+    chain.push(entry.node.source);
+  }
+  return chain;
 }

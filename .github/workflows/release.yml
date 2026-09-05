@@ -92,7 +92,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Same arrangement as the Storybook site: GitHub Actions builds,
       # `netlify deploy --prod` pushes the finished files (site:
-      # monowind-play, → play.monowind.benface.com).
+      # monowind-play, → play.monowind.benface.com) and bundles the
+      # short-link functions — the directory is passed explicitly: the
+      # CLI does not resolve netlify.toml's [functions] directory from
+      # inside this workspace package.
       - name: Build and deploy
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
@@ -104,4 +107,20 @@ jobs:
           fi
           pnpm --filter @monowind/play build
           cd apps/play
-          npx -y netlify-cli@27 deploy --prod --no-build --dir "$PWD/dist"
+          npx -y netlify-cli@27 deploy --prod --no-build --dir "$PWD/dist" --functions "$PWD/netlify/functions"
+      # The functions only run on Netlify, so the live short-link round
+      # trip is checked right after the deploy: a bundling or Blobs
+      # problem fails this job instead of reaching the first user.
+      - name: Verify short links
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            exit 0
+          fi
+          site=https://play.monowind.benface.com
+          id=$(curl -fsS --retry 5 --retry-all-errors --retry-delay 3 -X POST "$site/api/share" \
+            -H 'content-type: application/json' -d '{"target":"/"}' | sed 's/.*"id":"\([^"]*\)".*/\1/')
+          test -n "$id"
+          location=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$site/s/$id")
+          test "$location" = "$site/"

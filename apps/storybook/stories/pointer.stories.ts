@@ -32,6 +32,9 @@ export const SynthesizedPointerStates: StoryObj = {
           <span class="group-hover:underline">alpha</span> tile
         </div>
         <div class="border px-1 active:text-amber-400" data-test="press">press tile</div>
+        <div inert class="cursor-pointer border px-1 hover:text-rose-400" data-test="inert">
+          inert tile
+        </div>
       </div>
     </mono-wind>
   `,
@@ -69,6 +72,17 @@ export const SynthesizedPointerStates: StoryObj = {
       },
       { timeout: 10_000 },
     );
+
+    // An inert tile is absent for interaction: its parent hovers, it
+    // never does, and the mirrored cursor is the parent's grid-mode
+    // text cursor, not the tile's pointer.
+    const inert = canvasElement.querySelector<HTMLElement>('[data-test="inert"]')!;
+    host.dispatchEvent(new PointerEvent("pointermove", { ...at(inert), bubbles: true }));
+    await waitFor(() => expect(inert.parentElement).toHaveAttribute("data-mw-hover"), {
+      timeout: 10_000,
+    });
+    expect(inert).not.toHaveAttribute("data-mw-hover");
+    expect(grid.style.cursor).toBe("text");
 
     // Press: data-mw-active while held (bypasses the hover-capability
     // gate — touch has :active). Like native :active it drops when the

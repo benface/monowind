@@ -52,7 +52,7 @@
     </style>
   </head>
   <body class="flex h-dvh flex-col bg-neutral-900 font-mono text-sm text-neutral-200">
-    <header class="flex items-center gap-3 border-b border-neutral-700 px-4 py-2 lg:gap-6">
+    <header class="flex items-center gap-3 border-b border-neutral-700 py-2 pr-3 pl-4">
       <div class="flex items-center gap-4">
         <h1 class="m-0 text-base font-semibold">
           monowind play
@@ -75,13 +75,13 @@
         </a>
       </div>
       <div class="flex-1"></div>
-      <div id="toggle-slot-desktop" class="flex items-center gap-3 max-md:hidden lg:gap-6"></div>
+      <div id="toggle-slot-desktop" class="flex items-center gap-3 max-md:hidden"></div>
       <button
         id="copy"
         type="button"
-        class="min-w-26 cursor-pointer rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-center text-inherit hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-sky-300"
+        class="min-w-21.5 cursor-pointer rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-center text-inherit hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-sky-300"
       >
-        copy link
+        share
       </button>
     </header>
     <main class="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -120,10 +120,10 @@
         tabindex="0"
         class="shrink-0 grow-0 basis-[6px] cursor-row-resize touch-none border-y border-neutral-700 bg-neutral-800 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-300 md:cursor-col-resize md:border-x md:border-y-0"
       ></div>
-      <!-- Mobile-only home for the select toggle: no room in the header
-           on narrow screens, so play.js reparents the toggle here (a
-           single element, no state to sync). Adjacent to the preview
-           since that's what it controls. -->
+      <!-- Mobile-only home for the theme select and the options button:
+           no room in the header on narrow screens, so play.js reparents
+           them here (the same elements, no state to sync). Adjacent to
+           the preview since that's what they control. -->
       <div id="toggle-slot-mobile" class="flex flex-wrap md:hidden"></div>
       <!-- Preview lives in an iframe so the sample gets a fresh document
            to render into — the app's Tailwind classes on body (font,
@@ -167,7 +167,7 @@
          script fails; the max-md:* classes shape it for either home. -->
     <label
       id="theme-label"
-      class="flex items-center justify-center gap-1.5 text-neutral-400 max-md:flex-1 max-md:border-b max-md:border-neutral-700 max-md:bg-neutral-800 max-md:px-4 max-md:py-1.5"
+      class="flex items-center gap-1.5 text-neutral-400 max-md:flex-1 max-md:border-b max-md:border-neutral-700 max-md:bg-neutral-800 max-md:px-4 max-md:py-1.5"
     >
       theme
       <select
@@ -184,13 +184,43 @@
         <option value="bbs">bbs</option>
       </select>
     </label>
-    <label
-      id="select-text-label"
-      class="flex cursor-pointer items-center justify-center gap-1.5 text-neutral-400 max-md:flex-1 max-md:border-b max-md:border-neutral-700 max-md:bg-neutral-800 max-md:px-4 max-md:py-1.5"
+    <!-- The mode toggles sit in a popover behind one button, so the
+         header stays narrow; its cell moves between the slots with the
+         theme select (the cell, not the button, takes the mobile bar's
+         styling — like the theme label does). -->
+    <div
+      id="options-cell"
+      class="flex items-center max-md:flex-1 max-md:justify-end max-md:border-b max-md:border-neutral-700 max-md:bg-neutral-800 max-md:px-4 max-md:py-1.5"
     >
-      <input type="checkbox" id="select-text" />
-      select text only
-    </label>
+      <button
+        id="options"
+        type="button"
+        popovertarget="options-popover"
+        class="cursor-pointer rounded border border-neutral-600 bg-neutral-800 px-3 py-1 text-inherit hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-sky-300"
+      >
+        options
+      </button>
+      <!-- No display utility here: it would override the browser's
+         display: none on a closed popover. The fade rides the Popover
+         API's discrete transitions (@starting-style for the entry,
+         allow-discrete so display and the top layer wait for the exit). -->
+      <div
+        id="options-popover"
+        popover
+        role="group"
+        aria-label="options"
+        class="inset-auto m-0 -translate-y-1 space-y-2 rounded border border-neutral-600 bg-neutral-800 p-3 text-neutral-200 opacity-0 transition-all transition-discrete duration-150 ease-out open:translate-y-0 open:opacity-100 starting:open:-translate-y-1 starting:open:opacity-0"
+      >
+        <label class="flex cursor-pointer items-center gap-1.5">
+          <input type="checkbox" id="select-text" />
+          select text only
+        </label>
+        <label class="flex cursor-pointer items-center gap-1.5">
+          <input type="checkbox" id="focus-arrows" />
+          arrow-key focus
+        </label>
+      </div>
+    </div>
     <!-- Classic script (not a module) so the page also works straight
          from disk, like the CDN bundle itself. -->
     <script src="./play.js"></script>

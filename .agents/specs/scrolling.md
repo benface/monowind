@@ -71,7 +71,8 @@ truth.
   light elements are pointer-inert and wheel events land on the grid,
   so the engine ROUTES them — the synthesized-pointer-state pattern:
   hit-test the wheel's cell, walk the hit chain to the nearest
-  scrollable ancestor, `scrollBy` its light element (with
+  scrollable ancestor (an `inert` one is skipped — absent for
+  interaction, as natively), `scrollBy` its light element (with
   `preventDefault`), letting native physics take over from there.
   Both modes scroll identically. Nested scroll containers resolve by
   nearest-ancestor — and because programmatic `scrollBy` does NOT
