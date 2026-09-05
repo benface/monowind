@@ -199,16 +199,17 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
   -webkit-user-select: none;
 }
 /* Touch panning (specs/scrolling.md): where the primary pointer is a
- * finger, scroll containers take pointer events in grid mode so a
- * drag pans them NATIVELY (physics, momentum, chaining) — their
- * children stay inert, so the touch lands on the container itself.
- * A long-press there selects the element's text (an element
- * selection, copied by the engine like a semantic one). */
+ * finger, a scroll container's subtree takes pointer events in grid
+ * mode so a drag pans it NATIVELY (physics, momentum, chaining — the
+ * pan reaches the container from any descendant) and a long-press
+ * selects the element's text under the finger (an element selection,
+ * copied by the engine like a semantic one). The leaves must take the
+ * touch themselves: WebKit resolves the pressed text position inside
+ * the touched element, and on the container it falls back to the
+ * first positioned leaf. */
 @media (pointer: coarse) {
-  mono-wind[select="grid"] [data-mw-scroll] {
-    pointer-events: auto !important;
-  }
   mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) {
+    pointer-events: auto !important;
     user-select: text;
     -webkit-user-select: text;
   }
@@ -262,29 +263,24 @@ mono-wind:not([data-mw-ready]) {
   visibility: hidden !important;
 }
 
-/* Full invert on selection — THE CANONICAL RULE; shadow scopes can't
- * share it, so it's restated in element.ts (the grid) and in
- * @monowind/ascii's transcript: update all three together. Both
- * fields spelled out — setting only `color` makes some engines drop
- * the OS default background. The text-shadow is the ink in Safari:
- * it paints selection text with the element's text-fill-color — which
- * the invisibility lock holds transparent — so a zero-offset shadow
- * draws the glyph copy that `color` draws in other engines (where the
- * identical-color shadow hides beneath it). Native copy still yields
- * the real text (the DOM the browser reads). */
-mono-wind:not([measuring])[data-mw-leaf]::selection,
-mono-wind:not([measuring]) *::selection {
-  color: var(--mw-bg, canvas) !important;
-  text-shadow: 0 0 0 var(--mw-bg, canvas) !important;
-  background: var(--mw-fg, canvastext) !important;
-}
-/* Focus-invert already flipped the element's colors, so re-flipping in
- * ::selection would land on the same colors as the focused bg and hide
- * the selection. Swap them back for the focused element. */
-mono-wind:not([measuring]) :focus-visible::selection {
-  color: var(--mw-fg, canvastext) !important;
-  text-shadow: 0 0 0 var(--mw-fg, canvastext) !important;
-  background: var(--mw-bg, canvas) !important;
+/* A light-DOM selection is painted on the grid — inverted cells from the
+ * live range (specs/wide-characters.md "The grid paints the selection")
+ * — so the browser's own highlight on the invisible native text stays
+ * invisible: every field, as some engines keep an OS default background
+ * when only `color` is set, and Safari's text-shadow ink. Shadow scopes
+ * can't share the rule: element.ts (the slot) and @monowind/ascii's
+ * transcript restate it — update all three together. Form controls
+ * render their own text and keep their native highlight; forced
+ * colors paint selections themselves and strip backgrounds, so the
+ * native highlight stays there. */
+@media (forced-colors: none) {
+  mono-wind:not([measuring])[data-mw-leaf]::selection,
+  mono-wind:not([measuring])
+    :where(:not(input, textarea, select, [contenteditable], [contenteditable] *))::selection {
+    color: transparent !important;
+    text-shadow: none !important;
+    background: transparent !important;
+  }
 }
 
 /* === Typography locks and measuring gates ============================ */
@@ -619,15 +615,6 @@ mono-wind:not([measuring])[data-mw-leaf],
 mono-wind:not([measuring]) [data-mw-laid-out],
 mono-wind:not([measuring]) [data-mw-multicol-flow] {
   text-indent: calc(var(--mw-ti, 0) * var(--mw-cw, 1px)) !important;
-}
-
-/* Centered text with uniform odd leftover (specs/cell-model.md "Text
- * alignment"): the browser's fractional centering sits half a cell
- * right of the grid's floor()'d paint — nudge the native copy onto the
- * glyphs. `transform`, not `translate`: the spanner rule owns the
- * latter, and the two compose. */
-mono-wind:not([measuring]) [data-mw-center-nudge] {
-  transform: translateX(calc(-0.5 * var(--mw-cw, 1px))) !important;
 }
 
 /* In-flow multicol SPANNER (specs/multicol.md): a normally laid-out box

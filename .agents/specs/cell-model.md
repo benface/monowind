@@ -349,13 +349,10 @@ to whole cells (normalized LTR: `right`/`end` → end). Per line, with
   browser's own centering is fractional when leftover is odd; the GRID
   paints the quantized offset, and the browser's half-cell-off copy is
   invisible under the unified render — only native form-control ink
-  shows browser centering). When EVERY line of a CHILDLESS text leaf
-  shares the odd-parity drift (a single-line heading, most commonly),
-  the companion nudges the native copy half a cell left
-  (`data-mw-center-nudge`, a transform) so `select="text"` selection
-  sits on the glyphs; mixed-parity multi-line leaves, leaves with
-  embedded boxes (whose native ink must not shift), and form controls
-  keep the deviation.
+  shows browser centering). Selection is painted on the grid from the
+  DOM range and text-mode drags are routed by cell
+  (specs/wide-characters.md), so the native copy's half-cell drift
+  never shows.
 - A line at or over the content width stays at start, matching
   truncation. `renderPlainText` mirrors the same offsets.
 
@@ -438,8 +435,21 @@ included — so the `<pre>` is a rectangle of cells: a drag's highlight
 sweeps whole rows like a terminal instead of stopping at the last
 glyph, a copy is exactly the visible rectangle (alignment survives a
 paste into a fixed-width context), and a cell's flat text offset is
-`row × (width + 1) + col`. `renderPlainText` (the Node renderer,
-`toPlainText`) trims trailing blanks — goldens stay tidy there.
+read off the painted rows' cell strings (a wide cluster's continuation
+cells hold no code units, specs/wide-characters.md). `renderPlainText`
+(the Node renderer, `toPlainText`) trims trailing blanks — goldens stay
+tidy there.
+
+A light-DOM selection — a text-mode drag, a semantic gesture in
+either mode, a keyboard extension, a select-all — is painted on the
+grid too: the engine maps the live range to cells and paints them as
+reverse video, each cell's own color and background swapped (theme
+colors where a cell has none), while the browser's own highlight on
+the invisible native text stays invisible (specs/wide-characters.md
+"The grid paints the selection"). A grid-mode drag on the `<pre>`
+keeps the browser's highlight — the theme invert — so colored text
+highlights differently there than under any other selection, a
+documented deviation.
 
 A live grid selection survives repaints, by preserving node identity
 (paint.ts). A paint whose STRUCTURE matches the last one — same
@@ -617,11 +627,7 @@ lines); the explicit zero `clip` rect still drops them.
    padding passes through untouched (it never moves layout, per CSS).
    Inline backgrounds (`bg-*`, focus-invert) are mirrored into the
    grid, cell-aligned, over the run's cells INCLUDING the reserved
-   padding cells (the light-DOM bg itself is transparent-locked). The
-   native selection highlight still paints the font's content area
-   (ascent + descent); the `line-height: normal` default sizes the row
-   to that content area, so it fits within its own row instead of
-   bleeding into the next.
+   padding cells (the light-DOM bg itself is transparent-locked).
    Atomic inline boxes ride the line per CSS (growing their line when
    taller) but their margins are ignored, and BLOCK-level elements nested
    inside a run are skipped with a warning.
@@ -656,6 +662,10 @@ lines); the explicit zero `clip` rect still drops them.
 9. `aspect-ratio` is ignored (deferred: cells aren't square, so it needs
    the cell-metric ratio plumbed into layout plus a spec decision on
    px-square vs cell-square semantics).
-10. CSS `order` applies to flex items only (as in CSS); double-width glyphs
-    (CJK, emoji) are counted as their UTF-16 length, not their rendered
-    width — wcwidth-style counting is future work.
+10. CSS `order` applies to flex items only (as in CSS). Glyph widths are
+    the `wcwidth` table's, not the font's (specs/wide-characters.md):
+    East Asian wide and emoji-presentation clusters take two cells,
+    ambiguous-width symbols one; a cluster the font draws off its cell
+    count is scaled into a cell-sized box on the grid, and the
+    transparent native text keeps the font's advances (its selection
+    and drags are the engine's, so the drift never shows).

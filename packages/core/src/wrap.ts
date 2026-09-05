@@ -20,6 +20,8 @@
  * the two agree.
  */
 
+import { clusterWidth } from "./width.ts";
+
 /** A wrapped line as an index range into the text (`end` exclusive). */
 export interface LineSpan {
   start: number;
@@ -104,13 +106,26 @@ export function advanceOf(start: number, end: number, advances?: number[]): numb
  * tracked inline element's larger gap stays counted: browsers keep it at a
  * line end, and the engine doesn't cancel it (uniform across engines).
  */
-export function lineAdvance(start: number, end: number, advances?: number[], tracking = 0): number {
+export function lineAdvance(
+  text: string,
+  start: number,
+  end: number,
+  advances?: number[],
+  tracking = 0,
+): number {
   if (end <= start) return 0;
-  return advanceOf(start, end, advances) - Math.min(tracking, trailingGap(end - 1, advances));
+  return advanceOf(start, end, advances) - Math.min(tracking, trailingGap(text, end - 1, advances));
 }
 
-function trailingGap(index: number, advances?: number[]): number {
-  return advances ? (advances[index] ?? 1) - 1 : 0;
+/** The gap after the cluster ending at `index`: its advance beyond its
+ * cells, read from its first unit (continuation units carry 0,
+ * specs/wide-characters.md). A marker counts as one cell. */
+function trailingGap(text: string, index: number, advances?: number[]): number {
+  if (!advances) return 0;
+  let first = index;
+  while (first > 0 && advances[first] === 0) first--;
+  const cells = Math.max(1, clusterWidth(text.slice(first, index + 1)));
+  return Math.max(0, (advances[first] ?? 1) - cells);
 }
 
 /** Widest unbreakable unit (breakable segment) in the text — the
@@ -120,7 +135,10 @@ export function longestSegmentAdvance(text: string, options: WrapOptions = {}): 
   let longest = 0;
   for (const word of wordRanges(text, 0, text.length)) {
     for (const segment of breakableSegmentRanges(text, word.start, word.end)) {
-      longest = Math.max(longest, lineAdvance(segment.start, segment.end, advances, tracking));
+      longest = Math.max(
+        longest,
+        lineAdvance(text, segment.start, segment.end, advances, tracking),
+      );
     }
   }
   return longest;
@@ -235,7 +253,7 @@ function wrapHardLine(
       const segEnd = segment.end;
       const separatorStart = current !== null && !joinsPrevious ? segStart - 1 : segStart;
       const candidate = advancesSum + advanceOf(separatorStart, segEnd, advances);
-      const trailing = Math.min(tracking, trailingGap(segEnd - 1, advances));
+      const trailing = Math.min(tracking, trailingGap(text, segEnd - 1, advances));
       if (current !== null && candidate - trailing <= availableWidth()) {
         current.end = segEnd;
         advancesSum = candidate;
@@ -250,7 +268,7 @@ function wrapHardLine(
           let fit = segStart;
           while (
             fit < segEnd &&
-            lineAdvance(segStart, fit + 1, advances, tracking) <= availableWidth()
+            lineAdvance(text, segStart, fit + 1, advances, tracking) <= availableWidth()
           )
             fit++;
           if (fit === segEnd || fit === segStart) break;

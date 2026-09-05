@@ -13,6 +13,7 @@ import {
   resolveMargin,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
+import { clusterAdvances } from "./width.ts";
 import { wrapLineSpans } from "./wrap.ts";
 import type {
   CellStyle,
@@ -325,7 +326,7 @@ export function multicolLines(
   },
 ): { text: string; column: number; top: number }[] {
   const { columnWidth, columnCount, tracking = 0, lineGap = 0, restrictingHeight } = options;
-  const advances = tracking > 0 ? Array.from(text, () => 1 + tracking) : undefined;
+  const advances = clusterAdvances(text, tracking);
   const spans = wrapLineSpans(text, Math.max(1, columnWidth - tracking), {
     advances,
     tracking,

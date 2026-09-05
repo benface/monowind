@@ -249,17 +249,24 @@ none` on EVERY element — a one-time pristine-probe detects that and
 ## Resolved (were open questions)
 
 - **Touch panning in grid mode**: where the primary pointer is coarse
-  (`@media (pointer: coarse)`), scroll containers take pointer events
-  in grid mode — their children stay inert, so a touch lands on the
-  container and the browser pans it natively (physics, momentum,
-  chaining, `overscroll-behavior`), mirrored on the grid like any
-  scroll. A long-press inside a scroll container selects the ELEMENT's
-  text there (the container's subtree is `user-select: text` on those
-  devices — an element selection like a semantic one, copied by the
-  engine; specs/semantic-selection.md). That rule must out-cascade
-  the grid-mode lock, which `:where()` keeps at base specificity; a
-  story replays the coarse rule to pin the order, and the iOS
-  Simulator confirmed the long-press. The thumb drag stays a
+  (`@media (pointer: coarse)`), a scroll container and its whole
+  subtree take pointer events in grid mode, so a touch anywhere inside
+  pans the container natively (physics, momentum, chaining,
+  `overscroll-behavior` — the pan reaches the scroller from any
+  descendant), mirrored on the grid like any scroll. A long-press
+  inside a scroll container selects the ELEMENT's text under the
+  finger (the subtree is `user-select: text` on those devices — an
+  element selection like a semantic one, copied by the engine;
+  specs/semantic-selection.md). The leaves must take the touch
+  themselves: WebKit resolves the pressed text position within the
+  touched element, and when that is the container — whose children
+  are all positioned leaves — it falls back to the first leaf, so a
+  long-press on any later paragraph selected the heading above it
+  (found on a real iPhone with the playground sample; fixed
+  2026-09-05). The rule must out-cascade the grid-mode lock, which
+  `:where()` keeps at base specificity; a story replays the coarse
+  rule to pin the order, and the iOS Simulator confirmed the
+  long-press and the pan. The thumb drag stays a
   mouse/pen gesture — a finger on the gutter pans. Fine-pointer
   devices are unchanged: the grid keeps every pointer event, and
   wheel routing plus the thumb cover scrolling. Both modes: the

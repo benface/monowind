@@ -291,9 +291,9 @@ dominant.
 - **Cell aspect ratio / font metrics**: measure the actual font (not `1ch`
   assumptions), re-measure on `document.fonts.ready`; whether to recommend/bundle a
   known-good monospace font.
-- **Unicode display width**: single-column-glyph only for now
-  (documented deviation); real width algorithm (East Asian wide,
-  emoji, combining marks) lands in Milestone 9.
+- **Unicode display width**: done — `wcwidth`-style cluster widths,
+  cell-sized glyph boxes for fallback fonts, and the grid-painted
+  selection (`specs/wide-characters.md`).
 - **Scrolling**: decision is native pixel scrolling inside the gridded viewport
   (content on-grid, scroll offset not) — keeps momentum, a11y, find-in-page. CSS
   scroll-snap approximation or an opt-in JS row-scroll mode may come much later.

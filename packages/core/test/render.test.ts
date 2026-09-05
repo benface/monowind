@@ -21,22 +21,3 @@ it("keeps `--mw-z` unset on static block-flow children, per CSS", () => {
   // that by NOT writing --mw-z there (the companion falls back to auto).
   expect(host.querySelector("div div")!.getAttribute("style")).not.toContain("--mw-z");
 });
-
-it("flags uniform odd-leftover centered leaves for the native half-cell nudge", () => {
-  const host = document.createElement("div");
-  host.innerHTML = `<div style="width: 40px">
-    <div style="text-align: center" data-test="odd">abc</div>
-    <div style="text-align: center" data-test="even">abcd</div>
-  </div>`;
-  document.body.appendChild(host);
-  const node = buildTree(host.firstElementChild!, 16)!;
-  layoutRoot(node, 10);
-  render(node);
-  // "abc" in 10 cells leaves 7 (odd): the browser's fractional centering
-  // sits half a cell off the grid's floor()'d offset, so the companion
-  // nudges the native copy. "abcd" leaves 6 (even): already aligned.
-  expect(host.querySelector('[data-test="odd"]')!.hasAttribute("data-mw-center-nudge")).toBe(true);
-  expect(host.querySelector('[data-test="even"]')!.hasAttribute("data-mw-center-nudge")).toBe(
-    false,
-  );
-});

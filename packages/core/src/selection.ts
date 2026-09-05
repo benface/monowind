@@ -119,6 +119,42 @@ export function classifySelection(
   return "outside";
 }
 
+/* === Painted selection =============================================== */
+
+/** The text leaves a light-DOM range reaches, each with the character
+ * range the paint inverts (specs/wide-characters.md "The grid paints
+ * the selection"): a leaf inside the range whole, a boundary leaf from
+ * or to the point's character, a renderer leaf whole. */
+export function selectedRanges(
+  root: LayoutNode,
+  points: BoundaryPoints,
+): Map<LayoutNode, { start: number; end: number }> {
+  const range = root.source.ownerDocument!.createRange();
+  range.setStart(points.startContainer, points.startOffset);
+  range.setEnd(points.endContainer, points.endOffset);
+  const ranges = new Map<LayoutNode, { start: number; end: number }>();
+  const visit = (node: LayoutNode): void => {
+    if (node.tableHidden || !range.intersectsNode(node.source)) return;
+    if (isTextLeaf(node)) {
+      const { text } = node;
+      let start = 0;
+      let end = text.length;
+      if (node.charSource) {
+        if (node.source.contains(range.startContainer)) {
+          start = charIndexAt(node, range.startContainer, range.startOffset);
+        }
+        if (node.source.contains(range.endContainer)) {
+          end = charIndexAt(node, range.endContainer, range.endOffset);
+        }
+      }
+      if (end > start) ranges.set(node, { start, end });
+    }
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return ranges;
+}
+
 /* === Copy serialization ============================================== */
 
 /** A required line break count (collapses with neighbors, dropped at

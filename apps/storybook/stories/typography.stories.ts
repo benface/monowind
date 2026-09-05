@@ -1,9 +1,10 @@
 import { html } from "lit";
-import { expect } from "storybook/test";
+import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   expectBrowserLineBreaksToMatchEngine,
   expectBrowserRowsToMatchEngine,
+  expectGridOnItsCells,
   isFirefox,
 } from "./helpers.ts";
 
@@ -378,5 +379,25 @@ export const SubpixelHeadroom: StoryObj = {
       }
       await expectBrowserRowsToMatchEngine(canvasElement);
     }
+  },
+};
+
+/** Wide and fallback glyphs (specs/wide-characters.md): ideographs,
+ * Hangul, and emoji take two cells, symbols the font lacks one, and
+ * the grid stays on its cells whatever the fallback fonts draw. */
+export const WideCharacters: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="max-w-48 border border-neutral-500 px-1">
+        <p>日本語のテキストと 한국어 텍스트 mixed with Latin, ★ stars ✓ checks and 😀 emoji.</p>
+        <p class="mt-1 text-center">· 中央 ·</p>
+        <p class="mt-1 truncate">This line is truncated 日本語のテキストが長すぎる</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    expectGridOnItsCells(host);
   },
 };

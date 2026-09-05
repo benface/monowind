@@ -2,7 +2,7 @@ import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, leafRendererFor, onLeafRegistryChange } from "./leaf.ts";
 import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "./focus.ts";
-import { hitChain, hitStack, isInert } from "./pointer.ts";
+import { hitChain, hitStack, isInert, nearestCells } from "./pointer.ts";
 import { charIndexAtCell, renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
 import {
   classifySelection,
@@ -10,12 +10,15 @@ import {
   isTextLeaf,
   leafExtent,
   positionOf,
+  selectedRanges,
   selectionRangeThrough,
   serializeSelection,
   wordAt,
 } from "./selection.ts";
 import type { BoundaryPoints } from "./selection.ts";
-import { nodeAtOffset, paintGrid } from "./paint.ts";
+import { GlyphBoxes } from "./glyph-box.ts";
+import { INLINE_PAD } from "./wrap.ts";
+import { gridOffsetAt, nodeAtOffset, paintedCell, paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
@@ -61,9 +64,12 @@ const SHADOW_TEMPLATE = `
   /* A live semantic selection (specs/semantic-selection.md) lifts the
    * lock so the element selection copies; pointer events stay off. */
   :host([select="grid"][data-mw-semantic-selection]) slot { user-select: text; -webkit-user-select: text; }
-  /* Selection invert — mirror of the canonical rule in styles.css
-   * (which explains the field choices); update together. */
-  ::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
+  /* The grid's own selection (a grid-mode drag) keeps the browser's
+   * invert — mirror of the field choices in styles.css. Slotted text
+   * takes the slot's rule in Chromium and WebKit: invisible, the engine
+   * paints that selection on the grid (specs/wide-characters.md). */
+  #grid::selection, #grid *::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
+  slot::selection { color: transparent; text-shadow: none; background: transparent; }
 </style>
 <div id="viewport">
   <pre id="grid" aria-hidden="true"></pre>
@@ -97,8 +103,12 @@ interface SelectionUnit {
   end: Point;
 }
 
-interface SemanticGesture {
-  unit: "word" | "paragraph";
+/** An engine-routed selection gesture: a text-mode drag extends by
+ * character, a double- or triple-click by word or paragraph. */
+type GestureUnit = "character" | "word" | "paragraph";
+
+interface Gesture {
+  unit: GestureUnit;
   anchor: SelectionUnit;
 }
 
@@ -244,7 +254,11 @@ export class MonoWindElement extends HTMLElementBase {
    * semantic gesture only after a mouse or pen (a tap's compatibility
    * mousedown follows a touch pointerdown). */
   #lastPointerType = "";
-  #semanticGesture: SemanticGesture | null = null;
+  #gesture: Gesture | null = null;
+  /** Whether the last selectionchange found a range in this host's
+   * light DOM — the next one must repaint even when it left. */
+  #paintedSelection = false;
+  #glyphs = new GlyphBoxes();
   /** An engine-driven grid drag, anchored at a flat text offset: the
    * fallback when a plain mousedown lands on a phantom light target
    * (see INTERACTIVE), where no native selection can start. */
@@ -479,7 +493,7 @@ export class MonoWindElement extends HTMLElementBase {
       const metrics = this.#cellMetrics;
       if (!this.isConnected || !this.#lastLayout || !metrics) return;
       this.#syncScrollOffsets(metrics);
-      this.#paintHeld = !paintGrid(this.#lastLayout, this.#grid, this.#holdsNativeDrag());
+      this.#paintHeld = !this.#paint(this.#lastLayout);
       // The cells under a stationary pointer changed with the scroll.
       this.#updatePointerStates();
     };
@@ -861,8 +875,7 @@ export class MonoWindElement extends HTMLElementBase {
       return;
     }
     const held = ((event as PointerEvent).buttons & 1) !== 0;
-    if (held && this.#semanticGesture)
-      this.#extendSemantic(this.#semanticGesture, clientX, clientY);
+    if (held && this.#gesture) this.#extendGesture(this.#gesture, clientX, clientY);
     if (held && this.#gridDrag) this.#extendGridDrag(this.#gridDrag, clientX, clientY);
     if (held && this.#pressOnGrid && !this.hasAttribute("data-mw-dragging")) {
       this.setAttribute("data-mw-dragging", "");
@@ -888,25 +901,35 @@ export class MonoWindElement extends HTMLElementBase {
     event.preventDefault();
   };
 
-  /** Double- and triple-click on the grid select the element's word or
-   * paragraph (specs/semantic-selection.md); a plain click ends a
+  /** Engine-routed selection gestures: a text-mode press starts a
+   * character drag (specs/wide-characters.md); double- and triple-click
+   * select the element's word or paragraph in either mode
+   * (specs/semantic-selection.md); a plain grid-mode click ends a
    * semantic selection's lift synchronously, ahead of selectionchange. */
   #onMouseDown = (event: Event): void => {
     const e = event as MouseEvent;
-    if (e.button !== 0 || this.getAttribute("select") !== "grid") return;
+    if (e.button !== 0) return;
+    const mode = this.getAttribute("select");
     const onGrid = e.composedPath().includes(this.#grid);
-    if (!onGrid && !this.#isPhantomTarget(e.target)) return;
+    if (mode === "grid") {
+      if (!onGrid && !this.#isPhantomTarget(e.target)) return;
+    } else if (mode !== "text" || !this.#isTextTarget(e.target)) return;
     const finePointer = this.#lastPointerType === "mouse" || this.#lastPointerType === "pen";
     if (e.detail <= 1) {
       if (e.detail !== 1) return;
       this.removeAttribute(SEMANTIC_SELECTION);
+      if (!finePointer) return;
+      if (mode === "text") {
+        this.#startCharacterDrag(e);
+        return;
+      }
       // A press that blurs a control inside the host repaints the focus
       // invert — a structural rebuild a native drag anchor would not
       // survive (paintGrid holds those until release). Take such a
       // press over, like a phantom one: blur now, drag through the
       // engine.
       const focused = this.#focusedInside();
-      if (finePointer && (!onGrid || focused)) {
+      if (!onGrid || focused) {
         focused?.blur();
         this.#startGridDrag(e);
       }
@@ -925,7 +948,7 @@ export class MonoWindElement extends HTMLElementBase {
       // the browser's own gesture on the grid — a run of glyphs, or the
       // grid line on a triple-click.
       this.removeAttribute(SEMANTIC_SELECTION);
-      this.#semanticGesture = null;
+      this.#gesture = null;
       return;
     }
     // Ours from here: no native word/whole-grid selection, no native
@@ -941,7 +964,7 @@ export class MonoWindElement extends HTMLElementBase {
         ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
         : target;
     this.#selectThrough(selection, anchor, target);
-    this.#semanticGesture = { unit, anchor };
+    this.#gesture = { unit, anchor };
   };
 
   /** focus="arrows" (specs/focus-navigation.md): an unmodified arrow on a
@@ -1033,23 +1056,13 @@ export class MonoWindElement extends HTMLElementBase {
     );
   }
 
-  /** The grid's flat text offset for a cell: every row is painted at the
-   * grid's full width (cell-model.md "Selection"), so a row is
-   * `width + 1` characters with its newline. */
-  #gridOffsetAt(col: number, row: number): number {
-    const rows = this.#grid.textContent!.split("\n");
-    const width = rows[0]?.length ?? 0;
-    const y = Math.max(0, Math.min(row, rows.length - 1));
-    return y * (width + 1) + Math.max(0, Math.min(col, width));
-  }
-
   /** The grid text position under a client point: its flat offset and
    * the text node holding it. */
   #gridPointAt(clientX: number, clientY: number): { offset: number; at: [Text, number] } | null {
     const metrics = this.#cellMetrics;
     if (!metrics) return null;
     const { col, row } = this.#cellAt(clientX, clientY, metrics);
-    const offset = this.#gridOffsetAt(col, row);
+    const offset = gridOffsetAt(this.#grid, col, row);
     const at = nodeAtOffset(this.#grid, offset);
     return at && { offset, at };
   }
@@ -1071,7 +1084,7 @@ export class MonoWindElement extends HTMLElementBase {
   /** Drag extension: the anchor unit through the unit under the pointer,
    * in DOM order (base at the anchor's far edge, so the browser's
    * selection direction matches the drag). */
-  #extendSemantic(gesture: SemanticGesture, clientX: number, clientY: number): void {
+  #extendGesture(gesture: Gesture, clientX: number, clientY: number): void {
     const metrics = this.#cellMetrics;
     const selection = document.getSelection();
     if (!metrics || !selection) return;
@@ -1098,15 +1111,76 @@ export class MonoWindElement extends HTMLElementBase {
     else selectBetween(selection, from.end, to.start);
   }
 
-  /** The word or paragraph under a cell — null unless a CHARACTER of a
-   * text leaf is painted there (padding, borders, gaps, and blank tails
-   * are the browser's). The innermost hit text leaf; its
-   * selectionTarget's contents for a custom leaf; a Segmenter word
-   * mapped to DOM positions for the word gesture (falling back to the
-   * paragraph where the text has no positions). */
-  #unitAt(col: number, row: number, unit: "word" | "paragraph"): SelectionUnit | null {
+  /** A text-mode press (specs/wide-characters.md "Text-mode drags are
+   * routed"): the character nearest the cell anchors a collapsed range
+   * the drag extends by character; Shift extends the existing
+   * selection to it instead. An empty grid leaves the press native. */
+  #startCharacterDrag(e: MouseEvent): void {
+    const selection = document.getSelection();
+    const metrics = this.#cellMetrics;
+    if (!selection || !metrics) return;
+    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
+    const target = this.#unitAt(col, row, "character");
+    if (!target) return;
+    e.preventDefault();
+    this.#focusedInside()?.blur();
+    const anchor: SelectionUnit =
+      e.shiftKey && selection.anchorNode && this.#elementSelection()
+        ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
+        : pointUnit(target.start);
+    this.#selectThrough(selection, anchor, e.shiftKey ? target : anchor);
+    this.#gesture = { unit: "character", anchor };
+  }
+
+  /** In text mode the light DOM takes pointer events: a press on a
+   * non-interactive element, or on the host's own text, is the
+   * engine's; a control's is native. */
+  #isTextTarget(target: EventTarget | null): boolean {
+    if (target === this) return true;
+    if (!(target instanceof Element) || !this.contains(target)) return false;
+    const interactive = target.closest(INTERACTIVE);
+    return !interactive || interactive === this || !this.contains(interactive);
+  }
+
+  /** The unit at a cell: the word or paragraph under it, or the
+   * character nearest it (specs/wide-characters.md) — the cell's own,
+   * else a neighbor's edge in `nearestCells` order. */
+  #unitAt(col: number, row: number, unit: GestureUnit): SelectionUnit | null {
     const layout = this.#lastLayout;
     if (!layout) return null;
+    if (unit !== "character") return this.#unitUnder(layout, col, row, unit);
+    const { width, height } = layout.localRect;
+    for (const { x, y, edge } of nearestCells(width, height, col, row)) {
+      // An inert element's cells are nobody's (the browser ignores the
+      // press there too).
+      if (edge === "self") {
+        const top = hitStack(layout, x, y).at(-1);
+        if (top && isInert(top.node.source)) return null;
+      }
+      // Only painted glyphs can be characters: blank cells cost a lookup,
+      // not a hit test (a wide cluster's continuation cell is its
+      // cluster's, not blank).
+      const cell = paintedCell(this.#grid, x, y);
+      if (cell === undefined || cell === " ") continue;
+      const found = this.#unitUnder(layout, x, y, "character");
+      if (!found) continue;
+      return edge === "self" ? found : pointUnit(edge === "start" ? found.start : found.end);
+    }
+    return null;
+  }
+
+  /** The unit under a cell — null unless a CHARACTER of a text leaf is
+   * painted there (padding, borders, gaps, and blank tails are the
+   * browser's). The innermost hit text leaf; its selectionTarget's
+   * contents for a custom leaf; a Segmenter word mapped to DOM
+   * positions for the word gesture (falling back to the paragraph where
+   * the text has no positions). */
+  #unitUnder(
+    layout: LayoutNode,
+    col: number,
+    row: number,
+    unit: GestureUnit,
+  ): SelectionUnit | null {
     const stack = hitStack(layout, col, row);
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
@@ -1120,21 +1194,31 @@ export class MonoWindElement extends HTMLElementBase {
     return isTextLeaf(layout) ? this.#leafUnit(layout, 0, 0, col, row, unit) : null;
   }
 
-  /** The word or paragraph of a text leaf at a cell; null off its
-   * characters. A paragraph is the element's contents — a custom leaf's
+  /** The character, word, or paragraph of a text leaf at a cell; null
+   * off its characters (an inline padding cell is blank for a character).
+   * A paragraph is the element's contents — a custom leaf's
    * selectionTarget's — or, for the root leaf, the run's own extent (the
-   * host's child list also holds the metrics probe). */
+   * host's child list also holds the metrics probe); a character or word
+   * without DOM positions (a renderer leaf) is its paragraph. */
   #leafUnit(
     node: LayoutNode,
     x: number,
     y: number,
     col: number,
     row: number,
-    unit: "word" | "paragraph",
+    unit: GestureUnit,
   ): SelectionUnit | null {
     const index = charIndexAtCell(node, x, y, col, row);
     if (index === null) return null;
+    if (unit === "character" && node.text[index] === INLINE_PAD) return null;
     const target = leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source);
+    if (unit === "character" && !target) {
+      let end = index + 1;
+      while (end < node.text.length && node.advances?.[end] === 0) end++;
+      const start = positionOf(node, index);
+      const after = positionOf(node, end);
+      if (start && after) return { start, end: after };
+    }
     if (unit === "word" && !target) {
       const word = wordAt(node, index);
       const start = word && positionOf(node, word.start);
@@ -1195,11 +1279,31 @@ export class MonoWindElement extends HTMLElementBase {
     return collapsed ? null : range;
   }
 
-  /** The lift ends once the selection left the light DOM or collapsed. */
+  /** The lift ends once the selection left the light DOM or collapsed;
+   * the grid repaints its highlight (a frame, through #schedulePaint —
+   * an unchanged paint costs a signature). */
   #onSelectionChange = (): void => {
-    if (!this.hasAttribute(SEMANTIC_SELECTION)) return;
-    if (!this.#elementSelection()) this.removeAttribute(SEMANTIC_SELECTION);
+    const selected = this.#elementSelection() !== null;
+    if (this.hasAttribute(SEMANTIC_SELECTION) && !selected) {
+      this.removeAttribute(SEMANTIC_SELECTION);
+    }
+    // A selection elsewhere in the document is none of this host's
+    // business unless it just left it.
+    if ((selected || this.#paintedSelection) && this.#lastLayout) this.#schedulePaint();
+    this.#paintedSelection = selected;
   };
+
+  /** Paint the grid from `root`: the glyph boxes for this font, the
+   * light-DOM selection as inverted cells, structural rebuilds held
+   * while a native drag may be in flight. */
+  #paint(root: LayoutNode): boolean {
+    const range = this.#elementSelection();
+    return paintGrid(root, this.#grid, {
+      holdStructural: this.#holdsNativeDrag(),
+      glyphs: this.#glyphs,
+      selection: range ? selectedRanges(root, range) : undefined,
+    });
+  }
 
   #onPointerLeave = (): void => {
     this.#hoverClient = null;
@@ -1231,7 +1335,7 @@ export class MonoWindElement extends HTMLElementBase {
 
   #onPointerUp = (event: Event): void => {
     if (!(event as PointerEvent).isPrimary) return;
-    this.#semanticGesture = null;
+    this.#gesture = null;
     this.#gridDrag = null;
     this.#pressOnGrid = false;
     this.removeAttribute("data-mw-dragging");
@@ -1438,7 +1542,11 @@ export class MonoWindElement extends HTMLElementBase {
     // the PRE-swap fallback metrics when the event and the swap land in
     // the same frame (seen consistently on slow CI runners). One frame
     // later the swap has rendered; #scheduleLayout adds its own rAF.
-    requestAnimationFrame(() => this.#scheduleLayout());
+    // The glyph boxes measured under the fallback go with it.
+    requestAnimationFrame(() => {
+      this.#glyphs.invalidate();
+      this.#scheduleLayout();
+    });
   };
 
   /** True while a focused in-host <select> has its picker open. A
@@ -1540,8 +1648,21 @@ export class MonoWindElement extends HTMLElementBase {
         this.style.setProperty("--mw-ch", `${metrics.height}px`);
         this.style.setProperty("--mw-rls", `${metrics.letterSpacing}px`);
         this.style.setProperty("--mw-ink", `${metrics.inkOverhang ?? 0}px`);
+        // Rows cannot grow (specs/wide-characters.md): a fallback font's
+        // taller line box stays inside the measured cell.
+        this.#grid.style.lineHeight = `${metrics.height}px`;
       }
       this.#cellMetrics = metrics;
+      const gridStyle = getComputedStyle(this.#grid);
+      this.#glyphs.configure(
+        {
+          style: gridStyle.fontStyle,
+          weight: gridStyle.fontWeight,
+          size: gridStyle.fontSize,
+          family: gridStyle.fontFamily,
+        },
+        metrics,
+      );
 
       // (2) Available cells from the host's CONTENT box — authored padding
       // on the host stays outside the grid (the shadow slot box, which
@@ -1575,7 +1696,7 @@ export class MonoWindElement extends HTMLElementBase {
       // re-derives from the browser's internal anchor, which the
       // rebuild would destroy (Chromium collapses even across a
       // capture-and-restore).
-      this.#paintHeld = !paintGrid(virtualRoot, this.#grid, this.#holdsNativeDrag());
+      this.#paintHeld = !this.#paint(virtualRoot);
       this.#lastLayout = virtualRoot;
       // The grid box is the ink extent in engine cells: a glyph a
       // fallback font draws wider still overhangs as ink, but the box

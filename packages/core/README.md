@@ -47,10 +47,18 @@ defineMonoWind();
 the art and copy exactly what you see. Double- and triple-click select
 the element under the pointer — the word or the paragraph, as on any
 page — and drag extends word by word or paragraph by paragraph.
-`select="text"` selects the light DOM natively instead. In both modes
-a copy of light-DOM text is plain text laid out by the standard
-`innerText` rules (paragraphs separated by a blank line, table cells
-by tabs).
+`select="text"` selects your elements' text instead, character by
+character, the way a page does. In both modes the highlight is drawn
+on the grid, cell for cell, as reverse video: each cell's colors swap,
+so colored text selects as a band of its color. A copy of element
+text is plain text laid out by the standard `innerText` rules
+(paragraphs separated by a blank line, table cells by tabs).
+
+Glyph widths follow the terminal convention: CJK, Hangul, and emoji
+take two cells, everything else one, whatever the font draws — a
+glyph the font lacks is scaled into its cells so the grid never
+drifts. `clusterWidth`, `clusterAdvances`, `graphemes`, and
+`textCells` are exported for code that lays out text of its own.
 
 ## Keyboard focus
 

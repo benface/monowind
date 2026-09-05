@@ -1,30 +1,49 @@
-import { applyCellPaint, isBarePaint, renderCellSegments, samePaint } from "./plain-text.ts";
-import type { CellSegment } from "./plain-text.ts";
+import type { GlyphBoxes } from "./glyph-box.ts";
+import { applyCellPaint, isBarePaint, renderGridRows, samePaint } from "./plain-text.ts";
+import type { CellSegment, RenderOptions } from "./plain-text.ts";
 import { selectionRangeThrough } from "./selection.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
  * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`): each
- * text line is a cell row, same-paint runs coalesce into spans.
+ * text line is a cell row, same-paint runs coalesce into spans, and a
+ * cluster the font draws off its cell count gets a cell-sized box
+ * (specs/wide-characters.md).
  *
  * Node identity is preserved wherever possible (specs/cell-model.md
- * "Selection"): an unchanged paint skips the write entirely, and a
- * paint whose STRUCTURE (segment texts and span/bare split) matches
- * the last one only patches span styles in place — no node churn, so
- * live Selections (and an in-flight drag's anchor, which no engine
- * lets us restore) survive animation frames untouched. A structural
- * change rebuilds the nodes: the selection is captured as flat
- * character offsets before the swap and restored after, and while a
- * primary press is down with a selection anchor in the grid the
- * rebuild is HELD for release instead (element.ts) — even restored
- * nodes collapse Chromium's drag.
+ * "Selection"): an unchanged paint skips the write entirely, and a row
+ * whose STRUCTURE (segment texts and span/bare split) matches the last
+ * one only patches span styles in place — no node churn, so live
+ * Selections (and an in-flight drag's anchor, which no engine lets us
+ * restore) survive animation frames untouched, and a selection paint
+ * touches only the rows it changed. A structural change rebuilds that
+ * row's nodes: the selection is captured as flat character offsets
+ * before the swap and restored after, and while a primary press is
+ * down with a selection anchor in the grid the rebuild is HELD for
+ * release instead (element.ts) — even restored nodes collapse
+ * Chromium's drag.
  */
 const lastPaintSignature = new WeakMap<HTMLElement, string>();
+interface PaintedRow {
+  nodes: (Text | HTMLElement)[];
+  segments: CellSegment[];
+  /** The newline text node after the row; none after the last. */
+  newline: Text | null;
+  /** Code units in the row (its cell strings joined). */
+  units: number;
+}
 interface PaintedRows {
-  nodes: (Text | HTMLElement)[][];
-  segments: CellSegment[][];
+  rows: PaintedRow[];
+  cells: string[][];
 }
 const lastPaint = new WeakMap<HTMLElement, PaintedRows>();
+
+export interface PaintOptions {
+  /** Defer structural rebuilds while a primary press is down. */
+  holdStructural?: boolean;
+  glyphs?: GlyphBoxes;
+  selection?: RenderOptions["selection"];
+}
 
 /** True when a Selection boundary (a collapsed press anchor counts —
  * the drag it starts must survive) lies inside the grid. */
@@ -35,79 +54,158 @@ function hasSelectionInside(target: HTMLElement): boolean {
 /** Returns false when the paint was HELD: the caller asked to defer
  * structural rebuilds (a primary press is down) and a selection
  * anchor is in the grid — repeat the paint on release. */
-export function paintGrid(root: LayoutNode, target: HTMLElement, holdStructural = false): boolean {
-  const rows = renderCellSegments(root);
+export function paintGrid(
+  root: LayoutNode,
+  target: HTMLElement,
+  options: PaintOptions = {},
+): boolean {
+  const glyphs = options.glyphs;
+  const render: RenderOptions = {};
+  if (glyphs) render.boxed = (cluster, cells, paint) => glyphs.box(cluster, cells, paint) !== null;
+  if (options.selection) render.selection = options.selection;
+  const { segments: rows, cells } = renderGridRows(root, render);
   const signature = signatureOf(rows);
   if (lastPaintSignature.get(target) === signature) return true;
 
-  // Style-only pass: same texts in the same span/bare segmentation —
-  // patch the spans whose paint actually changed and leave every
-  // node's identity alone.
   const previous = lastPaint.get(target);
-  if (previous && structureMatches(target, previous.nodes, rows)) {
-    lastPaintSignature.set(target, signature);
+  const rebuild = new Set<number>();
+  if (previous && previous.rows.length === rows.length) {
     for (let y = 0; y < rows.length; y++) {
-      for (let i = 0; i < rows[y]!.length; i++) {
-        const segment = rows[y]![i]!;
-        if (isBarePaint(segment) || samePaint(segment, previous.segments[y]![i])) continue;
-        const span = previous.nodes[y]![i]! as HTMLElement;
-        span.style.cssText = "";
-        applyCellPaint(segment, span.style);
-      }
+      if (!rowStructureMatches(target, previous.rows[y]!.nodes, rows[y]!)) rebuild.add(y);
     }
-    previous.segments = rows;
+  }
+  if (rebuild.size > 0 || !previous || previous.rows.length !== rows.length) {
+    if (options.holdStructural && hasSelectionInside(target)) return false;
+  }
+  lastPaintSignature.set(target, signature);
+
+  if (!previous || previous.rows.length !== rows.length) {
+    const fragment = document.createDocumentFragment();
+    const painted: PaintedRow[] = [];
+    for (let y = 0; y < rows.length; y++) {
+      const { nodes, units } = rowNodes(rows[y]!, glyphs);
+      for (const node of nodes) fragment.appendChild(node);
+      const newline = y < rows.length - 1 ? document.createTextNode("\n") : null;
+      if (newline) fragment.appendChild(newline);
+      painted.push({ nodes, segments: rows[y]!, newline, units });
+    }
+    lastPaint.set(target, { rows: painted, cells });
+    const saved = captureSelection(target, false);
+    target.replaceChildren(fragment);
+    if (saved) restoreSelection(target, saved);
     return true;
   }
 
-  if (holdStructural && hasSelectionInside(target)) return false;
-  lastPaintSignature.set(target, signature);
-  const fragment = document.createDocumentFragment();
-  const nodes: (Text | HTMLElement)[][] = [];
+  // Style-only rows: patch the spans whose paint actually changed and
+  // leave every node's identity alone. Rebuilt rows swap their nodes
+  // in place, between the neighbors' newlines.
+  const saved = rebuild.size > 0 ? captureSelection(target, false) : null;
   for (let y = 0; y < rows.length; y++) {
-    if (y > 0) fragment.appendChild(document.createTextNode("\n"));
-    const rowNodes: (Text | HTMLElement)[] = [];
-    for (const segment of rows[y]!) {
-      if (isBarePaint(segment)) {
-        const text = document.createTextNode(segment.text);
-        rowNodes.push(text);
-        fragment.appendChild(text);
-        continue;
-      }
-      const span = document.createElement("span");
-      applyCellPaint(segment, span.style);
-      span.textContent = segment.text;
-      rowNodes.push(span);
-      fragment.appendChild(span);
+    const row = rows[y]!;
+    const painted = previous.rows[y]!;
+    if (rebuild.has(y)) {
+      const fresh = rowNodes(row, glyphs);
+      for (const node of fresh.nodes) target.insertBefore(node, painted.newline);
+      for (const node of painted.nodes) node.remove();
+      painted.nodes = fresh.nodes;
+      painted.segments = row;
+      painted.units = fresh.units;
+      continue;
     }
-    nodes.push(rowNodes);
+    for (let i = 0; i < row.length; i++) {
+      const segment = row[i]!;
+      if (isBarePaint(segment) || sameSegment(segment, painted.segments[i]!)) continue;
+      applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs);
+    }
+    painted.segments = row;
   }
-  lastPaint.set(target, { nodes, segments: rows });
-  const saved = captureSelection(target, false);
-  target.replaceChildren(fragment);
+  previous.cells = cells;
   if (saved) restoreSelection(target, saved);
   return true;
 }
 
-function structureMatches(
-  target: HTMLElement,
-  previous: (Text | HTMLElement)[][],
-  rows: CellSegment[][],
-): boolean {
-  if (previous.length !== rows.length) return false;
-  for (let y = 0; y < rows.length; y++) {
-    const prevRow = previous[y]!;
-    const row = rows[y]!;
-    if (prevRow.length !== row.length) return false;
-    for (let i = 0; i < row.length; i++) {
-      const node = prevRow[i]!;
-      const bare = isBarePaint(row[i]!);
-      if (bare !== (node.nodeType === Node.TEXT_NODE)) return false;
-      if (node.textContent !== row[i]!.text) return false;
-      // A node detached from the grid can't be patched.
-      if (node.parentNode !== target) return false;
+/** A row's nodes: bare text for unpainted runs, a span per painted one. */
+function rowNodes(
+  row: CellSegment[],
+  glyphs: GlyphBoxes | undefined,
+): { nodes: (Text | HTMLElement)[]; units: number } {
+  const nodes: (Text | HTMLElement)[] = [];
+  let units = 0;
+  for (const segment of row) {
+    units += segment.text.length;
+    if (isBarePaint(segment) && !segment.box) {
+      nodes.push(document.createTextNode(segment.text));
+      continue;
     }
+    const span = document.createElement("span");
+    applySegment(span, segment, glyphs);
+    span.textContent = segment.text;
+    nodes.push(span);
+  }
+  return { nodes, units };
+}
+
+/** The painted cell strings, for callers walking the grid by cell. */
+export function paintedCell(target: HTMLElement, col: number, row: number): string | undefined {
+  return lastPaint.get(target)?.cells[row]?.[col];
+}
+
+/** A span's paint, and its box when the segment is one: an inline
+ * block of exactly its cells, the glyph scaled to fill it and clipped
+ * to the row (specs/wide-characters.md). */
+function applySegment(
+  span: HTMLElement,
+  segment: CellSegment,
+  glyphs: GlyphBoxes | undefined,
+): void {
+  span.style.cssText = "";
+  applyCellPaint(segment, span.style);
+  if (!segment.box) return;
+  const box = glyphs?.box(segment.text, segment.cells ?? 1, segment);
+  const style = span.style;
+  style.display = "inline-block";
+  style.width = `calc(${segment.cells ?? 1} * var(--mw-cw, 1ch))`;
+  style.overflow = "hidden";
+  style.verticalAlign = "top";
+  style.textAlign = "center";
+  if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
+}
+
+function sameSegment(a: CellSegment, b: CellSegment): boolean {
+  return samePaint(a, b) && a.box === b.box && a.cells === b.cells;
+}
+
+function rowStructureMatches(
+  target: HTMLElement,
+  previous: (Text | HTMLElement)[],
+  row: CellSegment[],
+): boolean {
+  if (previous.length !== row.length) return false;
+  for (let i = 0; i < row.length; i++) {
+    const node = previous[i]!;
+    const segment = row[i]!;
+    const bare = isBarePaint(segment) && !segment.box;
+    if (bare !== (node.nodeType === Node.TEXT_NODE)) return false;
+    if (node.textContent !== segment.text) return false;
+    // A node detached from the grid can't be patched.
+    if (node.parentNode !== target) return false;
   }
   return true;
+}
+
+/** The grid's flat text offset of a cell (cell-model.md "Selection"):
+ * rows are joined by newlines, and a cell's code units are its cluster's
+ * — none for a continuation cell. Clamped to the grid. */
+export function gridOffsetAt(target: HTMLElement, col: number, row: number): number {
+  const painted = lastPaint.get(target);
+  if (!painted || painted.rows.length === 0) return 0;
+  const y = Math.max(0, Math.min(row, painted.rows.length - 1));
+  let offset = 0;
+  for (let i = 0; i < y; i++) offset += painted.rows[i]!.units + 1;
+  const cells = painted.cells[y]!;
+  const x = Math.max(0, Math.min(col, cells.length));
+  for (let i = 0; i < x; i++) offset += cells[i]!.length;
+  return offset;
 }
 
 /* === Selection preservation ========================================== */
@@ -207,6 +305,8 @@ function signatureOf(rows: CellSegment[][]): string {
         s.fontStyle ?? "",
         s.textDecorationLine ?? "",
         s.opacity ?? "",
+        s.selected ? "s" : "",
+        s.box ? `b${s.cells}` : "",
       );
     }
     parts.push("\n");

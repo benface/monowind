@@ -5,6 +5,7 @@ import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
 import type { LayoutNode, Rect } from "./types.ts";
+import { clusterWidth } from "./width.ts";
 
 /**
  * Render a laid-out tree as plain text ("ASCII art", though the border
@@ -19,9 +20,12 @@ import type { LayoutNode, Rect } from "./types.ts";
  *
  * The grid covers the layout's ink extent (layoutRoot grows the root
  * to it); ink above or left of the origin has no cells and is dropped.
+ * A wide cluster (specs/wide-characters.md) sits in its first cell with
+ * empty continuation cells after it, so a joined row reads at the
+ * width a terminal shows it.
  */
 export function renderPlainText(root: LayoutNode): string {
-  return renderGrids(root)
+  return renderGrids(root, {})
     .grid.map((row) => row.join("").trimEnd())
     .join("\n");
 }
@@ -43,34 +47,76 @@ export interface CellPaint {
    * blends with what's behind the HOST, never with covered cells.
    * `"0"` still paints: the glyphs stay selectable in grid mode. */
   opacity?: string;
+  /** The cell is inside a light-DOM selection (specs/wide-characters.md
+   * "The grid paints the selection"): painted with its color and
+   * background swapped. */
+  selected?: true;
 }
 
 /** One row of same-paint runs. Joining every segment's text gives the
  * row at the grid's full width (specs/cell-model.md "Selection"): the
  * <pre> is a rectangle of cells, so a drag's highlight sweeps whole
- * rows and a copy is the visible rectangle. */
+ * rows and a copy is the visible rectangle. A boxed segment is one
+ * cluster the font does not draw at its cell count, to be painted in a
+ * box of exactly `cells` cells. */
 export interface CellSegment extends CellPaint {
   text: string;
+  cells?: number;
+  box?: true;
+}
+
+/** What the DOM adapter knows and the plain-text model does not: which
+ * clusters its font draws off their cell count (`boxed`), and which
+ * leaves hold the light-DOM selection, as character ranges. */
+export interface RenderOptions {
+  boxed?: (cluster: string, cells: number, paint: CellPaint | undefined) => boolean;
+  selection?: Map<LayoutNode, { start: number; end: number }>;
 }
 
 /** Row-major cell segments. Each row is `rowSegments(grid[y],
  * paints[y])` — the DOM adapter (paint.ts) uses this, and tests
  * assert paint fields against it. */
-export function renderCellSegments(root: LayoutNode): CellSegment[][] {
-  const { grid, paints } = renderGrids(root);
-  return grid.map((row, y) => rowSegments(row, paints[y]!));
+export function renderCellSegments(root: LayoutNode, options: RenderOptions = {}): CellSegment[][] {
+  return renderGridRows(root, options).segments;
+}
+
+/** The segments plus the cell strings they were built from — the cell ↔
+ * code-unit map a row needs once a cluster spans cells or code units. */
+export function renderGridRows(
+  root: LayoutNode,
+  options: RenderOptions = {},
+): { segments: CellSegment[][]; cells: string[][] } {
+  const { grid, paints } = renderGrids(root, options);
+  return {
+    segments: grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed)),
+    cells: grid,
+  };
 }
 
 /** One rendered row → its same-paint runs. Painted spaces stay in
  * their run (underline spans an inline run's inner spaces; a
- * borderless focus-invert fill is nothing but spaces). */
-function rowSegments(row: string[], paints: (CellPaint | undefined)[]): CellSegment[] {
+ * borderless focus-invert fill is nothing but spaces). A continuation
+ * cell (`""`) rides with the wide cluster before it; a cluster the
+ * caller boxes closes its own segment. */
+function rowSegments(
+  row: string[],
+  paints: (CellPaint | undefined)[],
+  boxed?: RenderOptions["boxed"],
+): CellSegment[] {
   const segments: CellSegment[] = [];
   for (let x = 0; x < row.length; x++) {
+    const cell = row[x]!;
+    if (cell === "") continue;
     const paint = paints[x];
+    let cells = 1;
+    while (row[x + cells] === "") cells++;
+    if (boxed && (cell.length > 1 || cell.charCodeAt(0) >= 0x80) && boxed(cell, cells, paint)) {
+      segments.push({ text: cell, cells, box: true, ...paint });
+      continue;
+    }
     const last = segments[segments.length - 1];
-    if (last && samePaint(last, paint)) last.text += row[x]!;
-    else segments.push({ text: row[x]!, ...paint });
+    if (last && !last.box && samePaint(last, paint)) last.text += cell;
+    else segments.push({ text: cell, ...paint });
   }
   return segments;
 }
@@ -82,15 +128,22 @@ export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
     a.fontWeight === b?.fontWeight &&
     a.fontStyle === b?.fontStyle &&
     a.textDecorationLine === b?.textDecorationLine &&
-    a.opacity === b?.opacity
+    a.opacity === b?.opacity &&
+    a.selected === b?.selected
   );
 }
 
 /** Apply a `CellPaint` to a `CSSStyleDeclaration`. Kept in this file
- * alongside samePaint / textPaint so the paint schema has one home. */
+ * alongside samePaint / textPaint so the paint schema has one home. A
+ * selected cell swaps its colors — the theme's, for an unstyled cell. */
 export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): void {
-  if (paint.color !== undefined) style.color = paint.color;
-  if (paint.backgroundColor !== undefined) style.backgroundColor = paint.backgroundColor;
+  if (paint.selected) {
+    style.color = paint.backgroundColor ?? "var(--mw-bg, canvas)";
+    style.backgroundColor = paint.color ?? "var(--mw-fg, canvastext)";
+  } else {
+    if (paint.color !== undefined) style.color = paint.color;
+    if (paint.backgroundColor !== undefined) style.backgroundColor = paint.backgroundColor;
+  }
   if (paint.fontWeight !== undefined) style.fontWeight = paint.fontWeight;
   if (paint.fontStyle !== undefined) style.fontStyle = paint.fontStyle;
   if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
@@ -106,11 +159,15 @@ export function isBarePaint(paint: CellPaint): boolean {
     paint.fontWeight === undefined &&
     paint.fontStyle === undefined &&
     paint.textDecorationLine === undefined &&
-    paint.opacity === undefined
+    paint.opacity === undefined &&
+    paint.selected === undefined
   );
 }
 
-function renderGrids(root: LayoutNode): {
+function renderGrids(
+  root: LayoutNode,
+  options: RenderOptions,
+): {
   grid: string[][];
   paints: (CellPaint | undefined)[][];
 } {
@@ -122,15 +179,47 @@ function renderGrids(root: LayoutNode): {
   const paints: (CellPaint | undefined)[][] = Array.from({ length: height }, () =>
     Array.from({ length: width }, (): CellPaint | undefined => undefined),
   );
-  walk(root, 0, 0, (x, y, glyph, paint) => {
-    if (x >= 0 && x < width && y >= 0 && y < height) {
+  // The wide cluster owning each cell, so a later paint on any of its
+  // cells blanks the rest — a half-overwritten wide character is
+  // spaces, as in a terminal.
+  const owners: ({ x: number; cells: number } | undefined)[][] = Array.from(
+    { length: height },
+    () => Array.from({ length: width }, () => undefined),
+  );
+  const inside = (x: number, y: number) => x >= 0 && x < width && y >= 0 && y < height;
+  const release = (x: number, y: number) => {
+    const owner = owners[y]![x];
+    if (!owner) return;
+    for (let dx = 0; dx < owner.cells; dx++) {
+      grid[y]![owner.x + dx] = " ";
+      owners[y]![owner.x + dx] = undefined;
+    }
+  };
+  const mergePaint = (x: number, y: number, paint: CellPaint | undefined) => {
+    // Merge paints per field: a later glyph over an earlier fill
+    // keeps the fill's fields (bg-fill's backgroundColor survives
+    // when text paints its color on top). Same-field overlaps still
+    // last-wins.
+    const existing = paints[y]![x];
+    paints[y]![x] = existing ? { ...existing, ...paint } : paint;
+  };
+  walk(root, 0, 0, options, (x, y, glyph, paint, cells = 1) => {
+    if (y < 0 || y >= height) return;
+    if (cells === 1) {
+      if (!inside(x, y)) return;
+      release(x, y);
       grid[y]![x] = glyph;
-      // Merge paints per field: a later glyph over an earlier fill
-      // keeps the fill's fields (bg-fill's backgroundColor survives
-      // when text paints its color on top). Same-field overlaps still
-      // last-wins.
-      const existing = paints[y]![x];
-      paints[y]![x] = existing ? { ...existing, ...paint } : paint;
+      mergePaint(x, y, paint);
+      return;
+    }
+    // A cluster losing cells past the grid's edge is blanked whole.
+    const whole = inside(x, y) && inside(x + cells - 1, y);
+    for (let dx = 0; dx < cells; dx++) {
+      if (!inside(x + dx, y)) continue;
+      release(x + dx, y);
+      grid[y]![x + dx] = whole ? (dx === 0 ? glyph : "") : " ";
+      if (whole) owners[y]![x + dx] = { x, cells };
+      mergePaint(x + dx, y, paint);
     }
   });
   return { grid, paints };
@@ -157,12 +246,20 @@ function textPaint(source: {
   return paint;
 }
 
-type PutGlyph = (x: number, y: number, glyph: string, paint: CellPaint | undefined) => void;
+/** Paint `glyph` at a cell — a cluster over `cells` cells from it. */
+type PutGlyph = (
+  x: number,
+  y: number,
+  glyph: string,
+  paint: CellPaint | undefined,
+  cells?: number,
+) => void;
 
 function walk(
   node: LayoutNode,
   parentAbsX: number,
   parentAbsY: number,
+  options: RenderOptions,
   put: PutGlyph,
   alpha = 1,
 ): void {
@@ -230,10 +327,19 @@ function walk(
     const y0 = absY + style.border.top;
     const x1 = absX + node.localRect.width - style.border.right - (gutter?.right ?? 0);
     const y1 = absY + node.localRect.height - style.border.bottom - (gutter?.bottom ?? 0);
-    contentPut = (x, y, glyph, paint) => {
-      if (clipsX && (x < x0 || x >= x1)) return;
-      if (clipsY && (y < y0 || y >= y1)) return;
-      put(x, y, glyph, paint);
+    const clipped = (x: number, y: number) =>
+      (clipsX && (x < x0 || x >= x1)) || (clipsY && (y < y0 || y >= y1));
+    contentPut = (x, y, glyph, paint, cells = 1) => {
+      if (cells === 1) {
+        if (!clipped(x, y)) put(x, y, glyph, paint);
+        return;
+      }
+      // A cluster cut by the clip edge is blanked, its visible cells
+      // as spaces.
+      let whole = true;
+      for (let dx = 0; dx < cells; dx++) if (clipped(x + dx, y)) whole = false;
+      if (whole) put(x, y, glyph, paint, cells);
+      else for (let dx = 0; dx < cells; dx++) if (!clipped(x + dx, y)) put(x + dx, y, " ", paint);
     };
   }
 
@@ -244,29 +350,36 @@ function walk(
   if (!hasInFlowChildren && node.text) {
     const leafPaint = alphaPaint(textPaint(style));
     const inlinePaints = node.inlineElements?.map((entry) => alphaPaint(textPaint(entry)));
+    const selection = options.selection?.get(node);
     forEachLeafCell(
       node,
       scrolledX,
       scrolledY,
-      (k, x, y) => {
+      (k, length, x, y) => {
         const inlineIndex = node.charInline?.[k] ?? -1;
         const entry = inlineIndex >= 0 ? node.inlineElements![inlineIndex] : undefined;
+        let paint = entry ? inlinePaints![inlineIndex] : leafPaint;
+        if (selection && k >= selection.start && k < selection.end) {
+          paint = { ...paint, selected: true };
+        }
         // INLINE_PAD marks a blank inline-padding cell: no glyph, but
         // its element's background still fills it.
         if (node.text[k] === INLINE_PAD) {
           if (entry?.backgroundColor) {
             contentPut(x, y, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
           }
-        } else {
-          contentPut(x, y, node.text[k]!, entry ? inlinePaints![inlineIndex] : leafPaint);
+          return;
         }
+        const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
+        const cells = clusterWidth(cluster);
+        if (cells > 0) contentPut(x, y, cluster, paint, cells);
       },
       (x, y) => contentPut(x, y, "…", leafPaint),
     );
   }
 
   for (const child of paintOrderedChildren(node)) {
-    walk(child, scrolledX, scrolledY, contentPut, alpha * child.style.opacity);
+    walk(child, scrolledX, scrolledY, options, contentPut, alpha * child.style.opacity);
   }
 
   // Scrollbars last, over content (specs/scrolling.md): every
@@ -312,12 +425,15 @@ function walk(
  * per-character advances — in ONE place, so mapping a cell back to a
  * character (charIndexAtCell) cannot drift from the paint. `absX/absY`
  * is the leaf's border-box origin with its own scroll applied; U+FFFC
- * markers are skipped (their boxes paint themselves). */
+ * markers are skipped (their boxes paint themselves). Visits are per
+ * CLUSTER: `index` is its first code unit, `length` its code units
+ * (the following 0-advance units ride along, a 0-width cluster with
+ * the cluster before it), `advance` its cells with tracking. */
 function forEachLeafCell(
   node: LayoutNode,
   absX: number,
   absY: number,
-  onChar: (index: number, x: number, y: number, advance: number) => void,
+  onChar: (index: number, length: number, x: number, y: number, advance: number) => void,
   onEllipsis?: (x: number, y: number) => void,
 ): void {
   const style = node.style;
@@ -346,7 +462,7 @@ function forEachLeafCell(
     // `text-align: end` offsets each line to the content box's right
     // edge; `center` to floor((W − line) / 2). Whole cells; a line at
     // or over the width stays at start, matching truncation.
-    const lineWidth = lineAdvance(span.start, span.end, node.advances, style.tracking);
+    const lineWidth = lineAdvance(node.text, span.start, span.end, node.advances, style.tracking);
     const leftover = Math.max(0, alignWidth - indent - lineWidth);
     const alignOffset =
       style.textAlign === "end"
@@ -355,17 +471,21 @@ function forEachLeafCell(
           ? Math.floor(leftover / 2)
           : 0;
     let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset + indent;
-    for (let k = span.start; k < truncated.end; k++) {
-      const advance = advanceOf(k, k + 1, node.advances);
-      if (node.text[k] !== OBJECT_REPLACEMENT) {
+    const advances = node.advances;
+    for (let k = span.start; k < truncated.end;) {
+      const advance = advanceOf(k, k + 1, advances);
+      let length = 1;
+      if (advances) while (k + length < truncated.end && advances[k + length] === 0) length++;
+      if (node.text[k] !== OBJECT_REPLACEMENT && advance > 0) {
         // Inline relative shifts, whole cells (specs/positioning.md):
         // the over-constrained sides resolve like CSS (top/left win).
         const insets = node.inlineElements?.[node.charInline?.[k] ?? -1]?.insets;
         const dx = insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0;
         const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
-        onChar(k, x + dx, row + dy, advance);
+        onChar(k, length, x + dx, row + dy, advance);
       }
       x += advance;
+      k += length;
     }
     if (truncated.ellipsis) onEllipsis?.(x, row);
   }
@@ -414,7 +534,7 @@ export function charIndexAtCell(
     node,
     absX - (node.scroll?.x ?? 0),
     absY - (node.scroll?.y ?? 0),
-    (k, x, y, advance) => {
+    (k, _length, x, y, advance) => {
       if (found === null && y === row && col >= x && col < x + advance) found = k;
     },
   );
@@ -443,7 +563,7 @@ export function inlineElementRects(
     node,
     absX - (node.scroll?.x ?? 0),
     absY - (node.scroll?.y ?? 0),
-    (k, x, y, advance) => {
+    (k, _length, x, y, advance) => {
       const inner = node.charInline![k] ?? -1;
       if (inner < 0) return;
       for (const i of owners[inner]!) {
@@ -549,11 +669,12 @@ function truncateSpan(
   style: LayoutNode["style"],
 ): { end: number; ellipsis: boolean } {
   const { textOverflow, tracking } = style;
-  if (lineAdvance(span.start, span.end, advances, tracking) <= contentWidth) {
+  if (lineAdvance(text, span.start, span.end, advances, tracking) <= contentWidth) {
     return { end: span.end, ellipsis: false };
   }
   const limit = textOverflow === "ellipsis" ? contentWidth - 1 : contentWidth;
   let end = span.start;
-  while (end < span.end && lineAdvance(span.start, end + 1, advances, tracking) <= limit) end++;
+  while (end < span.end && lineAdvance(text, span.start, end + 1, advances, tracking) <= limit)
+    end++;
   return { end, ellipsis: textOverflow === "ellipsis" && contentWidth > 0 };
 }

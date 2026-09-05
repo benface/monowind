@@ -4,9 +4,9 @@ Status: **implemented** (2026-09-04) — engine (selection.ts, the gesture
 handlers in element.ts, the leaf hook), stories, and this spec agree.
 Engine facts below marked _verified_ were established on 2026-09-04
 against the CDN bundle in Chromium, Firefox, and WebKit (Playwright).
-Scope: `select="grid"` only for the gestures; the copy serialization
-applies to both modes. `select="text"` otherwise already gets every
-semantic gesture natively from the light DOM.
+Scope: the copy serialization applies to both modes; the gestures were
+grid-mode only until specs/wide-characters.md routed text mode's
+presses through the engine as well (a character drag, plus these).
 
 ## Why
 
@@ -39,20 +39,15 @@ selects a word or a paragraph.
   A grid range could never do this: a `<pre>` selection is "every cell
   between two points", which sweeps whole rows and drags neighboring
   boxes into the copy.
-- **The highlight is the native layer's.** The light-DOM text sits
-  under the grid's glyphs cell-for-cell (the unified render), and the
-  canonical `::selection` invert (styles.css) paints it exactly as
-  `select="text"` paints a selection today — same rule, same look, same
-  sub-cell deviations (odd centering without the nudge, cell-model.md
-  "Text alignment"). _Verified_: a programmatic paragraph range paints
-  the inverted band over exactly that paragraph in all three engines
-  (Firefox paints no selection in an unfocused document — a
-  headless-only concern). Grid mode therefore shows a semantic
-  selection the way text mode does, and follows the content when a
-  container scrolls (content-anchored, unlike a grid drag). The
-  highlight is not mirrored onto the grid: painting the selected cells
-  inverted would make it cell-exact instead of native-layer-exact, and
-  the sub-cell cases are the documented text-mode ones.
+- **The highlight is painted on the grid.** The engine maps the live
+  range to the cells its characters paint and swaps each cell's own
+  colors — reverse video, so colored text selects as a band of its
+  color (specs/wide-characters.md "The grid paints the selection");
+  the browser's own highlight on the invisible native text is
+  invisible too. A semantic selection therefore shows cell-exact in both modes,
+  and follows the content when a container scrolls (content-anchored,
+  unlike a grid drag). (Originally the native layer's `::selection`
+  invert, retired when wide clusters put the native text off the grid.)
 - **The paragraph is the text LEAF.** The unit is the innermost layout
   node under the cell that carries text (`LayoutNode.text` — a `<p>`,
   `<li>`, `<h1>`, a `<div>` with direct text, a `<td>`, a custom leaf
@@ -279,10 +274,6 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   column to the next selects everything between them in the DOM (a
   sidebar that sits between in source order but beside on screen) —
   native HTML behavior, kept.
-- **The highlight rides the native layer**, so it inherits text mode's
-  sub-cell deviations (an odd-parity centered line without the nudge
-  sits half a cell off). The grid glyphs beneath are covered by the
-  band, which is the intent.
 - **Word boundaries are `Intl.Segmenter`'s**, not each engine's native
   double-click rules (Chromium on Windows takes the trailing space
   along; Firefox's `layout.word_select.*` prefs vary). One rule in
@@ -330,7 +321,8 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   pointer moved past the grid during an engine-driven drag clamps the
   extent to the grid's end; grid-mode light elements compute
   `cursor: text` while an authored `cursor-pointer` still wins; in
-  `select="text"` a triple-click on the grid is not canceled. Word
+  `select="text"` a triple-click on a paragraph selects it
+  (specs/wide-characters.md routes text mode's gestures too). Word
   gesture:
   `detail: 2` on a cell inside a known word asserts the selection
   string is that word; on a blank cell of the same line, not canceled;

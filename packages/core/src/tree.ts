@@ -11,6 +11,7 @@ import {
 } from "./style.ts";
 import { defaultCellStyle, zeroInsets } from "./types.ts";
 import { warnOnce } from "./warn.ts";
+import { clusterAdvance, clusterAdvances, graphemes, textCells } from "./width.ts";
 import {
   eachObjectMarker,
   hardLineSpans,
@@ -167,12 +168,16 @@ function buildLeaf(
     nodes,
   );
   const text = run.chars.join("");
+  // The run's per-cluster arrays expand to code units, like `text`: a
+  // cluster's advance sits on its first unit and its inline index on
+  // every unit (specs/wide-characters.md).
+  const { advances, charInline } = expandClusters(run);
   // Intrinsic advances for the box markers use the boxes' max-content
   // widths; layout overwrites them with the laid-out widths per pass.
   if (run.boxes.length > 0) {
     const cache = makeIntrinsicCache();
-    eachObjectMarker(run.chars, (charIndex, boxIndex) => {
-      run.advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
+    eachObjectMarker(text, (charIndex, boxIndex) => {
+      advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
     });
   }
   // Form controls with no explicit width would otherwise be 0 cells
@@ -180,7 +185,7 @@ function buildLeaf(
   // widths mirror the native ones: input's size attribute, textarea's
   // cols, and a select's option labels — the longest by default, the
   // SELECTED one under `field-sizing: content`, like the browser.
-  let intrinsicWidth = longestLineAdvance(text, run.advances, style.tracking);
+  let intrinsicWidth = longestLineAdvance(text, advances, style.tracking);
   if (formControl && intrinsicWidth === 0) {
     // Number(): happy-dom (tests) returns these attributes as strings.
     if (tag === "INPUT") intrinsicWidth = Number((root as HTMLInputElement).size) || 20;
@@ -194,7 +199,7 @@ function buildLeaf(
         getComputedStyle(root).getPropertyValue("field-sizing") === "content"
           ? [labelOf(select.selectedOptions[0])]
           : Array.from(select.options, labelOf);
-      intrinsicWidth = Math.max(1, ...labels.map((label) => label.trim().length));
+      intrinsicWidth = Math.max(1, ...labels.map((label) => textCells(label.trim())));
     }
   }
   // Form controls always reserve at least one content row (native
@@ -221,7 +226,7 @@ function buildLeaf(
     const trailingLine = value.endsWith("\n") ? 1 : 0;
     const wrappedLines =
       contentCells !== undefined && contentCells > 0
-        ? wrapLineCount(value, contentCells) + trailingLine
+        ? wrapLineCount(value, contentCells, { advances: clusterAdvances(value) }) + trailingLine
         : value === ""
           ? 0
           : value.split(/\r\n?|\n/).length;
@@ -276,10 +281,10 @@ function buildLeaf(
     unclampedHeight: 0,
     resolvedPadding: zeroInsets(),
   };
-  if (run.advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = run.advances;
+  if (advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = advances;
   if (run.inlineElements.length > 0) {
     node.inlineElements = run.inlineElements;
-    node.charInline = run.chars.map((_, i) => run.inlineIndex[i] ?? -1);
+    node.charInline = charInline;
   }
   const charSource = charSourceRuns(run);
   if (charSource.length > 0) node.charSource = charSource;
@@ -307,11 +312,10 @@ function buildRendererLeaf(
   if (style.width === undefined || style.width.kind === "auto") {
     style.width = { kind: "max-content" };
   }
-  // One cell per UTF-16 unit — consistent with the run mapping below
-  // (astral glyph art is out of scope; fonts are BMP in practice) —
-  // plus tracking, applied uniformly so the art stretches coherently
-  // (columns stay aligned across rows, like letter-spacing on a pre).
-  const advances = Array.from({ length: text.length }, () => 1 + style.tracking);
+  // Cluster widths plus tracking, applied uniformly so the art
+  // stretches coherently (columns stay aligned across rows, like
+  // letter-spacing on a pre).
+  const advances = clusterAdvances(text, style.tracking);
   const intrinsicWidth = longestLineAdvance(text, advances, style.tracking);
   const intrinsicHeight = lines.length;
   const node: LayoutNode = {
@@ -325,7 +329,7 @@ function buildRendererLeaf(
     unclampedHeight: 0,
     resolvedPadding: zeroInsets(),
   };
-  if (style.tracking > 0) node.advances = advances;
+  if (advances.some((a) => a !== 1)) node.advances = advances;
   const runs = content?.runs ?? [];
   if (runs.length > 0 && text.length > 0) {
     // Line start offsets into the joined text (newlines included).
@@ -527,21 +531,19 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
         // untracked — tab stops are grid columns, not glyphs).
         const text = node.textContent ?? "";
         let offset = 0;
-        for (const ch of text) {
+        for (const ch of graphemes(text)) {
           const at = offset;
           offset += ch.length;
-          if (ch === "\r") {
-            if (text[offset] === "\n") continue; // CRLF: the LF carries the break
-            pushChar(run, "\n", 0, node as Text, at);
-          } else if (ch === "\n") {
-            pushChar(run, "\n", 0, node as Text, at);
+          if (ch === "\r\n" || ch === "\r" || ch === "\n") {
+            // CRLF is one cluster: the LF carries the break.
+            pushChar(run, "\n", 0, node as Text, at + ch.length - 1);
           } else if (ch === "\t") {
             const target = (Math.floor(column() / ctx.tabSize) + 1) * ctx.tabSize;
             for (let cells = column(); cells < target; cells++) {
               pushChar(run, " ", 1, node as Text, at);
             }
           } else {
-            pushChar(run, ch, 1 + tracking, node as Text, at);
+            pushChar(run, ch, clusterAdvance(ch, tracking), node as Text, at);
           }
         }
       } else {
@@ -549,10 +551,10 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
         // space that keeps the first collapsed character's offset.
         let offset = 0;
         let inSpace = false;
-        for (const ch of node.textContent ?? "") {
+        for (const ch of graphemes(node.textContent ?? "")) {
           const collapsible =
-            ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === "\f";
-          if (!collapsible) pushChar(run, ch, 1 + tracking, node as Text, offset);
+            ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === "\f" || ch === "\r\n";
+          if (!collapsible) pushChar(run, ch, clusterAdvance(ch, tracking), node as Text, offset);
           else if (!inSpace) pushChar(run, " ", 1 + tracking, node as Text, offset);
           inSpace = collapsible;
           offset += ch.length;
@@ -720,6 +722,24 @@ function pushChar(run: LeafRun, ch: string, advance: number, source: Text | null
   run.sourceOffset.push(offset);
 }
 
+/** The run's per-cluster advances and inline indices, expanded to one
+ * entry per code unit of the joined text: a cluster's advance on its
+ * first unit and 0 on the rest, its inline index on every unit. */
+function expandClusters(run: LeafRun): { advances: number[]; charInline: number[] } {
+  const advances: number[] = [];
+  const charInline: number[] = [];
+  for (let i = 0; i < run.chars.length; i++) {
+    const inline = run.inlineIndex[i] ?? -1;
+    advances.push(run.advances[i]!);
+    charInline.push(inline);
+    for (let unit = 1; unit < run.chars[i]!.length; unit++) {
+      advances.push(0);
+      charInline.push(inline);
+    }
+  }
+  return { advances, charInline };
+}
+
 /** Compact the per-character source map into runs (`LayoutNode.charSource`):
  * a run grows while the next character continues the same Text node at
  * the next offset. */
@@ -746,7 +766,7 @@ function longestLineAdvance(text: string, advances: number[], tracking: number):
   let lineStart = 0;
   for (let i = 0; i <= text.length; i++) {
     if (i === text.length || text[i] === "\n") {
-      max = Math.max(max, lineAdvance(lineStart, i, advances, tracking));
+      max = Math.max(max, lineAdvance(text, lineStart, i, advances, tracking));
       lineStart = i + 1;
     }
   }

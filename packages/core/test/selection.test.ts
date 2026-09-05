@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { registerLeafRenderer } from "../src/leaf.ts";
-import { classifySelection, serializeSelection, wordAt } from "../src/selection.ts";
+import { classifySelection, selectedRanges, serializeSelection, wordAt } from "../src/selection.ts";
 import { buildTree } from "../src/tree.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -141,5 +141,25 @@ describe("wordAt language", () => {
     expect(wordAt(node, 7)).toEqual({ start: 6, end: 11 });
     const invalid = build('<p lang="not a tag">hello world</p>').root.children[0]!;
     expect(wordAt(invalid, 1)).toEqual({ start: 0, end: 5 });
+  });
+});
+
+describe("selectedRanges", () => {
+  it("maps a light range to the character ranges of the leaves it reaches", () => {
+    const { host, root } = build("<p>ab <b>cd</b></p><div>efgh</div><p>ij</p>");
+    const [ab, cd, efgh] = texts(host);
+    const ranges = selectedRanges(root, points(ab!, 1, efgh!, 2));
+    const leaves = root.children;
+    expect(ranges.get(leaves[0]!)).toEqual({ start: 1, end: 5 });
+    expect(ranges.get(leaves[1]!)).toEqual({ start: 0, end: 2 });
+    expect(ranges.has(leaves[2]!)).toBe(false);
+    expect(selectedRanges(root, points(cd!, 1, cd!, 1)).size).toBe(0);
+  });
+
+  it("takes a renderer leaf whole", () => {
+    registerLeafRenderer({ tag: "test-art", render: () => ({ lines: ["AB", "CD"] }) });
+    const { host, root } = build("<p>x</p><test-art>art</test-art>");
+    const ranges = selectedRanges(root, selectAll(host));
+    expect(ranges.get(root.children[1]!)).toEqual({ start: 0, end: 5 });
   });
 });

@@ -3,14 +3,17 @@ import { expect, test } from "@playwright/test";
 /**
  * Selection-invert regression: drag a REAL selection across each
  * fixture and screenshot the painted result, in both select modes —
- * "text" guards the light DOM's ::selection ink (the bbfc59c class of
- * bug: the text-fill-color invisibility lock silently defeating it in
- * Safari) and the ascii transcript's; "grid" guards the <pre>'s and
- * the full-row sweep of its padded rows (specs/cell-model.md
- * "Selection"). The mode goes through the preview's Select toolbar
- * global, which rewrites every host's attribute after render. Runs in
- * all three engines (playwright.config projects) — they paint
- * selection ink differently, so each keeps its own golden.
+ * "text" guards the engine's painted highlight over a light-DOM range
+ * (reverse video per cell, the colored banner as a band of its color,
+ * specs/wide-characters.md) and the invisibility of the native one
+ * beneath it; "grid" guards the <pre>'s own ::selection ink (the
+ * bbfc59c class of bug: the text-fill-color invisibility lock silently
+ * defeating it in Safari) and the full-row sweep of its padded rows
+ * (specs/cell-model.md "Selection"). The mode goes through the
+ * preview's Select toolbar global, which rewrites every host's
+ * attribute after render. Runs in all three engines
+ * (playwright.config projects) — they paint native selection ink
+ * differently, so each keeps its own golden.
  */
 const FIXTURES = [
   "test-selection--light-text",

@@ -73,3 +73,28 @@ export function hitChain(root: LayoutNode, col: number, row: number): Element[] 
   }
   return chain;
 }
+
+/** The cells to try for the character nearest `(col, row)`, in the
+ * order the browser's closest-position rule would (specs/
+ * wide-characters.md): the cell itself, then its row leftward — a hit
+ * there is the point AFTER that character — and rightward (BEFORE it),
+ * then the rows above and below, farther out each step, an upper row
+ * from its end and a lower one from its start. The cell is clamped to
+ * the grid, so a pointer past the host runs to the text's ends. */
+export function* nearestCells(
+  width: number,
+  height: number,
+  col: number,
+  row: number,
+): Generator<{ x: number; y: number; edge: "self" | "start" | "end" }> {
+  if (width <= 0 || height <= 0) return;
+  const c = Math.max(0, Math.min(col, width - 1));
+  const r = Math.max(0, Math.min(row, height - 1));
+  yield { x: c, y: r, edge: "self" };
+  for (let x = c - 1; x >= 0; x--) yield { x, y: r, edge: "end" };
+  for (let x = c + 1; x < width; x++) yield { x, y: r, edge: "start" };
+  for (let d = 1; d < height; d++) {
+    if (r - d >= 0) for (let x = width - 1; x >= 0; x--) yield { x, y: r - d, edge: "end" };
+    if (r + d < height) for (let x = 0; x < width; x++) yield { x, y: r + d, edge: "start" };
+  }
+}

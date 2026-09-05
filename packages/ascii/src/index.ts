@@ -55,9 +55,9 @@ const HTMLElementBase = (
 const SHADOW_TEMPLATE = `<style>
   :host { display: block; }
   #mirror { margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; color: transparent; }
-  /* The engine's light-DOM ::selection invert cannot pierce this
-   * shadow; mirror of the canonical rule in core's styles.css. */
-  #mirror::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
+  /* The engine paints a selection on its grid (specs/wide-characters.md);
+   * the transcript's own highlight stays invisible, like the light DOM's. */
+  #mirror::selection { color: transparent; text-shadow: none; background: transparent; }
   .alt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; user-select: none; -webkit-user-select: none; }
 </style><pre id="mirror" aria-hidden="true"></pre><span class="alt"><slot></slot></span>`;
 

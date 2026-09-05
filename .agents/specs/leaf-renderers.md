@@ -34,10 +34,13 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   instead owns that in its OWN shadow root: a transparent transcript
   of the art (the host inherits the engine's typography lock, so a
   plain `pre` aligns with the grid cell-for-cell) with the slotted
-  semantic children visually hidden and `user-select: none` — native
-  selection/copy then read real text with real newlines in every kind
+  semantic children visually hidden and `user-select: none` — a
+  native range then reads real text with real newlines in every kind
   of sweep, and the AT still hears the light DOM (`<mono-ascii>` does
-  exactly this). The engine has no selection role beyond the lock.
+  exactly this). The engine paints that selection on the grid over the
+  leaf's cells and copies the leaf's text itself
+  (specs/wide-characters.md, specs/semantic-selection.md); the
+  transcript's own highlight stays invisible, like the light DOM's.
 - Colors in runs are CSS `<color>` STRINGS, vars welcome
   (`var(--mw-ansi-red)`), resolved at paint time against the host —
   themes restyle existing content with no re-render.

@@ -34,9 +34,9 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
     <div class="font-bold">§ MONOWIND DAILY</div>
     <div>issue 001</div>
   </div>
-  <div class="overflow-y-auto">
-    <div class="columns-1 gap-5 px-3 py-1 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
-      <h1 class="mb-1 text-center font-bold text-yellow-300 [column-span:all]">· A polite theft on Maple Street ·</h1>
+  <div class="overflow-y-auto px-3 py-1">
+    <h1 class="mb-1 text-center font-bold text-yellow-300">· A polite theft on Maple Street ·</h1>
+    <div class="columns-1 gap-5 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
       <p>A raccoon walked into the corner bakery at <span class="text-sky-300">6:47 AM</span> this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.</p>
       <p class="mt-1">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway. The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
       <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
@@ -45,10 +45,10 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
   </div>
   <div class="flex shrink-0 items-center justify-between px-2 py-1 text-neutral-400">
     <div class="flex gap-3">
-      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">* star</button>
-      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">» share</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">★ star</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">→ share</button>
     </div>
-    <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">¶ edit me</button>
+    <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">✎ edit me</button>
   </div>
 </div>`;
 

@@ -288,17 +288,19 @@ export const Semantic: StoryObj = {
     // Every grid row is painted at the full width — the visible rectangle.
     const rows = grid.textContent!.split("\n");
     expect(new Set(rows.map((row) => row.length)).size).toBe(1);
-    // The coarse-pointer rule (a scroll container's subtree is
-    // selectable, for long-press) must out-cascade the lock: the runner
-    // has no coarse pointer, so the rule is replayed without its media
-    // query — same selector, same source order — and must win.
+    // The coarse-pointer rule (a scroll container's subtree takes the
+    // touch and is selectable, for panning and long-press) must
+    // out-cascade the lock and the pointer-events pass-through: the
+    // runner has no coarse pointer, so the rule is replayed without its
+    // media query — same selector, same source order — and must win.
     const coarse = document.createElement("style");
     coarse.textContent =
-      'mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) { user-select: text; -webkit-user-select: text; }';
+      'mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) { pointer-events: auto !important; user-select: text; -webkit-user-select: text; }';
     document.head.appendChild(coarse);
     try {
       const style = getComputedStyle(by("scrolled"));
       expect(style.userSelect || style.webkitUserSelect).toBe("text");
+      expect(style.pointerEvents).toBe("auto");
     } finally {
       coarse.remove();
     }
@@ -343,10 +345,12 @@ export const Copy: StoryObj = {
     expect(copyOf("c1", "c2")).toBe("a\tb");
     expect(copyOf("c2", "c3")).toBe("b\nc");
     document.getSelection()!.removeAllRanges();
-    // The gestures are grid-mode only: a triple-click here is the browser's.
-    const grid = host.shadowRoot!.getElementById("grid")!;
-    const rect = canvasElement.querySelector('[data-test="p1"]')!.getBoundingClientRect();
-    expect(pressAt(grid, { x: rect.left + 4, y: rect.top + 4 }, 3)).toBe(true);
+    // The gestures are the engine's in text mode too: a triple-click on
+    // a paragraph selects it (specs/wide-characters.md).
+    const p1 = canvasElement.querySelector<HTMLElement>('[data-test="p1"]')!;
+    const rect = p1.getBoundingClientRect();
+    expect(pressAt(p1, { x: rect.left + 4, y: rect.top + 4 }, 3)).toBe(false);
+    expect(document.getSelection()!.toString()).toBe("Alpha one.");
     release();
   },
 };

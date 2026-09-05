@@ -404,7 +404,10 @@ function layoutTextLeaf(
     node.textExtent = {
       width: geometry.spans.reduce(
         (max, span) =>
-          Math.max(max, lineAdvance(span.start, span.end, node.advances, style.tracking)),
+          Math.max(
+            max,
+            lineAdvance(node.text, span.start, span.end, node.advances, style.tracking),
+          ),
         0,
       ),
       rows: geometry.totalRows,
@@ -509,7 +512,8 @@ function alignLeafText(
   const isColumn = style.display === "flex" && style.flexDirection === "column";
 
   const itemWidth = geometry.spans.reduce(
-    (max, span) => Math.max(max, lineAdvance(span.start, span.end, node.advances, style.tracking)),
+    (max, span) =>
+      Math.max(max, lineAdvance(node.text, span.start, span.end, node.advances, style.tracking)),
     0,
   );
   const leftoverX = Math.max(0, innerWidth - itemWidth);

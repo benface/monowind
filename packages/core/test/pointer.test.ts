@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
-import { hitChain } from "../src/pointer.ts";
+import { hitChain, nearestCells } from "../src/pointer.ts";
 import { buildTree } from "../src/tree.ts";
 import { makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
@@ -80,5 +80,32 @@ describe("hitChain in a paragraph-flow multicol container", () => {
     expect(hitChain(root, d.col, d.row).at(-1)).toBe(second);
     // A cell in the gap between the columns hits the container only.
     expect(hitChain(root, a.col + 4, a.row).at(-1)).toBe(host.firstElementChild);
+  });
+});
+
+describe("nearestCells", () => {
+  const order = (width: number, height: number, col: number, row: number) =>
+    Array.from(nearestCells(width, height, col, row), ({ x, y, edge }) => `${x},${y}${edge[0]}`);
+
+  it("tries the cell, its row outward, then the rows above and below", () => {
+    expect(order(4, 3, 1, 1)).toEqual([
+      "1,1s",
+      "0,1e",
+      "2,1s",
+      "3,1s",
+      "3,0e",
+      "2,0e",
+      "1,0e",
+      "0,0e",
+      "0,2s",
+      "1,2s",
+      "2,2s",
+      "3,2s",
+    ]);
+  });
+
+  it("clamps a cell past the grid and yields nothing for an empty one", () => {
+    expect(order(2, 1, 9, -3)).toEqual(["1,0s", "0,0e"]);
+    expect(order(0, 3, 0, 0)).toEqual([]);
   });
 });

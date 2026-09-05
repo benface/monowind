@@ -206,3 +206,42 @@ export async function expectBrowserLineBreaksToMatchEngine(
   // Firefox can skip every hyphenated leaf; a story with none must check.
   if (!isFirefox) expect(checked).toBeGreaterThan(0);
 }
+
+/** Assert that every painted grid row is exactly the grid's width and
+ * every boxed glyph exactly one cell tall on its row
+ * (specs/wide-characters.md): a fallback glyph drawn off its cell count
+ * would stretch or shrink its row, and a taller fallback line box would
+ * push the rows below. Element boxes are read directly — a Range's
+ * rect would also union the text inside a box, which a scaled glyph
+ * overflows by design. */
+export function expectGridOnItsCells(host: HTMLElement): void {
+  const grid = host.shadowRoot!.getElementById("grid")!;
+  const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+  const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+  const rows: Node[][] = [[]];
+  for (const node of Array.from(grid.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE && node.textContent === "\n") rows.push([]);
+    else rows[rows.length - 1]!.push(node);
+  }
+  const gridRect = grid.getBoundingClientRect();
+  expect(Math.abs(gridRect.height - rows.length * cellHeight)).toBeLessThan(1);
+  rows.forEach((row, y) => {
+    let left = Infinity;
+    let right = -Infinity;
+    for (const node of row) {
+      let rect: DOMRect;
+      if (node instanceof Element) {
+        rect = node.getBoundingClientRect();
+        expect(Math.abs(rect.height - cellHeight)).toBeLessThan(1);
+        expect(Math.abs(rect.top - (gridRect.top + y * cellHeight))).toBeLessThan(1);
+      } else {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rect = range.getBoundingClientRect();
+      }
+      left = Math.min(left, rect.left);
+      right = Math.max(right, rect.right);
+    }
+    if (row.length > 0) expect(Math.abs(right - left - gridRect.width)).toBeLessThan(cellWidth / 2);
+  });
+}
