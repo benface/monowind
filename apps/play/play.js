@@ -42,13 +42,21 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
       <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
       <p class="mt-1">Regulars are asked to keep their eyes open, their bread bags zipped, and their expectations reasonable.</p>
     </div>
-  </div>
-  <div class="flex shrink-0 items-center justify-between px-2 py-1 text-neutral-400">
-    <div class="flex gap-3">
-      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">★ star</button>
-      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">→ share</button>
+    <div class="mt-2 flex flex-col gap-x-3 gap-y-2 overflow-clip border border-double bg-sky-900 px-2 py-1 text-sky-200 sm:flex-row">
+      <div class="flex flex-col gap-1">
+        <p>Did you like that story? Follow us for more! Simply scan the following QR code with your mobile phone.</p>
+        <p>And if you've followed us for a while, please consider donating. Your support makes a huge difference.</p>
+        <p class="mt-auto">- The Monowind Daily Editors</p>
+      </div>
+      <mono-qr class="max-w-full max-sm:mx-auto">benface.com</mono-qr>
     </div>
-    <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg)">✎ edit me</button>
+  </div>
+  <div class="flex shrink-0 items-center justify-between gap-3 px-2 py-1 text-neutral-400">
+    <div class="flex gap-3">
+      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg) active:focus-visible:bg-(--mw-bg) active:focus-visible:text-(--mw-fg)">★ star</button>
+      <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg) active:focus-visible:bg-(--mw-bg) active:focus-visible:text-(--mw-fg)">→ share</button>
+    </div>
+    <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg) active:focus-visible:bg-(--mw-bg) active:focus-visible:text-(--mw-fg)">✎ edit me</button>
   </div>
 </div>`;
 
@@ -124,6 +132,7 @@ const previewShell = `<!doctype html>
 <base href="${new URL("./", location.href).href}">
 <script src="cdn.js"></script>
 <script src="ascii-cdn.js"></script>
+<script src="qr-cdn.js"></script>
 <link rel="stylesheet" href="themes/index.css">
 <style>
   html { color-scheme: dark; background: #171717; }

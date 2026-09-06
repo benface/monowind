@@ -2,7 +2,8 @@
 
 Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
 2026-09-01) — this file is the source of truth. `<mono-ascii>`
-(plans/2026-09-01-mono-ascii.md) is the first consumer.
+(plans/2026-09-01-mono-ascii.md) is the first consumer, `<mono-qr>`
+(specs/qr-code.md) the second.
 
 ## Locked contract
 
@@ -82,8 +83,8 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   custom element (computed `inline`) can't fold its semantic text into
   the parent's run; packages should still ship `display: block` for
   sane non-grid fallback rendering.
-- Intrinsic size: one cell per code point of the longest line ×
-  line count; `line-height`/`tracking` apply like any leaf. SIZING IS
+- Intrinsic size: the longest line's cells (cluster widths,
+  specs/wide-characters.md) × line count; `line-height`/`tracking` apply like any leaf. SIZING IS
   REPLACED-ELEMENT (like `<img>`): auto width means intrinsic, not
   block stretch — `mx-auto` centers, `w-full` stretches. Enforced in
   the engine, not companion CSS: Gecko's computed styles never

@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { clusterAdvances, wrapLines } from "monowind";
-import { copyText, expectGridOnItsCells, pressAt, release } from "./helpers.ts";
+import { copyText, dragTo, expectGridOnItsCells, pressAt, release } from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -31,6 +31,8 @@ export const Wide: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
     await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    // The boxes are measured in the loaded font.
+    await document.fonts.ready;
     const grid = host.shadowRoot!.getElementById("grid")!;
     const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
     const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
@@ -42,18 +44,7 @@ export const Wide: StoryObj = {
     const selection = () => document.getSelection()!.toString();
     const press = (name: string, at: Point, detail: number, init: PressInit = {}) =>
       pressAt(by(name), at, detail, init);
-    const move = (at: Point) =>
-      by("mixed").dispatchEvent(
-        new PointerEvent("pointermove", {
-          bubbles: true,
-          composed: true,
-          clientX: at.x,
-          clientY: at.y,
-          pointerType: "mouse",
-          isPrimary: true,
-          buttons: 1,
-        }),
-      );
+    const move = (at: Point) => dragTo(by("mixed"), at);
     const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     // A selected cell's color is the theme's background (its own has
     // none here); the paint swaps the two.

@@ -34,8 +34,26 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
   // fragments columns at ink bottoms, so multicol needs the overhang.
   const range = probe.ownerDocument.createRange();
   range.selectNodeContents(probe);
-  const inkOverhang = Math.max(0, range.getBoundingClientRect().height - rect.height);
-  return { width: rect.width / 100, height: rect.height, letterSpacing, inkOverhang };
+  const contentHeight = range.getBoundingClientRect().height;
+  const inkOverhang = Math.max(0, contentHeight - rect.height);
+  // The reverse: a content area SHORTER than the line box (WebKit's SF
+  // Mono, 16.5px in 17) is all an inline background covers, so rows of
+  // background would show a hairline between them.
+  const backgroundGap = Math.max(0, rect.height - contentHeight);
+  // The cell is the next whole 1/64 px (the layout unit Chromium and
+  // WebKit snap boxes to, text staying in floats); the grid's
+  // letter-spacing carries the remainder and the light DOM keeps its
+  // natural advance (specs/cell-model.md "Typography").
+  const measured = rect.width / 100;
+  const width = Math.ceil(measured * 64 - 1e-6) / 64;
+  return {
+    width,
+    height: rect.height,
+    letterSpacing,
+    gridLetterSpacing: letterSpacing + (width - measured),
+    inkOverhang,
+    backgroundGap,
+  };
 }
 
 export function getRootFontSizePx(): number {

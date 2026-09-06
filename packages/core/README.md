@@ -111,6 +111,11 @@ registerBorderGlyphs("stars", { solid: { tl: "✧", tr: "✧", bl: "✧", br: "�
 }
 ```
 
+Borders, blocks, and scrollbars tile in any font: where a font draws
+its box-drawing or block glyphs shorter than the row (Menlo and SF
+Mono do, and any font under a taller `leading-*`), the grid fits them
+to it, so rows never show a seam.
+
 ## Companion packages
 
 The core is self-contained; these are optional:
@@ -121,6 +126,8 @@ The core is self-contained; these are optional:
   border characters
 - [`@monowind/ascii`](https://www.npmjs.com/package/@monowind/ascii) —
   `<mono-ascii>` FIGlet banner text with gradient/metal effects
+- [`@monowind/qr-code`](https://www.npmjs.com/package/@monowind/qr-code) —
+  `<mono-qr>` scannable QR codes, packed into the grid's cells
 - [`@monowind/vite`](https://www.npmjs.com/package/@monowind/vite) —
   zero-config Vite plugin, Tailwind included
 

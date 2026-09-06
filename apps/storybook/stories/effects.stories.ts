@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { readyHost } from "./helpers.ts";
 
 /**
  * Visual effects on the grid: opacity and animated (transitioned)
@@ -13,12 +14,6 @@ const meta: Meta = {
   title: "Features / Effects",
 };
 export default meta;
-
-const readyHost = async (canvasElement: HTMLElement): Promise<HTMLElement> => {
-  const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-  return host;
-};
 
 const gridSpanFor = (host: HTMLElement, text: string): HTMLElement | undefined =>
   Array.from(host.shadowRoot!.getElementById("grid")!.querySelectorAll("span")).find((span) =>

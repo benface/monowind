@@ -114,6 +114,22 @@ describe("sizing fallbacks", () => {
     // Not percents: w-fit already matched, w-4 is the used-px path.
     expect(read({ class: "w-fit" }).width).toEqual({ kind: "fit-content" });
   });
+
+  it("reads size-* on both axes, every form", () => {
+    const square = read({ class: "size-5 bg-red-500" });
+    expect(square.width).toEqual({ kind: "cells", value: 5 });
+    expect(square.height).toEqual({ kind: "cells", value: 5 });
+    expect(read({ class: "md:size-full" }).height).toEqual({ kind: "percent", value: 100 });
+    expect(read({ class: "size-1/2" }).width).toEqual({ kind: "percent", value: 50 });
+    expect(read({ class: "size-fit" }).height).toEqual({ kind: "fit-content" });
+    expect(read({ class: "size-[40%]" }).width).toEqual({ kind: "percent", value: 40 });
+    // A viewport size lands on the physical path like `h-dvh`.
+    const metrics = { width: 9, height: 18, letterSpacing: 0 };
+    expect(read({ class: "size-dvh" }, metrics).height).toEqual({
+      kind: "cells",
+      value: Math.floor(window.innerHeight / 18),
+    });
+  });
 });
 
 describe("margin fallbacks", () => {

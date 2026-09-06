@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, pressAt, release } from "./helpers.ts";
+import { copyText, dragTo, pressAt, release } from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -98,18 +98,7 @@ export const Semantic: StoryObj = {
     const selection = () => document.getSelection()!.toString().trim();
     const press = (at: Point, detail: number, init: PressInit = {}) =>
       pressAt(init.target ?? grid, at, detail, init);
-    const move = (at: Point) =>
-      grid.dispatchEvent(
-        new PointerEvent("pointermove", {
-          bubbles: true,
-          composed: true,
-          clientX: at.x,
-          clientY: at.y,
-          pointerType: "mouse",
-          isPrimary: true,
-          buttons: 1,
-        }),
-      );
+    const move = (at: Point) => dragTo(grid, at);
     const copied = () => copyText(host);
     const lifted = "data-mw-semantic-selection";
     // The selection's start container as seen through the host's

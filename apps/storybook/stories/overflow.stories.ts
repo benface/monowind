@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { readyHost } from "./helpers.ts";
 
 /**
  * Overflow (specs/scrolling.md): `clip` culls at the padding box;
@@ -457,6 +458,51 @@ export const TouchPan: StoryObj = {
     expect(canvasElement.querySelector("[data-mw-active], [data-mw-hover]")).toBeNull();
     // A lifted finger is the release: its relayout runs.
     touch("pointerup");
+    await waitFor(() => expect(relayouts).toBeGreaterThan(0), { timeout: 10_000 });
+    observer.disconnect();
+  },
+};
+
+/** Test-only: a key press relayouts only for Enter and Space, and
+ * Space on a focused scroll container pages it instead
+ * (specs/scrolling.md "Keyboard scrolling") — a relayout under a
+ * scrolling key would cut short the native smooth scroll it starts in
+ * Firefox. The scroll itself, which only a real key starts, is
+ * visual/keyboard.spec.ts. */
+export const Keyboard: StoryObj = {
+  tags: ["!dev"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="box" tabindex="0" class="h-6 w-32 overflow-y-scroll border px-1">
+        ${LINES.map((line) => html`<div>${line}</div>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const box = canvasElement.querySelector<HTMLElement>('[data-test="box"]')!;
+    let relayouts = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) if (record.attributeName === "measuring") relayouts++;
+    });
+    observer.observe(host, { attributes: true });
+    // Quiet first: a font's `loadingdone` relayout lands a frame after
+    // `fonts.ready`.
+    do {
+      relayouts = 0;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    } while (relayouts > 0);
+    const press = (key: string) => {
+      for (const type of ["keydown", "keyup"]) {
+        box.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true }));
+      }
+    };
+    press("ArrowDown");
+    press("PageDown");
+    press(" ");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(relayouts).toBe(0);
+    press("Enter");
     await waitFor(() => expect(relayouts).toBeGreaterThan(0), { timeout: 10_000 });
     observer.disconnect();
   },

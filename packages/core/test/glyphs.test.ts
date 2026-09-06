@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { onGlyphRegistryChange, registerBorderGlyphs } from "../src/glyphs.ts";
+import { glyphSetFor, onGlyphRegistryChange, registerBorderGlyphs } from "../src/glyphs.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
@@ -84,5 +84,18 @@ describe("border glyph sets", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("last registration wins"));
     expect(box("test-dupe")).toMatch(/^┌b+┐/);
     warn.mockRestore();
+  });
+});
+
+describe("QR module roles (specs/qr-code.md)", () => {
+  it("no built-in set names one: every code draws with the default blocks", () => {
+    for (const name of ["default", "rounded", "ascii", "single", "cp437", "blocks"]) {
+      const solid = glyphSetFor(name)?.solid;
+      expect([solid?.qrFull, solid?.qrUpper, solid?.qrLower], name).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    }
   });
 });

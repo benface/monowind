@@ -2,18 +2,12 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import type { MonoWindElement } from "monowind";
-import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
+import { expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Grid",
 };
 export default meta;
-
-const readyHost = async (canvasElement: HTMLElement): Promise<HTMLElement> => {
-  const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-  return host;
-};
 
 const cellsOf = (el: HTMLElement, name: string): number => Number(el.style.getPropertyValue(name));
 

@@ -3,6 +3,7 @@ import { GLOBALS_UPDATED, STORY_RENDERED, UPDATE_GLOBALS } from "storybook/inter
 import type { Preview } from "@storybook/web-components-vite";
 import { defineMonoWind } from "monowind";
 import "@monowind/ascii";
+import "@monowind/qr-code";
 import "./styles.css";
 
 defineMonoWind();

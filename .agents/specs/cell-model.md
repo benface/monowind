@@ -109,6 +109,11 @@ specs: deterministic, document order.)
   collapsing (rare in utility-class code, where padding dominates).
 - Auto margins: recognized for centering (`mx-auto`; auto margins in flex
   per the flex spec). MVP may defer; the value must at least parse as `auto`.
+  **Deviation (no Typed OM — Firefox before 157):** `auto` is detected by
+  class scan, which cannot see the cascade: a variant override of an auto
+  side (`mx-auto sm:ms-0` at `sm` and up) still reads as auto, and an
+  inactive variant (`md:mx-auto` below `md`) reads as auto too. Engines
+  with Typed OM read the computed value, where the cascade has been applied.
 
 ## Positioning and insets
 
@@ -156,19 +161,35 @@ leaf (specs/host-leaf.md), laid out inside the same content box.
 
 - `font-family`, `font-size`, `line-height` (default **`normal`**), and
   `letter-spacing` (default **0**) on the **`<mono-wind>` root** define the
-  cell metrics: cell width = one glyph advance **plus the root's
-  letter-spacing**, cell height = the root's line box. The default
-  `normal` picks the font's natural leading (~1.15–1.30em) so cell
-  height fully contains ascent + descent — inline span backgrounds
-  (selection, `bg-*`, focus-invert) then fit within one row instead of
-  bleeding into the next. Root leading and tracking size the grid
-  itself, decorations included (box-drawing glyphs don't stretch, so a
-  cell taller or wider than the glyph shows gaps in borders). On inner
+  cell metrics. Root leading and tracking size the grid itself,
+  decorations included (box-drawing and block glyphs stretch to the
+  row — specs/wide-characters.md — but not to a cell wider than the
+  glyph, so tracking shows gaps in horizontal rules). On inner
   elements `font-family`/`font-size` are **locked** (neutralized by the
   companion stylesheet); multi-size text is out of scope for the
   foreseeable future. An authored inner font size (Tailwind size
   utility or inline style — the lock hides it from computed style)
   triggers a one-time console warning.
+  - **Cell width** = one glyph advance **plus the root's
+    letter-spacing**, rounded up to a whole number of 1/64 px — the
+    layout unit Chromium and WebKit snap box widths to, so a row of
+    boxed glyphs (specs/wide-characters.md) ends where a row of text
+    does. The grid's letter-spacing carries the sub-unit remainder;
+    the light DOM keeps its natural advance and so never overflows an
+    element sized in cells.
+  - **Cell height** = the root's line box. The default `normal` picks
+    the font's natural leading (~1.15–1.30em) so cell height fully
+    contains ascent + descent — inline span backgrounds (selection,
+    `bg-*`, focus-invert) then fit within one row instead of bleeding
+    into the next.
+  - **Background gap**: where the line box exceeds the content area
+    (WebKit's SF Mono, 16.5px in 17; Chromium and Firefox round the
+    two together), an inline background stops short of the row's edges
+    and rows of `bg-*` show a hairline, so the host measures the
+    difference (`backgroundGap`) and the grid's spans carry half of it,
+    rounded up to a whole pixel (Chromium snaps an inline box's
+    fractional padding and drags its text a pixel with it), as vertical
+    padding, which an inline element paints without moving the line.
 - **Line height on the grid** (`leading-*`, any element the engine lays
   out): `rows per line = max(1, floor(line-height ÷ font-size))`, and
   `line gap = rows − 1` empty rows are inserted **between** wrapped lines
@@ -536,8 +557,9 @@ limits (`max-w-max`, `min-w-max`, `max-w-fit`, …). On `height` (and height
 limits) these keywords behave as `auto` / no constraint (content height is
 already intrinsic). Detection uses Typed OM;
 the Firefox pre-157 fallback scans the class list for `w-min`/`w-max`/
-`w-fit` (getComputedStyle would return the browser's used px width, which
-is not on the spacing scale).
+`w-fit` — and `size-*`, which sets both axes, in every form
+(getComputedStyle would return the browser's used px width, which is not
+on the spacing scale).
 
 The classic centering idiom works: `w-min mx-auto` (or `w-fit mx-auto`)
 shrinks the box, then block-flow auto margins center it. Per CSS, `mx-auto`

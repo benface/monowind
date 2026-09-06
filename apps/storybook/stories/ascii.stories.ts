@@ -2,6 +2,7 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import { asciiFont } from "@monowind/ascii";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { readyHost } from "./helpers.ts";
 
 /**
  * `<mono-ascii>` (@monowind/ascii): FIGlet/TOIlet banner text as grid
@@ -12,12 +13,6 @@ const meta: Meta = {
   title: "Components / mono-ascii",
 };
 export default meta;
-
-const readyHost = async (canvasElement: HTMLElement): Promise<HTMLElement> => {
-  const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-  return host;
-};
 
 export const Banner: StoryObj = {
   render: () => html`

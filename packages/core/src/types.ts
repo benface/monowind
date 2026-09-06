@@ -674,14 +674,22 @@ export interface MulticolLeafGeometry {
  * `letterSpacing` is the root's, kept so descendant tracking can be read
  * relative to it. */
 export interface CellMetrics {
+  /** The cell, a whole number of 1/64 px (see metrics.ts). */
   width: number;
   height: number;
   letterSpacing: number;
+  /** The grid's letter-spacing: the root's plus what rounds the
+   * measured advance to `width`. */
+  gridLetterSpacing?: number;
   /** How far a glyph's ink extends past the cell's line box, in px
    * (some fonts' ascent + descent exceed their `normal` line box).
    * WebKit breaks columns at ink bottoms, so multicol leaves get this
    * much extra native column height (see styles.css). */
   inkOverhang?: number;
+  /** How far the line box exceeds the font's content area, in px: the
+   * strip an inline span's background leaves bare at each row's edge.
+   * The grid's spans pad by half of it (the host's `--mw-bgpad`). */
+  backgroundGap?: number;
 }
 
 export function defaultCellStyle(): CellStyle {

@@ -38,10 +38,13 @@ interface PaintedRows {
 }
 const lastPaint = new WeakMap<HTMLElement, PaintedRows>();
 
+/** What the painter asks of the glyph cache. */
+export type PaintGlyphs = Pick<GlyphBoxes, "box" | "shift">;
+
 export interface PaintOptions {
   /** Defer structural rebuilds while a primary press is down. */
   holdStructural?: boolean;
-  glyphs?: GlyphBoxes;
+  glyphs?: PaintGlyphs;
   selection?: RenderOptions["selection"];
 }
 
@@ -83,7 +86,7 @@ export function paintGrid(
     const fragment = document.createDocumentFragment();
     const painted: PaintedRow[] = [];
     for (let y = 0; y < rows.length; y++) {
-      const { nodes, units } = rowNodes(rows[y]!, glyphs);
+      const { nodes, units } = rowNodes(rows[y]!, glyphs, y);
       for (const node of nodes) fragment.appendChild(node);
       const newline = y < rows.length - 1 ? document.createTextNode("\n") : null;
       if (newline) fragment.appendChild(newline);
@@ -104,7 +107,7 @@ export function paintGrid(
     const row = rows[y]!;
     const painted = previous.rows[y]!;
     if (rebuild.has(y)) {
-      const fresh = rowNodes(row, glyphs);
+      const fresh = rowNodes(row, glyphs, y);
       for (const node of fresh.nodes) target.insertBefore(node, painted.newline);
       for (const node of painted.nodes) node.remove();
       painted.nodes = fresh.nodes;
@@ -115,7 +118,7 @@ export function paintGrid(
     for (let i = 0; i < row.length; i++) {
       const segment = row[i]!;
       if (isBarePaint(segment) || sameSegment(segment, painted.segments[i]!)) continue;
-      applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs);
+      applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs, y);
     }
     painted.segments = row;
   }
@@ -127,7 +130,8 @@ export function paintGrid(
 /** A row's nodes: bare text for unpainted runs, a span per painted one. */
 function rowNodes(
   row: CellSegment[],
-  glyphs: GlyphBoxes | undefined,
+  glyphs: PaintGlyphs | undefined,
+  y: number,
 ): { nodes: (Text | HTMLElement)[]; units: number } {
   const nodes: (Text | HTMLElement)[] = [];
   let units = 0;
@@ -138,7 +142,7 @@ function rowNodes(
       continue;
     }
     const span = document.createElement("span");
-    applySegment(span, segment, glyphs);
+    applySegment(span, segment, glyphs, y);
     span.textContent = segment.text;
     nodes.push(span);
   }
@@ -156,19 +160,36 @@ export function paintedCell(target: HTMLElement, col: number, row: number): stri
 function applySegment(
   span: HTMLElement,
   segment: CellSegment,
-  glyphs: GlyphBoxes | undefined,
+  glyphs: PaintGlyphs | undefined,
+  row: number,
 ): void {
   span.style.cssText = "";
+  delete span.dataset.shade;
   applyCellPaint(segment, span.style);
   if (!segment.box) return;
-  const box = glyphs?.box(segment.text, segment.cells ?? 1, segment);
+  const cells = segment.cells ?? 1;
+  const box = glyphs?.box(segment.text, cells, segment);
   const style = span.style;
   style.display = "inline-block";
-  style.width = `calc(${segment.cells ?? 1} * var(--mw-cw, 1ch))`;
+  style.padding = "0";
+  style.width = `calc(${cells} * var(--mw-cw, 1ch))`;
+  style.height = "var(--mw-ch, 1lh)";
   style.overflow = "hidden";
   style.verticalAlign = "top";
   style.textAlign = "center";
   if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
+  // A tiling glyph pinned to the row's top by its own line box, the
+  // overshoot clipped.
+  if (box?.lineHeight !== undefined) style.lineHeight = `${box.lineHeight}px`;
+  // A shade's lattice carries on from the row above: the glyph held
+  // down by this row's phase, copies a period above and below filling
+  // the box (the shadow's `[data-shade]` rules).
+  if (box?.period && glyphs) {
+    span.dataset.shade = segment.text;
+    style.paddingTop = "var(--mw-phase)";
+    style.setProperty("--mw-phase", `${glyphs.shift(box, row)}px`);
+    style.setProperty("--mw-period", `${box.period}px`);
+  }
 }
 
 function sameSegment(a: CellSegment, b: CellSegment): boolean {

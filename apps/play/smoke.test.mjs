@@ -38,6 +38,20 @@ const asciiRendered = await page.evaluate(() => {
   return banner?.textContent === "monowind" && !(grid?.textContent ?? "").includes("monowind");
 });
 
+// The sample's <mono-qr> renders through the qr CDN bundle: its
+// transcript holds block rows, and the value stays in the light DOM.
+const qrRendered = await page.evaluate(() => {
+  const doc = document.getElementById("preview")?.contentDocument;
+  const grid = doc?.querySelector("mono-wind")?.shadowRoot?.getElementById("grid");
+  const code = doc?.querySelector("mono-qr");
+  const rows = code?.shadowRoot?.getElementById("mirror")?.textContent ?? "";
+  return (
+    code?.textContent === "benface.com" &&
+    rows.includes("▀") &&
+    !(grid?.textContent ?? "").includes("benface")
+  );
+});
+
 // Live edit: replace the source and expect the grid to follow.
 await page.fill("#source", '<div class="border border-cyan-400 px-1">EDITED</div>');
 await page.waitForFunction(() => {
@@ -310,6 +324,7 @@ await browser.close();
 const result = {
   sampleRendered,
   asciiRendered,
+  qrRendered,
   fontLazyLoaded,
   themed,
   themeQueryPersisted,
@@ -338,6 +353,7 @@ const result = {
 if (
   !sampleRendered ||
   !asciiRendered ||
+  !qrRendered ||
   !fontLazyLoaded ||
   !themed ||
   !themeQueryPersisted ||

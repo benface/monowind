@@ -1,5 +1,5 @@
 /**
- * Copy the built CDN and sort bundles next to index.html — a plain
+ * Copy the built CDN, sort, and companion bundles next to index.html — a plain
  * relative script URL can't reach outside the served directory, and this
  * also mirrors how the files are consumed in the real world (URLs, not
  * monorepo paths).
@@ -12,11 +12,16 @@ for (const file of ["cdn.js", "cdn.js.map", "sort.js", "sort.js.map"]) {
     new URL(`./${file}`, import.meta.url),
   );
 }
-for (const file of ["cdn.js", "cdn.js.map"]) {
-  copyFileSync(
-    new URL(`../../packages/ascii/dist/${file}`, import.meta.url),
-    new URL(`./ascii-${file}`, import.meta.url),
-  );
+for (const [dir, prefix] of [
+  ["ascii", "ascii-"],
+  ["qr-code", "qr-"],
+]) {
+  for (const file of ["cdn.js", "cdn.js.map"]) {
+    copyFileSync(
+      new URL(`../../packages/${dir}/dist/${file}`, import.meta.url),
+      new URL(`./${prefix}${file}`, import.meta.url),
+    );
+  }
 }
 // Theme css + their woff fonts (class-scoped; the switcher toggles
 // classes on the preview host).

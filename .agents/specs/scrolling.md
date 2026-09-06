@@ -135,6 +135,10 @@ truth.
   cell short, and a paint from it flickers against the restored
   position), and writes it back AFTER the unmask — bottom-stick
   applies there too. Restoring any earlier gets wiped by the clamp.
+  Only a position the clamp moved is written back, and an end pin
+  only when the pass changed the max: any write cancels a native
+  scroll in flight — Firefox's smooth keyboard scroll, under a
+  relayout from any source that lands mid-scroll.
 - **`scrollbar-width` and `scrollbar-color` are honored.**
   `scrollbar-width: none` suppresses gutter and bar entirely (the
   full-width opt-out; scrolling still works); `thin` and `auto` both
@@ -277,14 +281,20 @@ none` on EVERY element — a one-time pristine-probe detects that and
   relayout reflows the light DOM under the finger, which abandons the
   pan to the page (reproduced on the iOS Simulator). `pointerup` is
   the release: its relayout picks up the tap's outcome.
-- **`scrollend`**: used where present; where missing (older Safari), a
-  debounced settle timer (160ms after the last `scroll` event) snaps
-  instead.
+- **`scrollend`**: settles where it comes; a debounced settle timer
+  (160ms after the last `scroll` event) snaps where none can come —
+  an engine without `scrollend` (older Safari), or a scroll within
+  500ms of a key press (WebKit fires none after a keyboard scroll).
 - **Gutter corner**: blank.
 - **Keyboard scrolling**: nothing synthesized in v1 — the engine never
   adds focusability. A container the author makes focusable
   (`tabindex`) scrolls natively with keys; browsers' default
-  nearest-scrollable keyboard heuristics cover text mode.
+  nearest-scrollable keyboard heuristics cover text mode. A key press
+  relayouts only for Enter and Space (the `:active` edges), and Space
+  on a focused scroll container pages it, so it passes too: a
+  scrolling key's relayout would cut short the smooth scroll it starts
+  in Firefox, and every other keyboard outcome arrives as its own
+  event.
 - **CSS scroll-snap**: considered for the cell-quantization settle and
   rejected — snap positions come from snap-target BOXES
   (`scroll-snap-align` on descendants), and the scrolled content has

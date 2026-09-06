@@ -1,0 +1,70 @@
+{
+  "name": "@monowind/qr-code",
+  "version": "0.2.9",
+  "description": "QR codes on the monowind grid: the <mono-qr> element",
+  "keywords": [
+    "monowind",
+    "qr",
+    "qr-code",
+    "tui"
+  ],
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/qr-code"
+  },
+  "style": "./src/styles.css",
+  "files": [
+    "dist",
+    "src/*.css"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "./src/index.ts",
+    "./dist/index.js"
+  ],
+  "exports": {
+    ".": {
+      "style": "./src/styles.css",
+      "typecheck": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles.css": "./src/styles.css",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "style": "./src/styles.css",
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./styles.css": "./src/styles.css",
+      "./package.json": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "vite build && vite build -c vite.cdn.config.ts && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "qr": "^0.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "happy-dom": "^20.14.0",
+    "monowind": "workspace:^",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "monowind": "workspace:^"
+  }
+}

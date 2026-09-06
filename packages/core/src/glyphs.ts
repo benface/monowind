@@ -34,6 +34,13 @@ export interface GlyphTable {
   /** Scrollbar gutter ink (specs/scrolling.md); defaults `░` / `█`. */
   scrollTrack?: string;
   scrollThumb?: string;
+  /** QR modules (specs/qr-code.md): a full cell, its upper half, its
+   * lower half — `█ ▀ ▄` by default. A set naming `qrFull` without
+   * both halves has no half blocks: its modules are full cells, two
+   * per module at the usual cell. */
+  qrFull?: string;
+  qrUpper?: string;
+  qrLower?: string;
 }
 
 export type BorderGlyphSet = Partial<Record<BorderStyle, GlyphTable>>;

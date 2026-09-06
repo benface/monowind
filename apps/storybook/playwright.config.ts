@@ -14,9 +14,19 @@ export default defineConfig({
     { name: "chromium" },
     // Selection painting differs per engine (Safari draws selection ink
     // through text-fill-color) — the selection spec runs in all three,
-    // each with its own goldens.
-    { name: "webkit", use: { browserName: "webkit" }, testMatch: /selection\.spec\.ts/ },
-    { name: "firefox", use: { browserName: "firefox" }, testMatch: /selection\.spec\.ts/ },
+    // each with its own goldens. The QR decode and keyboard specs run
+    // in all three too, goldenless: glyph rendering and scroll physics
+    // differ per engine.
+    {
+      name: "webkit",
+      use: { browserName: "webkit" },
+      testMatch: /(selection|qr|keyboard)\.spec\.ts/,
+    },
+    {
+      name: "firefox",
+      use: { browserName: "firefox" },
+      testMatch: /(selection|qr|keyboard)\.spec\.ts/,
+    },
   ],
   webServer: {
     command: "node ../../scripts/serve-static.mjs storybook-static 6007",

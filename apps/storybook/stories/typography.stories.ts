@@ -401,3 +401,83 @@ export const WideCharacters: StoryObj = {
     expectGridOnItsCells(host);
   },
 };
+
+/** Tiling glyphs fit their row in any font (specs/wide-characters.md):
+ * a `leading-6` root makes the row taller than the font's `█` and `│`,
+ * so every block and box-drawing glyph is boxed, scaled past the row,
+ * and pinned to it — borders, the scrollbar's thumb, and a QR code's
+ * half blocks included, the shades (the track) at the scale that lands
+ * their lattice on whole device pixels and phased so it runs on from
+ * row to row; a `bg-*` reaches the row's edges too. */
+export const TilingGlyphs: StoryObj = {
+  render: () => html`
+    <mono-wind class="leading-6">
+      <div class="flex items-start gap-2">
+        <div data-test="blocks" class="w-12">█████ ▀▀▀▀▀ ▄▄▄▄▄ ░░░░░ ▒▒▒▒▒ ▓▓▓▓▓ ▌▌▐▐ ▖▗▘▝</div>
+        <div class="h-5 w-20 overflow-y-auto border border-neutral-500 px-1">
+          A scroll container's bar is block glyphs too: the track and the thumb tile the gutter
+          without a gap between rows, however tall the row.
+        </div>
+        <div class="border border-double border-cyan-400 px-1">
+          <div data-test="filled" class="bg-neutral-700 px-1">a filled row</div>
+          <div class="mt-1">and a double border</div>
+        </div>
+        <mono-qr data-test="code">12345</mono-qr>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    await document.fonts.ready;
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const gridRect = grid.getBoundingClientRect();
+    // The cell is a whole number of layout units, so a row of boxes ends
+    // where a row of text does.
+    expect((parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw")) * 64) % 1).toBe(0);
+    // Every tiling glyph is a box a row tall on its row, judged in bulk:
+    // the Interactions addon instruments every `expect`, and hundreds
+    // freeze the panel.
+    const spans = Array.from(grid.querySelectorAll("span"));
+    const boxes = spans.filter((span) => /^[\u2500-\u259F]$/.test(span.textContent ?? ""));
+    expect(boxes.length).toBeGreaterThan(60);
+    expect(boxes.some((box) => /^[\u2500-\u257F]$/.test(box.textContent!))).toBe(true);
+    const unfit = boxes.filter((box) => {
+      const rect = box.getBoundingClientRect();
+      const rowOffset = ((rect.top - gridRect.top) / cellHeight) % 1;
+      return (
+        !(parseFloat(box.style.fontSize) > 100) ||
+        !box.style.lineHeight.endsWith("px") ||
+        Math.abs(rect.height - cellHeight) > 0.5 ||
+        Math.min(rowOffset, 1 - rowOffset) > 0.05
+      );
+    });
+    expect(unfit.map((box) => `${box.textContent} [${box.getAttribute("style")}]`)).toEqual([]);
+    // A shade scales past the blocks, to whole device pixels of lattice,
+    // and its box carries the lattice's phase from row to row.
+    const block = parseFloat(boxes.find((box) => box.textContent === "█")!.style.fontSize);
+    const shades = boxes.filter((box) => /^[\u2591-\u2593]$/.test(box.textContent!));
+    expect(shades.length).toBeGreaterThan(3);
+    const unphased = shades.filter((box) => {
+      const period = parseFloat(box.style.getPropertyValue("--mw-period"));
+      const phase = parseFloat(box.style.getPropertyValue("--mw-phase"));
+      return (
+        !(parseFloat(box.style.fontSize) >= block) ||
+        box.dataset.shade !== box.textContent ||
+        !(period > 0) ||
+        !(phase >= 0 && phase < period) ||
+        Math.abs(parseFloat(getComputedStyle(box).paddingTop) - phase) > 0.01
+      );
+    });
+    expect(unphased.map((box) => `${box.textContent} [${box.getAttribute("style")}]`)).toEqual([]);
+    const rows = grid.textContent!.split("\n").length;
+    expect(gridRect.height).toBeCloseTo(rows * cellHeight, 0);
+    // A painted span pads by the host's measured half-gap.
+    const filled = spans.find((span) => span.textContent!.includes("a filled row"))!;
+    expect(parseFloat(getComputedStyle(filled).paddingTop)).toBeCloseTo(
+      parseFloat(host.style.getPropertyValue("--mw-bgpad")),
+      3,
+    );
+  },
+};

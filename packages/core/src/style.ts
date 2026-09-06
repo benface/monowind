@@ -898,7 +898,8 @@ function readSize(
   // Class scan, every engine: computed values (Typed OM included)
   // resolve viewport units to plain px, indistinguishable from
   // spacing-scale lengths.
-  const viewportPx = viewportUtilityPx(classAttr, key === "width" ? "w" : "h");
+  const axis = key === "width" ? "w" : "h";
+  const viewportPx = viewportUtilityPx(classAttr, axis) ?? viewportUtilityPx(classAttr, "size");
   if (viewportPx !== null) {
     // Confirm the utility is ACTIVE against the resolved value — an
     // inactive variant (md:h-screen below md) or an overriding inline
@@ -951,21 +952,19 @@ function readSize(
   // Intrinsic-keyword utilities (`w-min`…) must be caught by class scan here:
   // getComputedStyle would hand back the browser's *used* px width, which is
   // measured content px — NOT on the spacing scale — and would convert to a
-  // nonsense cell count.
-  const axis = key === "width" ? "w" : "h";
-  if (new RegExp(`(?:^|[\\s:.[!])${axis}-min\\b`).test(classAttr)) return { kind: "min-content" };
-  if (new RegExp(`(?:^|[\\s:.[!])${axis}-max\\b`).test(classAttr)) return { kind: "max-content" };
-  if (new RegExp(`(?:^|[\\s:.[!])${axis}-fit\\b`).test(classAttr)) return { kind: "fit-content" };
+  // nonsense cell count. `size-*` sets both axes; the lead-in admits
+  // variants (`md:w-full`, `hover:w-0`, `[&_span]:w-2`).
+  const stem = `(?:^|[\\s:.[!])(?:${axis}|size)-`;
+  if (new RegExp(`${stem}min\\b`).test(classAttr)) return { kind: "min-content" };
+  if (new RegExp(`${stem}max\\b`).test(classAttr)) return { kind: "max-content" };
+  if (new RegExp(`${stem}fit\\b`).test(classAttr)) return { kind: "fit-content" };
   // Percent utilities must be caught here too: their used px depends on
   // the (pre-neutralization) native layout — badly wrong inside tables.
-  const fraction = new RegExp(`(?:^|[\\s:.[!])${axis}-(\\d+)/(\\d+)(?![\\w./])`).exec(classAttr);
+  const fraction = new RegExp(`${stem}(\\d+)/(\\d+)(?![\\w./])`).exec(classAttr);
   if (fraction)
     return { kind: "percent", value: (100 * Number(fraction[1])) / Number(fraction[2]) };
-  if (new RegExp(`(?:^|[\\s:.[!])${axis}-full(?![\\w-])`).test(classAttr))
-    return { kind: "percent", value: 100 };
-  const arbitraryPercent = new RegExp(`(?:^|[\\s:.[!])${axis}-\\[(\\d+(?:\\.\\d+)?)%\\]`).exec(
-    classAttr,
-  );
+  if (new RegExp(`${stem}full(?![\\w-])`).test(classAttr)) return { kind: "percent", value: 100 };
+  const arbitraryPercent = new RegExp(`${stem}\\[(\\d+(?:\\.\\d+)?)%\\]`).exec(classAttr);
   if (arbitraryPercent) return { kind: "percent", value: Number(arbitraryPercent[1]) };
   // Numeric spacing-scale utility (`h-7`, `w-0.5`, …): map the class
   // directly to cells. Match the Tailwind spacing scale (N * 0.25rem
@@ -973,11 +972,9 @@ function readSize(
   // for most elements, but critical for <td>/<th> in Firefox where
   // `cs.height` returns the USED height from the table layout
   // (including rowspan effects), not the authored value.
-  const numeric = new RegExp(`(?:^|[\\s:.[!])${axis}-(\\d+(?:\\.\\d+)?)(?![\\w-/])`).exec(
-    classAttr,
-  );
+  const numeric = new RegExp(`${stem}(\\d+(?:\\.\\d+)?)(?![\\w-/])`).exec(classAttr);
   if (numeric) return { kind: "cells", value: roundHalfAwayFromZero(Number(numeric[1])) };
-  if (!hasSizingUtility(classAttr, axis)) return { kind: "auto" };
+  if (!new RegExp(stem).test(classAttr)) return { kind: "auto" };
   if (fallback === "auto") return { kind: "auto" };
   if (fallback.endsWith("%")) return { kind: "percent", value: parseFloat(fallback) };
   const px = parseFloat(fallback);
@@ -1524,17 +1521,6 @@ function parseGridAutoFlow(value: string): GridAutoFlow {
     direction: value.includes("column") ? "column" : "row",
     dense: value.includes("dense"),
   };
-}
-
-/**
- * Detect whether an element has an authored `width` / `height` utility (not
- * `min-*` or `max-*`, which set separate properties). Handles variants
- * (`md:w-full`, `hover:w-0`) and arbitrary variant selectors (`[&_span]:w-2`).
- * Used only when Typed OM is unavailable.
- */
-function hasSizingUtility(classAttr: string, axis: "w" | "h"): boolean {
-  const pattern = axis === "w" ? /(?:^|[\s:.[!])w-/ : /(?:^|[\s:.[!])h-/;
-  return pattern.test(classAttr);
 }
 
 function readPadding(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<CellLength> {

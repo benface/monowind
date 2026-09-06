@@ -58,6 +58,29 @@ export function release(): void {
   window.dispatchEvent(new PointerEvent("pointerup", { pointerType: "mouse", isPrimary: true }));
 }
 
+/** A primary-button drag to `at`, dispatched on `target`. */
+export function dragTo(target: Element, at: Point): void {
+  target.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      composed: true,
+      clientX: at.x,
+      clientY: at.y,
+      pointerType: "mouse",
+      isPrimary: true,
+      buttons: 1,
+    }),
+  );
+}
+
+/** The story's host once laid out and its fonts loaded. */
+export async function readyHost(canvasElement: HTMLElement): Promise<HTMLElement> {
+  const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
+  await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+  await document.fonts.ready;
+  return host;
+}
+
 async function textLeaves(host: Element): Promise<HTMLElement[]> {
   // Generous timeout: three browser instances share the CPU (worse on CI
   // runners), so a rAF-driven relayout can easily outrun waitFor's
@@ -232,8 +255,9 @@ export function expectGridOnItsCells(host: HTMLElement): void {
       let rect: DOMRect;
       if (node instanceof Element) {
         rect = node.getBoundingClientRect();
-        expect(Math.abs(rect.height - cellHeight)).toBeLessThan(1);
-        expect(Math.abs(rect.top - (gridRect.top + y * cellHeight))).toBeLessThan(1);
+        const which = `row ${y} "${node.textContent}" [${node.getAttribute("style")}]`;
+        expect(Math.abs(rect.height - cellHeight), which).toBeLessThan(1);
+        expect(Math.abs(rect.top - (gridRect.top + y * cellHeight)), which).toBeLessThan(1);
       } else {
         const range = document.createRange();
         range.selectNodeContents(node);

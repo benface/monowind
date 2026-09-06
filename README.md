@@ -38,8 +38,8 @@ forms, and accessibility semantics stay fully intact.
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and
 > CSS transitions animate the grid (backgrounds synthesized by the
 > engine), hover/active states work on any element without breaking
-> grid selection, and `<mono-ascii>` renders FIGlet banner text —
-> see the sections below. Design docs
+> grid selection, `<mono-ascii>` renders FIGlet banner text, and
+> `<mono-qr>` scannable QR codes — see the sections below. Design docs
 > live in [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
@@ -86,6 +86,23 @@ per-module imports (or `registerAsciiFont` with your own
 44 clearly-licensed fonts ship with the package; see
 [packages/ascii/README.md](packages/ascii/README.md) for setup per
 integration and the full font list.
+
+## QR codes
+
+`@monowind/qr-code` adds `<mono-qr>`: the element's text as a
+scannable QR code packed into the grid's cells — half blocks where a
+cell is twice as tall as wide, so a version-1 code is 21 × 11 — with
+the value kept in the light DOM for screen readers and a drag over
+the code selecting characters that paste as a working code. Padding
+is its quiet zone; `text-*` and `bg-*` set its colors; glyph sets
+restyle its modules.
+
+```html
+<mono-qr class="mx-auto px-2 py-1">https://play.monowind.benface.com</mono-qr>
+```
+
+See [packages/qr-code/README.md](packages/qr-code/README.md) for the
+attributes.
 
 ## Themes
 

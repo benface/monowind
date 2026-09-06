@@ -1,5 +1,5 @@
 export { MonoWindElement, defineMonoWind } from "./element.ts";
-export { registerBorderGlyphs } from "./glyphs.ts";
+export { glyphSetFor, registerBorderGlyphs } from "./glyphs.ts";
 export type { BorderGlyphSet, GlyphTable } from "./glyphs.ts";
 export { invalidateLeaves, registerLeafRenderer } from "./leaf.ts";
 export type { LeafContent, LeafPaint, LeafRegistration, LeafRun } from "./leaf.ts";

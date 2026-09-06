@@ -11,6 +11,7 @@
  * - the engine, with <mono-wind> registered immediately.
  */
 import "@tailwindcss/browser";
+import { glyphSetFor } from "./glyphs.ts";
 import { invalidateLeaves, registerLeafRenderer } from "./leaf.ts";
 import { defineMonoWind } from "./element.ts";
 import utilitiesCss from "./utilities.css?inline";
@@ -47,5 +48,6 @@ Object.assign(globalThis, {
     version: __MONOWIND_VERSION__,
     registerLeafRenderer,
     invalidateLeaves,
+    glyphSetFor,
   },
 });

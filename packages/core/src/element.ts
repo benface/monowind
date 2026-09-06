@@ -61,6 +61,17 @@ const SHADOW_TEMPLATE = `
    * inherits across the shadow boundary; currentColor stays a keyword
    * at computed time, so every run keeps its own color. */
   #grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; -webkit-text-fill-color: currentColor; }
+  /* A background reaches the row's edges: the host's measured half-gap
+   * between the line box and the font's content area, which an inline
+   * span paints without moving the line (specs/cell-model.md). */
+  #grid span { padding-block: var(--mw-bgpad, 0px); }
+  /* A shade's lattice runs on from row to row (specs/wide-characters.md):
+   * the box holds its glyph down by the row's phase, with copies a
+   * period above and below. */
+  #grid span[data-shade] { position: relative; box-sizing: border-box; }
+  #grid span[data-shade]::before, #grid span[data-shade]::after { content: attr(data-shade); position: absolute; inset-inline: 0; }
+  #grid span[data-shade]::before { top: calc(var(--mw-phase) - var(--mw-period)); }
+  #grid span[data-shade]::after { top: calc(var(--mw-phase) + var(--mw-period)); }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
   /* A live semantic selection (specs/semantic-selection.md) lifts the
@@ -125,7 +136,8 @@ const DYNAMIC_RELAYOUT_EVENTS = [
   "pointerover",
   "pointerleave",
   // `:active` styles (`active:opacity-50`) need a repaint on both edges
-  // of a press — pointer and keyboard (Space/Enter activation).
+  // of a press — pointer and keyboard (Space/Enter, filtered in
+  // #scheduleDynamicRelayout).
   "pointerdown",
   "pointerup",
   "pointercancel",
@@ -164,8 +176,12 @@ const INERTIA_TICKS = 8;
  * key fires scrollend after every step's animation, and an immediate
  * (instant) settle would cut the next step's animation short. */
 const SETTLE_QUIESCE_MS = 100;
-/** Settle debounce where `scrollend` is missing (older Safari). */
+/** Settle debounce after the last `scroll` event where no `scrollend`
+ * comes: older Safari has none, WebKit fires none after a keyboard
+ * scroll. */
 const SETTLE_FALLBACK_MS = 160;
+/** A scroll this soon after a key press is the key's. */
+const KEY_SCROLL_MS = 500;
 
 // Import-safe outside the browser (SSR, Node scripts using renderPlainText):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
@@ -260,7 +276,11 @@ export class MonoWindElement extends HTMLElementBase {
   /** Whether the last selectionchange found a range in this host's
    * light DOM — the next one must repaint even when it left. */
   #paintedSelection = false;
-  #glyphs = new GlyphBoxes();
+  /** When the last key went down (see #onScroll). */
+  #lastKeyAt = 0;
+  #glyphs = new GlyphBoxes((glyph, scale, lineHeight) =>
+    this.#baselineOf(glyph, scale, lineHeight),
+  );
   /** An engine-driven grid drag, anchored at a flat text offset: the
    * fallback when a plain mousedown lands on a phantom light target
    * (see INTERACTIVE), where no native selection can start. */
@@ -319,6 +339,22 @@ export class MonoWindElement extends HTMLElementBase {
       "white-space:pre!important;overflow-wrap:normal!important;" +
       "padding:0!important;margin:0!important;border:0!important;";
     this.#probe.textContent = "M".repeat(100);
+  }
+
+  /** The baseline of the box the grid would paint for `glyph` at that
+   * scale and line-height: a throwaway box in the grid with an empty
+   * inline-block at its baseline, both unpadded (specs/wide-characters.md). */
+  #baselineOf(glyph: string, scale: number, lineHeight: number): number {
+    const box = document.createElement("span");
+    box.style.cssText = `display:inline-block;vertical-align:top;overflow:hidden;padding:0;height:${this.#cellMetrics?.height ?? 0}px;line-height:${lineHeight}px;font-size:${scale * 100}%`;
+    box.textContent = glyph;
+    const mark = document.createElement("span");
+    mark.style.cssText = "display:inline-block;width:0;height:0;padding:0";
+    box.appendChild(mark);
+    this.#grid.appendChild(box);
+    const baseline = mark.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    box.remove();
+    return baseline;
   }
 
   connectedCallback(): void {
@@ -550,6 +586,8 @@ export class MonoWindElement extends HTMLElementBase {
       snapshot.set(el, {
         top: el.scrollTop,
         left: el.scrollLeft,
+        maxTop: el.scrollHeight - el.clientHeight,
+        maxLeft: el.scrollWidth - el.clientWidth,
         x,
         y,
         pinX: maxX > 0 && x >= maxX,
@@ -559,22 +597,29 @@ export class MonoWindElement extends HTMLElementBase {
     return snapshot;
   }
 
-  /** Write the snapshot back after the unmask (pins to the native
-   * ceiling — the new max). Firefox and WebKit hold post-reflow scroll
-   * clamping in a lazy state where a write that looks like the
-   * pre-clamp value coalesces with the pending clamp into "no
-   * change" — no scroll event, and the container desyncs. Reading
-   * FIRST commits the clamp, so the write is a real change (same-value
-   * writes are no-ops). */
+  /** Write back, after the unmask, a position the clamp moved and an
+   * end pin whose native max the pass changed. The reads commit
+   * Firefox's and WebKit's lazy post-reflow clamp before the compare
+   * (a write that looks like the pre-clamp value would coalesce with
+   * it into no change), and only a real change is written: any write
+   * cancels a native scroll in flight. */
   #restoreScrollPositions(snapshot: ScrollSnapshot): void {
     for (const node of this.#scrollNodes) {
       const el = node.source as HTMLElement;
       const entry = snapshot.get(el);
       if (!entry) continue;
-      void el.scrollTop;
-      void el.scrollLeft;
-      el.scrollTop = entry.pinY ? el.scrollHeight : entry.top;
-      el.scrollLeft = entry.pinX ? el.scrollWidth : entry.left;
+      const top = el.scrollTop;
+      const left = el.scrollLeft;
+      if (entry.pinY && el.scrollHeight - el.clientHeight !== entry.maxTop) {
+        el.scrollTop = el.scrollHeight;
+      } else if (top !== entry.top) {
+        el.scrollTop = entry.top;
+      }
+      if (entry.pinX && el.scrollWidth - el.clientWidth !== entry.maxLeft) {
+        el.scrollLeft = el.scrollWidth;
+      } else if (left !== entry.left) {
+        el.scrollLeft = entry.left;
+      }
     }
   }
 
@@ -594,10 +639,14 @@ export class MonoWindElement extends HTMLElementBase {
     this.#schedulePaint();
     // Routed wheel ticks keep their own quiesce timer (#onWheel).
     if (Date.now() - (this.#routedWheelAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
-    // Still scrolling: a pending settle waits; without scrollend
-    // (older Safari) the pause after the last event settles instead.
-    clearTimeout(this.#settleTimers.get(target));
-    if (!("onscrollend" in window)) this.#settleAfter(target, SETTLE_FALLBACK_MS);
+    // Still scrolling: a pending settle waits for scrollend — or, where
+    // none comes (older Safari; WebKit after a key), for the pause
+    // after the last event.
+    if (!("onscrollend" in window) || Date.now() - this.#lastKeyAt < KEY_SCROLL_MS) {
+      this.#settleAfter(target, SETTLE_FALLBACK_MS);
+    } else {
+      clearTimeout(this.#settleTimers.get(target));
+    }
   };
 
   #onScrollEnd = (event: Event): void => {
@@ -975,6 +1024,7 @@ export class MonoWindElement extends HTMLElementBase {
    * beyond leaves the key native (no wrap). */
   #onKeyDown = (event: Event): void => {
     const e = event as KeyboardEvent;
+    this.#lastKeyAt = Date.now();
     if (this.getAttribute("focus") !== "arrows") return;
     const direction = directionOf(e.key);
     if (!direction || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -1494,6 +1544,16 @@ export class MonoWindElement extends HTMLElementBase {
     // to the page. Touch has no hover to reflect, and the release
     // relayout picks up the tap's outcome.
     if (isTouchInProgress(event)) return;
+    // Only an activating key changes what the grid shows (`:active`);
+    // every other keyboard outcome arrives as its own event — input,
+    // change, focus, scroll — and a relayout under a scrolling key
+    // cuts short the smooth scroll it starts (Firefox). Space on a
+    // focused scroll container pages it.
+    if (event.type === "keydown" || event.type === "keyup") {
+      const { key, target } = event as KeyboardEvent;
+      const scrolls = target instanceof Element && target.hasAttribute("data-mw-scroll");
+      if (key !== "Enter" && (key !== " " || scrolls)) return;
+    }
     // Focus moving onto or off a <select>: relayout NOW, while still
     // inside the event dispatch — the click's default action opens the
     // picker right after, and once it's open relayouts are held (see
@@ -1664,15 +1724,21 @@ export class MonoWindElement extends HTMLElementBase {
         previous.width !== metrics.width ||
         previous.height !== metrics.height ||
         previous.letterSpacing !== metrics.letterSpacing ||
-        previous.inkOverhang !== metrics.inkOverhang
+        previous.gridLetterSpacing !== metrics.gridLetterSpacing ||
+        previous.inkOverhang !== metrics.inkOverhang ||
+        previous.backgroundGap !== metrics.backgroundGap
       ) {
         this.style.setProperty("--mw-cw", `${metrics.width}px`);
         this.style.setProperty("--mw-ch", `${metrics.height}px`);
         this.style.setProperty("--mw-rls", `${metrics.letterSpacing}px`);
         this.style.setProperty("--mw-ink", `${metrics.inkOverhang ?? 0}px`);
+        // A whole pixel: Chromium snaps an inline box's fractional padding
+        // and drags its text a pixel with it.
+        this.style.setProperty("--mw-bgpad", `${Math.ceil((metrics.backgroundGap ?? 0) / 2)}px`);
         // Rows cannot grow (specs/wide-characters.md): a fallback font's
         // taller line box stays inside the measured cell.
         this.#grid.style.lineHeight = `${metrics.height}px`;
+        this.#grid.style.letterSpacing = `${metrics.gridLetterSpacing ?? metrics.letterSpacing}px`;
       }
       this.#cellMetrics = metrics;
       const gridStyle = getComputedStyle(this.#grid);
@@ -1683,7 +1749,11 @@ export class MonoWindElement extends HTMLElementBase {
           size: gridStyle.fontSize,
           family: gridStyle.fontFamily,
         },
-        metrics,
+        {
+          width: metrics.width,
+          height: metrics.height,
+          letterSpacing: metrics.gridLetterSpacing ?? metrics.letterSpacing,
+        },
       );
 
       // (2) Available cells from the host's CONTENT box — authored padding
@@ -1824,10 +1894,20 @@ declare global {
 }
 
 /** Pre-layout native container positions, by element (specs/scrolling.md):
- * px, the cells they meant under the OLD range, and end pins. */
+ * px and the native max, the cells they meant under the OLD range, and
+ * end pins. */
 type ScrollSnapshot = Map<
   HTMLElement,
-  { top: number; left: number; x: number; y: number; pinX: boolean; pinY: boolean }
+  {
+    top: number;
+    left: number;
+    maxTop: number;
+    maxLeft: number;
+    x: number;
+    y: number;
+    pinX: boolean;
+    pinY: boolean;
+  }
 >;
 
 interface WheelLatch {

@@ -1,0 +1,14 @@
+/* @monowind/qr-code companion stylesheet — import next to monowind's:
+ *   @import "tailwindcss";
+ *   @import "monowind";
+ *   @import "@monowind/qr-code";
+ *
+ * In `base` so themes and utilities override everything here. */
+
+@layer base {
+  /* Custom elements default to inline; the engine's leaf handling
+   * gives the block replaced-element sizing (auto width = intrinsic). */
+  mono-qr {
+    display: block;
+  }
+}

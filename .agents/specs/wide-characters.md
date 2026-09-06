@@ -71,6 +71,12 @@ machine (★ is 1.00 in Menlo, 1.3 in JetBrains Mono on macOS, 1.6 in
 the sweep; an emoji is exactly two cells in the sweep's Chromium): tests
 assert cell alignment, never which clusters got boxed.
 
+Block probe (2026-09-05, `scratchpad/fill.mjs`): at 14px in a 16px
+row, Menlo's `█` measures 14.27px tall (SF Mono 14px in 17px; JetBrains
+Mono 19px in 18px), its `│` 17.84px; a span scaled 16 ÷ 14.27 with
+`line-height` set so the ink starts at the row's top covers the row in
+all three engines within a pixel, the halves meeting at the middle.
+
 Boxing probe (2026-09-05, `verify/box.mjs`): an inline-block span of
 `cells × cell width`, `vertical-align: top`, `line-height` pinned to the
 cell, `overflow: hidden`, with a scaled `font-size`, inside a `<pre>`
@@ -145,6 +151,49 @@ copy event sees it in all three engines.
   adapter's: the paint model takes a `boxed(cluster)` predicate from
   the caller the way it takes the selection, and the Node renderer
   passes none.
+- **Tiling glyphs fit their row.** Block Elements (U+2580–U+259F:
+  `█ ▀ ▄`, the quadrants) and Box Drawing (U+2500–U+257F) are the
+  glyphs meant to abut, and a font's line box need not match them:
+  Menlo and SF Mono draw `█` 14.3px and 14px tall in the 16px and 17px
+  rows their `line-height: normal` makes, so every row of blocks shows
+  a gap (the scrollbar's track and thumb included); Monaco's `│` is
+  11.9px in a 19px row, and Firefox's rows for Courier New, Andale
+  Mono, and PT Mono are a pixel taller than their `│`, so their
+  vertical borders gap; and a `leading-*` on the root makes the row
+  taller than any font's glyph. The adapter measures each range's
+  reference glyph once per grid font — `█` for blocks, `│` for box
+  drawing; when the font draws it short of the row, or off its cell
+  width, every glyph of the range is boxed with the one transform: a
+  `font-size` scaled so the glyph is a pixel and a half taller than
+  the row on each side, and a `line-height` on the box that puts its
+  top that far above the row — a line box places the baseline at
+  half-leading plus the font's ascent, both from the same `measureText`
+  call, and the host then measures the baseline the engine actually
+  gives that box (an empty inline-block's top) and corrects the
+  line-height by twice the error, since engines round a scaled font's
+  metrics their own way — the box a row tall and clipping the
+  overshoot (half a pixel seamed in Chromium; a whole one left
+  Firefox's top row half bare). One transform per range is what keeps a
+  junction's strokes on its neighbors': box-drawing strokes sit at the
+  glyph's center and edges, which a uniform scale around the box's
+  center preserves; the cost is strokes as much bolder as the row is
+  taller than the glyph. The shades `░ ▒ ▓` are patterns, periodic
+  by design: at an arbitrary scale a lattice resamples into moiré
+  (Chromium's scrollbar tracks, twice over). A shade takes the same
+  fit with its scale raised to the nearest factor that makes its
+  period a whole number of device pixels, so every dot rasterizes
+  alike — the period read off a rendering, the first peak of the
+  alpha's autocorrelation down the glyph's most patterned column. Its
+  box then carries the lattice on from row to row: the glyph held down
+  by the row's phase (what remains of the period after the rows above
+  it), with a copy a period above and below, drawn by the box's
+  pseudo-elements, filling what the shift uncovers. The box clips the
+  rest, and a zoom, which moves the device pixel ratio, refits. The
+  halves still meet at the row's middle, and a fallback font's
+  double-width block clips to its cell instead of shrinking to half a
+  row. A glyph taller than the row is left alone: it tiles already,
+  overlapping harmlessly (JetBrains Mono's `█`, 19px in an 18px row;
+  Menlo's `│`, 17.8px in 16).
 - **Rows cannot grow.** The grid's `line-height` is pinned to the
   measured cell height so a fallback font's taller line box (emoji
   fonts, some CJK fonts) cannot push the rows below.
@@ -252,14 +301,21 @@ Map<leaf, { start, end }>`; a `selected` paint swaps color and
 - glyph-box.ts (DOM): `GlyphBoxes` — canvas `measureText` per distinct
   cluster and font (family, size, weight, style), the 0.01-cell
   tolerance, the fill scale capped by the ink, a cache the element
-  clears on `configure` changes and on font `loadingdone`, and no
-  caching while `document.fonts` is loading.
+  clears on `configure` changes and on font `loadingdone`; a cluster's
+  box is not cached while `document.fonts` is loading, a tiling fit is
+  (its measurement forces a layout, and the `loadingdone` invalidation
+  refreshes it).
 - paint.ts: `paintGrid(root, target, { holdStructural, glyphs,
 selection })` patches per ROW (styles in place when the row's
   structure matches, a rebuild between its neighbors' newlines when
   not); a boxed segment is an `inline-block` span `cells × --mw-cw`
-  wide, centered, clipped, its font-size the scale; `gridOffsetAt` and
-  `paintedCell` read the kept cell strings.
+  wide and `--mw-ch` tall, unpadded, centered, clipped, its font-size
+  the scale; a tiling fit adds its `line-height`; a shade adds
+  `data-shade` (its glyph, which the shadow's `::before`/`::after`
+  repeat a period above and below), `padding-top: var(--mw-phase)`,
+  and `--mw-phase`/`--mw-period` in px; every other grid span pads
+  `padding-block: var(--mw-bgpad)`, the host's `ceil(backgroundGap /
+2)` px; `gridOffsetAt` and `paintedCell` read the kept cell strings.
 - selection.ts: `selectedRanges(root, points)`.
 - element.ts: `#paint` (glyph boxes plus the selection's ranges);
   `#onSelectionChange` repaints a host holding the range or just left
@@ -267,8 +323,10 @@ selection })` patches per ROW (styles in place when the row's
   `"character"` gesture unit, extended by the existing
   `#extendGesture`; `#unitAt` finds the nearest character over
   painted cells only, in `nearestCells` order (pointer.ts); the
-  grid's `line-height` pinned to the cell; the glyph cache configured
-  per layout from the grid's computed font.
+  grid's `line-height` pinned to the cell and its `letter-spacing` set
+  to `gridLetterSpacing`; the host's `--mw-bgpad`; the glyph cache
+  configured per layout from the grid's computed font, with
+  `#baselineOf` lending the tiling fit its measured baseline.
 - styles.css / element.ts / @monowind/ascii: the light `::selection`
   sites are transparent outside forced colors and off form controls;
   `#grid::selection` keeps the invert; the focus-visible swap rule and
@@ -326,6 +384,17 @@ selection })` patches per ROW (styles in place when the row's
   engine's now, so they become engine-identical), a "Wide characters"
   story under Features, and the deviation story of a native Shift+Down
   on a drifted line.
+- Tiling fit: the stubbed-canvas unit tests (one measurement per range
+  and font, the scale and line-height from Menlo's numbers, a tall
+  glyph left alone, a double-width one clipped, box drawing fitted
+  apart from the blocks, a shade locked to its lattice and its phase
+  row by row, the pin corrected by a measured baseline), the paint
+  test of a shade's phase and period on its box, and the
+  `Features / Typography / Tiling Glyphs` story — a `leading-6` root,
+  where the bundled font's `█` and `│` are short of the row — asserting
+  every tiling glyph's box, the shades' lattice and phase, a painted
+  row's padding, and the cell as whole layout units in three engines,
+  with its golden in the sweep.
 
 ## Verification
 
@@ -354,3 +423,9 @@ per change, the DOM patch is per row.
   a "Unicode" note on terminal widths.
 - core-architecture.md: the "Unicode display width" backlog item
   becomes the pointer to this spec.
+- Tiling glyphs (2026-09-05): glyph-box.ts `#tileFit` and the
+  `BaselineOf` measurer the host lends (`#baselineOf` in element.ts);
+  paint.ts `applySegment` pins, clips, and stretches; metrics.ts
+  `backgroundGap` (→ the host's `--mw-bgpad`, the grid's span padding)
+  and `gridLetterSpacing` (the cell rounded up to 1/64 px, set on the
+  grid); cell-model.md "Typography" records both.
