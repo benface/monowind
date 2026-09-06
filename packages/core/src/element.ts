@@ -2,7 +2,7 @@ import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, leafRendererFor, onLeafRegistryChange } from "./leaf.ts";
 import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "./focus.ts";
-import { hitChain, hitStack, isInert, nearestCells } from "./pointer.ts";
+import { hitChain, hitRect, hitStack, isInert, nearestCells, scrollStep } from "./pointer.ts";
 import { charIndexAtCell, renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
 import {
   classifySelection,
@@ -121,6 +121,8 @@ type GestureUnit = "character" | "word" | "paragraph";
 interface Gesture {
   unit: GestureUnit;
   anchor: SelectionUnit;
+  /** The unit last extended to; the same one again writes nothing. */
+  extent?: SelectionUnit;
 }
 
 /** Light elements that legitimately receive pointer events in grid
@@ -180,6 +182,41 @@ const SETTLE_QUIESCE_MS = 100;
 const SETTLE_FALLBACK_MS = 160;
 /** A scroll this soon after a key press is the key's. */
 const KEY_SCROLL_MS = 500;
+/** The browsers' own autoscroll timer: a held gesture past its
+ * scroller's edge scrolls it this often (specs/wide-characters.md). */
+const AUTOSCROLL_TICK_MS = 50;
+
+/** Whether a native scroller has room in the delta's direction. */
+function hasRoom(el: Element, dx: number, dy: number): boolean {
+  return (
+    (dy > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 0.5) ||
+    (dy < 0 && el.scrollTop > 0.5) ||
+    (dx > 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5) ||
+    (dx < 0 && el.scrollLeft > 0.5)
+  );
+}
+
+/** Whether a scroll container has room in the delta's direction: native
+ * room on an axis with engine range (the native ceiling IS the
+ * engine's max, and an axis without range never consumes). */
+function containerHasRoom(node: LayoutNode, dx: number, dy: number): boolean {
+  const { maxX, maxY } = node.scrollRange!;
+  const el = node.source as HTMLElement;
+  return (
+    (dy !== 0 && maxY > 0 && hasRoom(el, 0, dy)) || (dx !== 0 && maxX > 0 && hasRoom(el, dx, 0))
+  );
+}
+
+/** An element's padding box in client pixels. */
+function paddingBox(el: Element): DOMRectReadOnly {
+  const rect = el.getBoundingClientRect();
+  return new DOMRectReadOnly(
+    rect.left + el.clientLeft,
+    rect.top + el.clientTop,
+    el.clientWidth,
+    el.clientHeight,
+  );
+}
 
 // Import-safe outside the browser (SSR, Node scripts using renderPlainText):
 // `HTMLElement` doesn't exist there, and a bare `extends HTMLElement` throws
@@ -252,12 +289,12 @@ export class MonoWindElement extends HTMLElementBase {
   /** Scroll containers of the LAST layout (specs/scrolling.md). */
   #scrollNodes: LayoutNode[] = [];
   #settleTimers = new Map<Element, ReturnType<typeof setTimeout>>();
-  /** Last routed-wheel activity per scroll container: each scrollBy is a separate
-   * PROGRAMMATIC scroll, so the browser fires scrollend between wheel
-   * ticks — mid-gesture settles would keep snapping small deltas back
-   * (the "resistance"). Recent activity suppresses them; the wheel
-   * quiesce timer settles instead. */
-  #routedWheelAt = new WeakMap<Element, number>();
+  /** Last routed-scroll activity per scroll container (a wheel tick, an
+   * auto-scroll tick): each scrollBy is a separate PROGRAMMATIC scroll,
+   * so the browser fires scrollend between ticks — mid-gesture settles
+   * would keep snapping small deltas back (the "resistance"). Recent
+   * activity suppresses them; the quiesce timer settles instead. */
+  #routedScrollAt = new WeakMap<Element, number>();
   /** What the current wheel gesture is LATCHED to — a scroll container, or the
    * page (`el: null`): chaining is a gesture-START decision (native
    * scroll-chaining semantics), so mid-gesture boundary hits stay on
@@ -266,11 +303,20 @@ export class MonoWindElement extends HTMLElementBase {
    * #onWheel). */
   #wheelLatch: WheelLatch | null = null;
   #thumbDrag: ThumbDrag | null = null;
-  /** The last primary pointerdown's type: a `mousedown` counts as a
-   * semantic gesture only after a mouse or pen (a tap's compatibility
-   * mousedown follows a touch pointerdown). */
+  /** The last primary pointerdown's type and id: a `mousedown` counts
+   * as a semantic gesture only after a mouse or pen (a tap's
+   * compatibility mousedown follows a touch pointerdown), and the id is
+   * the capture target of a gesture the engine takes over. */
   #lastPointerType = "";
+  #lastPointerId = -1;
   #gesture: Gesture | null = null;
+  /** A gesture's auto-scroll (specs/wide-characters.md "auto-scrolls"):
+   * the pressed cell's scroller — a scroll container, a native scroller
+   * outside the host, or the page — ticked while the press is held. */
+  #autoscroll: { el: HTMLElement; page: boolean; timer: ReturnType<typeof setInterval> } | null =
+    null;
+  /** A scroll container scrolled since the last offsets sync. */
+  #containerScrolled = false;
   /** A gesture the engine took over releases through it too: armed by
    * its pointerup, spent by the mouseup after (#onMouseUp). */
   #ownsRelease = false;
@@ -492,6 +538,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#settleTimers.clear();
     this.#thumbDrag = null;
     this.#wheelLatch = null;
+    this.#stopAutoscroll();
     window.removeEventListener("pointerup", this.#onPointerUp);
     window.removeEventListener("pointercancel", this.#onPointerUp);
     window.removeEventListener("mouseup", this.#onMouseUp, { capture: true });
@@ -536,6 +583,7 @@ export class MonoWindElement extends HTMLElementBase {
       if (!this.isConnected || !this.#lastLayout || !metrics) return;
       this.#syncScrollOffsets(metrics);
       this.#paintHeld = !this.#paint(this.#lastLayout);
+      this.#followContainerScroll();
       // The cells under a stationary pointer changed with the scroll.
       this.#updatePointerStates();
     };
@@ -559,6 +607,15 @@ export class MonoWindElement extends HTMLElementBase {
           }
         : this.#quantize(node, metrics);
     }
+  }
+
+  /** A scroll container scrolled: the cells under a held pointer
+   * moved, so a live gesture follows — after the paint, whose grid and
+   * tree the search reads. */
+  #followContainerScroll(): void {
+    if (!this.#containerScrolled) return;
+    this.#containerScrolled = false;
+    this.#followPointer();
   }
 
   /** A container's native position in cells (see scrollCells), ties
@@ -640,9 +697,10 @@ export class MonoWindElement extends HTMLElementBase {
     const target = event.target;
     if (!(target instanceof HTMLElement) || target === this) return;
     if (!target.hasAttribute("data-mw-scroll")) return;
+    this.#containerScrolled = true;
     this.#schedulePaint();
-    // Routed wheel ticks keep their own quiesce timer (#onWheel).
-    if (Date.now() - (this.#routedWheelAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
+    // Routed scrolls keep their own quiesce timer (#scrollRouted).
+    if (Date.now() - (this.#routedScrollAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
     // Still scrolling: a pending settle waits for scrollend — or, where
     // none comes (older Safari; WebKit after a key), for the pause
     // after the last event.
@@ -657,9 +715,9 @@ export class MonoWindElement extends HTMLElementBase {
     const target = event.target;
     if (!(target instanceof HTMLElement) || target === this) return;
     if (!target.hasAttribute("data-mw-scroll")) return;
-    // Mid-gesture scrollends: routed wheel ticks and thumb drags
-    // settle on quiesce/release instead (see #routedWheelAt).
-    if (Date.now() - (this.#routedWheelAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
+    // Mid-gesture scrollends: routed scrolls and thumb drags settle on
+    // quiesce/release instead (see #routedScrollAt).
+    if (Date.now() - (this.#routedScrollAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
     this.#settleAfter(target, SETTLE_QUIESCE_MS);
   };
 
@@ -722,25 +780,7 @@ export class MonoWindElement extends HTMLElementBase {
     }
     // Native room decides (the native ceiling IS the engine's max);
     // an axis without engine range never consumes.
-    const canMove = (node: LayoutNode): boolean => {
-      const range = node.scrollRange!;
-      const el = node.source as HTMLElement;
-      if (dy !== 0 && range.maxY > 0) {
-        if (
-          (dy > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 0.5) ||
-          (dy < 0 && el.scrollTop > 0.5)
-        )
-          return true;
-      }
-      if (dx !== 0 && range.maxX > 0) {
-        if (
-          (dx > 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5) ||
-          (dx < 0 && el.scrollLeft > 0.5)
-        )
-          return true;
-      }
-      return false;
-    };
+    const canMove = (node: LayoutNode): boolean => containerHasRoom(node, dx, dy);
     // Gesture boundaries without native phase info: a gesture ends
     // when ticks quiesce or the delta RISES after confirmed inertia —
     // momentum never rises (it often repeats a delta: 3, 3, 2, 2, 1…),
@@ -811,28 +851,32 @@ export class MonoWindElement extends HTMLElementBase {
     if (!target) return; // the page's gesture
     e.preventDefault();
     if (!canMove(target)) return; // latched at the boundary: consume, no chain
-    const el = target.source as HTMLElement;
     const range = target.scrollRange!;
-    const apply: ScrollToOptions = { behavior: "instant" };
-    if (dy !== 0 && range.maxY > 0) apply.top = dy;
-    if (dx !== 0 && range.maxX > 0) apply.left = dx;
-    el.scrollBy(apply);
-    // One gesture, not N programmatic scrolls: suppress the per-tick
-    // scrollend settles and settle after quiesce.
-    this.#routedWheelAt.set(el, now);
-    this.#settleAfter(el, WHEEL_QUIESCE_MS);
+    this.#scrollRouted(
+      target.source as HTMLElement,
+      range.maxX > 0 ? dx : 0,
+      range.maxY > 0 ? dy : 0,
+    );
   };
+
+  /** An engine-driven scroll — a routed wheel tick, an auto-scroll
+   * tick. A scroll container's is one gesture rather than N
+   * programmatic scrolls: its per-tick scrollend settles are
+   * suppressed and it settles after quiesce. */
+  #scrollRouted(el: HTMLElement, left: number, top: number): void {
+    const apply: ScrollToOptions = { behavior: "instant" };
+    if (left !== 0) apply.left = left;
+    if (top !== 0) apply.top = top;
+    el.scrollBy(apply);
+    if (!el.hasAttribute("data-mw-scroll")) return;
+    this.#routedScrollAt.set(el, Date.now());
+    this.#settleAfter(el, WHEEL_QUIESCE_MS);
+  }
 
   /** Whether a native scroller outside the host has room in the
    * delta's direction (offset reads only — the list is per layout). */
   #outsideCanScroll(dx: number, dy: number): boolean {
-    return this.#outerScrollers.some(
-      (el) =>
-        (dy > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 0.5) ||
-        (dy < 0 && el.scrollTop > 0.5) ||
-        (dx > 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5) ||
-        (dx < 0 && el.scrollLeft > 0.5),
-    );
+    return this.#outerScrollers.some((el) => hasRoom(el, dx, dy));
   }
 
   /** The host's width is capped to whole cells (styles.css), so a
@@ -976,6 +1020,7 @@ export class MonoWindElement extends HTMLElementBase {
       if (!finePointer) return;
       if (mode === "text") {
         this.#startCharacterDrag(e);
+        this.#startAutoscroll(e);
         return;
       }
       // A press that blurs a control inside the host repaints the focus
@@ -997,7 +1042,7 @@ export class MonoWindElement extends HTMLElementBase {
     const metrics = this.#cellMetrics;
     if (!selection || !layout || !metrics) return;
     const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
-    const target = this.#unitAt(col, row, unit);
+    const target = this.#unitUnder(layout, col, row, unit);
     if (!target) {
       // No word or paragraph under the cell (a gap, a border, a blank):
       // the browser's own gesture on the grid — a run of glyphs, or the
@@ -1020,7 +1065,72 @@ export class MonoWindElement extends HTMLElementBase {
         : target;
     this.#selectThrough(selection, anchor, target);
     this.#gesture = { unit, anchor };
+    this.#startAutoscroll(e);
   };
+
+  /** A gesture's auto-scroll (specs/wide-characters.md "auto-scrolls"):
+   * the pointer captured so moves keep coming past the host, and the
+   * pressed cell's innermost scroll container — else the innermost
+   * native scroller outside the host, else the page — ticked while the
+   * press is held. */
+  #startAutoscroll(e: MouseEvent): void {
+    const layout = this.#lastLayout;
+    const metrics = this.#cellMetrics;
+    if (!this.#gesture || !layout || !metrics) return;
+    this.#stopAutoscroll();
+    if (e.isTrusted) this.setPointerCapture(this.#lastPointerId);
+    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
+    const stack = hitStack(layout, col, row);
+    let container: HTMLElement | null = null;
+    for (let i = stack.length - 1; i >= 0 && !container; i--) {
+      const { node } = stack[i]!;
+      if (node.scrollRange && !isInert(node.source)) container = node.source as HTMLElement;
+    }
+    const outer = this.#outerScrollers[0] as HTMLElement | undefined;
+    const el =
+      container ??
+      outer ??
+      ((document.scrollingElement ?? document.documentElement) as HTMLElement);
+    const timer = setInterval(() => this.#autoscrollTick(), AUTOSCROLL_TICK_MS);
+    this.#autoscroll = { el, page: !container && !outer, timer };
+  }
+
+  /** One tick: the cells past the scroller's box toward the pointer
+   * (the scrollport for the page), on the axes with room — a scroll
+   * container's read from the current layout, as a press relays out. */
+  #autoscrollTick(): void {
+    const auto = this.#autoscroll;
+    const metrics = this.#cellMetrics;
+    const at = this.#hoverClient;
+    if (!auto || !metrics || !at || !this.#pressing) return;
+    const { el, page } = auto;
+    const box = page ? new DOMRectReadOnly(0, 0, el.clientWidth, el.clientHeight) : paddingBox(el);
+    const step = scrollStep(box, at, metrics);
+    const node = this.#scrollNodes.find((candidate) => candidate.source === el);
+    const room = (dx: number, dy: number): boolean =>
+      node ? containerHasRoom(node, dx, dy) : hasRoom(el, dx, dy);
+    const left = step.x * metrics.width;
+    const top = step.y * metrics.height;
+    const dx = room(left, 0) ? left : 0;
+    const dy = room(0, top) ? top : 0;
+    if (dx !== 0 || dy !== 0) this.#scrollRouted(el, dx, dy);
+  }
+
+  #stopAutoscroll(): void {
+    if (!this.#autoscroll) return;
+    clearInterval(this.#autoscroll.timer);
+    this.#autoscroll = null;
+  }
+
+  /** Content moved under a held gesture — an auto-scroll tick, a wheel
+   * mid-drag, the page scrolling: extend it to the unit now under the
+   * pointer. */
+  #followPointer(): void {
+    const gesture = this.#gesture;
+    const at = this.#hoverClient;
+    if (!gesture || !at || !this.#pressing) return;
+    this.#extendGesture(gesture, at.x, at.y);
+  }
 
   /** focus="arrows" (specs/focus-navigation.md): an unmodified arrow on a
    * focused descendant whose control does not own it moves focus to the
@@ -1136,7 +1246,9 @@ export class MonoWindElement extends HTMLElementBase {
     if (!metrics || !selection) return;
     const { col, row } = this.#cellAt(clientX, clientY, metrics);
     const current = this.#unitAt(col, row, gesture.unit);
-    if (current) this.#selectThrough(selection, gesture.anchor, current);
+    if (!current || (gesture.extent && sameUnit(gesture.extent, current))) return;
+    gesture.extent = current;
+    this.#selectThrough(selection, gesture.anchor, current);
   }
 
   /** Select from the anchor unit through `unit`: the anchor's far edge
@@ -1192,47 +1304,60 @@ export class MonoWindElement extends HTMLElementBase {
     return !interactive || interactive === this || !this.contains(interactive);
   }
 
-  /** The unit at a cell: the word or paragraph under it, or the
-   * character nearest it (specs/wide-characters.md) — the cell's own,
-   * else a neighbor's edge in `nearestCells` order. */
+  /** The unit nearest a cell, for a drag's anchor or extent: the
+   * character under the cell, or the nearest one's near edge; the
+   * nearest word or paragraph whole (the browser's reach over a gap).
+   * The innermost box under the cell bounds the search first — a gap
+   * between stacked paragraphs reaches them, not a column beside, as
+   * a point resolves inside its containing block — then the grid. */
   #unitAt(col: number, row: number, unit: GestureUnit): SelectionUnit | null {
     const layout = this.#lastLayout;
     if (!layout) return null;
-    if (unit !== "character") return this.#unitUnder(layout, col, row, unit);
-    const { width, height } = layout.localRect;
-    for (const { x, y, edge } of nearestCells(width, height, col, row)) {
-      if (edge === "self") {
-        const top = hitStack(layout, x, y).at(-1);
-        // An inert element's cells are nobody's (the browser ignores the
-        // press there too).
-        if (top && isInert(top.node.source)) return null;
+    const grid = { x: 0, y: 0, width: layout.localRect.width, height: layout.localRect.height };
+    const c = Math.max(0, Math.min(col, grid.width - 1));
+    const r = Math.max(0, Math.min(row, grid.height - 1));
+    const inner = hitStack(layout, c, r).at(-1);
+    // An inert element's cells are nobody's (the browser ignores the
+    // press there too).
+    if (inner && isInert(inner.node.source)) return null;
+    const boxes = inner ? [hitRect(inner.node, inner.x, inner.y), grid] : [grid];
+    for (const box of boxes) {
+      for (const cell of nearestCells(box.width, box.height, c - box.x, r - box.y)) {
+        const x = box.x + cell.x;
+        const y = box.y + cell.y;
+        const { edge } = cell;
+        // Only painted glyphs can be neighbors: blank cells cost a lookup,
+        // not a hit test (a wide cluster's continuation cell is its
+        // cluster's, not blank). The pressed cell itself is always hit
+        // tested — a space in a text run is a character.
+        const painted = paintedCell(this.#grid, x, y);
+        if (painted === undefined || (painted === " " && edge !== "self")) continue;
+        const found = this.#unitUnder(layout, x, y, unit, box === grid ? null : inner!.node);
+        if (!found) continue;
+        if (edge === "self" || unit !== "character") return found;
+        return pointUnit(edge === "start" ? found.start : found.end);
       }
-      // Only painted glyphs can be neighbors: blank cells cost a lookup,
-      // not a hit test (a wide cluster's continuation cell is its
-      // cluster's, not blank). The pressed cell itself is always hit
-      // tested — a space in a text run is a character.
-      const cell = paintedCell(this.#grid, x, y);
-      if (cell === undefined || (cell === " " && edge !== "self")) continue;
-      const found = this.#unitUnder(layout, x, y, "character");
-      if (!found) continue;
-      return edge === "self" ? found : pointUnit(edge === "start" ? found.start : found.end);
     }
     return null;
   }
 
   /** The unit under a cell — null unless a CHARACTER of a text leaf is
    * painted there (padding, borders, gaps, and blank tails are the
-   * browser's). The innermost hit text leaf; its selectionTarget's
-   * contents for a custom leaf; a Segmenter word mapped to DOM
-   * positions for the word gesture (falling back to the paragraph where
-   * the text has no positions). */
+   * browser's), or the cell is outside `within` (a box clipped by its
+   * scroll container paints other content past the clip). The
+   * innermost hit text leaf; its selectionTarget's contents for a
+   * custom leaf; a Segmenter word mapped to DOM positions for the word
+   * gesture (falling back to the paragraph where the text has no
+   * positions). */
   #unitUnder(
     layout: LayoutNode,
     col: number,
     row: number,
     unit: GestureUnit,
+    within: LayoutNode | null = null,
   ): SelectionUnit | null {
     const stack = hitStack(layout, col, row);
+    if (within && !stack.some((entry) => entry.node === within)) return null;
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
       // An inert leaf's text is unselectable natively: no unit there.
@@ -1380,6 +1505,7 @@ export class MonoWindElement extends HTMLElementBase {
     const e = event as PointerEvent;
     if (!e.isPrimary || e.button !== 0) return;
     this.#lastPointerType = e.pointerType;
+    this.#lastPointerId = e.pointerId;
     this.#ownsRelease = false;
     // A finger pans natively (styles.css "Touch panning") and must not
     // relayout before release (see #scheduleDynamicRelayout): no thumb
@@ -1404,6 +1530,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (!(event as PointerEvent).isPrimary) return;
     this.#ownsRelease = event.type === "pointerup" && this.#gesture !== null;
     this.#gesture = null;
+    this.#stopAutoscroll();
     this.#gridDrag = null;
     this.#pressOnGrid = false;
     this.removeAttribute("data-mw-dragging");
@@ -1437,6 +1564,7 @@ export class MonoWindElement extends HTMLElementBase {
     const target = event.target;
     if (target instanceof HTMLElement && target.hasAttribute("data-mw-scroll")) return;
     this.#gridOrigin = null;
+    this.#followPointer();
     this.#updatePointerStates();
   };
 
@@ -1881,6 +2009,7 @@ export class MonoWindElement extends HTMLElementBase {
       // re-derive the synthesized pointer states (cheap when nothing
       // changed; a chain change coalesces into the next frame).
       this.#gridOrigin = null;
+      this.#followContainerScroll();
       if (this.#hoverClient) this.#updatePointerStates();
     }
   }

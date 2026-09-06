@@ -9,7 +9,8 @@ font was still loading must be forgotten when the font lands (the
 fallback's advance was cached under the same font name — the theme
 gallery boxed its borders in the sweep), and a `Range` rect around a
 boxed span unions the scaled text inside it, so alignment checks read
-the span's own box.
+the span's own box. Auto-scroll and the box-bounded nearest-unit
+search were added 2026-09-06 (no plan: one phase).
 
 ## Why
 
@@ -255,7 +256,8 @@ copy event sees it in all three engines.
   direction rules); Shift extends the existing range; double- and
   triple-click are the word and paragraph gestures the grid mode
   already has. A pointer past the host's edge clamps to the nearest
-  cell, so the extent runs to the start or end of the host's text.
+  cell, so the extent runs to the nearest character of the box under
+  that edge cell.
   Keyboard extension (Shift+arrows, Shift+Home) stays the browser's, on
   the range. A custom leaf's transcript (specs/leaf-renderers.md) is
   text like any other: its `selectionTarget` holds the leaf's text
@@ -271,6 +273,31 @@ copy event sees it in all three engines.
   drifted native glyph cannot pick its neighbor. What the native drag
   did for free and the engine now does too: leaving a control's focus
   on press, and the copy through the engine's serializer.
+- **An engine gesture auto-scrolls its scroller, as a native drag
+  does — a text-mode drag, and the word and paragraph gestures in
+  either mode.** The host captures the pointer for the gesture (a trusted
+  press; synthetic tests dispatch their own moves), so moves keep
+  arriving past the host's edge and the window's. The gesture's
+  scroller is the innermost scroll container enclosing the PRESSED
+  cell — a scroll container in its hit stack, else the innermost
+  native scroller outside the host, else the page — for the whole
+  gesture, never chaining outward (Chromium and WebKit instead scroll
+  whichever scroller's edge the pointer is past, the page beyond the
+  viewport). While the primary button is held, every 50 ms (Chromium's
+  autoscroll interval) the pointer's distance past the scroller's box
+  on each axis — its padding box, the scrollport for the page —
+  scrolls it that many whole cells toward the pointer, rounded up,
+  through the instant scroll and quiesce settle a routed wheel tick
+  uses (`scrollStep`, pointer.ts); a pointer inside the box, or a
+  scroller with no room that way, scrolls nothing. Content moving
+  under a held pointer — an auto-scroll tick, a wheel mid-drag, the
+  page scrolling — extends the selection to the unit now under it,
+  after the paint that mirrors the scroll, whose grid and tree the
+  search reads. A semantic selection is the same content-anchored range
+  in grid mode, so its gestures scroll the same way there; the plain
+  grid drag is the browser's own positional selection on the `<pre>`
+  (specs/scrolling.md), which auto-scrolls the page natively and
+  scrolls no scroll container.
 - **The centering nudge is retired.** `data-mw-center-nudge` existed
   to land the native highlight on centered glyphs; with the highlight
   painted from cells it has no job.
@@ -325,12 +352,17 @@ selection })` patches per ROW (styles in place when the row's
   `#onSelectionChange` repaints a host holding the range or just left
   by it; the text-mode press (`#startCharacterDrag`) and the
   `"character"` gesture unit, extended by the existing
-  `#extendGesture`; `#unitAt` finds the nearest character over
-  painted cells only, in `nearestCells` order (pointer.ts); the
+  `#extendGesture`; `#unitAt` finds the nearest unit over painted
+  cells only, in `nearestCells` order (pointer.ts) inside the innermost
+  box under the cell, then the grid; the
   grid's `line-height` pinned to the cell and its `letter-spacing` set
   to `gridLetterSpacing`; the host's `--mw-bgpad`; the glyph cache
   configured per layout from the grid's computed font, with
-  `#baselineOf` lending the tiling fit its measured baseline.
+  `#baselineOf` lending the tiling fit its measured baseline;
+  `#autoscroll` (the gesture's scroller, captured pointer, and 50 ms
+  tick through `#scrollRouted`, the wheel's scroll-and-settle)
+  and `#followPointer`, which a scroll-driven paint and a page scroll
+  call to extend the live gesture under the held pointer.
 - styles.css / element.ts / @monowind/ascii: the light `::selection`
   sites are transparent outside forced colors and off form controls;
   `#grid::selection` keeps the invert; the focus-visible swap rule and
@@ -346,11 +378,14 @@ selection })` patches per ROW (styles in place when the row's
   in text mode moves by the browser's line boxes, which can differ
   from the grid's rows on lines holding drifted glyphs; the painted
   highlight shows the characters that were actually selected.
-- **A text-mode drag stays inside the host.** A native drag could run
-  from the host into the surrounding page, or auto-scroll the page
-  while the pointer sat past its edge; the engine's clamps to the
-  host's text and scrolls only with the wheel mid-drag. Auto-scroll of
-  the page and of scroll containers can be added to the gesture later.
+- **A text-mode drag selects the host's text only.** A native drag
+  could run from the host into the surrounding page; the engine's
+  clamps to the host's nearest character, scrolling the gesture's
+  scroller or the page while the pointer sits past their edges.
+- **Native `:hover` freezes under a captured drag in text mode.**
+  The host holds the pointer for an engine gesture, so light elements
+  see no boundary events until release, where a native drag keeps
+  their `:hover` live.
 - **A selection cannot be dragged as text.** The press that would start
   a native drag-and-drop of the selected text starts a new selection
   instead, as in grid mode.
@@ -383,7 +418,27 @@ selection })` patches per ROW (styles in place when the row's
   and paragraph gestures, copy; the painted highlight's cells for a
   drag, for a keyboard extension, and over a focused control; a
   textarea with CJK sized by cluster widths; the existing selection
-  stories re-pointed at the painted cells.
+  stories re-pointed at the painted cells; auto-scroll (`Test /
+Selection / Autoscroll`, a text-mode host): a press in a scroll
+  container and one synthetic move past its bottom edge scroll it and
+  extend the selection to a paragraph that was below its fold, a move
+  past its top edge scrolls it back, a move inside scrolls nothing, and
+  a press outside any container with a move past the viewport's bottom
+  edge scrolls the page and extends to the line below the fold, a
+  horizontal scroller scrolls past its right edge to its tail, a
+  `pointercancel` ends the ticks, a container scroll whose paint a
+  relayout takes over still extends the gesture, and in grid mode a
+  triple-click in the container held past its edge scrolls it the same
+  way; in three engines. `Nearest Unit`: a leaf taller than its scroll
+  container — a drag over its blank visible rows reaches the paragraph
+  above, not the one painted past the clip.
+- Node: `scrollStep` — cells past each edge, rounded up, zero inside.
+- Visual (`visual/selection.spec.ts`, a real mouse, on the play-less
+  `Autoscroll Fixture`): a drag from a scroll container's first line
+  to below its box and outside the host — a text-mode press, a
+  grid-mode double-click — scrolls it, never the page, and extends the
+  selection past its fold, as only the captured pointer's moves reach
+  the engine there; both modes, three engines.
 - Visual: the selection-invert fixtures re-baselined (the paint is the
   engine's now, so they become engine-identical), a "Wide characters"
   story under Features, and the deviation story of a native Shift+Down

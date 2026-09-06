@@ -316,19 +316,13 @@ function walk(
   // the scroll extremes but content flows through them mid-scroll. A
   // reserved gutter cell stays excluded (the bar owns it). Nested
   // containers compose: the wrapped put chains to the parent's.
-  const gutter = node.scrollGutterCells;
-  const clipsX = style.overflow.x !== "visible";
-  const clipsY = style.overflow.y !== "visible";
   const scrolledX = absX - (node.scroll?.x ?? 0);
   const scrolledY = absY - (node.scroll?.y ?? 0);
   let contentPut = put;
-  if (clipsX || clipsY) {
-    const x0 = absX + style.border.left;
-    const y0 = absY + style.border.top;
-    const x1 = absX + node.localRect.width - style.border.right - (gutter?.right ?? 0);
-    const y1 = absY + node.localRect.height - style.border.bottom - (gutter?.bottom ?? 0);
-    const clipped = (x: number, y: number) =>
-      (clipsX && (x < x0 || x >= x1)) || (clipsY && (y < y0 || y >= y1));
+  const clip = clipBounds(node, absX, absY);
+  if (clip) {
+    const { x0, y0, x1, y1 } = clip;
+    const clipped = (x: number, y: number) => x < x0 || x >= x1 || y < y0 || y >= y1;
     contentPut = (x, y, glyph, paint, cells = 1) => {
       if (cells === 1) {
         if (!clipped(x, y)) put(x, y, glyph, paint);
@@ -387,6 +381,7 @@ function walk(
   // overflows — the `scroll` case; an `auto` gutter exists only with
   // overflow). The shared corner cell of two bars stays blank.
   const range = node.scrollRange;
+  const gutter = node.scrollGutterCells;
   if (range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
     const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
     // `scrollbar-color: auto` means the container's own color (its
@@ -489,6 +484,30 @@ function forEachLeafCell(
     }
     if (truncated.ellipsis) onEllipsis?.(x, row);
   }
+}
+
+/** The cells a clipping container's content shows through, in
+ * absolute cells (specs/scrolling.md): its padding box on each
+ * clipping axis, the gutter excluded, unbounded on a visible axis;
+ * null for a container clipping neither. The paint culls ink here and
+ * hit-testing stops descending here. */
+export function clipBounds(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+): { x0: number; y0: number; x1: number; y1: number } | null {
+  const { overflow, border } = node.style;
+  const clipsX = overflow.x !== "visible";
+  const clipsY = overflow.y !== "visible";
+  if (!clipsX && !clipsY) return null;
+  const gutter = node.scrollGutterCells;
+  const { width, height } = node.localRect;
+  return {
+    x0: clipsX ? absX + border.left : -Infinity,
+    y0: clipsY ? absY + border.top : -Infinity,
+    x1: clipsX ? absX + width - border.right - (gutter?.right ?? 0) : Infinity,
+    y1: clipsY ? absY + height - border.bottom - (gutter?.bottom ?? 0) : Infinity,
+  };
 }
 
 /** Whether a cell lies on one of a fragmented leaf's line boxes — the

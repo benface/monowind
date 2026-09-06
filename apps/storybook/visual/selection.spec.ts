@@ -112,3 +112,41 @@ for (const mode of MODES) {
     expect(await selected()).toBe("");
   });
 }
+
+/**
+ * An engine gesture auto-scrolls its scroll container
+ * (specs/wide-characters.md "auto-scrolls"), with a real mouse held
+ * OUTSIDE the host: only the captured pointer's moves reach the
+ * engine there. A text-mode press, a grid-mode double-click.
+ */
+for (const mode of MODES) {
+  test(`a drag past the host scrolls the pressed cell's container (${mode})`, async ({ page }) => {
+    await page.goto(
+      `/iframe.html?id=test-selection--autoscroll-fixture&viewMode=story&globals=select:${mode}`,
+    );
+    await page.waitForFunction((mode) => {
+      const host = document.querySelector("mono-wind");
+      return host?.hasAttribute("data-mw-ready") && host.getAttribute("select") === mode;
+    }, mode);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(150);
+    const host = (await page.locator("mono-wind").boundingBox())!;
+    const first = (await page.locator('[data-test="s1"]').boundingBox())!;
+    const box = (await page.locator('[data-test="scroller"]').boundingBox())!;
+    const scrollTop = () =>
+      page.evaluate(() => document.querySelector('[data-test="scroller"]')!.scrollTop);
+    expect(await scrollTop()).toBe(0);
+    const clickCount = mode === "grid" ? 2 : 1;
+    await page.mouse.move(first.x + 4, first.y + first.height / 2);
+    if (clickCount === 2) {
+      await page.mouse.down();
+      await page.mouse.up();
+    }
+    await page.mouse.down({ clickCount });
+    await page.mouse.move(host.x + host.width + 24, box.y + box.height + 12, { steps: 4 });
+    await page.waitForFunction(() => document.getSelection()!.toString().includes("Fifth"));
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await page.mouse.up({ clickCount });
+    expect(await scrollTop()).toBeGreaterThan(0);
+  });
+}

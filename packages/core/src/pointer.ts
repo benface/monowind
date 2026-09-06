@@ -1,6 +1,6 @@
 import { paintOrderedChildren } from "./borders.ts";
-import { leafLineCovers } from "./plain-text.ts";
-import type { LayoutNode } from "./types.ts";
+import { clipBounds, leafLineCovers } from "./plain-text.ts";
+import type { LayoutNode, Rect } from "./types.ts";
 
 /**
  * Cell hit-testing for the synthesized pointer states
@@ -18,12 +18,28 @@ export interface HitEntry {
   y: number;
 }
 
+/** A node's hit rect in absolute cells (specs/scrolling.md
+ * "Hit-testing follows the ink"): its border box, grown to a text
+ * leaf's ink where an unwrapped line runs past it on a visible axis. */
+export function hitRect(node: LayoutNode, x: number, y: number): Rect {
+  let { width, height } = node.localRect;
+  const ink = node.textExtent;
+  if (ink) {
+    const { border, overflow } = node.style;
+    const padding = node.resolvedPadding;
+    if (overflow.x === "visible") width = Math.max(width, border.left + padding.left + ink.width);
+    if (overflow.y === "visible") height = Math.max(height, border.top + padding.top + ink.rows);
+  }
+  return { x, y, width, height };
+}
+
 /** The nodes under a cell with their painted origins, outermost
- * first: the innermost node whose border-box covers the cell, plus
- * its ancestors — native :hover marks the whole chain, so the
- * synthesized attribute does too. Overlapping siblings resolve to the
- * TOPMOST in paint order (z-index, document-order ties), matching
- * what the grid shows at that cell. */
+ * first: the innermost node whose hit rect covers the cell, plus its
+ * ancestors — native :hover marks the whole chain, so the synthesized
+ * attribute does too. Overlapping siblings resolve to the TOPMOST in
+ * paint order (z-index, document-order ties), matching what the grid
+ * shows at that cell; the descent stops where a clipping container's
+ * paint does. */
 export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[] {
   const stack: HitEntry[] = [];
   let node = root;
@@ -39,20 +55,25 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
       // its siblings; its ink is where its line fragments are.
       const inside = child.multicolFlow
         ? leafLineCovers(child, cx, cy, col, row)
-        : col >= cx &&
-          col < cx + child.localRect.width &&
-          row >= cy &&
-          row < cy + child.localRect.height;
+        : covers(hitRect(child, cx, cy), col, row);
       if (inside) hit = child;
     }
     if (!hit) return stack;
-    stack.push({ node: hit, x: x + hit.localRect.x, y: y + hit.localRect.y });
+    const hx = x + hit.localRect.x;
+    const hy = y + hit.localRect.y;
+    stack.push({ node: hit, x: hx, y: hy });
+    const clip = clipBounds(hit, hx, hy);
+    if (clip && (col < clip.x0 || col >= clip.x1 || row < clip.y0 || row >= clip.y1)) return stack;
     // Descend with the hit's scroll applied: its children paint (and
     // therefore hit) shifted by the offset (specs/scrolling.md).
-    x += hit.localRect.x - (hit.scroll?.x ?? 0);
-    y += hit.localRect.y - (hit.scroll?.y ?? 0);
+    x = hx - (hit.scroll?.x ?? 0);
+    y = hy - (hit.scroll?.y ?? 0);
     node = hit;
   }
+}
+
+function covers(rect: Rect, col: number, row: number): boolean {
+  return col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height;
 }
 
 /** Inside an `inert` subtree: absent for user interaction, as natively
@@ -75,13 +96,30 @@ export function hitChain(root: LayoutNode, col: number, row: number): Element[] 
   return chain;
 }
 
+/** The cells a scroller moves toward a pointer past its box
+ * (specs/wide-characters.md "auto-scrolls"): the distance past each
+ * edge in whole cells, rounded up; zero on an axis the pointer is
+ * inside. */
+export function scrollStep(
+  box: Pick<DOMRectReadOnly, "left" | "top" | "right" | "bottom">,
+  point: { x: number; y: number },
+  cell: { width: number; height: number },
+): { x: number; y: number } {
+  const past = (before: number, after: number, size: number): number =>
+    before > 0 ? -Math.ceil(before / size) : after > 0 ? Math.ceil(after / size) : 0;
+  return {
+    x: past(box.left - point.x, point.x - box.right, cell.width),
+    y: past(box.top - point.y, point.y - box.bottom, cell.height),
+  };
+}
+
 /** The cells to try for the character nearest `(col, row)`, in the
  * order the browser's closest-position rule would (specs/
  * wide-characters.md): the cell itself, then its row leftward — a hit
  * there is the point AFTER that character — and rightward (BEFORE it),
  * then the rows above and below, farther out each step, an upper row
- * from its end and a lower one from its start. The cell is clamped to
- * the grid, so a pointer past the host runs to the text's ends. */
+ * from its end and a lower one from its start, all inside a box of
+ * `width × height` cells the cell is clamped into. */
 export function* nearestCells(
   width: number,
   height: number,

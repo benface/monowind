@@ -146,8 +146,13 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   matches the drag (Shift+Arrow afterwards extends from the right end).
   Everything between the two in DOM order is selected — the behavior
   of double- and triple-click-drag on any page. A pointer over cells
-  with no unit leaves the previous extent in place. Release ends the
-  gesture; the selection stays.
+  with no unit — a gap, a blank tail, past the grid — reaches the
+  nearest unit (`nearestCells`, the character drag's search: the row
+  outward, then the rows above and below, bounded by the innermost box
+  under the cell before the whole grid, as a point resolves inside its
+  containing block), the browser's reach to the nearest paragraph
+  across a margin; the press itself takes only a unit under its cell.
+  Release ends the gesture; the selection stays.
 - **Double-click is the same gesture at word granularity.** The word
   is the segment of the leaf's text that contains the character painted
   at the cell, by `Intl.Segmenter` (`granularity: "word"`, locale from
@@ -264,7 +269,10 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   the window-level `pointerup`/`pointercancel` the engine already
   listens to ends it, and the `mouseup` after a `pointerup` is
   canceled (`#onMouseUp`, captured on the window) so the browser's
-  release leaves the selection alone. The existing press bookkeeping
+  release leaves the selection alone. The host captures the pointer
+  for the gesture and auto-scrolls the pressed cell's scroll container
+  or the page while the pointer sits past its edge, in both modes
+  (wide-characters.md "auto-scrolls"). The existing press bookkeeping
   (`#pressing`, data-mw-active) runs as for any press.
 - **Repaints.** The selection lives in the light DOM, which the paint
   never rebuilds — paintGrid's capture/restore and the structural hold
@@ -295,10 +303,6 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   element's text is the unit, not the visible cells (unlike a grid
   drag, which copies what shows). The highlight shows only the visible
   part, clipped natively with the element.
-- **Extension over nothing keeps the last extent** rather than reaching
-  the nearest unit in the pointer's direction (the browser's behavior
-  for paragraphs separated by margins). Cheap to revisit if it feels
-  sticky.
 
 ## Verified after implementation
 
@@ -321,8 +325,9 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   `innerText`, that the host carries `data-mw-semantic-selection`, and
   that nothing from the side paragraph is selected; then `pointermove`
   (primary button held) onto the second stacked paragraph and asserts
-  the string covers both and still excludes the side one; `pointerup`
-  ends the gesture; `removeAllRanges` followed by `selectionchange`
+  the string covers both and still excludes the side one, then onto
+  the gap row above it and asserts the nearest paragraph, the first,
+  is the extent; `pointerup` ends the gesture; `removeAllRanges` followed by `selectionchange`
   clears the attribute. A `mousedown` with `detail: 3` on a gap cell
   asserts the event was not canceled and the selection untouched (the
   browser's gesture); so does a triple-click on a bordered box's border

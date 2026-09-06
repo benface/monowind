@@ -232,8 +232,13 @@ none` on EVERY element — a one-time pristine-probe detects that and
 - **Hit-testing follows the ink.** `hitChain` applies each scroll
   container's cell offset while descending, so hover, active, cursor
   mirroring, and semantic selection (`semantic-selection.md`) see the
-  element actually under the pointer in a scrolled container. Cells in
-  the gutter hit the container itself.
+  element actually under the pointer in a scrolled container, and stops
+  descending where the paint's clip does (`clipBounds`, shared with the
+  paint): a cell on a clipping container's border or gutter hits the
+  container itself, never a child scrolled beneath it. A text leaf's
+  hit rect is its box grown to its ink (`hitRect`): an unwrapped line
+  running past its box on a visible axis hits like any of its text, so
+  a horizontal scroller's overflowing line is selectable to its end.
 
 ## Deviations (documented, like the cell model's running list)
 
@@ -316,3 +321,8 @@ none` on EVERY element — a one-time pristine-probe detects that and
   scrolls with its element natively.
 - **Themes**: gutter glyphs resolve through the decoration owner's
   glyph set like borders and rules do.
+- **Gesture auto-scroll** (wide-characters.md): an engine gesture's
+  ticks scroll the pressed cell's scroll container by whole cells
+  through the routed wheel's instant scroll and quiesce settle, the
+  page through `scrollBy` on the scrolling element; the selection then
+  follows the held pointer after the paint that mirrors the scroll.

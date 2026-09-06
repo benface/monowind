@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, dragTo, pressAt, release } from "./helpers.ts";
+import { copyText, dragTo, pressAt, readyHost, release } from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -124,13 +124,13 @@ export const Semantic: StoryObj = {
     expect(selection().endsWith(text("second"))).toBe(true);
     expect(selection()).not.toContain("Side");
     expect(copied()).toBe(`${text("first")}\n\n${text("second")}`);
-    // A gap cell keeps the extent; release ends the gesture.
-    const before = selection();
+    // The gap row above the second paragraph reaches the nearest
+    // paragraph, the first; release ends the gesture.
     move(cell("second", 1, -1));
-    expect(selection()).toBe(before);
+    expect(selection()).toBe(text("first"));
     release();
     move(cell("last", 1, 0));
-    expect(selection()).toBe(before);
+    expect(selection()).toBe(text("first"));
     // A plain click ends the lift synchronously.
     press(cell("first", 1, 0), 1);
     expect(host).not.toHaveAttribute(lifted);
@@ -342,5 +342,193 @@ export const Copy: StoryObj = {
     expect(pressAt(p1, { x: rect.left + 4, y: rect.top + 4 }, 3)).toBe(false);
     expect(document.getSelection()!.toString()).toBe("Alpha one.");
     release();
+  },
+};
+
+/** The auto-scroll fixture: a text-mode host narrower than the page,
+ * a scroll container of five lines showing two, a horizontal scroller
+ * of one long line, and a paragraph below the fold. */
+const autoscrollFixture = html`
+  <mono-wind select="text" class="w-lg">
+    <p data-test="top">Top paragraph, above the box.</p>
+    <div data-test="scroller" class="mt-1 h-4 w-40 overflow-y-auto border px-1">
+      <p data-test="s1">First line in the box.</p>
+      <p>Second line in the box.</p>
+      <p>Third line in the box.</p>
+      <p>Fourth line in the box.</p>
+      <p>Fifth line in the box, longest.</p>
+    </div>
+    <div data-test="wide" class="mt-1 w-40 overflow-x-auto border px-1 whitespace-nowrap">
+      <p data-test="w1">One long line that runs well past the box's right edge to its tail.</p>
+    </div>
+    <div class="h-screen"></div>
+    <p data-test="bottom">Bottom paragraph, below the fold.</p>
+  </mono-wind>
+`;
+
+/** The real-mouse auto-scroll target (visual/selection.spec.ts): a
+ * drag held outside the host, which only the captured pointer's moves
+ * reach. */
+export const AutoscrollFixture: StoryObj = {
+  render: () => autoscrollFixture,
+};
+
+/**
+ * Auto-scroll (specs/wide-characters.md "auto-scrolls"): a text-mode
+ * drag held past a scroll container's edge scrolls it, held past the
+ * viewport's edge scrolls the page, the selection follows the content
+ * under the stationary pointer, and a grid-mode paragraph gesture
+ * scrolls the same way. Synthetic moves reach the host wherever they
+ * claim to be; the fixture's spec covers the captured pointer.
+ */
+export const Autoscroll: StoryObj = {
+  render: () => autoscrollFixture,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const selection = () => document.getSelection()!.toString();
+    const focusOwner = () => {
+      const node = document.getSelection()!.focusNode;
+      return (node instanceof Element ? node : node?.parentElement)
+        ?.closest("[data-test]")
+        ?.getAttribute("data-test");
+    };
+    const firstCell = (el: Element) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + cellWidth / 2, y: rect.top + cellHeight / 2 };
+    };
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 250));
+    const clear = () => {
+      release();
+      document.getSelection()!.removeAllRanges();
+    };
+    const scroller = by("scroller");
+    const box = scroller.getBoundingClientRect();
+    const inside = firstCell(by("s1"));
+    // Row middles: past the box is the gap row below it.
+    const pastBottom = { x: inside.x, y: box.bottom + cellHeight / 2 };
+    // A press in the box, one move past its bottom edge: the ticks
+    // scroll it to its end and the selection reaches the last line
+    // whole; the page never chains. Back inside, nothing scrolls.
+    expect(pressAt(by("s1"), inside, 1)).toBe(false);
+    dragTo(by("s1"), pastBottom);
+    await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+    await waitFor(() => expect(selection()).toMatch(/longest\.$/));
+    expect(window.scrollY).toBe(0);
+    dragTo(by("s1"), inside);
+    await waitFor(() => expect(selection()).toMatch(/Third line in the box\.\s*F$/));
+    const atEnd = scroller.scrollTop;
+    await pause();
+    expect(scroller.scrollTop).toBe(atEnd);
+    // Past its top edge: back up, the selection running backward from
+    // the anchor into the paragraph above.
+    dragTo(by("s1"), { x: inside.x, y: box.top - cellHeight / 2 });
+    await waitFor(() => expect(scroller.scrollTop).toBe(0));
+    await waitFor(() => expect(focusOwner()).toBe("top"));
+    // A container scroll whose paint a relayout takes over (a light-DOM
+    // mutation in the same task): the gesture follows after that
+    // layout's paint, on the new tree.
+    dragTo(by("s1"), { x: inside.x, y: inside.y + cellHeight });
+    await waitFor(() => expect(selection()).toMatch(/First line in the box\.\s*S$/));
+    scroller.scrollTop += cellHeight;
+    by("top").append(" (edited)");
+    await waitFor(() => expect(selection()).toMatch(/Second line in the box\.\s*T$/));
+    scroller.scrollTop = 0;
+    await pause();
+    clear();
+    // A pointercancel ends the ticks before the first one lands.
+    expect(pressAt(by("s1"), inside, 1)).toBe(false);
+    dragTo(by("s1"), pastBottom);
+    window.dispatchEvent(
+      new PointerEvent("pointercancel", { pointerType: "mouse", isPrimary: true }),
+    );
+    await pause();
+    expect(scroller.scrollTop).toBe(0);
+    document.getSelection()!.removeAllRanges();
+    // A horizontal scroller: a move past its right edge scrolls it to
+    // the line's tail.
+    const wide = by("wide");
+    const start = firstCell(by("w1"));
+    expect(pressAt(by("w1"), start, 1)).toBe(false);
+    dragTo(by("w1"), { x: wide.getBoundingClientRect().right + cellWidth / 2, y: start.y });
+    await waitFor(() => expect(wide.scrollLeft).toBeGreaterThan(0));
+    // Thirty-one cells at a cell per tick.
+    await waitFor(() => expect(selection()).toMatch(/tail\.$/), { timeout: 5000 });
+    clear();
+    wide.scrollLeft = 0;
+    await pause();
+    // A press outside any container, a move past the viewport's
+    // bottom at the host's right edge: the page scrolls and the
+    // selection reaches the end of the line below the fold.
+    const top = firstCell(by("top"));
+    expect(pressAt(by("top"), top, 1)).toBe(false);
+    const right = host.getBoundingClientRect().right - cellWidth / 2;
+    dragTo(by("top"), { x: right, y: window.innerHeight + cellHeight });
+    await waitFor(() => expect(window.scrollY).toBeGreaterThan(0));
+    await waitFor(() => expect(selection()).toContain("Bottom paragraph"), { timeout: 5000 });
+    release();
+    await pause();
+    const scrolled = window.scrollY;
+    await pause();
+    expect(window.scrollY).toBe(scrolled);
+    document.getSelection()!.removeAllRanges();
+    window.scrollTo(0, 0);
+    await pause();
+    // Grid mode: a triple-click in the box held past its edge scrolls
+    // it the same way, paragraph by paragraph.
+    host.setAttribute("select", "grid");
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const line = firstCell(by("s1"));
+    expect(pressAt(grid, line, 3)).toBe(false);
+    expect(selection().trim()).toBe("First line in the box.");
+    dragTo(grid, pastBottom);
+    await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+    await waitFor(() => expect(selection()).toContain("Fifth line in the box, longest."));
+    clear();
+    // The box's bottom border, a clipped line scrolled beneath it: the
+    // browser's own gesture, as on any border cell.
+    const onBorder = pressAt(grid, { x: inside.x, y: box.bottom - cellHeight / 2 }, 3);
+    expect([onBorder, selection()]).toEqual([true, ""]);
+    clear();
+    host.setAttribute("select", "text");
+  },
+};
+
+/**
+ * The nearest-unit search stays inside the innermost box's VISIBLE
+ * cells (specs/semantic-selection.md "Drag extends unit by unit"): a
+ * leaf taller than its scroll container paints nothing past the clip,
+ * so the content painted there belongs to whatever sits below, and a
+ * drag over the leaf's blank rows reaches the paragraph above instead.
+ */
+export const NearestUnit: StoryObj = {
+  render: () => html`
+    <mono-wind select="text" class="w-96">
+      <p data-test="top">Top paragraph, above the box.</p>
+      <div data-test="scroller" class="h-4 w-40 overflow-y-auto border px-1">
+        <p><br /><br /><br /><br />text</p>
+      </div>
+      <p data-test="below">Below paragraph.</p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const selection = () => document.getSelection()!.toString();
+    const top = by("top").getBoundingClientRect();
+    expect(
+      pressAt(by("top"), { x: top.left + cellWidth / 2, y: top.top + cellHeight / 2 }, 1),
+    ).toBe(false);
+    // The box's first content row, blank: the leaf's own cells hold no
+    // character, and its clipped rows below are not its cells.
+    const box = by("scroller").getBoundingClientRect();
+    dragTo(by("top"), { x: box.left + 2.5 * cellWidth, y: box.top + 1.5 * cellHeight });
+    await waitFor(() => expect(selection()).toBe("Top paragraph, above the box."));
+    release();
+    document.getSelection()!.removeAllRanges();
   },
 };
