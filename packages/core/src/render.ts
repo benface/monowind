@@ -66,7 +66,7 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
   }
 
   if (isRoot) markRoot(node);
-  else positionElement(node);
+  else if (!node.anonymous) positionElement(node);
   // A hidden table box (misparented content, <col>) hides its whole
   // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
@@ -74,23 +74,27 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
   for (const child of paintOrderedChildren(node)) {
     // Absolutization would otherwise activate z-index on static block
     // children too (CSS keeps it inert there): the companion reads
-    // `--mw-z`, written only where CSS applies it.
-    const el = child.source as HTMLElement;
-    if (child.style.zIndex !== null && paintsInPositionedStep(child, node) && !child.inlineBox)
-      setVar(el, "--mw-z", String(child.style.zIndex));
-    else clearVar(el, "--mw-z");
+    // `--mw-z`, written only where CSS applies it. A run's element is
+    // its container, whose own value is already written.
+    if (!child.anonymous) {
+      const el = child.source as HTMLElement;
+      if (child.style.zIndex !== null && paintsInPositionedStep(child, node) && !child.inlineBox)
+        setVar(el, "--mw-z", String(child.style.zIndex));
+      else clearVar(el, "--mw-z");
+    }
     walk(child, false, inlineInsetElements);
   }
 }
 
-/** The host's flags when its own content is the root leaf
- * (specs/host-leaf.md): the companion's host variants of the leaf
- * typography rules key on them. No geometry — the host is its own box.
- * A new leaf flag in positionElement that shapes native text needs a
- * line here and a host variant in styles.css. */
+/** The host's flags when its own text is on the grid — the root leaf,
+ * or a mixed host's anonymous runs (specs/host-leaf.md): the
+ * companion's host variants of the leaf typography rules key on them.
+ * No geometry — the host is its own box. A new leaf flag in
+ * positionElement that shapes native text needs a line here and a host
+ * variant in styles.css. */
 function markRoot(node: LayoutNode): void {
   const el = node.source as HTMLElement;
-  const leaf = node.text.length > 0;
+  const leaf = node.text.length > 0 || node.children.some((child) => child.anonymous);
   const { whiteSpace, textAlignBlocked, textIndent } = node.style;
   setFlag(el, "data-mw-leaf", leaf);
   setFlag(el, "data-mw-nowrap", leaf && whiteSpace !== "normal");
@@ -132,11 +136,12 @@ function positionElement(node: LayoutNode): void {
   // different companion rule each (see styles.css).
   const flow = node.multicolFlow;
   const flowSpan = node.multicolFlowSpan;
-  setFlag(el, "data-mw-laid-out", !node.inlineBox && !flow && !flowSpan);
+  setFlag(el, "data-mw-laid-out", !node.inlineBox && !flow && !flowSpan && !node.flow);
   setFlag(el, "data-mw-inline-box", Boolean(node.inlineBox));
   setFlag(el, "data-mw-multicol-flow", Boolean(flow));
   setFlag(el, "data-mw-multicol-flow-span", Boolean(flowSpan));
-  const flowMargins = flow ?? flowSpan;
+  setFlag(el, "data-mw-flow", Boolean(node.flow));
+  const flowMargins = flow ?? flowSpan ?? node.flow;
   if (flowMargins) {
     setVar(el, "--mw-mt", String(flowMargins.top ?? 0));
     setVar(el, "--mw-mr", String(flowMargins.right ?? 0));
@@ -218,8 +223,12 @@ function positionElement(node: LayoutNode): void {
   // would resolve to an indented ancestor's value.
   setVar(el, "--mw-ti", String(node.style.textIndent));
   setFlag(el, "data-mw-text-align-blocked", textAlignBlocked);
-  // Un-laid-out direct text (mixed with block children) would otherwise
-  // paint unpositioned over the children — hide it (see styles.css).
-  setFlag(el, "data-mw-dropped-text", Boolean(node.droppedText));
   setFlag(el, "data-mw-table-hidden", Boolean(node.tableHidden));
+  // A hidden run has no element of its own: its container hides its
+  // text and its laid-out children show through (styles.css).
+  setFlag(
+    el,
+    "data-mw-hidden-runs",
+    node.children.some((child) => child.anonymous && child.tableHidden),
+  );
 }

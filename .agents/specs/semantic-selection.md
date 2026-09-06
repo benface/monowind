@@ -54,9 +54,9 @@ selects a word or a paragraph.
   such as `<mono-ascii>`), taken from `hitStack` (pointer.ts), which
   already applies scroll offsets, or the root leaf itself when nothing
   in the stack carries text (the host's own inline content,
-  host-leaf.md). Leaves are elements or the root — a container's
-  direct text next to block children is dropped (cell-model.md), so
-  there are no anonymous runs — and inline descendants (`<span>`,
+  host-leaf.md). Leaves are elements, the root, or a container's
+  anonymous run of text beside block children (cell-model.md "Inline
+  content") — and inline descendants (`<span>`,
   `<a>`, `<b>`) and `<br>` lines belong to their leaf. An `inert` leaf
   yields no unit (its text is unselectable natively) — the browser's
   grid gesture applies. An atomic
@@ -125,7 +125,10 @@ selects a word or a paragraph.
   word gesture, `detail >= 3` a paragraph gesture; the engine
   `preventDefault()`s the event —
   stopping the browser's own word/whole-`<pre>` selection AND the
-  native drag it would start — and owns the gesture until release.
+  native drag it would start — and owns the gesture through its
+  release: the `mouseup` is canceled too, since its default collapses
+  a selection the press landed in (Chromium, WebKit), which would undo
+  the gesture on the spot.
   Mouse and pen only: a `mousedown` counts only when the most recent
   primary `pointerdown` was mouse or pen. _Verified_ (Chromium,
   WebKit): a tap runs `pointerdown(touch) → pointerup(touch) →
@@ -259,8 +262,10 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
 - **Gesture state.** `mousedown` (detail ≥ 2) starts it and records the
   anchor unit; `pointermove` extends while the primary button is down;
   the window-level `pointerup`/`pointercancel` the engine already
-  listens to ends it. The existing press bookkeeping (`#pressing`,
-  data-mw-active) runs as for any press.
+  listens to ends it, and the `mouseup` after a `pointerup` is
+  canceled (`#onMouseUp`, captured on the window) so the browser's
+  release leaves the selection alone. The existing press bookkeeping
+  (`#pressing`, data-mw-active) runs as for any press.
 - **Repaints.** The selection lives in the light DOM, which the paint
   never rebuilds — paintGrid's capture/restore and the structural hold
   are about grid selections and do not engage (`hasSelectionInside` is
@@ -335,6 +340,11 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   on another paragraph asserts the selection now ends at that
   paragraph's boundary. Banner: `detail: 3` on the art asserts the
   selection string is the art. Runs in all three engines.
+- Release (`visual/selection.spec.ts`, a real mouse — a synthetic
+  release has no default to cancel): after a drag, a double-click on a
+  word and a triple-click on its paragraph keep their selection past
+  the release, and a plain click inside it still collapses it, in both
+  modes and all three engines.
 - Copy: a synthetic `ClipboardEvent("copy", { clipboardData: new
 DataTransfer() })` dispatched on the host after each selection above
   asserts `getData("text/plain")`: two `<p>`s separated by a blank

@@ -4,6 +4,7 @@ import type { LeafRegistration } from "./leaf.ts";
 import { pxToCells } from "./metrics.ts";
 import {
   isTransparentColor,
+  lineGapRows,
   readCellStyle,
   readOverflow,
   readTextStyle,
@@ -44,8 +45,8 @@ export type TextareaWidths = Map<HTMLTextAreaElement, number>;
  *   (`<div>hello <span>world</span></div>`) participate in the wrap
  *   calculation and render correctly.
  * - Elements with at least one in-flow block-level element child become
- *   **containers** and recurse. Direct text nodes on containers (uncommon
- *   in utility-first markup) are not laid out — a documented deviation.
+ *   **containers** and recurse; the text beside those children forms
+ *   anonymous runs (`buildChildren`, specs/cell-model.md "Inline content").
  * - The host follows the same rule through `buildRootLeaf`
  *   (specs/host-leaf.md).
  *
@@ -78,16 +79,16 @@ export function buildTree(
     return buildLeaf(root, style, elementChildren, roles, context);
   }
 
-  const children: LayoutNode[] = [];
-  for (let i = 0; i < elementChildren.length; i++) {
-    if (roles[i] === "none") continue;
-    const node = buildTree(elementChildren[i]!, rootFontSizePx, cellMetrics, textareaWidths);
-    if (node) children.push(node);
-  }
-  const container: LayoutNode = {
+  return {
     source: root,
     style,
-    children,
+    children: buildChildren(
+      root,
+      Array.from(root.childNodes),
+      rootFontSizePx,
+      cellMetrics,
+      textareaWidths,
+    ),
     text: "",
     intrinsicWidth: 0,
     intrinsicHeight: 0,
@@ -95,8 +96,81 @@ export function buildTree(
     unclampedHeight: 0,
     resolvedPadding: zeroInsets(),
   };
-  flagDroppedText(root, container);
-  return container;
+}
+
+/** A container's children in document order (specs/cell-model.md
+ * "Inline content"): each block-level element a node, and each maximal
+ * run of inline content between them — text, inline elements, atomic
+ * boxes, any out-of-flow element among them — an anonymous leaf in
+ * `runStyle`, the container's own text style unless given (the host's,
+ * specs/host-leaf.md). A stretch of nothing but whitespace and
+ * out-of-flow elements is no run: those elements are the container's
+ * own positioned children. */
+export function buildChildren(
+  container: Element,
+  nodes: ChildNode[],
+  rootFontSizePx: number,
+  cellMetrics?: CellMetrics,
+  textareaWidths?: TextareaWidths,
+  runStyle?: CellStyle,
+): LayoutNode[] {
+  const context = { rootFontSizePx, cellMetrics, textareaWidths };
+  const children: LayoutNode[] = [];
+  const build = (el: Element): void => {
+    const node = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
+    if (node) children.push(node);
+  };
+  let style = runStyle;
+  let run: ChildNode[] = [];
+  let roles: ChildRole[] = [];
+  let inline = false;
+  const flush = (): void => {
+    const elements = run.filter((node): node is Element => node instanceof Element);
+    if (!inline) {
+      for (const el of elements) build(el);
+    } else {
+      style ??= leafStyleOf(container, rootFontSizePx, cellMetrics);
+      children.push(buildAnonymousLeaf(container, run, elements, roles, context, style));
+    }
+    run = [];
+    roles = [];
+    inline = false;
+  };
+  for (const node of nodes) {
+    if (node instanceof Element) {
+      const role = childRole(node);
+      if (role === "none") continue;
+      if (role === "block") {
+        flush();
+        build(node);
+        continue;
+      }
+      roles.push(role);
+      inline ||= role === "inline";
+    } else if (node.nodeType !== Node.TEXT_NODE) {
+      continue;
+    } else {
+      inline ||= /[^ \t\r\n\f]/.test(node.textContent ?? "");
+    }
+    run.push(node);
+  }
+  flush();
+  return children;
+}
+
+/** A run's leaf over exactly the run's nodes, which are its DOM
+ * (selection.ts `runNodes`). */
+function buildAnonymousLeaf(
+  container: Element,
+  nodes: ChildNode[],
+  elements: Element[],
+  roles: ChildRole[],
+  context: BuildContext,
+  style: CellStyle,
+): LayoutNode {
+  const leaf = buildLeaf(container, style, elements, roles, context, nodes);
+  leaf.anonymous = true;
+  return leaf;
 }
 
 interface BuildContext {
@@ -122,18 +196,37 @@ export function buildRootLeaf(
   const roles = elementChildren.map(childRole);
   if (roles.includes("block")) return null;
   if (!hasDirectText(host) && !roles.includes("inline")) return null;
-  const style = rootLeafStyle(host, rootFontSizePx);
+  const style = hostLeafStyle(host, rootFontSizePx, cellMetrics);
   const context = { rootFontSizePx, cellMetrics, textareaWidths };
   return buildLeaf(host, style, elementChildren, roles, context, nodes);
 }
 
-/** The root leaf's style: the virtual root's box (no padding, border,
- * margin, or size — the host's own stay outside the grid) with the
- * host's text properties. Tracking and line gap are zero by
- * definition: the host's letter-spacing and line-height ARE the cell. */
-function rootLeafStyle(host: Element, rootFontSizePx: number): CellStyle {
-  const cs = getComputedStyle(host);
-  const style = { ...defaultCellStyle(), ...readTextStyle(host, cs, rootFontSizePx) };
+/** The style of the host's own text (specs/host-leaf.md): its text
+ * properties on no box, with no tracking or line gap — the host's
+ * letter-spacing and line-height are the cell. */
+export function hostLeafStyle(
+  host: Element,
+  rootFontSizePx: number,
+  metrics?: CellMetrics,
+): CellStyle {
+  return { ...leafStyleOf(host, rootFontSizePx, metrics), tracking: 0, lineGap: 0 };
+}
+
+/** A leaf's style from an element's text and inherited paint
+ * properties, on no box of its own (padding, border, margin, and size
+ * stay the element's): the root leaf's and an anonymous run's. */
+function leafStyleOf(el: Element, rootFontSizePx: number, metrics?: CellMetrics): CellStyle {
+  const cs = getComputedStyle(el);
+  const fontSizePx = parseFloat(cs.fontSize) || rootFontSizePx;
+  const style: CellStyle = {
+    ...defaultCellStyle(),
+    ...readTextStyle(el, cs, rootFontSizePx),
+    lineGap: lineGapRows(cs.lineHeight, fontSizePx),
+    tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
+    color: cs.color,
+    fontWeight: cs.fontWeight,
+    fontStyle: cs.fontStyle,
+  };
   // Truncation needs the clip; any other overflow stays the root's.
   if (readOverflow(cs).x === "clip") style.overflow = { ...style.overflow, x: "clip" };
   return style;
@@ -583,7 +676,7 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
         continue;
       }
       // A BLOCK-level element nested inside the run can't be laid out
-      // from here — skip its subtree and warn, mirroring dropped text.
+      // from here — skip its subtree and warn.
       if (!isRunInline(child, cs.display)) {
         warnSkippedRunContent(child);
         continue;
@@ -786,30 +879,14 @@ function warnSkippedRunContent(el: Element): void {
 }
 
 /** True if `el` has any direct text child that isn't just whitespace. */
-export function hasDirectText(el: Element): boolean {
+function hasDirectText(el: Element): boolean {
   return Array.from(el.childNodes).some(
     (child) => child.nodeType === Node.TEXT_NODE && /[^ \t\r\n\f]/.test(child.textContent ?? ""),
   );
 }
 
-/** Author-facing warning when direct text can't be laid out alongside
- * block children — shared by the nested-container path here and the
- * host-level path in element.ts. */
-export const DIRECT_TEXT_DROPPED =
-  "Direct text next to block-level children can't be laid out and was hidden. " +
-  "Wrap each text segment in its own element (e.g. a <div>).";
-
 /** True for tags whose value/caret/selection are handled by the browser
  * natively — the tree builder treats them as empty leaves. */
 export function isFormControlTag(tag: string): boolean {
   return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
-}
-
-/** Mixed direct text + in-flow block children: the text can't be laid out
- * (no element to position — cell-model deviation). Hide it (via the
- * renderer) and tell the author how to fix their markup, once. */
-function flagDroppedText(el: Element, node: LayoutNode): void {
-  if (!hasDirectText(el)) return;
-  node.droppedText = true;
-  warnOnce(el, DIRECT_TEXT_DROPPED);
 }

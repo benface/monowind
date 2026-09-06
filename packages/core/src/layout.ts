@@ -138,6 +138,7 @@ export function layoutNode(
   delete node.multicolGeometry;
   delete node.multicolFlow;
   delete node.multicolFlowSpan;
+  delete node.flow;
   delete node.textExtent;
 
   // Width is clamped to min/max BEFORE laying out content — wrapping and
@@ -748,7 +749,32 @@ function layoutBlock(
     previousMarginBottom = marginBottom;
   }
   if (previousMarginBottom !== null) y += previousMarginBottom;
+  if (node.children.some((child) => child.anonymous)) placeFlowChildren(node, originX, startY);
   return y - startY;
+}
+
+/** Native margins that put a mixed container's in-flow block children,
+ * and the run after each, where the engine did (specs/cell-model.md
+ * "Inline content"): a run advances the native cursor by its line
+ * boxes, `lines × (1 + gap)` rows, a child by its height, and the
+ * container's half-leading translate lifts it all, so a child starts
+ * half a gap below its engine row. */
+function placeFlowChildren(node: LayoutNode, originX: number, startY: number): void {
+  const gap = node.style.lineGap;
+  let cursor = startY;
+  let previous: LayoutNode | undefined;
+  for (const child of node.children) {
+    if (isOutOfFlow(child.style)) continue;
+    const { x, y, height } = child.localRect;
+    if (child.anonymous) {
+      if (previous?.flow) previous.flow.bottom = y - cursor;
+      cursor = y + height + gap;
+    } else {
+      child.flow = { top: y + gap / 2 - cursor, right: 0, bottom: 0, left: x - originX };
+      cursor = y + gap / 2 + height;
+    }
+    previous = child;
+  }
 }
 
 /** Horizontal placement of a box inside its block-flow slot: `auto`

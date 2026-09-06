@@ -93,7 +93,7 @@ export function focusableRects(root: LayoutNode): Focusable[] {
     if (node.tableHidden) return;
     const x = parentX + node.localRect.x;
     const y = parentY + node.localRect.y;
-    if (!isRoot && isFocusable(node.source)) {
+    if (!isRoot && !node.anonymous && isFocusable(node.source)) {
       out.push({
         element: node.source,
         rect: { x, y, width: node.localRect.width, height: node.localRect.height },

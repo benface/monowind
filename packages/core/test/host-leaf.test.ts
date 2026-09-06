@@ -67,6 +67,12 @@ describe("buildRootLeaf", () => {
     expect(renderPlainText(leaf)).toBe("a lon…");
   });
 
+  it("keeps zero tracking and line gap: the host's spacing is the cell", () => {
+    const el = host("foo bar", "line-height: 32px; letter-spacing: 0.4px; color: red");
+    const leaf = buildRootLeaf(el, 16)!;
+    expect(leaf.style).toMatchObject({ tracking: 0, lineGap: 0, color: "red" });
+  });
+
   it("is null for a container host, an empty host, or out-of-flow children alone", () => {
     expect(buildRootLeaf(host("foo<div>block</div>"), 16)).toBeNull();
     expect(buildRootLeaf(host("  \n  "), 16)).toBeNull();

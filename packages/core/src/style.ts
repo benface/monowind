@@ -746,7 +746,7 @@ export function trackingCells(
  * CSS meaning (`leading-loose` = 2 → 2 rows per line, 1 gap) even when
  * cell-height ≠ 1em (default `line-height: normal` on the root makes
  * the cell ~1.15em). */
-function lineGapRows(lineHeight: string, fontSizePx: number): number {
+export function lineGapRows(lineHeight: string, fontSizePx: number): number {
   if (!lineHeight || lineHeight === "normal" || fontSizePx <= 0) return 0;
   const px = parseFloat(lineHeight);
   if (!Number.isFinite(px)) return 0;

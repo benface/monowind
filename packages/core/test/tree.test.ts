@@ -49,11 +49,10 @@ describe("buildTree", () => {
     expect(node.text).toBe("hello wide world");
   });
 
-  it("treats an element with a block child as a container and drops direct text", () => {
+  it("treats an element with a block child as a container, its own text a run", () => {
     const node = buildTree(el("<div>orphan text<div>child</div></div>"), 16)!;
     expect(node.text).toBe("");
-    expect(node.children.length).toBe(1);
-    expect(node.children[0]!.text).toBe("child");
+    expect(node.children.map((child) => child.text)).toEqual(["orphan text", "child"]);
   });
 
   it("skips display: none subtrees entirely", () => {
@@ -111,10 +110,10 @@ describe("buildTree", () => {
       el('<div>before <span style="display: block">own line</span> after</div>'),
       16,
     )!;
-    // An in-flow block child forces container mode (the direct text is
-    // dropped — the documented mixed-content deviation).
-    expect(node.children.length).toBe(1);
-    expect(node.children[0]!.text).toBe("own line");
+    // An in-flow block child makes the element a container; the text
+    // around it forms anonymous runs (specs/cell-model.md).
+    expect(node.children.map((child) => child.text)).toEqual(["before", "own line", "after"]);
+    expect(node.children.map((child) => child.anonymous)).toEqual([true, undefined, true]);
   });
 
   it("excludes display: none inline content from the text run", () => {
@@ -173,12 +172,39 @@ describe("buildTree", () => {
     expect(node.children[0]!.inlineBox).toBe(true);
   });
 
-  it("flags dropped direct text on mixed containers (hidden + warned)", () => {
+  it("lays out text beside block children as anonymous runs", () => {
     const mixed = buildTree(el("<div>orphan <div>child</div></div>"), 16)!;
-    expect(mixed.droppedText).toBe(true);
-    // Whitespace-only text between block children is not "dropped text".
-    const clean = buildTree(el("<div>\n  <div>a</div>\n  <div>b</div>\n</div>"), 16)!;
-    expect(clean.droppedText).toBeUndefined();
+    expect(mixed.children.map((child) => child.text)).toEqual(["orphan", "child"]);
+    expect(mixed.children[0]!.anonymous).toBe(true);
+    expect(mixed.children[0]!.source).toBe(mixed.source);
+    // Whitespace between block children forms no run; an out-of-flow
+    // element there is the container's own positioned child.
+    const clean = buildTree(
+      el(
+        '<div>\n  <div>a</div>\n  <span style="position: absolute">abs</span>\n  <div>b</div>\n</div>',
+      ),
+      16,
+    )!;
+    expect(clean.children.map((child) => child.text)).toEqual(["a", "abs", "b"]);
+    expect(clean.children.some((child) => child.anonymous)).toBe(false);
+    // A run carries its inline elements, atomic boxes, and out-of-flow
+    // elements like any leaf.
+    const rich = buildTree(
+      el(
+        '<div>foo <a href="#">link</a> <i style="position: absolute">abs</i><div>bar</div>' +
+          '<span style="display: inline-block">chip</span> baz</div>',
+      ),
+      16,
+    )!;
+    const [first, , last] = rich.children;
+    expect(first!.text).toBe("foo link");
+    expect(first!.inlineElements).toHaveLength(1);
+    expect(first!.children[0]!.style.position).toBe("absolute");
+    expect(last!.text).toBe("\uFFFC baz");
+    expect(last!.children[0]!.inlineBox).toBe(true);
+    // A flex container's runs are its anonymous items.
+    const flex = buildTree(el('<div style="display: flex">foo<div>bar</div>baz</div>'), 16)!;
+    expect(flex.children.map((child) => child.anonymous)).toEqual([true, undefined, true]);
   });
 
   it("keeps edge <br> line boxes like browsers (final one excepted)", () => {

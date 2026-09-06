@@ -495,7 +495,7 @@ export interface LayoutNode {
    * `inlineBoxesOf`, the one place that pairing is read. */
   children: LayoutNode[];
   /** The leaf's text run (inline descendants included, `<br>` as `\n`).
-   * Empty for containers — their direct text nodes are not laid out. */
+   * Empty for containers, whose text lives in their anonymous runs. */
   text: string;
   intrinsicWidth: number;
   intrinsicHeight: number;
@@ -580,11 +580,10 @@ export interface LayoutNode {
         rows?: InheritedTracks | undefined;
       }
     | undefined;
-  /** True on a container whose direct text nodes were dropped (mixed
-   * text + in-flow block children — cell-model deviation). The renderer
-   * hides that text and warns instead of letting the browser paint it
-   * unpositioned. */
-  droppedText?: boolean;
+  /** An anonymous run (specs/cell-model.md "Inline content"): a
+   * container's inline content beside its block children, `source` the
+   * container, its DOM the run's own nodes (selection.ts `runNodes`). */
+  anonymous?: boolean;
   /** Engine-generated glyph runs in this node's local coordinates
    * (offset by its absolute position at paint time). Today: a collapsed
    * table's border lattice; future producers (css-gaps rules,
@@ -642,6 +641,11 @@ export interface LayoutNode {
    * geometry forced like a laid-out element's. Carries the quantized
    * native margins (`left` = the engine's cross offset). */
   multicolFlowSpan?: NullableInsets;
+  /** A mixed block container's in-flow child (specs/cell-model.md
+   * "Inline content"): stays in the browser's flow, engine-sized, with
+   * these engine margins placing it where the engine did, so the
+   * container's anonymous runs sit natively on their rows. */
+  flow?: NullableInsets;
 }
 
 /** A multicol text leaf's per-line fragmentation. `lineY`/`textY` are

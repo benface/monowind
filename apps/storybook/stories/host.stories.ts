@@ -6,10 +6,10 @@ import { copyText, pressAt, release } from "./helpers.ts";
 /**
  * The host's own content states: emptied out, it is zero rows with an
  * empty grid (specs/cell-model.md "Host sizing"); its own inline
- * content is the root leaf (specs/host-leaf.md); direct text next to a
- * block child is hidden through the shadow slot while laid-out
- * children stay visible (deviation 7). Hidden from the sidebar and the
- * story sweep.
+ * content is the root leaf (specs/host-leaf.md); its own text beside a
+ * block child is an anonymous run, the block a flow child
+ * (specs/cell-model.md "Inline content"). Hidden from the sidebar and
+ * the story sweep.
  */
 const meta: Meta = {
   title: "Test / Host",
@@ -51,7 +51,6 @@ export const Content: StoryObj = {
     host.innerHTML = 'foo <b data-test="bold" class="text-red-400">bar</b> baz';
     await waitFor(() => expect(grid.textContent).toContain("foo bar baz"));
     expect(host).toHaveAttribute("data-mw-leaf");
-    expect(host).not.toHaveAttribute("data-mw-dropped-text");
     // The invisibility lock covers the host itself; the grid keeps its
     // own ink through the shadow reset.
     expect(style.webkitTextFillColor).toBe("rgba(0, 0, 0, 0)");
@@ -97,18 +96,58 @@ export const Content: StoryObj = {
     host.classList.remove("w-24", "truncate");
     await waitFor(() => expect(grid.textContent).toContain("foo bar baz"));
 
-    // Mixed with a block child: the child lays out and shows, the text
-    // is dropped and hidden.
-    host.innerHTML = 'foo<div data-test="block">bar</div>';
-    await waitFor(() => expect(grid.textContent!.trim()).toBe("bar"));
-    expect(host).not.toHaveAttribute("data-mw-leaf");
-    expect(host).toHaveAttribute("data-mw-dropped-text");
-    expect(getComputedStyle(slot).visibility).toBe("hidden");
-    expect(getComputedStyle(by("block")).visibility).toBe("visible");
+    // Mixed with a block child: the host is a container, its own text
+    // an anonymous run locked like the root leaf's, the child in the
+    // browser's flow beneath it.
+    host.innerHTML = 'foo bar<div data-test="block">baz</div>';
+    await waitFor(() =>
+      expect(grid.textContent!.split("\n").map((row) => row.trim())).toEqual(["foo bar", "baz"]),
+    );
+    expect(host).toHaveAttribute("data-mw-leaf");
+    expect(style.webkitTextFillColor).toBe("rgba(0, 0, 0, 0)");
+    expect(by("block")).toHaveAttribute("data-mw-flow");
+    expect(by("block")).not.toHaveAttribute("data-mw-laid-out");
+    // A triple-click on the run selects the run alone.
+    expect(pressAt(grid, cell(1, 0), 3)).toBe(false);
+    expect(selection()).toBe("foo bar");
+    release();
+    document.getSelection()!.removeAllRanges();
+    // Flow children keep their top margins inside their formatting
+    // context, as the engine placed them: the slot holds the host's
+    // first child's, a flow child its own first child's.
+    host.innerHTML =
+      '<div data-test="first" class="mt-2">first</div>foo' +
+      '<div data-test="outer" class="mt-1"><div data-test="inner" class="mt-1">inner</div>x</div>';
+    await waitFor(() =>
+      expect(grid.textContent!.split("\n").map((row) => row.trim())).toEqual([
+        "",
+        "",
+        "first",
+        "foo",
+        "",
+        "",
+        "inner",
+        "x",
+      ]),
+    );
+    const contentTop = cell(0, 0).y - cellHeight / 2;
+    const rowOf = (rect: DOMRect) => Math.round((rect.top - contentTop) / cellHeight);
+    expect(rowOf(slot.getBoundingClientRect())).toBe(0);
+    expect(rowOf(by("first").getBoundingClientRect())).toBe(2);
+    expect(rowOf(by("inner").getBoundingClientRect())).toBe(6);
+    // The host's runs take the root leaf's style: the host's line-height
+    // is the cell, so a run's lines are contiguous rows.
+    host.style.lineHeight = "2";
+    host.innerHTML = 'foo<br />bar<div data-test="block">baz</div>';
+    await waitFor(() =>
+      expect(grid.textContent!.split("\n").map((row) => row.trim())).toEqual(["foo", "bar", "baz"]),
+    );
+    const tallCell = parseFloat(style.getPropertyValue("--mw-ch"));
+    expect(Math.round((by("block").getBoundingClientRect().top - contentTop) / tallCell)).toBe(2);
+    host.style.lineHeight = "";
 
-    // Back to clean content: the flag clears.
-    host.innerHTML = "<div>clean</div>";
-    await waitFor(() => expect(host).not.toHaveAttribute("data-mw-dropped-text"));
-    expect(getComputedStyle(slot).visibility).toBe("visible");
+    // Back to element children only: positioned as ever.
+    host.innerHTML = '<div data-test="clean">clean</div>';
+    await waitFor(() => expect(by("clean")).toHaveAttribute("data-mw-laid-out"));
   },
 };

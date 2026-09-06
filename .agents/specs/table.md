@@ -67,7 +67,10 @@ group. `<col span>` expands to that many columns; a `<colgroup>` with no
 CSS generates anonymous boxes around misparented content (§17.2.1); we
 don't. Content that isn't where the model expects it — text or non-row
 children in a table, non-cell children in a row — is hidden and warned
-about once, the same pattern as dropped text in `cell-model.md`. Real
+about once, like the engine's other author warnings; stray text forms
+an anonymous run (cell-model.md "Inline content") that its container
+hides natively (`data-mw-hidden-runs`), its rows or cells showing
+through. Real
 HTML tables are always well-formed (the HTML parser guarantees it);
 this only bites hand-rolled div-tables.
 

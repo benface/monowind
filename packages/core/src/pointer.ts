@@ -69,7 +69,8 @@ export function hitChain(root: LayoutNode, col: number, row: number): Element[] 
   const chain: Element[] = [];
   for (const entry of hitStack(root, col, row)) {
     if (isInert(entry.node.source)) break;
-    chain.push(entry.node.source);
+    // An anonymous run's element is its container, already in the chain.
+    if (!entry.node.anonymous) chain.push(entry.node.source);
   }
   return chain;
 }

@@ -1,19 +1,20 @@
 # The host as a leaf
 
 Status: **implemented** (2026-09-04; plan
-`.agents/plans/2026-09-04-host-leaf.md`). A deferred second half
-(anonymous boxes for text between block children) is kept at the end
-for the record.
+`.agents/plans/2026-09-04-host-leaf.md`); the second half, anonymous
+runs for text beside block children, 2026-09-06 (plan
+`.agents/plans/2026-09-06-anonymous-runs.md`, spec in cell-model.md
+"Inline content").
 
 ## Why
 
-`<mono-wind>foo</mono-wind>` renders nothing: the host is the one
-container whose direct text is never laid out, while `<div>foo</div>`
-anywhere inside it is a text leaf. The host's tree is built from its
-element children only, its own text is flagged as dropped (cell-model.md
-deviation 7) with a warning written for text NEXT TO block children,
-and the playground shows a blank preview to anyone who types plain
-text. Wrapping the text in the light DOM is not an option: frameworks
+`<mono-wind>foo</mono-wind>` rendered nothing: the host was the one
+container whose direct text was never laid out, while `<div>foo</div>`
+anywhere inside it is a text leaf. The host's tree was built from its
+element children only, its own text flagged as dropped (then
+cell-model.md deviation 7) with a warning written for text NEXT TO
+block children, and the playground showed a blank preview to anyone
+who typed plain text. Wrapping the text in the light DOM is not an option: frameworks
 reconcile against the nodes they created, and a foreign wrapper breaks
 their next render, the author's selectors, and DOM round-trips. The
 engine's own tree is the place to fix it, and it needs no new concept:
@@ -27,26 +28,29 @@ is a leaf.
   with no in-flow block-level child, the host's inline content — text,
   inline elements, atomic inline boxes as U+FFFC markers — is the ROOT
   LEAF, and its out-of-flow children are positioned nodes as in any
-  leaf. With a block-level child the host is the container it is today
-  (mixed text stays dropped and warned; the warning's wording is then
-  right). The engine's metrics probe is never part of the run.
+  leaf. With a block-level child the host is a container, its own
+  text beside the blocks laid out as anonymous runs like any
+  container's (cell-model.md "Inline content"), in the root leaf's
+  style. The engine's metrics probe is never part of a run.
 - **The root leaf's style.** The virtual root's box style — no padding,
   border, margin, or size; the host's own padding and border stay
   outside the grid, as today — plus the host's text properties:
   white-space, tab-size, text-indent, text-align (and its `justify`
   block), text-overflow, overflow (for truncation), and the decoration
   line. Tracking and line gap are zero by definition: the host's
-  letter-spacing and line-height ARE the cell. Its paint is bare except
-  for the decoration line — the grid inherits the host's color, weight,
-  and style natively, and paints the decoration itself because an
-  absolutely positioned `<pre>` receives no propagated decoration.
+  letter-spacing and line-height ARE the cell. Its paint is the host's
+  color, weight, style, and decoration line, read as any leaf's (one
+  style reader serves the root leaf and anonymous runs); the grid
+  paints the decoration itself because an absolutely positioned
+  `<pre>` receives no propagated decoration.
 - **The host's native text needs no positioning.** The host is its own
   box: the browser lays its inline content out in the same content box,
   at the cell's line height, wrapping at the same whole-cell width the
   engine laid out, so the text already sits under the glyphs exactly as
   a leaf's text sits under its box (probed: rows match for wrapped,
   indented, and `nowrap` text in all three engines). The invisibility
-  locks extend to the host while it is a leaf (`data-mw-leaf`):
+  locks extend to the host while its own text is on the grid — the
+  root leaf, or a mixed host's runs (`data-mw-leaf`):
   text-fill and decoration color go transparent on the host itself, and
   the shadow grid resets text-fill to `currentColor` because the fill
   inherits across the shadow boundary (probed: every grid span keeps
@@ -85,14 +89,16 @@ is a leaf.
   node's `user-select` from its light parent), and of the four leaf
   typography rules; in the shadow sheet,
   `#grid { -webkit-text-fill-color: currentColor }`.
-- The slot is a positioned block box (`slot { display: block; position:
-relative }`). Laid-out elements are absolute and always painted above
-  the grid, but the host's own text is in-flow, and in-flow content
-  paints BELOW an absolutely positioned sibling — the grid's glyphs
-  covered its selection ink (found by the visual fixture; the probes
-  had an empty grid). A positioned slot box paints its content in the
-  positioned step after the grid, and laid-out elements position
-  against it at the same origin as before.
+- The slot is a positioned block box (`slot { display: flow-root;
+position: relative }`). Laid-out elements are absolute and always
+  painted above the grid, but the host's own text is in-flow, and
+  in-flow content paints BELOW an absolutely positioned sibling — the
+  grid's glyphs covered its selection ink (found by the visual fixture;
+  the probes had an empty grid). A positioned slot box paints its
+  content in the positioned step after the grid, and laid-out elements
+  position against it at the same origin as before. `flow-root` makes
+  it a block formatting context, so a mixed host's first flow child
+  keeps its top margin inside the slot (cell-model.md "Inline content").
 - The unit gesture: after the hit stack yields no text leaf, the root
   leaf is tried at the cell (`charIndexAtCell` with the root's origin).
 - `truncate` on the host: the root leaf takes the host's x clip, and
@@ -108,21 +114,28 @@ relative }`). Laid-out elements are absolute and always painted above
   whole component.
 - **Column utilities on the host itself** do not apply (they never
   did); use a wrapper.
-- Deviation 7 (text next to block children is dropped) is unchanged.
+- A mixed host's block children are flow children (cell-model.md):
+  in the browser's flow, engine-sized and engine-margined, so the
+  host's own runs sit natively on their rows; the shadow slot is a
+  block formatting context so the first child's top margin stays
+  inside it.
 
 ## Testing
 
 - Node (happy-dom): the root leaf built from a host-like element —
   text, an inline element with padding, an atomic box, an out-of-flow
-  child, the probe excluded, a `<br>`; the host with a block child
-  still a container with dropped text.
+  child, the probe excluded, a `<br>`; the host with a block child a
+  container whose text beside it is an anonymous run.
 - Storybook (`Test / Host`, extended): a text-only host with an inline
   element — grid text, `data-mw-leaf`, the host's fill transparent, a
   grid span's fill `currentColor`, a programmatic range over the host's
   text copied by the engine, a triple-click on it selecting the run and
   a word gesture selecting a word, `nowrap` and `text-indent` on the
-  host reflected in the flags; the mixed host unchanged. All three
-  engines.
+  host reflected in the flags; the mixed host: its text on the grid
+  beside the block, the host locked as a leaf, a triple-click on the
+  run selecting the run alone, the block a flow child, and top margins
+  on a first flow child (the host's, a flow child's own) landing
+  natively where the engine put them. All three engines.
 - Visual: a third selection-invert fixture — a text-only host dragged
   in both modes (the host `::selection` site, and the grid) — and the
   visible "Own Text" story under Root Styles, whose play asserts the
@@ -132,30 +145,19 @@ relative }`). Laid-out elements are absolute and always painted above
 ## Touch points on implementation
 
 - cell-model.md: "Host sizing" notes the root leaf; the Inline content
-  section references this spec; deviation 7's wording drops the host
-  from the dropped-text case.
+  section references this spec and holds the anonymous-run rule.
 - semantic-selection.md "The paragraph is the text LEAF": leaves are
-  elements or the root.
+  elements, the root, or an anonymous run.
 - README "Selection" or the intro: a sentence that the host's own text
   renders like any element's.
 
-## Deferred: anonymous boxes for text between block children
+## Resolved: anonymous runs for text between block children
 
-CSS wraps each run of inline content between block siblings in an
-anonymous block box (CSS 2 §9.2.1.1); the engine could do the same in
-its tree — an anonymous leaf per run, `source` the container, nothing
-written to the DOM. Its bare text can never be positioned natively (no
-element), so it would stay hidden as today, and the grid gestures would
-treat the run as blank so that the visible highlight always matches the
-copy. Its elements could stay live: an inline element or atomic box on
-a single row positioned at its cells as a fragment box (absolute, run
-padding, `nowrap`, visible) — today's engine lays out such inline
-elements as blocks of their own, clickable, which a fragment rule would
-preserve — while an element wrapping across rows would hide with the
-text (interactive content hidden that way warned once).
-
-Deferred because it trades one deviation for a smaller one at the cost
-of a node kind that five modules must respect plus a fragment path,
-for a markup shape utility-first code rarely produces, where the
-existing warning already names the one-line fix. Revisit if real
-content keeps hitting the warning.
+Deferred at first (a node kind five modules must respect, plus a
+fragment path for a run's inline elements, for a markup shape the
+warning already named the fix for); done 2026-09-06 without the
+fragment path — a mixed block container's block children stay in the
+browser's flow (as multicol's spanners do), so the runs' native text
+and inline elements land on their rows by themselves. Spec:
+cell-model.md "Inline content"; plan
+`.agents/plans/2026-09-06-anonymous-runs.md`.

@@ -6,6 +6,7 @@ import {
   expectBrowserRowsToMatchEngine,
   expectGridOnItsCells,
   isFirefox,
+  readyHost,
 } from "./helpers.ts";
 
 const meta: Meta = {
@@ -140,9 +141,8 @@ export const InlineDisplay: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="relative max-w-48 border border-neutral-500 px-3 py-1">
-        <!-- A block child turns its parent into a container, and containers
-             don't lay out direct text (cell-model deviation 7) — so the
-             running text lives in its own div beside the block span. -->
+        <!-- The running text keeps a div of its own beside the block span:
+             the row-agreement helper below checks laid-out leaves. -->
         <div>
           Inline-ness follows computed display: this text run contains
           <div class="inline">an inline div,</div>
@@ -477,5 +477,139 @@ export const TilingGlyphs: StoryObj = {
       parseFloat(host.style.getPropertyValue("--mw-bgpad")),
       3,
     );
+  },
+};
+
+/** Text beside block children (specs/cell-model.md "Inline content"):
+ * each run is an anonymous leaf on the grid, and the block children
+ * stay in the browser's flow, so the runs' native text and the link
+ * land on their cells in every engine — under `leading-loose` too,
+ * where a run's wrapped lines sit two rows apart, a native line box is
+ * two rows, and the container's content shifts by half a row. */
+export const AnonymousRuns: StoryObj = {
+  name: "Anonymous Runs",
+  render: () => html`
+    <mono-wind>
+      <div data-test="mixed" class="w-48 border border-neutral-500 px-2 py-1 text-amber-300">
+        Text before the block.
+        <div data-test="block" class="my-1 bg-neutral-700 px-1 text-white">A block child</div>
+        Text after it, with <a data-test="link" href="#" class="text-cyan-400 underline">a link</a>.
+      </div>
+      <div
+        data-test="mixed-loose"
+        class="mt-1 w-48 border border-neutral-500 px-2 py-1 leading-loose"
+      >
+        Leaded before the block, wrapping onto a second line.
+        <div data-test="block-loose" class="my-1 bg-neutral-700 px-1 text-white">
+          A leaded block that wraps onto a second row.
+        </div>
+        Leaded after it, with
+        <a data-test="link-loose" href="#" class="text-cyan-400 underline">a link</a>, wrapping onto
+        a second line too.
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const rows = grid.textContent!.split("\n");
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const gridRect = grid.getBoundingClientRect();
+    // Where a native line rect lands, in cells (its middle: a leaded
+    // line box is two rows).
+    const cellOf = (rect: DOMRect) => ({
+      row: Math.floor((rect.top + rect.height / 2 - gridRect.top) / cellHeight),
+      col: Math.round((rect.left - gridRect.left) / cellWidth),
+    });
+    // Where the grid shows a text, from a row on.
+    const shown = (text: string, from = 0) => {
+      const row = rows.findIndex((line, index) => index >= from && line.includes(text));
+      expect(row).toBeGreaterThanOrEqual(0);
+      return { row, col: rows[row]!.indexOf(text) };
+    };
+    // 48 cells: the border, then `px-2` and the block's own `px-1`.
+    const inner = (text = "") => `│${text.padEnd(46)}│`;
+    expect(rows.map((row) => row.trimEnd()).filter(Boolean)).toEqual([
+      `┌${"─".repeat(46)}┐`,
+      inner(),
+      inner("  Text before the block."),
+      inner(),
+      inner("   A block child"),
+      inner(),
+      inner("  Text after it, with a link."),
+      inner(),
+      `└${"─".repeat(46)}┘`,
+      `┌${"─".repeat(46)}┐`,
+      inner(),
+      inner("  Leaded before the block, wrapping onto a"),
+      inner(),
+      inner("  second line."),
+      inner(),
+      inner("   A leaded block that wraps onto a second"),
+      inner(),
+      inner("   row."),
+      inner(),
+      inner("  Leaded after it, with a link, wrapping"),
+      inner(),
+      inner("  onto a second line too."),
+      inner(),
+      `└${"─".repeat(46)}┘`,
+    ]);
+    // A text node's lines, each by its leftmost rect (WebKit splits a
+    // line's rects at spaces).
+    const linesOf = (node: Node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const byRow = new Map<number, number>();
+      for (const rect of range.getClientRects()) {
+        if (rect.width === 0) continue;
+        const { row, col } = cellOf(rect);
+        byRow.set(row, Math.min(byRow.get(row) ?? Infinity, col));
+      }
+      return [...byRow].sort(([a], [b]) => a - b).map(([row, col]) => ({ row, col }));
+    };
+    const textNodes = (el: Element) =>
+      Array.from(el.childNodes).filter(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== "",
+      );
+    for (const [suffix, word, blockText, blockRows] of [
+      ["", "Text", "A block child", 1],
+      ["-loose", "Leaded", "A leaded block", 3],
+    ] as const) {
+      // The block stays in the browser's flow, engine-margined so its
+      // text sits on its row; its box spans its rows, the gap row of a
+      // wrapped line included.
+      const block = by(`block${suffix}`);
+      expect(block).toHaveAttribute("data-mw-flow");
+      const top = shown(`${word} before`).row;
+      expect(linesOf(textNodes(block)[0]!)[0]).toEqual(shown(blockText, top));
+      expect(Math.round(block.getBoundingClientRect().height / cellHeight)).toBe(blockRows);
+      // The runs' native text and the link inside one sit on their cells.
+      const [before, after] = textNodes(by(`mixed${suffix}`));
+      expect(linesOf(before!)[0]).toEqual(shown(`${word} before`, top));
+      expect(linesOf(after!)[0]).toEqual(shown(`${word} after`, top));
+      expect(cellOf(by(`link${suffix}`).getBoundingClientRect())).toEqual(shown("a link", top));
+    }
+    // A run paints in its container's color.
+    const run = Array.from(grid.querySelectorAll("span")).find((span) =>
+      span.textContent!.includes("Text before"),
+    )!;
+    expect(getComputedStyle(run).color).toBe(getComputedStyle(by("mixed")).color);
+    // Under leading, each wrapped line sits a gap row down — the runs'
+    // and the block's, natively too (the run after the link wraps in
+    // the text node after it).
+    const leaded = shown("Leaded before").row;
+    const [leadedBefore, , leadedTail] = textNodes(by("mixed-loose"));
+    for (const [node, first, second] of [
+      [leadedBefore!, "Leaded before", "second line."],
+      [leadedTail!, "Leaded after", "onto a second line too"],
+      [textNodes(by("block-loose"))[0]!, "A leaded block", "row."],
+    ] as const) {
+      const wrapped = shown(second, leaded);
+      expect(wrapped.row).toBe(shown(first, leaded).row + 2);
+      expect(linesOf(node).at(-1)).toEqual(wrapped);
+    }
   },
 };

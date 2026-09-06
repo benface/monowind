@@ -99,9 +99,10 @@ describe("focusableRects", () => {
       // Wrapped over rows 2 and 3: one rect per line.
       ["a link that wraps around", 0, 2, 17, 1],
       ["a link that wraps around", 0, 3, 6, 1],
-      // The scroll container starts on row 6; its button is on its third
-      // row, painted one row up by the scroll, 19 wide beside the gutter.
-      ["scrolled", 0, 7, 19, 1],
+      // The scroll container starts on row 6; its button, an atomic box
+      // in an anonymous run, is on its third row, painted one row up by
+      // the scroll, at its own width.
+      ["scrolled", 0, 7, 8, 1],
     ]);
     // The wrapped link's own extent is the union of its lines.
     const wrapped = host.querySelectorAll("a")[2]!;

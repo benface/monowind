@@ -154,7 +154,16 @@
    * despite `pointer-events: none`, and would show an arrow there.
    * Interactives keep their own (UA and authored cursors win). */
   mono-wind[select="grid"]
-    [data-mw-laid-out]:not(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
+    :is([data-mw-laid-out], [data-mw-flow]):not(
+      a,
+      button,
+      input,
+      select,
+      textarea,
+      label,
+      [tabindex],
+      [role="button"]
+    ) {
     cursor: text;
   }
 }
@@ -374,9 +383,10 @@ mono-wind:not([measuring]) * {
  * on it for real and the engine samples true mid-fade values (the
  * animation loop, element.ts). Decoration ink follows `color`, so it
  * needs its own transparent lock (the grid paints decorations).
- * `[data-mw-leaf]` is the host with its own text as the root leaf
- * (specs/host-leaf.md): every rule that shapes a leaf's native text
- * carries this host variant — render.ts writes the host's flags. */
+ * `[data-mw-leaf]` is the host with its own text on the grid — the root
+ * leaf, or a mixed host's anonymous runs (specs/host-leaf.md): every
+ * rule that shapes a leaf's native text carries this host variant —
+ * render.ts writes the host's flags. */
 mono-wind:not([measuring])[data-mw-leaf],
 mono-wind:not([measuring]) *:not(input):not(textarea):not(select) {
   -webkit-text-fill-color: transparent !important;
@@ -475,7 +485,8 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
  * (below). */
 mono-wind:not([measuring]) [data-mw-laid-out],
 mono-wind:not([measuring]) [data-mw-inline-box],
-mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
+mono-wind:not([measuring]) [data-mw-multicol-flow-span],
+mono-wind:not([measuring]) [data-mw-flow] {
   box-sizing: border-box !important;
   /* Trailing-gap allowance: a tracked box's lines end with a phantom
    * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
@@ -613,24 +624,36 @@ mono-wind:not([measuring]) [data-mw-multicol-flow] {
  * the two agree — selection ranges land exactly where the glyphs are. */
 mono-wind:not([measuring])[data-mw-leaf],
 mono-wind:not([measuring]) [data-mw-laid-out],
-mono-wind:not([measuring]) [data-mw-multicol-flow] {
+mono-wind:not([measuring]) [data-mw-multicol-flow],
+mono-wind:not([measuring]) [data-mw-flow] {
   text-indent: calc(var(--mw-ti, 0) * var(--mw-cw, 1px)) !important;
 }
 
-/* In-flow multicol SPANNER (specs/multicol.md): a normally laid-out box
- * that stays in the native flow so paragraphs fragment around it —
- * engine-forced geometry (the shared rule above), quantized margins,
- * `column-span: all`. The half-leading translate doubles as the
- * containing block for its absolutized descendants (a transformed box
- * contains them like a positioned one). */
+/* Boxes that stay in the browser's flow with engine-forced geometry
+ * (the shared rule above) and quantized engine margins: a mixed block
+ * container's child, placed so the container's anonymous runs of text
+ * land on their rows (specs/cell-model.md "Inline content"), and an
+ * in-flow multicol SPANNER (specs/multicol.md), which paragraphs
+ * fragment around. The half-leading translate doubles as the containing
+ * block for their absolutized descendants (a transformed box contains
+ * them like a positioned one). */
+mono-wind:not([measuring]) [data-mw-flow],
 mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
   position: static !important;
-  column-span: all !important;
   margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
   margin-right: 0 !important;
   margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
   margin-left: calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
   translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
+}
+mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
+  column-span: all !important;
+}
+/* A flow child's own formatting context: its first child's top margin
+ * stays inside it, where the engine put that child (the shadow slot
+ * does the same for the host's, element.ts). */
+mono-wind:not([measuring]) [data-mw-flow] {
+  contain: layout !important;
 }
 
 /* Spanner-split paragraph flow trusts the NATIVE balancer per segment
@@ -685,25 +708,21 @@ mono-wind:not([measuring]) [data-mw-inline-inset] {
 
 /* === Engine state attributes (warnings, hiding, alignment) =========== */
 
-/* A container whose direct text was dropped (mixed text + block children,
- * cell-model deviation): the browser would paint that text unpositioned
- * over the laid-out children, so hide it — the host's own through its
- * shadow slot (element.ts), a nested container's through itself.
- * `visibility` is inherited AND resettable, so the laid-out children come
- * back — only in this warned state, which is why the reset may also
- * override an authored `invisible` utility there. */
-mono-wind:not([measuring]) [data-mw-dropped-text] {
-  visibility: hidden !important;
-}
-mono-wind:not([measuring])[data-mw-dropped-text] > [data-mw-laid-out],
-mono-wind:not([measuring]) [data-mw-dropped-text] > [data-mw-laid-out] {
-  visibility: visible !important;
-}
-
 /* Misparented table content (no anonymous boxes, specs/table.md) and
  * <col>/<colgroup> boxes: fully hidden, subtree included. */
 mono-wind:not([measuring]) [data-mw-table-hidden] {
   display: none !important;
+}
+
+/* A container whose anonymous runs are misparented table content
+ * (stray text in a div-table, specs/table.md): the runs have no element
+ * to hide, so the container hides its text, and its laid-out children
+ * — the rows or cells — show through the inherited value. */
+mono-wind:not([measuring]) [data-mw-hidden-runs] {
+  visibility: hidden !important;
+}
+mono-wind:not([measuring]) [data-mw-hidden-runs] > [data-mw-laid-out] {
+  visibility: visible !important;
 }
 
 /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/

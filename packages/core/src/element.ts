@@ -24,9 +24,9 @@ import { gridOffsetAt, paintedCell, paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render } from "./render.ts";
-import { buildRootLeaf, buildTree, DIRECT_TEXT_DROPPED, hasDirectText } from "./tree.ts";
+import { buildChildren, buildRootLeaf, hostLeafStyle } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
-import { defaultCellStyle, zeroInsets } from "./types.ts";
+import { zeroInsets } from "./types.ts";
 import { warnSubject } from "./warn.ts";
 import type { CellMetrics, LayoutNode } from "./types.ts";
 
@@ -37,12 +37,11 @@ const SHADOW_TEMPLATE = `
   /* The slot as a positioned box: the light DOM paints ABOVE the grid
    * (the elements are absolute; the host's own in-flow text, specs/host-leaf.md,
    * would otherwise sit under the <pre> and lose its selection ink) and
-   * laid-out elements position against it — the same origin as #viewport. */
-  slot { display: block; position: relative; }
-  /* The host's own dropped direct text (specs/cell-model.md deviation 7)
-   * hides through the slot; laid-out children re-declare visible in
-   * styles.css. */
-  :host([data-mw-dropped-text]) slot { visibility: hidden; }
+   * laid-out elements position against it — the same origin as #viewport.
+   * A block formatting context, so a flow child's top margin
+   * (specs/cell-model.md "Inline content") stays inside it, where the
+   * engine put the child. */
+  slot { display: flow-root; position: relative; }
   /* The unified grid: one <pre> with same-paint-run spans, cell-precise
    * (one monospace character = one cell). In select="grid" (the
    * default, reflected onto the attribute — see DEFAULT_SELECT) the
@@ -272,6 +271,9 @@ export class MonoWindElement extends HTMLElementBase {
    * mousedown follows a touch pointerdown). */
   #lastPointerType = "";
   #gesture: Gesture | null = null;
+  /** A gesture the engine took over releases through it too: armed by
+   * its pointerup, spent by the mouseup after (#onMouseUp). */
+  #ownsRelease = false;
   /** Whether the last selectionchange found a range in this host's
    * light DOM — the next one must repaint even when it left. */
   #paintedSelection = false;
@@ -448,6 +450,7 @@ export class MonoWindElement extends HTMLElementBase {
     // the host, and the press state must thaw wherever it ends.
     window.addEventListener("pointerup", this.#onPointerUp);
     window.addEventListener("pointercancel", this.#onPointerUp);
+    window.addEventListener("mouseup", this.#onMouseUp, { capture: true });
     // Content scrolling under a stationary pointer moves cells beneath
     // it — native :hover re-evaluates there, so the synthesis must
     // too. Capture catches nested scrollers (scroll doesn't bubble).
@@ -491,11 +494,13 @@ export class MonoWindElement extends HTMLElementBase {
     this.#wheelLatch = null;
     window.removeEventListener("pointerup", this.#onPointerUp);
     window.removeEventListener("pointercancel", this.#onPointerUp);
+    window.removeEventListener("mouseup", this.#onMouseUp, { capture: true });
     document.removeEventListener("scroll", this.#onAnyScroll, { capture: true });
     this.#hoverClient = null;
     this.#pressTarget = null;
     this.#pressing = false;
     this.#paintHeld = false;
+    this.#ownsRelease = false;
     this.#updatePointerStates();
     MonoWindElement.#unwatchHead(this);
   }
@@ -1045,32 +1050,22 @@ export class MonoWindElement extends HTMLElementBase {
     next.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
-  /** The root as a container over the element children. Direct text on
-   * it can't be laid out then — hidden and warned (cell-model deviation),
-   * as tree.ts does for nested containers. */
+  /** The root as a container over its child nodes: the element
+   * children as nodes, the host's own text beside them as anonymous
+   * runs in the host's leaf style (specs/host-leaf.md), the metrics
+   * probe never one. The root carries that style too: its text
+   * properties key the host's native locks (render.ts `markRoot`). */
   #buildRootContainer(
     rootFontSizePx: number,
     metrics: CellMetrics,
     textareaWidths: TextareaWidths,
   ): LayoutNode {
-    const children: LayoutNode[] = [];
-    for (const child of Array.from(this.children)) {
-      if (child === this.#probe) continue;
-      const node = buildTree(child, rootFontSizePx, metrics, textareaWidths);
-      if (node) children.push(node);
-    }
-    if (hasDirectText(this)) {
-      if (!this.hasAttribute("data-mw-dropped-text")) {
-        console.warn(`[monowind] ${DIRECT_TEXT_DROPPED}`, warnSubject(this));
-      }
-      this.setAttribute("data-mw-dropped-text", "");
-    } else {
-      this.removeAttribute("data-mw-dropped-text");
-    }
+    const nodes = Array.from(this.childNodes).filter((node) => node !== this.#probe);
+    const style = hostLeafStyle(this, rootFontSizePx, metrics);
     return {
       source: this,
-      style: defaultCellStyle(),
-      children,
+      style,
+      children: buildChildren(this, nodes, rootFontSizePx, metrics, textareaWidths, style),
       text: "",
       intrinsicWidth: 0,
       intrinsicHeight: 0,
@@ -1291,7 +1286,7 @@ export class MonoWindElement extends HTMLElementBase {
    * custom leaf, the run's own extent for the root leaf (the host's
    * child list also holds the metrics probe), the element's otherwise. */
   #leafContents(node: LayoutNode): SelectionUnit | null {
-    if (node === this.#lastLayout) return leafExtent(node);
+    if (node === this.#lastLayout || node.anonymous) return leafExtent(node);
     const container =
       leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source) ?? node.source;
     return {
@@ -1385,6 +1380,7 @@ export class MonoWindElement extends HTMLElementBase {
     const e = event as PointerEvent;
     if (!e.isPrimary || e.button !== 0) return;
     this.#lastPointerType = e.pointerType;
+    this.#ownsRelease = false;
     // A finger pans natively (styles.css "Touch panning") and must not
     // relayout before release (see #scheduleDynamicRelayout): no thumb
     // drag, no synthesized press.
@@ -1406,6 +1402,7 @@ export class MonoWindElement extends HTMLElementBase {
 
   #onPointerUp = (event: Event): void => {
     if (!(event as PointerEvent).isPrimary) return;
+    this.#ownsRelease = event.type === "pointerup" && this.#gesture !== null;
     this.#gesture = null;
     this.#gridDrag = null;
     this.#pressOnGrid = false;
@@ -1420,6 +1417,16 @@ export class MonoWindElement extends HTMLElementBase {
     this.#pressTarget = null;
     this.#updatePointerStates();
     if (this.#paintHeld) this.#scheduleLayout();
+  };
+
+  /** The browser's mouse-up default collapses a selection the press
+   * landed in (Chromium, WebKit), which would undo a word or paragraph
+   * gesture on release: a press the engine took over is released by
+   * the engine too. */
+  #onMouseUp = (event: Event): void => {
+    if (!this.#ownsRelease) return;
+    this.#ownsRelease = false;
+    event.preventDefault();
   };
 
   #onAnyScroll = (event: Event): void => {
@@ -1766,7 +1773,8 @@ export class MonoWindElement extends HTMLElementBase {
 
       // (3) Build a tree from the light DOM: the host's own inline
       // content is the root leaf (specs/host-leaf.md); with a block-level
-      // child the root is a virtual container over the element children.
+      // child the root is a virtual container over its child nodes, the
+      // host's own text as anonymous runs.
       const rootFontSizePx = getRootFontSizePx();
       const virtualRoot =
         buildRootLeaf(this, rootFontSizePx, metrics, textareaWidths) ??

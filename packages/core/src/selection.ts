@@ -244,16 +244,16 @@ export function selectedRanges(
   range.setEnd(points.endContainer, points.endOffset);
   const ranges = new Map<LayoutNode, { start: number; end: number }>();
   const visit = (node: LayoutNode): void => {
-    if (node.tableHidden || !range.intersectsNode(node.source)) return;
+    if (node.tableHidden || !rangeMeets(node, range)) return;
     if (isTextLeaf(node)) {
       const { text } = node;
       let start = 0;
       let end = text.length;
       if (node.charSource) {
-        if (node.source.contains(range.startContainer)) {
+        if (leafHolds(node, range.startContainer)) {
           start = charIndexAt(node, range.startContainer, range.startOffset);
         }
-        if (node.source.contains(range.endContainer)) {
+        if (leafHolds(node, range.endContainer)) {
           end = charIndexAt(node, range.endContainer, range.endOffset);
         }
       }
@@ -292,7 +292,7 @@ export function serializeSelection(root: LayoutNode, points: BoundaryPoints): st
 }
 
 function collectItems(node: LayoutNode, range: Range, items: TextItem[]): void {
-  if (node.tableHidden || !range.intersectsNode(node.source)) return;
+  if (node.tableHidden || !rangeMeets(node, range)) return;
   const breaks = requiredBreaks(node);
   if (breaks) items.push({ breaks });
   if (node.style.tableRole === "row") {
@@ -355,7 +355,8 @@ function requiredBreaks(node: LayoutNode): number {
   const role = node.style.tableRole;
   if (role === "row" || role === "cell" || isRowGroup(node)) return 0;
   if (role === "column" || role === "column-group") return 0;
-  return node.source.tagName === "P" ? 2 : 1;
+  // A run in a <p> is an anonymous block: one break, as innerText gives.
+  return node.source.tagName === "P" && !node.anonymous ? 2 : 1;
 }
 
 interface Point {
@@ -395,6 +396,31 @@ export function leafExtent(leaf: LayoutNode): { start: Point; end: Point } | nul
   return { start, end };
 }
 
+/** The light DOM an anonymous run owns — its text nodes, inline
+ * elements, and children (atomic boxes, out-of-flow elements) — since
+ * its `source` is the container it shares with its siblings. */
+function runNodes(leaf: LayoutNode): Node[] {
+  return [
+    ...(leaf.charSource ?? []).map((run) => run.node),
+    ...(leaf.inlineElements ?? []).map((inline) => inline.element),
+    ...leaf.children.map((child) => child.source),
+  ];
+}
+
+/** Whether the range reaches the node's light DOM. */
+function rangeMeets(node: LayoutNode, range: Range): boolean {
+  if (!node.anonymous) return range.intersectsNode(node.source);
+  return runNodes(node).some((own) => range.intersectsNode(own));
+}
+
+/** Whether a range endpoint's node is the leaf's — the container
+ * itself included, since a point between a run's nodes sits on it
+ * (`charIndexAt` clamps one beyond the run to its ends). */
+function leafHolds(leaf: LayoutNode, node: Node): boolean {
+  if (!leaf.anonymous) return leaf.source.contains(node);
+  return leaf.source === node || runNodes(leaf).some((own) => own === node || own.contains(node));
+}
+
 /** A node whose text is painted: text and no in-flow children (the
  * paint walk's own test); renderer leaves included. */
 export function isTextLeaf(node: LayoutNode): boolean {
@@ -415,10 +441,10 @@ function leafSlice(leaf: LayoutNode, range: Range): string {
   let start = 0;
   let end = text.length;
   if (leaf.charSource) {
-    if (leaf.source.contains(range.startContainer)) {
+    if (leafHolds(leaf, range.startContainer)) {
       start = charIndexAt(leaf, range.startContainer, range.startOffset);
     }
-    if (leaf.source.contains(range.endContainer)) {
+    if (leafHolds(leaf, range.endContainer)) {
       end = charIndexAt(leaf, range.endContainer, range.endOffset);
     }
   }

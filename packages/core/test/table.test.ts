@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { render } from "../src/render.ts";
 import { buildTree } from "../src/tree.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -375,6 +376,31 @@ describe("structure", () => {
         `<table style="caption-side: bottom"><caption>cap</caption><tr><td>body</td></tr></table>`,
       ),
     ).toBe(["body", "cap"].join("\n"));
+  });
+
+  it("hides stray text through its container, which its rows show through", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const table = document.createElement("table");
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.textContent = "ok";
+      tr.appendChild(td);
+      table.append(document.createTextNode("oops"), tr);
+      const wrapper = document.createElement("div");
+      wrapper.appendChild(table);
+      document.body.appendChild(wrapper);
+      const node = buildTree(wrapper, 16)!;
+      layoutRoot(node, 60);
+      render(node);
+      expect(renderPlainText(node)).toBe("ok");
+      expect(warn).toHaveBeenCalledOnce();
+      expect(node.children[0]!.children[0]!.tableHidden).toBe(true);
+      expect(table.hasAttribute("data-mw-hidden-runs")).toBe(true);
+      expect(tr.hasAttribute("data-mw-laid-out")).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("hides misparented content with a one-time warning", () => {

@@ -293,6 +293,35 @@ children are built in document order, so a box nested in an inline
 ancestor sorts into place — through one accessor (`inlineBoxesOf`),
 never by ad-hoc filtering. **Deviation:** the box's margins are ignored. A BLOCK-level element
 nested inside a run is skipped with a warning.
+
+**Anonymous runs.** A container whose in-flow children mix inline
+content — text, inline elements, atomic inline boxes — with
+block-level elements lays out each maximal run of consecutive
+inline-level nodes as an ANONYMOUS LEAF, CSS 2 §9.2.1.1's anonymous
+block box: `source` the container, built over exactly those nodes,
+styled by the container's text and inherited paint properties alone
+(white-space, leading, tracking, color, weight, style) on no box of
+its own. In a block container a run is a block leaf filling the
+content width between its block siblings, in document order; in a
+flex or grid container each run is an anonymous item, as CSS makes
+it. Whitespace-only text between blocks forms no run; out-of-flow
+elements in a run are the run's positioned children, as in any leaf.
+The host's own text beside a block child runs the same way
+(specs/host-leaf.md). A run's bare text nodes cannot be positioned
+natively (a wrapper element would break frameworks' reconciliation),
+so a mixed BLOCK container keeps its in-flow block children in the
+browser's flow instead — FLOW CHILDREN, engine-sized like any laid-out
+box, `position: static`, with engine margins that put them where the
+engine did, the container's half-leading translate and a run's native
+line boxes (`lines × (1 + gap)` rows) counted in. A flow child is its
+own formatting context (`contain: layout`), and the shadow slot one
+for the host's, so a first child's top margin stays inside its
+container as the engine placed it. The runs' native lines then fall
+on their rows through the typography lock, exactly as a leaf's do: the
+text is selectable and copied, a link in a run is clickable at its
+cells, a triple-click selects the run, find-in-page lands. In a mixed
+flex, grid, or multicol container the bare text stays where the
+browser flows it (deviation 7).
 CSS blockification then falls out for free: an authored `block`/`flex` on
 a `<span>` makes it a layout node; `position: absolute`/`fixed` blockifies
 at computed-value time, so a positioned span leaves the run and becomes an
@@ -664,13 +693,11 @@ lines); the explicit zero `clip` rect still drops them.
    (flex rows justify horizontally / align vertically, columns swap, grid
    uses `justify-items`/`align-items`). The wrap is unchanged — the padded
    content box is exactly the widest line.
-7. Mixed direct text nodes + in-flow block-level element children in one
-   container — the host included (specs/host-leaf.md) — don't get their
-   text laid out (an all-inline mix does, and out-of-flow children
-   don't count — see Inline content). The dropped
-   text is HIDDEN (it would otherwise paint unpositioned over the laid-out
-   children; the host's own hides through its shadow slot) and the engine
-   warns once with the fix: wrap each text segment in its own element.
+7. An anonymous run's bare text in a mixed FLEX, GRID, or MULTICOL
+   container is laid out on the grid but stays where the browser flows
+   it natively (see Inline content — a block container's flow children
+   put it right), so its native line boxes, the hit boxes of its inline
+   elements, and find-in-page highlights sit off the grid there.
 8. `white-space: pre` DOES preserve whitespace: spaces and newlines
    survive as authored, tabs expand to `tab-size` stops (default 8)
    measured from each hard line's start, and browsers render the same
