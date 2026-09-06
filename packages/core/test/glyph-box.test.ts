@@ -117,11 +117,21 @@ describe("GlyphBoxes", () => {
     expect(boxes.box("▟", 1)).toEqual(fit);
     // A shade with a 2px lattice: 1.331 would need 2.66 device pixels of
     // lattice, so 1.5, where it is three; 1.5 × (2 × 10.77 − 13 + 3) − 3.
+    // Its content area, 24 tall, sits 4.85 above the box and 3.16 below.
     const shade = boxes.box("░", 1)!;
-    expect(shade).toEqual({ scale: 1.5, lineHeight: 14.31, period: 3 });
+    expect(shade).toEqual({
+      scale: 1.5,
+      lineHeight: 14.31,
+      period: 3,
+      reach: { above: 4.85, below: 3.16 },
+    });
     expect(calls).toEqual(["█", "░"]);
-    // Row by row the lattice carries on: 16px rows against a 3px period.
+    // Row by row the lattice carries on: 16px rows against a 3px period,
+    // down while the content area still covers the box's top.
     expect([0, 1, 2, 3].map((row) => boxes.shift(shade, row))).toEqual([0, 2, 1, 0]);
+    // Past that reach, up by the rest when the bottom stays covered.
+    const tight = { ...shade, reach: { above: 1, below: 2 } };
+    expect([0, 1, 2].map((row) => boxes.shift(tight, row))).toEqual([0, -1, 1]);
     expect(boxes.shift({ scale: 1 }, 5)).toBe(0);
   });
 

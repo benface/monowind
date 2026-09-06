@@ -179,16 +179,17 @@ function applySegment(
   style.textAlign = "center";
   if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
   // A tiling glyph pinned to the row's top by its own line box, the
-  // overshoot clipped.
-  if (box?.lineHeight !== undefined) style.lineHeight = `${box.lineHeight}px`;
-  // A shade's lattice carries on from the row above: the glyph held
-  // down by this row's phase, copies a period above and below filling
+  // overshoot clipped; a shade's line box also moves the glyph by the
+  // row's shift (twice it), and copies a period above and below fill
   // the box (the shadow's `[data-shade]` rules).
-  if (box?.period && glyphs) {
-    span.dataset.shade = segment.text;
-    style.paddingTop = "var(--mw-phase)";
-    style.setProperty("--mw-phase", `${glyphs.shift(box, row)}px`);
-    style.setProperty("--mw-period", `${box.period}px`);
+  if (box?.lineHeight !== undefined) {
+    let lineHeight = box.lineHeight;
+    if (box.period && glyphs) {
+      span.dataset.shade = segment.text;
+      style.setProperty("--mw-period", `${box.period}px`);
+      lineHeight += 2 * glyphs.shift(box, row);
+    }
+    style.lineHeight = `${lineHeight}px`;
   }
 }
 

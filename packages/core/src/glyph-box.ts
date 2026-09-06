@@ -21,6 +21,10 @@ export interface GlyphBox {
   /** The vertical period of a shade's lattice at that scale, in px
    * (set for shades only). */
   period?: number;
+  /** How far the glyph's content area — what a browser's selection
+   * highlight covers — reaches past the box above and below, in px
+   * (set with `period`). */
+  reach?: { above: number; below: number };
 }
 
 /** The ranges meant to abut, each with the glyph that spans its full
@@ -129,14 +133,20 @@ export class GlyphBoxes {
     return { scale: Math.round(scale * 1000) / 1000 };
   }
 
-  /** How far down a shade's lattice sits in `row` so that it carries
-   * on from the row above: what remains of the period after the rows
-   * above it. */
+  /** How far a shade's lattice moves in `row` so that it carries on
+   * from the row above: down by the phase, or up by the rest of the
+   * period when down would carry the glyph's content area off the
+   * box's top and up keeps it past the bottom — a selection highlight
+   * covers the content area, and the move must not bare the box. */
   shift(box: GlyphBox, row: number): number {
     const unit = (box.period ?? 0) * this.#dpr;
     if (!unit) return 0;
-    const above = row * this.#cell.height * this.#dpr;
-    return ((unit - (above % unit)) % unit) / this.#dpr;
+    const past = row * this.#cell.height * this.#dpr;
+    const down = (unit - (past % unit)) % unit;
+    const up = unit - down;
+    const reach = box.reach;
+    const goesUp = reach && down > reach.above * this.#dpr && up <= reach.below * this.#dpr;
+    return (goesUp ? -up : down) / this.#dpr;
   }
 
   /** One fit per tiling range of a font: null when the reference glyph
@@ -188,6 +198,15 @@ export class GlyphBoxes {
           lineHeight -= 2 * (inkTop + 1.5);
         }
         fit.lineHeight = Math.round(lineHeight * 100) / 100;
+        if (lattice) {
+          // The content area sits in the line box by its half-leading.
+          const content = (ascent + descent) * scale;
+          const top = (lineHeight - content) / 2;
+          fit.reach = {
+            above: Math.round(-top * 100) / 100,
+            below: Math.round((top + content - cellHeight) * 100) / 100,
+          };
+        }
       }
     }
     // Cached even while fonts load: the measurement forces a layout,

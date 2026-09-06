@@ -118,7 +118,7 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     expect(gridOffsetAt(target, 4, 0)).toBe(3);
   });
 
-  it("carries a shade's lattice across rows: the phase held by padding, copies a period away", () => {
+  it("carries a shade's lattice across rows: the phase in the line box, copies a period away", () => {
     const target = document.createElement("pre");
     const root = makeNode({
       children: [
@@ -129,16 +129,15 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     layoutRoot(root, 1);
     const glyphs = {
       box: () => ({ scale: 1.5, lineHeight: 14.31, period: 3 }),
-      shift: (_box: unknown, row: number) => [0, 2, 1][row % 3]!,
+      shift: (_box: unknown, row: number) => [0, -1, 1][row % 3]!,
     };
     paintGrid(root, target, { glyphs });
     const [first, second] = Array.from(target.querySelectorAll("span"));
     expect(first!.dataset.shade).toBe("░");
-    expect(first!.style.paddingTop).toBe("var(--mw-phase)");
-    expect(first!.style.getPropertyValue("--mw-phase")).toBe("0px");
-    expect(second!.style.getPropertyValue("--mw-phase")).toBe("2px");
-    expect(second!.style.getPropertyValue("--mw-period")).toBe("3px");
-    expect(second!.style.lineHeight).toBe("14.31px");
+    expect(first!.style.getPropertyValue("--mw-period")).toBe("3px");
+    expect(first!.style.lineHeight).toBe("14.31px");
+    // Row 1 moves one pixel up the lattice: its line box shrinks by two.
+    expect(second!.style.lineHeight).toBe("12.31px");
   });
 
   it("drops the shade mark from a span patched in place once its font draws it whole", () => {
@@ -147,14 +146,14 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
       children: [makeNode({ style: { color: "red" }, text: "░", intrinsicWidth: 1 })],
     });
     layoutRoot(root, 1);
-    const shaded = { box: () => ({ scale: 1.5, period: 3 }), shift: () => 0 };
+    const shaded = { box: () => ({ scale: 1.5, lineHeight: 14, period: 3 }), shift: () => 0 };
     paintGrid(root, target, { glyphs: shaded });
     const span = target.querySelector("span")!;
     expect(span.dataset.shade).toBe("░");
     paintGrid(root, target, { glyphs: { box: () => null, shift: () => 0 } });
     expect(target.querySelector("span")).toBe(span);
     expect(span.dataset.shade).toBeUndefined();
-    expect(span.style.paddingTop).toBe("");
+    expect(span.style.lineHeight).toBe("");
   });
 
   it("maps cells to flat offsets across rows", () => {

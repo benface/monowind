@@ -1,15 +1,15 @@
 /* @monowind/themes — c64: Commodore 64, light blue on blue with
- * PETSCII-style rounded corners. Apply with class "theme-c64" on a
- * <mono-wind> or any wrapper. No period font ships (the canonical C64
- * faces forbid redistribution) — bring your own via @font-face and
- * set font-family on the themed host. */
+ * PETSCII-style rounded corners, in Kreative Korp's Pet Me 64 (the
+ * 8×8 character cell, square at 16px). Apply with class "theme-c64"
+ * on a <mono-wind> or any wrapper. */
 @import "./c64.palette.css";
+@import "../fonts/petme-font.css";
 
 @layer base {
   mono-wind.theme-c64,
   .theme-c64 mono-wind {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 14px;
+    font-family: "Pet Me 64", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px;
     line-height: 1;
     background-color: #40318d;
     color: #7869c4;

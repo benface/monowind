@@ -461,13 +461,11 @@ export const TilingGlyphs: StoryObj = {
     expect(shades.length).toBeGreaterThan(3);
     const unphased = shades.filter((box) => {
       const period = parseFloat(box.style.getPropertyValue("--mw-period"));
-      const phase = parseFloat(box.style.getPropertyValue("--mw-phase"));
       return (
         !(parseFloat(box.style.fontSize) >= block) ||
         box.dataset.shade !== box.textContent ||
         !(period > 0) ||
-        !(phase >= 0 && phase < period) ||
-        Math.abs(parseFloat(getComputedStyle(box).paddingTop) - phase) > 0.01
+        !(parseFloat(box.style.lineHeight) > 0)
       );
     });
     expect(unphased.map((box) => `${box.textContent} [${box.getAttribute("style")}]`)).toEqual([]);

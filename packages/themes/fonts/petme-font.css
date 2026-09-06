@@ -1,0 +1,9 @@
+@font-face {
+  /* "Pet Me 64" from Kreative Korp's Commodore font set
+   * (kreativekorp.com/software/fonts/c64/, Kreative Software Relay
+   * Fonts Free Use License — see LICENSES), shipped unmodified as the
+   * license requires. Native bitmap size 8px: keep font-size at
+   * integer multiples for crisp cells. */
+  font-family: "Pet Me 64";
+  src: url("./PetMe64.ttf") format("truetype");
+}

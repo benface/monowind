@@ -184,11 +184,15 @@ copy event sees it in all three engines.
   period a whole number of device pixels, so every dot rasterizes
   alike — the period read off a rendering, the first peak of the
   alpha's autocorrelation down the glyph's most patterned column. Its
-  box then carries the lattice on from row to row: the glyph held down
-  by the row's phase (what remains of the period after the rows above
-  it), with a copy a period above and below, drawn by the box's
-  pseudo-elements, filling what the shift uncovers. The box clips the
-  rest, and a zoom, which moves the device pixel ratio, refits. The
+  box then carries the lattice on from row to row: its line box grows
+  by twice the row's phase, which moves the glyph down by the phase —
+  or shrinks, moving it up by the rest of the period, when down would
+  carry the glyph's content area off the box's top and up keeps it
+  past the bottom (a selection highlight covers the content area, so
+  the move must not bare the box) — and a copy a period above and
+  below, drawn by the box's pseudo-elements in the same line box,
+  fills what the shift uncovers. The box clips the rest, and a zoom,
+  which moves the device pixel ratio, refits. The
   halves still meet at the row's middle, and a fallback font's
   double-width block clips to its cell instead of shrinking to half a
   row. A glyph taller than the row is left alone: it tiles already,
@@ -310,10 +314,10 @@ selection })` patches per ROW (styles in place when the row's
   structure matches, a rebuild between its neighbors' newlines when
   not); a boxed segment is an `inline-block` span `cells × --mw-cw`
   wide and `--mw-ch` tall, unpadded, centered, clipped, its font-size
-  the scale; a tiling fit adds its `line-height`; a shade adds
-  `data-shade` (its glyph, which the shadow's `::before`/`::after`
-  repeat a period above and below), `padding-top: var(--mw-phase)`,
-  and `--mw-phase`/`--mw-period` in px; every other grid span pads
+  the scale; a tiling fit adds its `line-height`, a shade's moved by
+  twice the row's shift; a shade adds `data-shade` (its glyph, which
+  the shadow's `::before`/`::after` repeat a period above and below)
+  and `--mw-period` in px; every other grid span pads
   `padding-block: var(--mw-bgpad)`, the host's `ceil(backgroundGap /
 2)` px; `gridOffsetAt` and `paintedCell` read the kept cell strings.
 - selection.ts: `selectedRanges(root, points)`.

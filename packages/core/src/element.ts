@@ -66,12 +66,11 @@ const SHADOW_TEMPLATE = `
    * span paints without moving the line (specs/cell-model.md). */
   #grid span { padding-block: var(--mw-bgpad, 0px); }
   /* A shade's lattice runs on from row to row (specs/wide-characters.md):
-   * the box holds its glyph down by the row's phase, with copies a
-   * period above and below. */
-  #grid span[data-shade] { position: relative; box-sizing: border-box; }
+   * copies a period above and below the glyph, in its own line box. */
+  #grid span[data-shade] { position: relative; }
   #grid span[data-shade]::before, #grid span[data-shade]::after { content: attr(data-shade); position: absolute; inset-inline: 0; }
-  #grid span[data-shade]::before { top: calc(var(--mw-phase) - var(--mw-period)); }
-  #grid span[data-shade]::after { top: calc(var(--mw-phase) + var(--mw-period)); }
+  #grid span[data-shade]::before { top: calc(-1 * var(--mw-period)); }
+  #grid span[data-shade]::after { top: var(--mw-period); }
   :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
   /* A live semantic selection (specs/semantic-selection.md) lifts the
