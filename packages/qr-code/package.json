@@ -57,11 +57,11 @@
     "qr": "^0.7.0"
   },
   "devDependencies": {
-    "@types/node": "^26.4.1",
-    "happy-dom": "^20.14.0",
+    "@types/node": "^26.5.0",
+    "happy-dom": "^20.14.3",
     "monowind": "workspace:^",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2",
+    "vite": "^8.3.0",
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
