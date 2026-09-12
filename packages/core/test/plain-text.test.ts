@@ -104,7 +104,7 @@ describe("renderPlainText golden outputs", () => {
     );
   });
 
-  it("renders a border-2 double border as concentric rings", () => {
+  it("renders a two-cell double border as concentric rings", () => {
     const box = makeNode({
       style: {
         border: { top: 2, right: 2, bottom: 2, left: 2 },
@@ -117,6 +117,33 @@ describe("renderPlainText golden outputs", () => {
     expect(plainText(root, 10)).toBe(
       ["╔════════╗", "║╔══════╗║", "║║hi    ║║", "║╚══════╝║", "╚════════╝"].join("\n"),
     );
+  });
+
+  it("renders a 2px edge heavy, and a corner between weights heavy", () => {
+    const box = makeNode({
+      style: {
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderWeight: { top: 2, right: 1, bottom: 1, left: 1 },
+      },
+      text: "hi",
+    });
+    const root = makeNode({ children: [box] });
+
+    expect(plainText(root, 6)).toBe(["┏━━━━┓", "│hi  │", "└────┘"].join("\n"));
+  });
+
+  it("keeps a corner light beside a 2px double edge, which has no heavier weight", () => {
+    const box = makeNode({
+      style: {
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderStyle: { top: "double", right: "solid", bottom: "solid", left: "solid" },
+        borderWeight: { top: 2, right: 1, bottom: 1, left: 1 },
+      },
+      text: "hi",
+    });
+    const root = makeNode({ children: [box] });
+
+    expect(plainText(root, 6)).toBe(["┌════┐", "│hi  │", "└────┘"].join("\n"));
   });
 
   it("renders per-side border styles with light corners at style boundaries", () => {

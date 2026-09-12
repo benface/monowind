@@ -240,6 +240,19 @@ describe("paragraph flow", () => {
     );
     expect(art).toBe(["aaa |ccc", "bbb |"].join("\n"));
   });
+
+  it("floors the gap at the rule band's cells: two under a rings set, one heavy by default", () => {
+    expect(
+      plainText(
+        `<div style="column-count: 2; column-gap: 0; --mw-rule-x-width: 2px; --mw-border-glyphs: ascii; width: 32px"><div>aaa bbb</div><div>ccc</div></div>`,
+      ),
+    ).toBe(["aaa||ccc", "bbb||"].join("\n"));
+    expect(
+      plainText(
+        `<div style="column-count: 2; column-gap: 0; --mw-rule-x-width: 2px; width: 28px"><div>aaa bbb</div><div>ccc</div></div>`,
+      ),
+    ).toBe(["aaa┃ccc", "bbb┃"].join("\n"));
+  });
 });
 
 // Throughout the atomic-path suites below, a paint-only background on

@@ -21,17 +21,17 @@ run, junctioned into surrounding borders with the table tee machinery.
 Named after the `gap-x`/`gap-y` axis convention (`rule-x` decorates
 column gaps — vertical lines — like `gap-x` sizes them):
 
-| class                                                                        | effect                                                                     |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `rule-x`, `rule-x-<n>`                                                       | column-rule width 1px / `<n>` px — the rule's WEIGHT, one cell wide        |
-| `rule-y`, `rule-y-<n>`                                                       | row-rule width 1px / `<n>` px — likewise                                   |
-| `rule`, `rule-<n>`                                                           | both axes                                                                  |
-| `rule-solid` / `rule-dashed` / `rule-dotted` / `rule-double`                 | style, both axes                                                           |
-| `rule-<color>`                                                               | color, both axes (default `currentColor`, like borders)                    |
-| `rule-break-none` / `rule-break-normal` / `rule-break-intersection`          | where segments break at gap intersections (both axes)                      |
-| `rule-inset-<n>`                                                             | retract every segment endpoint by `<n>` px (both axes, all endpoint kinds) |
-| `rule-inset-overlap-join`                                                    | extend junction endpoints into the crossing gap so meeting rules connect   |
-| `rule-visibility-all` / `rule-visibility-around` / `rule-visibility-between` | `rule-visibility-items`: which segments paint next to empty grid areas     |
+| class                                                                        | effect                                                                      |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `rule-x`, `rule-x-<n>`                                                       | column-rule width 1px / `<n>` px — the rule's WEIGHT, its band's cells wide |
+| `rule-y`, `rule-y-<n>`                                                       | row-rule width 1px / `<n>` px — likewise                                    |
+| `rule`, `rule-<n>`                                                           | both axes                                                                   |
+| `rule-solid` / `rule-dashed` / `rule-dotted` / `rule-double`                 | style, both axes                                                            |
+| `rule-<color>`                                                               | color, both axes (default `currentColor`, like borders)                     |
+| `rule-break-none` / `rule-break-normal` / `rule-break-intersection`          | where segments break at gap intersections (both axes)                       |
+| `rule-inset-<n>`                                                             | retract every segment endpoint by `<n>` px (both axes, all endpoint kinds)  |
+| `rule-inset-overlap-join`                                                    | extend junction endpoints into the crossing gap so meeting rules connect    |
+| `rule-visibility-all` / `rule-visibility-around` / `rule-visibility-between` | `rule-visibility-items`: which segments paint next to empty grid areas      |
 
 A rule's width picks its weight band exactly as a border's does
 (`cell-model.md` "Box model"): the band's glyphs, at the band's

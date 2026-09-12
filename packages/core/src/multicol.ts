@@ -385,6 +385,7 @@ export function multicolLeafRuleRuns(
     contentHeight: geometry.totalRows,
     border,
     borderStyle: style.borderStyle,
+    borderWeight: style.borderWeight,
     borderColor: style.borderColor,
     padding,
   });
@@ -943,6 +944,7 @@ export function layoutMulticol(
       contentHeight: y,
       border,
       borderStyle: style.borderStyle,
+      borderWeight: style.borderWeight,
       borderColor: style.borderColor,
       padding,
     });

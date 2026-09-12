@@ -72,15 +72,21 @@ tr?, bl?, br? }` in cells: a corner draws the registration nearest
   `border-width` in px: a role table with per-glyph fallback to the
   plain table, and `cells`, the border's thickness (1 unless said),
   drawn as that many rings. A border draws the band nearest its width
-  (`cell-model.md` "Box model"), the plain table at one cell counting
-  as the 1px band. The defaults register the heavy tables from 2px for
-  solid, dashed, and dotted; `single` and `ascii` register `{ width:
-2, cells: 2 }`, two rings of their lines; `cp437` the double table
-  at 2px (the codepage has double, not heavy); `blocks` two cells of
-  its blocks. The thickness is read with the style, so a set
+  (`cell-model.md` "Box model"), ties to the wider, the plain table at
+  one cell counting as the 1px band. A set that registers a style's
+  table registers its weights too — `weights` when listed, else none —
+  so only an untouched style takes the defaults, which register the
+  heavy tables from 2px for solid, dashed, and dotted; `single`,
+  `ascii`, `rounded`, and `blocks` register `{ width: 2, cells: 2 }`
+  on every table they register, two rings of their lines (DEC, ASCII,
+  and PETSCII hardware had no heavy) — so `ascii` keeps `double`, its
+  own `=` emphasis, at one ring like the defaults, while `single` and
+  `blocks`, whose double is their one line, ring it too; `cp437` the
+  double table at 2px (the codepage has double, not heavy). A
+  registered set is frozen and read as registered; a change is a new
+  registration. The thickness is read with the style, so a set
   registered late relayouts connected hosts like any registration.
-  Built-in
-  roster: `default`, `rounded` (solid corners → arcs), `ascii` (7-bit;
+  Built-in roster: `default`, `rounded` (solid corners → arcs), `ascii` (7-bit;
   double as `+=+`, dotted as `.`/`:`),
   `single` (double/dashed/dotted all downgrade to light — DEC-style
   one-line-style hardware), `blocks` (uniform CP437 blocks per role;

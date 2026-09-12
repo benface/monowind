@@ -347,6 +347,7 @@ export function layoutFlexRow(
       contentHeight,
       border,
       borderStyle: node.style.borderStyle,
+      borderWeight: node.style.borderWeight,
       borderColor: node.style.borderColor,
       padding,
     });
@@ -565,6 +566,7 @@ export function layoutFlexColumn(
       contentHeight,
       border,
       borderStyle: node.style.borderStyle,
+      borderWeight: node.style.borderWeight,
       borderColor: node.style.borderColor,
       padding,
     });

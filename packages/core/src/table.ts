@@ -1,6 +1,7 @@
 import { STYLE_RANK } from "./lattice.ts";
 import { scrollGutter } from "./types.ts";
-import { glyphSetFor } from "./glyphs.ts";
+import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
+import type { BorderGlyphSet } from "./glyphs.ts";
 import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
@@ -14,7 +15,14 @@ import {
   resolveSizeAgainst,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import type { Insets, LatticeBorder, LatticeSegment, LayoutNode, TableLattice } from "./types.ts";
+import type {
+  Insets,
+  LatticeBorder,
+  LatticeSegment,
+  LayoutNode,
+  Side,
+  TableLattice,
+} from "./types.ts";
 
 /**
  * Table layout (specs/table.md): CSS 2.1 §17 adapted to integer cells.
@@ -414,35 +422,44 @@ interface TableChrome {
   hSegments: (LatticeSegment | null)[][];
 }
 
-type Side = "top" | "right" | "bottom" | "left";
-
-/** CSS 2.1 §17.6.2.1, simplified: wider wins, then style rank, then the
- * candidate order (callers pass cell > row > row group > table). */
+/** CSS 2.1 §17.6.2.1, simplified: wider (px) wins, then style rank,
+ * then the candidate order (callers pass cell > row > row group >
+ * table). The winner draws with its weight band under the TABLE's set —
+ * a lattice resolves with one set (specs/theming.md) — at the band's
+ * thickness, and carries its weight into junctions where the set draws
+ * it (junctionWeight). */
 function resolveSegment(
   candidates: { border: LatticeBorder | null; side: Side }[],
+  set: BorderGlyphSet | undefined,
 ): LatticeSegment | null {
   for (const { border, side } of candidates) if (border?.hidden[side]) return null; // hidden beats everything
-  let winner: LatticeSegment | null = null;
+  let winner: Omit<LatticeSegment, "width"> | null = null;
   for (const { border, side } of candidates) {
-    if (!border) continue;
-    const width = border.width[side];
-    if (width <= 0) continue;
+    if (!border || border.width[side] <= 0) continue;
+    const weight = border.weight[side];
     const style = border.style[side];
     if (
       winner === null ||
-      width > winner.width ||
-      (width === winner.width && STYLE_RANK[style] > STYLE_RANK[winner.style])
+      weight > winner.weight ||
+      (weight === winner.weight && STYLE_RANK[style] > STYLE_RANK[winner.style])
     ) {
-      winner = { width, style, color: border.color[side] };
+      winner = { weight, style, color: border.color[side] };
     }
   }
-  return winner;
+  if (!winner) return null;
+  const { style, weight } = winner;
+  return {
+    ...winner,
+    width: weightBand(style, weight, set).cells,
+    weight: junctionWeight(style, weight, set),
+  };
 }
 
 function resolveChrome(node: LayoutNode, structure: TableStructure): TableChrome {
   const C = structure.columnCount;
   const R = structure.rows.length;
   const collapsed = node.style.borderCollapse;
+  const set = glyphSetFor(node.style.glyphSet);
   const chrome: TableChrome = {
     collapsed,
     vLines: Array.from({ length: C + 1 }, () => 0),
@@ -485,7 +502,7 @@ function resolveChrome(node: LayoutNode, structure: TableStructure): TableChrome
         if (group) candidates.push({ border: group.style.latticeBorder, side: edge });
         candidates.push({ border: table, side: edge });
       }
-      segments.push(resolveSegment(candidates));
+      segments.push(resolveSegment(candidates, set));
     }
     chrome.vSegments.push(segments);
     chrome.vLines[i] = segments.reduce((w, s) => Math.max(w, s?.width ?? 0), 0);
@@ -515,7 +532,7 @@ function resolveChrome(node: LayoutNode, structure: TableStructure): TableChrome
         candidates.push({ border: groupBelow.style.latticeBorder, side: "top" });
       if (j === 0) candidates.push({ border: table, side: "top" });
       if (j === R) candidates.push({ border: table, side: "bottom" });
-      segments.push(resolveSegment(candidates));
+      segments.push(resolveSegment(candidates, set));
     }
     chrome.hSegments.push(segments);
     chrome.hLines[j] = segments.reduce((w, s) => Math.max(w, s?.width ?? 0), 0);

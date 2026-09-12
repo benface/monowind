@@ -197,6 +197,14 @@ export const GapDecorations: StoryObj = {
           <div>second entry</div>
           <div>third entry</div>
         </div>
+        <div
+          class="flex border-2 border-neutral-500 rule rule-2 rule-neutral-500"
+          data-test="heavy"
+        >
+          <div class="grow px-1">rule-2</div>
+          <div class="grow px-1">heavy</div>
+          <div class="grow px-1">like border-2</div>
+        </div>
         <div class="flex max-w-12 flex-wrap gap-1 rule rule-cyan-400">
           <div>rule</div>
           <div>break</div>
@@ -239,6 +247,9 @@ export const GapDecorations: StoryObj = {
     // column gap, teeing the vertical that ends there.
     const lines = host.toPlainText().split("\n");
     const lineWith = (text: string) => lines.findIndex((line) => line.includes(text));
+    // A 2px rule is heavy in one cell, teeing into the heavy border.
+    expect(lines[lineWith("rule-2")]).toContain("┃");
+    expect(lines[lineWith("rule-2") - 1]).toContain("┳");
     expect(lines[lineWith("normal") - 1]).toContain("┴");
     // intersection: a hole where the line-1 column gap crosses.
     expect(lines[lineWith("intersection") - 1]).toMatch(/─+ ─+/);

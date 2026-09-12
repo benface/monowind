@@ -160,9 +160,9 @@ And double-spaced!?</textarea>
     // Empty with rows="1": exactly one content row.
     expect(cells(host.querySelector<HTMLElement>("#textarea-description")!)).toBe(1);
     // leading-loose doubles the spacing: 2 lines → 2 + 1 gap = 3
-    // content rows, + py-1 (2) + border-2 (4).
+    // content rows, + py-1 (2) + border-2 (2: heavy, one cell per edge).
     const funky = host.querySelector<HTMLElement>("#textarea-funky")!;
-    expect(cells(funky)).toBe(3 + 2 + 4);
+    expect(cells(funky)).toBe(3 + 2 + 2);
     // The half-leading cancellation must reach inline boxes too — a
     // textarea's native value would otherwise sit centered in its
     // (leading-loose) line boxes instead of on its rows.

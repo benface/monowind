@@ -92,11 +92,39 @@ describe("collapsed borders", () => {
         <tr><td style="border: 3px double">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
     );
-    // 3px quantizes to 1 cell: same width, double outranks solid at the
-    // shared line. Mixed-style junctions fall back to the light set, so
-    // only the all-double corner shows the double junction.
-    expect(art).toContain("║");
-    expect(art).toContain("╔");
+    // The wider double wins the shared line. Mixed-style junctions fall
+    // back to the light set — light, since double has no heavier weight
+    // to carry in — so only the all-double corners show double junctions.
+    expect(art).toBe(["╔══┬──┐", "║aa║bb│", "╚══┴──┘"].join("\n"));
+  });
+
+  it("a wider border wins the shared edge and draws heavy, junctions with it", () => {
+    const art = plainText(
+      `<table style="border-collapse: collapse">
+        <tr><td style="border: 2px solid">aa</td><td style="${CELL_BORDER}">bb</td></tr>
+      </table>`,
+    );
+    expect(art).toBe(["┏━━┳──┐", "┃aa┃bb│", "┗━━┻──┘"].join("\n"));
+  });
+
+  it("resolves the lattice with the table's set: a cell's own rings set has no say", () => {
+    const art = plainText(
+      `<table style="border-collapse: collapse">
+        <tr><td style="border: 2px solid; --mw-border-glyphs: ascii">aa</td><td style="${CELL_BORDER}">bb</td></tr>
+      </table>`,
+    );
+    expect(art).toBe(["┏━━┳──┐", "┃aa┃bb│", "┗━━┻──┘"].join("\n"));
+  });
+
+  it("draws a lattice line at the table set's band thickness: two cells under single", () => {
+    const art = plainText(
+      `<table style="border-collapse: collapse; --mw-border-glyphs: single">
+        <tr><td style="border: 2px solid">aa</td><td style="${CELL_BORDER}">bb</td></tr>
+      </table>`,
+    );
+    // The 2px cell's edges are two cells thick, its neighbor's one.
+    expect(art.split("\n")).toHaveLength(5);
+    expect(art).toContain("││aa││bb│");
   });
 });
 

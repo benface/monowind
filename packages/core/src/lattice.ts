@@ -198,8 +198,8 @@ export function resolveLattice(
     cell.mask |= arm;
     cell.allDouble &&= segment.style === "double";
     if (
-      segment.width > cell.dominant.width ||
-      (segment.width === cell.dominant.width &&
+      segment.weight > cell.dominant.weight ||
+      (segment.weight === cell.dominant.weight &&
         STYLE_RANK[segment.style] > STYLE_RANK[cell.dominant.style])
     ) {
       cell.dominant = segment;
@@ -314,9 +314,10 @@ export function resolveLattice(
   const parts = new Map<LayoutNode, BorderRun[]>();
   for (const cell of map.values()) {
     const glyph = cell.only
-      ? lineGlyph(cell.dominant.style, cell.only.axis, set)
+      ? lineGlyph(cell.dominant.style, cell.dominant.weight, cell.only.axis, set)
       : junctionGlyph(
           cell.allDouble ? "double" : "solid",
+          cell.dominant.weight,
           (cell.mask & UP) !== 0,
           (cell.mask & DOWN) !== 0,
           (cell.mask & LEFT) !== 0,

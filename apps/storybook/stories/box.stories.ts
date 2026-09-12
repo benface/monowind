@@ -1,7 +1,13 @@
 import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { glyphSetFor, registerBorderGlyphs } from "monowind";
 import { readyGrid } from "./helpers.ts";
+
+// A set drawing 2px as two rings of the default lines (the rings a
+// theme without heavy glyphs registers, specs/theming.md).
+if (!glyphSetFor("rings"))
+  registerBorderGlyphs("rings", { solid: { weights: [{ width: 2, cells: 2 }] } });
 
 const meta: Meta = {
   title: "Features / Box Model",
@@ -20,17 +26,55 @@ export const BorderStyles: StoryObj = {
   `,
 };
 
+/**
+ * `border-width` is a WEIGHT the glyph set interprets (specs/cell-model.md
+ * "Box model"): the defaults draw 2px and up heavy in one cell (double
+ * has no heavier), a corner between weights draws the heavier, a set
+ * without heavy glyphs draws two rings (`ascii`, `single`, `rounded`,
+ * `blocks`), and `cp437` draws double.
+ */
 export const BorderWidths: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="flex gap-x-2 gap-y-1">
-        <div class="border-2 border-emerald-400 px-3 py-1">border-2</div>
-        <div class="border-3 border-double border-fuchsia-400 px-3 py-1">
+      <div class="flex flex-wrap gap-x-2 gap-y-1">
+        <div class="border border-purple-500 px-3 py-1">border</div>
+        <div data-test="heavy" class="border-2 border-emerald-400 px-3 py-1">border-2</div>
+        <div class="border-2 border-dashed border-yellow-400 px-3 py-1">border-2 border-dashed</div>
+        <div class="border-2 border-dotted border-blue-400 px-3 py-1">border-2 border-dotted</div>
+        <div data-test="double" class="border-3 border-double border-fuchsia-400 px-3 py-1">
           border-3 border-double
+        </div>
+        <div data-test="mixed" class="border-x-2 border-y border-emerald-400 px-3 py-1">
+          border-x-2 border-y
+        </div>
+        <div data-test="ascii" class="border-2 border-neutral-400 px-3 py-1 borders-ascii">
+          border-2 borders-ascii
+        </div>
+        <div data-test="cp437" class="border-2 border-neutral-400 px-3 py-1 borders-cp437">
+          border-2 borders-cp437
         </div>
       </div>
     </mono-wind>
   `,
+  play: async ({ canvasElement }) => {
+    const { by, cells, measure } = await readyGrid(canvasElement);
+    // The box's top-left corner, the top edge's first cell, and the
+    // left edge's first cell.
+    const cornerOf = (name: string) => {
+      const { rows, boxOf } = measure();
+      const { row, col } = boxOf(by(name));
+      return rows[row]!.slice(col, col + 2) + rows[row + 1]![col];
+    };
+    expect(cornerOf("heavy")).toBe("┏━┃");
+    expect(cornerOf("double")).toBe("╔═║");
+    expect(cornerOf("mixed")).toBe("┏─┃");
+    expect(cornerOf("ascii")).toBe("+-|");
+    expect(cornerOf("cp437")).toBe("╔═║");
+    // One cell per edge for heavy and double, two for the ascii rings.
+    expect(cells(by("heavy"), "--mw-bt")).toBe(1);
+    expect(cells(by("cp437"), "--mw-bt")).toBe(1);
+    expect(cells(by("ascii"), "--mw-bt")).toBe(2);
+  },
 };
 
 export const BorderSides: StoryObj = {
@@ -60,7 +104,8 @@ export const BorderSides: StoryObj = {
  * `border-radius` picks corner glyphs (specs/cell-model.md "Borders:
  * glyph mapping"): the set's registration nearest the radius — the
  * defaults' arcs from half a cell, per corner, a ring inside a cell
- * less, double with no arcs, a set keeping its own corners.
+ * less (under a set drawing 2px as two rings), heavy and double with
+ * no arcs, a set keeping its own corners.
  */
 export const BorderRadius: StoryObj = {
   render: () => html`
@@ -68,8 +113,13 @@ export const BorderRadius: StoryObj = {
       <div class="flex flex-wrap gap-2">
         <div data-test="rounded" class="rounded border px-1">rounded</div>
         <div data-test="top" class="rounded-t-lg border px-1">rounded-t-lg</div>
-        <div data-test="rings" class="rounded-lg border-2 px-1">border-2 rounded-lg</div>
-        <div data-test="inner-square" class="rounded border-2 px-1">border-2 rounded</div>
+        <div data-test="heavy" class="rounded-lg border-2 px-1">border-2 rounded-lg</div>
+        <div data-test="rings" class="rounded-lg border-2 px-1 [--mw-border-glyphs:rings]">
+          rings rounded-lg
+        </div>
+        <div data-test="inner-square" class="rounded border-2 px-1 [--mw-border-glyphs:rings]">
+          rings rounded
+        </div>
         <div data-test="double" class="rounded border border-double px-1">double</div>
         <div data-test="dashed" class="rounded-full border border-dashed px-1">dashed</div>
         <div data-test="ascii" class="rounded border px-1 borders-ascii">ascii</div>
@@ -94,6 +144,7 @@ export const BorderRadius: StoryObj = {
     };
     expect(cornersOf("rounded")).toBe("╭╮╰╯");
     expect(cornersOf("top")).toBe("╭╮└┘");
+    expect(cornersOf("heavy")).toBe("┏┓┗┛");
     expect(cornersOf("rings")).toBe("╭╮╰╯");
     expect(cornersOf("rings", 1)).toBe("╭╮╰╯");
     expect(cornersOf("inner-square")).toBe("╭╮╰╯");

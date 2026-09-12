@@ -1,4 +1,6 @@
 import { trackBackground } from "./animate.ts";
+import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
+import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack, zeroInsets } from "./types.ts";
 import { leafRendererFor } from "./leaf.ts";
@@ -21,7 +23,6 @@ import type {
   GridAutoFlow,
   GridLine,
   GridTemplate,
-  Insets,
   JustifyContent,
   PerSide,
   Position,
@@ -54,6 +55,10 @@ export function readCellStyle(
   const classAttr = el.getAttribute("class") ?? "";
   const inlineStyle = (el as HTMLElement).style;
   warnAuthoredFontSize(el, classAttr, inlineStyle);
+  // The glyph set decides a border's or rule's cells (its weight band),
+  // so it is resolved before they are read.
+  const glyphSet = cs.getPropertyValue("--mw-border-glyphs").trim() || null;
+  const set = glyphSetFor(glyphSet);
   // A min/max limit: an authored calc() or viewport length first (their
   // units carry intent the computed px has lost), then the computed px.
   const limit = (property: string, resolved: string, prefix: string): SizeLimit | undefined =>
@@ -241,13 +246,7 @@ export function readCellStyle(
       rootFontSizePx,
     ),
     gapY: readSpacing(cs.rowGap === "normal" ? "0px" : cs.rowGap, rootFontSizePx),
-    border: readBorderInsets(cs),
-    borderStyle: {
-      top: mapBorderStyle(cs.borderTopStyle),
-      right: mapBorderStyle(cs.borderRightStyle),
-      bottom: mapBorderStyle(cs.borderBottomStyle),
-      left: mapBorderStyle(cs.borderLeftStyle),
-    },
+    ...readBorder(cs, set),
     borderRadius: {
       tl: readRadius(cs.borderTopLeftRadius, rootFontSizePx),
       tr: readRadius(cs.borderTopRightRadius, rootFontSizePx),
@@ -286,15 +285,15 @@ export function readCellStyle(
       left: cs.borderLeftColor,
     },
     opacity: readOpacity(cs.opacity),
-    glyphSet: cs.getPropertyValue("--mw-border-glyphs").trim() || null,
+    glyphSet,
     boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
     ruleX:
       display === "flex" || display === "grid" || display === "multicol"
-        ? readGapRule(cs, "x")
+        ? readGapRule(cs, "x", set)
         : null,
-    ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y") : null,
+    ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y", set) : null,
     ruleBreak: readKeyword(cs, "--mw-rule-break", ["none", "intersection"] as const, "normal"),
     ruleInset:
       cs.getPropertyValue("--mw-rule-inset").trim() === "overlap-join"
@@ -336,6 +335,7 @@ function applyBorderCollapse(style: CellStyle, cs: CSSStyleDeclaration): void {
   if (!participates) return;
   style.latticeBorder = {
     width: style.border,
+    weight: style.borderWeight,
     style: style.borderStyle,
     color: style.borderColor,
     hidden: {
@@ -580,9 +580,6 @@ function warnAuthoredFontSize(
   );
 }
 
-/** Gap rules from the `--mw-rule-*` mirrors (specs/gap-decorations.md);
- * registered `inherits: false`, so a container only sees its own.
- * Widths use the border scale (1px = 1 cell), like the utilities. */
 function readKeyword<T extends string, D extends string>(
   cs: CSSStyleDeclaration,
   property: string,
@@ -593,15 +590,23 @@ function readKeyword<T extends string, D extends string>(
   return values.includes(value) ? value : fallback;
 }
 
-function readGapRule(cs: CSSStyleDeclaration, axis: "x" | "y"): GapRule | null {
-  const width = roundHalfAwayFromZero(
-    parseFloat(cs.getPropertyValue(`--mw-rule-${axis}-width`)) || 0,
-  );
-  if (width <= 0) return null;
+/** Gap rules from the `--mw-rule-*` mirrors (specs/gap-decorations.md);
+ * registered `inherits: false`, so a container only sees its own. A
+ * width is a weight, as for borders: the set's band draws it and
+ * says its cells. */
+function readGapRule(
+  cs: CSSStyleDeclaration,
+  axis: "x" | "y",
+  set: BorderGlyphSet | undefined,
+): GapRule | null {
+  const weight = parseFloat(cs.getPropertyValue(`--mw-rule-${axis}-width`)) || 0;
+  if (weight <= 0) return null;
+  const style = mapBorderStyle(cs.getPropertyValue(`--mw-rule-${axis}-style`).trim());
   const color = cs.getPropertyValue(`--mw-rule-${axis}-color`).trim();
   return {
-    width,
-    style: mapBorderStyle(cs.getPropertyValue(`--mw-rule-${axis}-style`).trim()),
+    width: weightBand(style, weight, set).cells,
+    weight: junctionWeight(style, weight, set),
+    style,
     // Default currentColor, resolved on the CONTAINER (like computed
     // border colors) — decoration spans would otherwise inherit the
     // host's color, not the container's.
@@ -1716,16 +1721,32 @@ function readPadding(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<C
   };
 }
 
-/** Border widths use the 1px = 1 cell scale (not the spacing scale). */
-function readBorderInsets(cs: CSSStyleDeclaration): Insets {
-  const readSide = (side: string, style: string) => {
-    if (cs.getPropertyValue(style) === "none") return 0;
-    return roundHalfAwayFromZero(parseFloat(cs.getPropertyValue(side)) || 0);
+/** Borders per edge: the style, the px width as the WEIGHT, and the
+ * cells the weight band draws it with — one under the defaults' heavy,
+ * two where a set registers rings (specs/cell-model.md "Box model").
+ * `hidden` reads as no border, its computed width in a browser. */
+function readBorder(
+  cs: CSSStyleDeclaration,
+  set: BorderGlyphSet | undefined,
+): Pick<CellStyle, "border" | "borderWeight" | "borderStyle"> {
+  const border = zeroInsets();
+  const borderWeight = { top: 1, right: 1, bottom: 1, left: 1 };
+  const borderStyle: PerSide<BorderStyle> = {
+    top: "solid",
+    right: "solid",
+    bottom: "solid",
+    left: "solid",
   };
-  return {
-    top: readSide("border-top-width", "border-top-style"),
-    right: readSide("border-right-width", "border-right-style"),
-    bottom: readSide("border-bottom-width", "border-bottom-style"),
-    left: readSide("border-left-width", "border-left-style"),
-  };
+  for (const side of ["top", "right", "bottom", "left"] as const) {
+    const style = cs.getPropertyValue(`border-${side}-style`);
+    const weight =
+      style === "none" || style === "hidden"
+        ? 0
+        : parseFloat(cs.getPropertyValue(`border-${side}-width`)) || 0;
+    borderStyle[side] = mapBorderStyle(style);
+    if (weight <= 0) continue;
+    borderWeight[side] = weight;
+    border[side] = weightBand(borderStyle[side], weight, set).cells;
+  }
+  return { border, borderWeight, borderStyle };
 }

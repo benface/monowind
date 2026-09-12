@@ -111,6 +111,8 @@ registerBorderGlyphs("stars", { solid: { tl: "✧", tr: "✧", bl: "✧", br: "�
 }
 ```
 
+A registered set is frozen; to change one, register it again.
+
 A set can also register corner glyphs by `border-radius` — a corner
 draws the registration nearest its radius in cells, the plain corner
 counting at 0 (the defaults round light-line corners to `╭ ╮ ╰ ╯`
@@ -123,6 +125,21 @@ registerBorderGlyphs("soft", {
     rounded: [{ radius: 2, tl: "◜", tr: "◝", bl: "◟", br: "◞" }],
     shadow: ["▓", "▒", "░", "·"],
   },
+});
+```
+
+`border-width` is a **weight** the set interprets: the defaults draw
+`border-2` and up as heavy lines (`━ ┃ ┏ ┓ ┗ ┛`) in one cell, and
+`rule-2` on a gap the same way. A set registers its own weight bands —
+glyphs for a width, and the cells it takes — so a theme whose font has
+no heavy glyphs can draw two rings instead, which is what `ascii`,
+`single`, `rounded`, and `blocks` do (`cp437` draws double, as DOS
+did):
+
+```js
+registerBorderGlyphs("rings", { solid: { weights: [{ width: 2, cells: 2 }] } });
+registerBorderGlyphs("bold", {
+  solid: { weights: [{ width: 2, h: "═", v: "║", tl: "╔", tr: "╗", bl: "╚", br: "╝" }] },
 });
 ```
 
@@ -152,8 +169,8 @@ your Tailwind theme:
 ```
 
 `rounded-*` picks the corner glyphs a set registers nearest the radius
-— the defaults' `╭ ╮ ╰ ╯` for light-line borders — while double
-borders stay square.
+— the defaults' `╭ ╮ ╰ ╯` for light-line borders — while heavy and
+double borders stay square.
 
 ## Companion packages
 
@@ -176,7 +193,8 @@ The core is self-contained; these are optional:
   every supported feature
 - [Project overview and development setup](https://github.com/benface/monowind#readme)
 - [Cell-model rules](https://github.com/benface/monowind/blob/main/.agents/specs/cell-model.md)
-  — the layout semantics (spacing scale: 1 cell = 0.25rem; border scale:
-  1px = 1 cell; what's deliberately unsupported)
+  — the layout semantics (spacing scale: 1 cell = 0.25rem; border
+  width as a weight the glyph set draws; what's deliberately
+  unsupported)
 - [Example apps](https://github.com/benface/monowind/tree/main/apps) — CDN
   mode, Vite + Tailwind, and more

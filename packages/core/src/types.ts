@@ -281,7 +281,11 @@ export interface BorderRun {
 
 /** A collapsed lattice segment: the border that won one piece of a line. */
 export interface LatticeSegment {
+  /** Cells: the line's thickness. */
   width: number;
+  /** The weight it draws with and carries into junctions: its px
+   * width where the set has a band for it, else 1 (junctionWeight). */
+  weight: number;
   style: BorderStyle;
   color: string | undefined;
 }
@@ -313,7 +317,11 @@ export interface TableLattice {
  * currentColor resolves to the container's computed color at read time,
  * like border colors. */
 export interface GapRule {
+  /** The rule's thickness in cells, its weight band's. */
   width: number;
+  /** The weight it draws with and carries into junctions: its px
+   * width where the set has a band for it, else 1 (junctionWeight). */
+  weight: number;
   style: BorderStyle;
   color: string | undefined;
 }
@@ -333,6 +341,9 @@ export type RuleVisibilityItems = "normal" | "all" | "around" | "between";
  * (specs/table.md). */
 export interface LatticeBorder {
   width: Insets;
+  /** px per edge: a shared edge goes to the heavier (CSS 2.1 §17.6.2.1),
+   * whose band then draws it. */
+  weight: PerSide<number>;
   style: PerSide<BorderStyle>;
   color: PerSide<string | undefined>;
   /** `border-style: hidden` (`border-hidden`): suppresses the shared
@@ -340,6 +351,8 @@ export interface LatticeBorder {
    * the flag must ride separately (CSS 2.1 §17.6.2.1). */
   hidden: PerSide<boolean>;
 }
+
+export type Side = "top" | "right" | "bottom" | "left";
 
 /** One value per box edge (border style, border color, …). */
 export interface PerSide<T> {
@@ -422,7 +435,13 @@ export interface CellStyle {
   insets: PerSide<CellLength | null>;
   gapX: CellLength;
   gapY: CellLength;
+  /** Cells per edge: the weight band's thickness (specs/cell-model.md
+   * "Box model") — one under the defaults, two under a set's rings. */
   border: Insets;
+  /** `border-width` in px per edge, the WEIGHT the glyph set draws it
+   * with (light at 1, heavy from 2 by default; specs/theming.md), 1
+   * where there is no border. */
+  borderWeight: PerSide<number>;
   borderStyle: PerSide<BorderStyle>;
   borderColor: PerSide<string | undefined>;
   /** Each corner's radius in cells, unrounded — the corner glyph
@@ -828,6 +847,7 @@ export function defaultCellStyle(): CellStyle {
     gapX: 0,
     gapY: 0,
     border: zeroInsets(),
+    borderWeight: { top: 1, right: 1, bottom: 1, left: 1 },
     borderStyle: { top: "solid", right: "solid", bottom: "solid", left: "solid" },
     borderRadius: { tl: 0, tr: 0, bl: 0, br: 0 },
     overflow: { x: "visible", y: "visible" },

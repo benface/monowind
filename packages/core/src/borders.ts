@@ -1,10 +1,10 @@
 import {
-  DOUBLE_JUNCTIONS,
-  LIGHT_JUNCTIONS,
   cornerGlyph,
   glyphSetFor,
   junctionRole,
+  junctionWeight,
   shadowRamp,
+  weightBand,
 } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type {
@@ -19,32 +19,19 @@ import type {
   LayoutNode,
   PerSide,
   Rect,
+  Side,
 } from "./types.ts";
 
 export type { BorderRun } from "./types.ts";
 
-interface Glyphs {
-  h: string;
-  v: string;
-  tl: string;
-  tr: string;
-  bl: string;
-  br: string;
-}
-
-interface RingSides {
-  top: boolean;
-  right: boolean;
-  bottom: boolean;
-  left: boolean;
-}
+type RingSides = Record<Side, boolean>;
 
 /**
  * Emit runs of border glyphs for the box's engine-allocated border cells.
  *
- * For multi-cell borders (`border-2`, `border-3`, …) the engine allocates N
- * cells per edge; we render them as N concentric rings. Styles and colors
- * are per-side (see paintRing); every ring repeats them.
+ * A weight band of N cells (a set's rings, specs/theming.md) allocates N
+ * cells per edge; we render them as N concentric rings. Styles, weights,
+ * and colors are per-side (see paintRing); every ring repeats them.
  *
  * A single-cell-thin box (width < 2 or height < 2) has no interior; we draw
  * only vertical/horizontal runs and skip corners that would overlap.
@@ -60,11 +47,18 @@ export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[])
       bottom: ring < border.bottom,
       left: ring < border.left,
     };
+    // A ring starts past a thinner edge's cells, which keep their glyphs.
+    const inset = {
+      top: Math.min(ring, border.top),
+      right: Math.min(ring, border.right),
+      bottom: Math.min(ring, border.bottom),
+      left: Math.min(ring, border.left),
+    };
     const ringRect = {
-      x: box.x + (sides.left ? ring : 0),
-      y: box.y + (sides.top ? ring : 0),
-      width: box.width - (sides.left ? ring : 0) - (sides.right ? ring : 0),
-      height: box.height - (sides.top ? ring : 0) - (sides.bottom ? ring : 0),
+      x: box.x + inset.left,
+      y: box.y + inset.top,
+      width: box.width - inset.left - inset.right,
+      height: box.height - inset.top - inset.bottom,
     };
     if (ringRect.width <= 0 || ringRect.height <= 0) continue;
     // A ring inside loses a cell of radius, as CSS's inner edge does.
@@ -77,6 +71,7 @@ export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[])
     paintRing(
       out,
       style.borderStyle,
+      style.borderWeight,
       style.borderColor,
       radii,
       ringRect,
@@ -188,29 +183,36 @@ function colorAlpha(color: string): number {
 }
 
 /**
- * Paint one ring, honoring per-side styles and colors. Each edge uses its
- * own style's glyphs. A corner where both adjacent edges share a style uses
- * that style's corner glyph; mixed-style corners fall back to the light
- * corners (Unicode has no mixed junction glyphs for most pairs — same
- * convention as dashed/dotted). Corner color comes from the horizontal
- * (top/bottom) edge. A corner's radius picks its glyph (cornerGlyph).
+ * Paint one ring, honoring per-side styles, weights, and colors. Each
+ * edge uses its own style's glyphs at its weight. A corner where both
+ * adjacent edges share a style uses that style's corner glyph;
+ * mixed-style corners fall back to the light corners (Unicode has no
+ * mixed junction glyphs for most pairs — same convention as
+ * dashed/dotted), and a corner between weights draws the heavier
+ * (junctionWeight). Corner color comes from the horizontal (top/bottom)
+ * edge. A corner's radius picks its glyph (cornerGlyph).
  */
 function paintRing(
   out: BorderRun[],
   styles: PerSide<BorderStyle>,
+  weights: PerSide<number>,
   colors: PerSide<string | undefined>,
   radii: Record<CornerRole, number>,
   rect: Rect,
   sides: RingSides,
   set?: BorderGlyphSet,
 ): void {
-  const top = borderGlyphs(styles.top, set);
-  const right = borderGlyphs(styles.right, set);
-  const bottom = borderGlyphs(styles.bottom, set);
-  const left = borderGlyphs(styles.left, set);
-  const corner = (a: BorderStyle, b: BorderStyle, role: CornerRole): string => {
-    const style = a === b ? a : "solid";
-    return cornerGlyph(style, role, radii[role], borderGlyphs(style, set)[role], set);
+  const top = weightBand(styles.top, weights.top, set).roles;
+  const right = weightBand(styles.right, weights.right, set).roles;
+  const bottom = weightBand(styles.bottom, weights.bottom, set).roles;
+  const left = weightBand(styles.left, weights.left, set).roles;
+  const corner = (a: Side, b: Side, role: CornerRole): string => {
+    const style = styles[a] === styles[b] ? styles[a] : "solid";
+    const weight = Math.max(
+      junctionWeight(styles[a], weights[a], set),
+      junctionWeight(styles[b], weights[b], set),
+    );
+    return cornerGlyph(style, role, radii[role], weightBand(style, weight, set), set);
   };
   const { x, y, width, height } = rect;
   const hasCorners = width >= 2 && height >= 2;
@@ -251,7 +253,7 @@ function paintRing(
   if (hasCorners) {
     if (sides.top && sides.left)
       out.push({
-        glyph: corner(styles.top, styles.left, "tl"),
+        glyph: corner("top", "left", "tl"),
         x,
         y,
         length: 1,
@@ -259,7 +261,7 @@ function paintRing(
       });
     if (sides.top && sides.right)
       out.push({
-        glyph: corner(styles.top, styles.right, "tr"),
+        glyph: corner("top", "right", "tr"),
         x: x + width - 1,
         y,
         length: 1,
@@ -267,7 +269,7 @@ function paintRing(
       });
     if (sides.bottom && sides.left)
       out.push({
-        glyph: corner(styles.bottom, styles.left, "bl"),
+        glyph: corner("bottom", "left", "bl"),
         x,
         y: y + height - 1,
         length: 1,
@@ -275,7 +277,7 @@ function paintRing(
       });
     if (sides.bottom && sides.right)
       out.push({
-        glyph: corner(styles.bottom, styles.right, "br"),
+        glyph: corner("bottom", "right", "br"),
         x: x + width - 1,
         y: y + height - 1,
         length: 1,
@@ -336,68 +338,35 @@ export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
   ];
 }
 
-/** A style's straight line glyph, for lattice segments. */
-export function lineGlyph(style: BorderStyle, axis: "h" | "v", set?: BorderGlyphSet): string {
-  const glyphs = borderGlyphs(style, set);
-  return axis === "h" ? glyphs.h : glyphs.v;
+/** A style's straight line glyph at a weight (px), for lattice
+ * segments and rules. */
+export function lineGlyph(
+  style: BorderStyle,
+  weight: number,
+  axis: "h" | "v",
+  set?: BorderGlyphSet,
+): string {
+  return weightBand(style, weight, set).roles[axis];
 }
 
 /** Junction glyph for a lattice intersection, from which of the four
- * arms exist. `double` has a full junction set; dashed/dotted (and mixed
+ * arms exist, at a weight (px) — the heaviest arm's, decided by the
+ * caller. `double` has a full junction set; dashed/dotted (and mixed
  * styles, decided by the caller) use the light set — the corner
  * convention (specs/cell-model.md). Stubs (≤1 arm) fall back to plain
  * line glyphs. An active glyph SET (specs/theming.md) overrides PER
  * GLYPH by junction role. */
 export function junctionGlyph(
   style: BorderStyle,
+  weight: number,
   up: boolean,
   down: boolean,
   left: boolean,
   right: boolean,
   set?: BorderGlyphSet,
 ): string {
-  const mask = (up ? 8 : 0) | (down ? 4 : 0) | (left ? 2 : 0) | (right ? 1 : 0);
-  if (set) {
-    const role = junctionRole(mask);
-    const override = role && set[style]?.[role];
-    if (override) return override;
-  }
-  const table = style === "double" ? DOUBLE_JUNCTIONS : LIGHT_JUNCTIONS;
-  return table[mask]!;
-}
-
-/** Rings are junction special cases: lines are two collinear arms,
- * corners two perpendicular ones. Only dashed/dotted lines need their own
- * glyphs (`╌`/`╎` — the double dash pair reads cleaner than the triple
- * dash, which looks like dots in many fonts; `┄`/`┊` for dotted). Their
- * corners fall back to light via the junction set, as before. */
-function borderGlyphs(style: BorderStyle, set?: BorderGlyphSet): Glyphs {
-  const j = (up: boolean, down: boolean, left: boolean, right: boolean) =>
-    junctionGlyph(style, up, down, left, right, set);
-  const base: Glyphs = {
-    h: j(false, false, true, true),
-    v: j(true, true, false, false),
-    tl: j(false, true, false, true),
-    tr: j(false, true, true, false),
-    bl: j(true, false, false, true),
-    br: j(true, false, true, false),
-  };
-  if (style === "dashed") return { h: "╌", v: "╎", ...withoutLines(base), ...setLines(set, style) };
-  if (style === "dotted") return { h: "┄", v: "┊", ...withoutLines(base), ...setLines(set, style) };
-  return base;
-}
-
-function withoutLines(glyphs: Glyphs): Omit<Glyphs, "h" | "v"> {
-  const { h: _h, v: _v, ...rest } = glyphs;
-  return rest;
-}
-
-function setLines(set: BorderGlyphSet | undefined, style: BorderStyle): Partial<Glyphs> {
-  const table = set?.[style];
-  const lines: Partial<Glyphs> = {};
-  if (table?.h) lines.h = table.h;
-  if (table?.v) lines.v = table.v;
-  return lines;
+  const role = junctionRole((up ? 8 : 0) | (down ? 4 : 0) | (left ? 2 : 0) | (right ? 1 : 0));
+  return role ? weightBand(style, weight, set).roles[role] : " ";
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +484,9 @@ export interface GapRuleContext {
   contentHeight: number;
   border: Insets;
   borderStyle: PerSide<BorderStyle>;
+  /** The border's weight per side (px): a rule tees into it with the
+   * heavier of the two (junctionWeight). */
+  borderWeight: PerSide<number>;
   borderColor: PerSide<string | undefined>;
   padding: Insets;
   /** The owning container's resolved glyph set (specs/theming.md). */
@@ -526,7 +498,8 @@ export interface GapRuleContext {
  * band (floor on the leading side), crossings get junction glyphs from
  * their arms, and a rule that reaches the content edge through zero
  * padding tees into the container's innermost border ring. Mixed styles
- * fall back to the light set; all-double crossings use the double set.
+ * fall back to the light set; all-double crossings use the double set;
+ * a crossing of weights draws the heavier.
  */
 export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
   const out: BorderRun[] = [];
@@ -562,7 +535,7 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
     hLines.some((l) => y >= l.line && y < l.line + hWidth && x >= l.start && x < l.end);
 
   if (ctx.ruleX) {
-    const glyph = lineGlyph(ctx.ruleX.style, "v", ctx.glyphs);
+    const glyph = lineGlyph(ctx.ruleX.style, ctx.ruleX.weight, "v", ctx.glyphs);
     for (const line of vLines) {
       for (let t = 0; t < vWidth; t++)
         for (let y = line.start; y < line.end; y++) {
@@ -580,6 +553,7 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
   }
   if (ctx.ruleY) {
     const allDouble = ctx.ruleY.style === "double" && ctx.ruleX?.style === "double";
+    const crossing = Math.max(ctx.ruleY.weight, ctx.ruleX?.weight ?? 0);
     for (const line of hLines) {
       for (let t = 0; t < hWidth; t++) {
         const y = line.line + t;
@@ -591,13 +565,14 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
               up || down
                 ? junctionGlyph(
                     allDouble ? "double" : "solid",
+                    crossing,
                     up,
                     down,
                     inkAtBoundary(hLines, hWidth, y, x),
                     inkAtBoundary(hLines, hWidth, y, x + 1),
                     ctx.glyphs,
                   )
-                : lineGlyph(ctx.ruleY.style, "h", ctx.glyphs),
+                : lineGlyph(ctx.ruleY.style, ctx.ruleY.weight, "h", ctx.glyphs),
             x: originX + x,
             y: originY + y,
             length: 1,
@@ -629,73 +604,41 @@ function collectRuleBorderTees(
   const tee = (
     x: number,
     y: number,
-    borderSide: BorderStyle,
-    color: string | undefined,
+    side: Side,
     up: boolean,
     down: boolean,
     left: boolean,
     right: boolean,
   ) => {
-    const style = rule.style === "double" && borderSide === "double" ? "double" : "solid";
+    const style =
+      rule.style === "double" && ctx.borderStyle[side] === "double" ? "double" : "solid";
+    const weight = Math.max(
+      rule.weight,
+      junctionWeight(ctx.borderStyle[side], ctx.borderWeight[side], ctx.glyphs),
+    );
     out.push({
-      glyph: junctionGlyph(style, up, down, left, right, ctx.glyphs),
+      glyph: junctionGlyph(style, weight, up, down, left, right, ctx.glyphs),
       x,
       y,
       length: 1,
-      color,
+      color: ctx.borderColor[side],
     });
   };
   if (axis === "x") {
     for (let t = 0; t < rule.width; t++) {
       const x = originX + line + t;
       if (start <= 0 && ctx.padding.top === 0 && ctx.border.top > 0)
-        tee(
-          x,
-          ctx.border.top - 1,
-          ctx.borderStyle.top,
-          ctx.borderColor.top,
-          false,
-          true,
-          true,
-          true,
-        );
+        tee(x, ctx.border.top - 1, "top", false, true, true, true);
       if (end >= ctx.contentHeight && ctx.padding.bottom === 0 && ctx.border.bottom > 0)
-        tee(
-          x,
-          nodeHeight - ctx.border.bottom,
-          ctx.borderStyle.bottom,
-          ctx.borderColor.bottom,
-          true,
-          false,
-          true,
-          true,
-        );
+        tee(x, nodeHeight - ctx.border.bottom, "bottom", true, false, true, true);
     }
   } else {
     for (let t = 0; t < rule.width; t++) {
       const y = originY + line + t;
       if (start <= 0 && ctx.padding.left === 0 && ctx.border.left > 0)
-        tee(
-          ctx.border.left - 1,
-          y,
-          ctx.borderStyle.left,
-          ctx.borderColor.left,
-          true,
-          true,
-          false,
-          true,
-        );
+        tee(ctx.border.left - 1, y, "left", true, true, false, true);
       if (end >= ctx.contentWidth && ctx.padding.right === 0 && ctx.border.right > 0)
-        tee(
-          nodeWidth - ctx.border.right,
-          y,
-          ctx.borderStyle.right,
-          ctx.borderColor.right,
-          true,
-          true,
-          true,
-          false,
-        );
+        tee(nodeWidth - ctx.border.right, y, "right", true, true, true, false);
     }
   }
 }

@@ -336,6 +336,7 @@ export function layoutGrid(
       contentHeight,
       border,
       borderStyle: style.borderStyle,
+      borderWeight: style.borderWeight,
       borderColor: style.borderColor,
       padding,
     });

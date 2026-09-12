@@ -425,12 +425,14 @@ dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
   tables above from 2px for solid, dashed, and dotted, one cell thick;
   double has no heavier weight and keeps `═ ║` at any width. A set
   without heavy glyphs registers what its hardware had instead — two
-  rings of light lines (`single`, `ascii`), double lines (`cp437`, as
+  rings of its lines (`single`, `ascii`, `rounded`), double lines (`cp437`, as
   DOS interfaces emphasized), two cells of blocks (`blocks`). A heavy
   corner has no arc, so `rounded-*` leaves it square, like double. In
   a collapsed lattice the wider border wins a shared edge, as CSS
   collapses, and its band draws the line at the band's thickness; a
-  junction where weights meet draws the heavier weight's glyph
+  corner or junction where weights meet draws the heavier weight's
+  glyph, a side counting its weight only where its set has a band for
+  it — a 2px double side meets a light side at a light corner
   (Unicode's mixed-weight junctions, `┿ ╂ ┝ …`, are a later
   refinement).
 - Mixed-style junctions (light meets double: `╞ ╤ ╧ ╡` exist) —
@@ -736,7 +738,8 @@ lines); the explicit zero `clip` rect still drops them.
 3. Font family/size are root-only; descendant `leading-*`/`tracking-*` are
    re-quantized to whole rows/cells rather than applied as authored, and
    `leading-*` on inline elements is ignored.
-4. Border-width uses the 1px = 1 cell scale, not the spacing scale.
+4. Border-width is a weight the glyph set draws ("Box model"), not a
+   length on the spacing scale.
 5. Inline elements ignore MOST layout-affecting properties (borders,
    sizing, margins). Horizontal padding IS honored, quantized to whole
    cells: the run reserves the cells as blank markers glued to the
