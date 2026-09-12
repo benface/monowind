@@ -54,7 +54,12 @@ function setFlag(el: Element, name: string, on: boolean): void {
   else el.removeAttribute(name);
 }
 
-function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Element>): void {
+function walk(
+  node: LayoutNode,
+  isRoot: boolean,
+  inlineInsetElements: Set<Element>,
+  ground?: string,
+): void {
   if (node.inlineElements) {
     for (const { element, tracking, padLeft, padRight, insets, sticky } of node.inlineElements) {
       const el = element as HTMLElement;
@@ -77,6 +82,10 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
 
   if (isRoot) markRoot(node);
   else if (!node.anonymous) positionElement(node);
+  // The ground the grid paints under this box: its own fill, else the
+  // nearest above, `bg-clear` cutting through to the theme's.
+  const own = node.style.backgroundColor ?? (node.style.backgroundClear ? undefined : ground);
+  if (!isRoot && !node.anonymous) syncEditableColors(node.source as HTMLElement, node, own);
   // A hidden table box (misparented content, <col>) hides its whole
   // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
@@ -92,8 +101,22 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
         setVar(el, "--mw-z", String(child.style.zIndex));
       else clearVar(el, "--mw-z");
     }
-    walk(child, false, inlineInsetElements);
+    walk(child, false, inlineInsetElements, own);
   }
+}
+
+/** The elements whose text the browser renders and selects (the
+ * companion's `::selection` rule for them, styles.css). */
+const EDITABLE = "input, textarea, select, [contenteditable], [contenteditable] *";
+
+/** An editable's ink and ground for its native selection (styles.css),
+ * which swaps them as the grid swaps a selected cell's colors. */
+function syncEditableColors(el: HTMLElement, node: LayoutNode, ground: string | undefined): void {
+  if (!el.matches(EDITABLE)) return;
+  if (node.style.color !== undefined) setVar(el, "--mw-ink", node.style.color);
+  else clearVar(el, "--mw-ink");
+  if (ground !== undefined) setVar(el, "--mw-ground", ground);
+  else clearVar(el, "--mw-ground");
 }
 
 /** The host's flags when its own text is on the grid — the root leaf,

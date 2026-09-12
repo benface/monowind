@@ -366,6 +366,22 @@ const autoscrollFixture = html`
   </mono-wind>
 `;
 
+/** A form control's selection (visual/selection.spec.ts): its own
+ * colors swapped, painted natively by the control — the theme's on the
+ * focus invert, an author's focus colors on the second. */
+export const FieldFixture: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <input data-test="plain" class="w-20 border" value="focus me" />
+      <input
+        data-test="styled"
+        class="mt-1 w-20 border focus-visible:bg-blue-900 focus-visible:text-amber-300"
+        value="focus me"
+      />
+    </mono-wind>
+  `,
+};
+
 /** The real-mouse auto-scroll target (visual/selection.spec.ts): a
  * drag held outside the host, which only the captured pointer's moves
  * reach. */

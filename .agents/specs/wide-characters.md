@@ -238,15 +238,27 @@ copy event sees it in all three engines.
   `::selection` rule turns transparent (its three sites — styles.css,
   the host, the ascii transcript — go with it) except under
   `forced-colors: active`, where the system paints selections and
-  strips backgrounds, so the native rule stays; form controls keep
-  their native highlight, as they render their own text. A grid-mode
-  drag on the `<pre>` keeps the browser's highlight: that text IS the
-  grid — and the browser's rule is the theme invert, so colored text
-  highlights differently under a grid drag than under a text-mode or
-  semantic selection (see Deviations). The paint is a style-only pass (same texts, new
-  paints) coalesced to one frame per `selectionchange` burst, patching
-  only the rows whose selected cells changed, so a drag on a large grid
-  costs a few row patches per frame.
+  strips backgrounds, so the native rule stays; form controls and
+  editables, which render their own text, swap their own colors by a
+  rule of their own, as the grid swaps a selected cell's: the engine
+  writes each editable's measured ink and the ground the grid paints
+  under it — its own fill, else the nearest above, `bg-clear` cutting
+  through to the theme's — as `--mw-ink` / `--mw-ground` (render.ts),
+  and the rule reads them swapped. A focus-inverted control's measured
+  colors are the inverted ones; a contenteditable's inline descendants
+  inherit their block's. The properties land with the relayout a focus
+  change triggers, so a gesture that focuses and selects at once can
+  show the previous colors for a frame. Left unstyled, Firefox paints
+  them its native highlight, and Chromium and WebKit hand a control its
+  parent's `::selection` (css-pseudo-4 highlight inheritance), so the
+  transparent rule blanks the selected value (probed 2026-09-11). A
+  grid-mode drag on the `<pre>` keeps the browser's highlight: that
+  text IS the grid — and the browser's rule is the theme invert, so
+  colored text highlights differently under a grid drag than under a
+  text-mode or semantic selection (see Deviations). The paint is a
+  style-only pass (same texts, new paints) coalesced to one frame per
+  `selectionchange` burst, patching only the rows whose selected cells
+  changed, so a drag on a large grid costs a few row patches per frame.
 - **Text-mode drags are routed like grid-mode gestures.** A primary
   press on the host in `select="text"` that is not on an interactive
   element is the engine's: it hit-tests the cell, maps it to the
@@ -337,9 +349,11 @@ Map<leaf, { start, end }>`; a `selected` paint swaps color and
   (its measurement forces a layout, and the `loadingdone` invalidation
   refreshes it).
 - paint.ts: `paintGrid(root, target, { holdStructural, glyphs,
-selection })` patches per ROW (styles in place when the row's
-  structure matches, a rebuild between its neighbors' newlines when
-  not); a boxed segment is an `inline-block` span `cells × --mw-cw`
+selection })` — `holdStructural` while a press on the grid the engine
+  has not taken over may be a native drag, whose anchor a rebuild would
+  lose; a press on a control is the control's — patches per ROW (styles
+  in place when the row's structure matches, a rebuild between its
+  neighbors' newlines when not); a boxed segment is an `inline-block` span `cells × --mw-cw`
   wide and `--mw-ch` tall, unpadded, centered, clipped, its font-size
   the scale; a tiling fit adds its `line-height`, a shade's moved by
   twice the row's shift; a shade adds `data-shade` (its glyph, which
@@ -364,9 +378,12 @@ selection })` patches per ROW (styles in place when the row's
   and `#followPointer`, which a scroll-driven paint and a page scroll
   call to extend the live gesture under the held pointer.
 - styles.css / element.ts / @monowind/ascii: the light `::selection`
-  sites are transparent outside forced colors and off form controls;
-  `#grid::selection` keeps the invert; the focus-visible swap rule and
-  `data-mw-center-nudge` are gone.
+  sites are transparent outside forced colors, form controls and
+  editables swapping their engine-written colors by a rule of their
+  own; `#grid::selection` keeps the invert; `data-mw-center-nudge` is
+  gone.
+- render.ts: `--mw-ink` / `--mw-ground` on editables, the ground
+  threaded down the walk.
 
 ## Deviations (documented, like the cell model's running list)
 

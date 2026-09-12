@@ -114,6 +114,106 @@ for (const mode of MODES) {
 }
 
 /**
+ * A form control's selection swaps the control's own colors, as the
+ * grid swaps a selected cell's (specs/cell-model.md "Form controls"):
+ * Chromium and WebKit hand a control its parent's `::selection` —
+ * transparent, for the grid-painted selection — so the control's own
+ * rule swaps the ink and ground the engine wrote on it. The focused
+ * control's ink spreads over the selected cells as a band, its glyphs
+ * on the band in the ground color: on the focus invert, and on an
+ * author's focus colors.
+ */
+test("a form control's selection swaps its own colors", async ({ page }) => {
+  await page.goto(
+    `/iframe.html?id=test-selection--field-fixture&viewMode=story&globals=select:text`,
+  );
+  await page.waitForFunction(() =>
+    document.querySelector("mono-wind")?.hasAttribute("data-mw-ready"),
+  );
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(150);
+  // A control's cells inside its border.
+  const clipOf = (name: string) =>
+    page.evaluate((name) => {
+      const style = getComputedStyle(document.querySelector("mono-wind")!);
+      const cw = parseFloat(style.getPropertyValue("--mw-cw"));
+      const ch = parseFloat(style.getPropertyValue("--mw-ch"));
+      const rect = document.querySelector(`[data-test="${name}"]`)!.getBoundingClientRect();
+      return {
+        x: rect.left + cw,
+        y: rect.top + ch,
+        width: rect.width - 2 * cw,
+        height: rect.height - 2 * ch,
+      };
+    }, name);
+  // A clip's pixels as [r, g, b] triples, row-major.
+  const pixels = async (clip: Awaited<ReturnType<typeof clipOf>>) => {
+    const png = (await page.screenshot({ clip })).toString("base64");
+    return page.evaluate(async (png) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${png}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const rgb: [number, number, number][] = [];
+      for (let i = 0; i < data.length; i += 4) rgb.push([data[i]!, data[i + 1]!, data[i + 2]!]);
+      return { width: canvas.width, rgb };
+    }, png);
+  };
+  const grounds: string[] = [];
+  for (const name of ["plain", "styled"]) {
+    const clip = await clipOf(name);
+    // Focused with a collapsed caret: WebKit selects the value on focus.
+    await page.evaluate((name) => {
+      const input = document.querySelector<HTMLInputElement>(`[data-test="${name}"]`)!;
+      input.focus();
+      input.setSelectionRange(0, 0);
+    }, name);
+    await page.waitForTimeout(150);
+    const focused = await pixels(clip);
+    // The focused control's ground: its most common color. Pixels far
+    // from it are ink (a glyph, or the band once selected — WebKit's
+    // inactive window paints the band at part intensity).
+    const counts = new Map<string, number>();
+    for (const px of focused.rgb) counts.set(px.join(), (counts.get(px.join()) ?? 0) + 1);
+    const ground = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])[0]![0]
+      .split(",")
+      .map(Number);
+    grounds.push(ground.join());
+    const distance = (px: number[]) => px.reduce((sum, v, i) => sum + Math.abs(v - ground[i]!), 0);
+    const inked = (shot: typeof focused) => shot.rgb.filter((px) => distance(px) > 200).length;
+    await page.evaluate(
+      (name) => document.querySelector<HTMLInputElement>(`[data-test="${name}"]`)!.select(),
+      name,
+    );
+    await page.waitForTimeout(150);
+    const selected = await pixels(clip);
+    // The band: far more ink than the glyphs alone.
+    expect(inked(selected)).toBeGreaterThan(3 * inked(focused));
+    // The glyphs on it: ground-colored pixels inside the band's bounds.
+    const at = (i: number) => [i % selected.width, Math.floor(i / selected.width)] as const;
+    const band = selected.rgb.flatMap((px, i) => (distance(px) > 200 ? [at(i)] : []));
+    const [left, right] = [Math.min(...band.map(([x]) => x)), Math.max(...band.map(([x]) => x))];
+    const [top, bottom] = [
+      Math.min(...band.map(([, y]) => y)),
+      Math.max(...band.map(([, y]) => y)),
+    ];
+    const glyphs = selected.rgb.filter((px, i) => {
+      const [x, y] = at(i);
+      return distance(px) < 100 && x >= left && x <= right && y >= top && y <= bottom;
+    }).length;
+    expect(glyphs).toBeGreaterThan(50);
+  }
+  // The styled control was checked on its own colors.
+  expect(grounds[1]).not.toBe(grounds[0]);
+});
+
+/**
  * An engine gesture auto-scrolls its scroll container
  * (specs/wide-characters.md "auto-scrolls"), with a real mouse held
  * OUTSIDE the host: only the captured pointer's moves reach the

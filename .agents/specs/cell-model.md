@@ -632,9 +632,12 @@ visible cell when `text-overflow: ellipsis` is set.
 selection, and IME **natively** — the tree builder treats them as empty
 leaves (never descending into a `<select>`'s options), and the light-DOM
 color-transparent lock exempts them so their native ink shows on top of
-the grid's borders and backgrounds. Placeholders (`::placeholder`, and
-`select:invalid` for a required select on its empty option) paint at
-half the themed color.
+the grid's borders and backgrounds; their selection swaps their own
+colors, as the grid swaps a selected cell's, by a rule of their own
+reading the ink and ground the engine writes on them
+(`wide-characters.md` "The grid paints the selection"). Placeholders
+(`::placeholder`, and `select:invalid` for a required select on its
+empty option) paint at half the themed color.
 
 Intrinsic sizes mirror the native ones:
 

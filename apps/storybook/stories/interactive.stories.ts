@@ -2,6 +2,7 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import type { MonoWindElement } from "monowind";
+import { pressAt, release } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Interactive",
@@ -271,6 +272,66 @@ export const Select: StoryObj = {
       expect(day.matches(":invalid")).toBe(false);
       expect(getComputedStyle(day).color).toBe(getComputedStyle(dropdown).color);
     });
+    // A press on another select while one is focus-visible, a caret
+    // left in the grid by an earlier click: the blur's relayout repaints
+    // the first's cells at once — the press is the control's, never a
+    // native grid drag to hold the repaint for — before the picker opens
+    // and holds relayouts.
+    const gridBackgroundAt = (el: HTMLElement) => {
+      const rect = el.getBoundingClientRect();
+      const [x, y] = [rect.left + rect.width / 2, rect.top + rect.height / 2];
+      const spans = host.shadowRoot!.getElementById("grid")!.querySelectorAll("span");
+      const span = Array.from(spans).find((span) => {
+        const r = span.getBoundingClientRect();
+        return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+      });
+      return span?.style.backgroundColor ?? "";
+    };
+    const center = (el: HTMLElement) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    };
+    dropdown.focus();
+    expect(dropdown.matches(":focus-visible")).toBe(true);
+    await waitFor(() => expect(gridBackgroundAt(dropdown)).not.toBe(""));
+    const gridEl = host.shadowRoot!.getElementById("grid")!;
+    const gridText = document.createTreeWalker(gridEl, NodeFilter.SHOW_TEXT).nextNode()!;
+    document.getSelection()!.setBaseAndExtent(gridText, 0, gridText, 0);
+    pressAt(fruit, center(fruit), 1);
+    fruit.focus();
+    expect(gridBackgroundAt(dropdown)).toBe("");
+    release();
+    host.dispatchEvent(new PointerEvent("pointerleave"));
+    // A press on the grid instead: the engine takes the drag over and
+    // claims it before the blur, so the blur's relayout paints too.
+    dropdown.focus();
+    await waitFor(() => expect(gridBackgroundAt(dropdown)).not.toBe(""));
+    document.getSelection()!.setBaseAndExtent(gridText, 0, gridText, 0);
+    pressAt(gridEl, center(host.querySelector<HTMLElement>("legend")!), 1);
+    expect(document.activeElement).not.toBe(dropdown);
+    expect(gridBackgroundAt(dropdown)).toBe("");
+    release();
+    host.dispatchEvent(new PointerEvent("pointerleave"));
+    // A press on the select's own row, which that relayout rebuilds:
+    // the caret lands on the grid's fresh nodes.
+    dropdown.focus();
+    await waitFor(() => expect(gridBackgroundAt(dropdown)).not.toBe(""));
+    const box = dropdown.getBoundingClientRect();
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    pressAt(gridEl, { x: box.right + 2 * cellWidth, y: box.top + box.height / 2 }, 1);
+    expect(gridBackgroundAt(dropdown)).toBe("");
+    // The caret's node, seen through the shadow (the document's anchor
+    // is retargeted onto the host in some engines).
+    const selection = document.getSelection()!;
+    const inner = (host.shadowRoot as { getSelection?: () => Selection | null }).getSelection?.();
+    const caret =
+      selection.getComposedRanges?.({ shadowRoots: [host.shadowRoot!] })[0]?.startContainer ??
+      (inner ?? selection).getRangeAt(0).startContainer;
+    expect(caret.nodeType).toBe(Node.TEXT_NODE);
+    expect(gridEl.contains(caret)).toBe(true);
+    release();
+    host.dispatchEvent(new PointerEvent("pointerleave"));
+    selection.removeAllRanges();
   },
 };
 

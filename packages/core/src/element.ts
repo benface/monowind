@@ -1039,10 +1039,7 @@ export class MonoWindElement extends HTMLElementBase {
       // press over, like a phantom one: blur now, drag through the
       // engine.
       const focused = this.#focusedInside();
-      if (!onGrid || focused) {
-        focused?.blur();
-        this.#startGridDrag(e);
-      }
+      if (!onGrid || focused) this.#startGridDrag(e, focused);
       return;
     }
     if (!finePointer) return;
@@ -1204,11 +1201,12 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   /** Structural repaints are held while a NATIVE drag may be in flight
-   * (its browser-internal anchor would not survive a rebuild); an
-   * engine-driven grid drag re-derives its points from flat offsets and
-   * needs no hold. */
+   * — a press on the grid the engine has not taken over, whose
+   * browser-internal anchor would not survive a rebuild; a press on a
+   * control is the control's, and an engine-driven grid drag re-derives
+   * its points from flat offsets. */
   #holdsNativeDrag(): boolean {
-    return this.#pressing && !this.#gridDrag;
+    return this.#pressing && this.#pressOnGrid && !this.#gridDrag;
   }
 
   /** A non-interactive light element inside the host: never a legitimate
@@ -1222,29 +1220,34 @@ export class MonoWindElement extends HTMLElementBase {
     );
   }
 
-  /** The grid text position under a client point: its flat offset and
-   * the text node holding it. */
-  #gridPointAt(clientX: number, clientY: number): { offset: number; at: [Text, number] } | null {
+  /** The grid text position under a client point, as a flat offset. */
+  #gridOffsetAt(clientX: number, clientY: number): number | null {
     const metrics = this.#cellMetrics;
     if (!metrics) return null;
     const { col, row } = this.#cellAt(clientX, clientY, metrics);
-    const offset = gridOffsetAt(this.#grid, col, row);
-    const at = textPositionAt(this.#grid, offset);
-    return at && { offset, at };
+    return gridOffsetAt(this.#grid, col, row);
   }
 
-  #startGridDrag(e: MouseEvent): void {
-    const point = this.#gridPointAt(e.clientX, e.clientY);
-    if (!point) return;
-    e.preventDefault();
-    document.getSelection()?.setBaseAndExtent(...point.at, ...point.at);
-    this.#gridDrag = { anchor: point.offset };
+  /** The engine's drag from a press, claimed before `blurring` loses
+   * focus so the blur's own relayout (a select's runs at once) paints
+   * — no native anchor to hold it for — and anchored after it, on the
+   * nodes the grid has then. */
+  #startGridDrag(e: MouseEvent, blurring: HTMLElement | null): void {
+    const anchor = this.#gridOffsetAt(e.clientX, e.clientY);
+    if (anchor !== null) {
+      e.preventDefault();
+      this.#gridDrag = { anchor };
+    }
+    blurring?.blur();
+    const at = anchor === null ? null : textPositionAt(this.#grid, anchor);
+    if (at) document.getSelection()?.setBaseAndExtent(...at, ...at);
   }
 
   #extendGridDrag(drag: { anchor: number }, clientX: number, clientY: number): void {
     const base = textPositionAt(this.#grid, drag.anchor);
-    const point = this.#gridPointAt(clientX, clientY);
-    if (base && point) document.getSelection()?.setBaseAndExtent(...base, ...point.at);
+    const offset = this.#gridOffsetAt(clientX, clientY);
+    const at = offset === null ? null : textPositionAt(this.#grid, offset);
+    if (base && at) document.getSelection()?.setBaseAndExtent(...base, ...at);
   }
 
   /** Drag extension: the anchor unit through the unit under the pointer,

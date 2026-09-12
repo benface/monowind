@@ -278,10 +278,9 @@ mono-wind:not([data-mw-ready]) {
  * invisible: every field, as some engines keep an OS default background
  * when only `color` is set, and Safari's text-shadow ink. Shadow scopes
  * can't share the rule: element.ts (the slot) and @monowind/ascii's
- * transcript restate it — update all three together. Form controls
- * render their own text and keep their native highlight; forced
- * colors paint selections themselves and strip backgrounds, so the
- * native highlight stays there. */
+ * transcript restate it — update all three together. Forced colors
+ * paint selections themselves and strip backgrounds, so the native
+ * highlight stays there. */
 @media (forced-colors: none) {
   mono-wind:not([measuring])[data-mw-leaf]::selection,
   mono-wind:not([measuring])
@@ -289,6 +288,16 @@ mono-wind:not([data-mw-ready]) {
     color: transparent !important;
     text-shadow: none !important;
     background: transparent !important;
+  }
+  /* An editable renders its own text, and Chromium and WebKit hand it
+   * its parent's `::selection` (css-pseudo-4 highlight inheritance —
+   * transparent, from the rule above): its own rule swaps its colors as
+   * the grid swaps a selected cell's, from the ink and ground the engine
+   * measured and wrote on it (render.ts). */
+  mono-wind:not([measuring])
+    :where(input, textarea, select, [contenteditable], [contenteditable] *)::selection {
+    color: var(--mw-ground, var(--mw-bg, canvas));
+    background: var(--mw-ink, var(--mw-fg, canvastext));
   }
 }
 
@@ -765,8 +774,8 @@ mono-wind:not([measuring]) [data-mw-hidden-runs] > [data-mw-laid-out] {
 }
 
 /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/
- * `end` all land on whole cells (offset = (W - N) × cell width); `center` and
- * `justify` produce fractional per-line offsets we can't snap to the grid. */
+ * `end`/`center` all land on whole cells (offset = (W - N) × cell width);
+ * `justify` produces fractional per-line offsets we can't snap to the grid. */
 mono-wind:not([measuring])[data-mw-text-align-blocked],
 mono-wind:not([measuring]) [data-mw-text-align-blocked] {
   text-align: start !important;
