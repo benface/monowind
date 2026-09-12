@@ -177,16 +177,17 @@ export function paintsInPositionedStep(child: LayoutNode, parent: LayoutNode): b
   );
 }
 
-/** Children in paint order (CSS 2.1 Appendix E, no floats and sibling
- * stacking only): negative z-index (asc), then non-positioned block,
- * then non-positioned inline, then positioned with z-index >= 0 or
- * auto (asc, auto counts as 0). Stable within a bucket, so DOM order
- * breaks ties. Bucketed instead of full-sorted so the common case
- * (single bucket, no z-index) is allocation-free. */
+/** Children in paint order (CSS 2.1 Appendix E, sibling stacking
+ * only): negative z-index (asc), then non-positioned block, then
+ * floats, then non-positioned inline, then positioned with z-index >=
+ * 0 or auto (asc, auto counts as 0). Stable within a bucket, so DOM
+ * order breaks ties. Bucketed instead of full-sorted so the common
+ * case (single bucket, no z-index) is allocation-free. */
 export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
   if (node.children.length <= 1) return node.children;
   let negatives: LayoutNode[] | null = null;
   let blocks: LayoutNode[] | null = null;
+  let floats: LayoutNode[] | null = null;
   let inlines: LayoutNode[] | null = null;
   let positioned: LayoutNode[] | null = null;
   for (const child of node.children) {
@@ -194,6 +195,7 @@ export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
       if ((child.style.zIndex ?? 0) < 0) (negatives ??= []).push(child);
       else (positioned ??= []).push(child);
     } else if (child.inlineBox) (inlines ??= []).push(child);
+    else if (child.style.float !== "none") (floats ??= []).push(child);
     else (blocks ??= []).push(child);
   }
   if (negatives && negatives.length > 1) {
@@ -202,10 +204,16 @@ export function paintOrderedChildren(node: LayoutNode): LayoutNode[] {
   if (positioned && positioned.length > 1) {
     positioned.sort((a, b) => (a.style.zIndex ?? 0) - (b.style.zIndex ?? 0));
   }
-  if (!negatives && blocks && !inlines && !positioned) return blocks;
-  if (!negatives && !blocks && inlines && !positioned) return inlines;
-  if (!negatives && !blocks && !inlines && positioned) return positioned;
-  return [...(negatives ?? []), ...(blocks ?? []), ...(inlines ?? []), ...(positioned ?? [])];
+  if (!negatives && blocks && !floats && !inlines && !positioned) return blocks;
+  if (!negatives && !blocks && !floats && inlines && !positioned) return inlines;
+  if (!negatives && !blocks && !floats && !inlines && positioned) return positioned;
+  return [
+    ...(negatives ?? []),
+    ...(blocks ?? []),
+    ...(floats ?? []),
+    ...(inlines ?? []),
+    ...(positioned ?? []),
+  ];
 }
 
 /** A style's straight line glyph, for lattice segments. */

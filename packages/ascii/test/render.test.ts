@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import figlet from "figlet";
 import { parseFont } from "../src/font.ts";
-import { renderAscii } from "../src/render.ts";
+import { renderAscii, trimAscii } from "../src/render.ts";
 
 /** The npm `figlet` package is the independent reference
  * implementation: same `.flf` inputs, battle-tested output. Any
@@ -74,5 +74,36 @@ describe("spaces", () => {
     expect(width("a b")).toBe(width("a b"));
     expect(width("a  b")).toBeGreaterThan(width("a b"));
     expect(renderAscii("a b", font).lines).toEqual(renderAscii("a b", font).lines);
+  });
+});
+
+describe("trimAscii", () => {
+  it("drops the blank rows and columns around the art, moving the runs along", () => {
+    const paint = { color: "red" };
+    const art = {
+      lines: ["      ", "  ab  ", "   c  ", "      "],
+      runs: [
+        { line: 1, start: 0, end: 4, paint },
+        { line: 2, start: 3, end: 4, paint },
+        { line: 3, start: 0, end: 6, paint },
+      ],
+    };
+    expect(trimAscii(art)).toEqual({
+      lines: ["ab", " c"],
+      runs: [
+        { line: 0, start: 0, end: 2, paint },
+        { line: 1, start: 1, end: 2, paint },
+      ],
+    });
+    expect(trimAscii({ lines: ["   ", "   "], runs: [] })).toEqual({ lines: [], runs: [] });
+  });
+
+  it("takes a small-font glyph's leading column and descender row", () => {
+    const art = renderAscii("A", load("small.flf"));
+    expect(art.lines.every((line) => line.startsWith(" "))).toBe(true);
+    expect(art.lines[art.lines.length - 1]!.trim()).toBe("");
+    const trimmed = trimAscii(art);
+    expect(trimmed.lines.length).toBe(art.lines.length - 1);
+    expect(trimmed.lines.some((line) => !line.startsWith(" "))).toBe(true);
   });
 });

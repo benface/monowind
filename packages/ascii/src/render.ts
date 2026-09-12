@@ -39,6 +39,31 @@ export function renderAscii(text: string, font: AsciiFont): RenderedAscii {
   return { lines, runs: collectRuns(rows) };
 }
 
+/** The art without the blank rows above and below it and the blank
+ * columns beside it — a FIGlet glyph keeps its font's leading space
+ * column and descender row — its runs moved along. */
+export function trimAscii(art: RenderedAscii): RenderedAscii {
+  const inked = art.lines.map((line) => line.trim() !== "");
+  const top = inked.indexOf(true);
+  if (top < 0) return { lines: [], runs: [] };
+  const bottom = inked.lastIndexOf(true) + 1;
+  const rows = art.lines.slice(top, bottom);
+  const left = Math.min(...rows.map((line) => line.search(/\S/)).filter((at) => at >= 0));
+  const right = Math.max(...rows.map((line) => line.trimEnd().length));
+  return {
+    lines: rows.map((line) => line.slice(left, right)),
+    runs: art.runs
+      .filter((run) => run.line >= top && run.line < bottom)
+      .map((run) => ({
+        ...run,
+        line: run.line - top,
+        start: Math.max(run.start, left) - left,
+        end: Math.min(run.end, right) - left,
+      }))
+      .filter((run) => run.end > run.start),
+  };
+}
+
 /** How far the next glyph slides left: the minimum over rows of
  * (trailing spaces + leading spaces), plus one when the touching pair
  * can smush. */

@@ -14,14 +14,14 @@ import "./fonts/standard.ts";
 import "./fonts/small.ts";
 import "./fonts/mono9.ts";
 import { asciiFont } from "./registry.ts";
-import { renderAscii } from "./render.ts";
+import { renderAscii, trimAscii } from "./render.ts";
 import { effectRuns, isEffect } from "./effects.ts";
 import type { AsciiFont } from "./font.ts";
 import type { LeafContent } from "monowind";
 
 export { asciiFont, registerAsciiFont } from "./registry.ts";
 export { parseFont } from "./font.ts";
-export { renderAscii } from "./render.ts";
+export { renderAscii, trimAscii } from "./render.ts";
 export type { AsciiFont, Glyph, HorizontalLayout } from "./font.ts";
 export type { RenderedAscii } from "./render.ts";
 
@@ -64,8 +64,9 @@ const SHADOW_TEMPLATE = `<style>
 /** `<mono-ascii>`: renders its text content as ascii art. The `font`
  * ATTRIBUTE names a registered font (default: "standard"); the `font`
  * PROPERTY takes a parsed font object directly and wins over the
- * attribute. The light DOM keeps the semantic text (a11y); the shadow
- * transcript is what select="text" selects and copies. */
+ * attribute; `trim` drops the blank rows and columns around the art.
+ * The light DOM keeps the semantic text (a11y); the shadow transcript
+ * is what select="text" selects and copies. */
 export class MonoAsciiElement extends HTMLElementBase {
   #font: AsciiFont | null = null;
   #mirror: HTMLElement | null = null;
@@ -129,11 +130,10 @@ function renderContent(el: Element): LeafContent {
   }
   if (!text) return { lines: [] };
   const rendered = renderAscii(text, font);
+  const art = el.hasAttribute("trim") ? trimAscii(rendered) : rendered;
   const effect = el.getAttribute("effect");
-  if (effect && isEffect(effect)) {
-    return { lines: rendered.lines, runs: effectRuns(effect, rendered.lines) };
-  }
-  return { lines: rendered.lines, runs: rendered.runs };
+  if (effect && isEffect(effect)) return { lines: art.lines, runs: effectRuns(effect, art.lines) };
+  return art;
 }
 
 /** Idempotent registration of the element + leaf renderer (safe under
@@ -144,7 +144,7 @@ export function defineMonoAscii(): void {
   customElements.define("mono-ascii", MonoAsciiElement);
   registerLeafRenderer({
     tag: "mono-ascii",
-    observedAttributes: ["font", "effect"],
+    observedAttributes: ["font", "effect", "trim"],
     render: renderLeaf,
     selectionTarget: (el) => el.shadowRoot?.getElementById("mirror") ?? null,
   });

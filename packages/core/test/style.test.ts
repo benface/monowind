@@ -331,3 +331,19 @@ describe("mixed-unit calc()", () => {
     }
   });
 });
+
+describe("float and clear (specs/float.md)", () => {
+  it("reads the sides, and none on an out-of-flow box", () => {
+    expect(read({ style: "float: left" }).float).toBe("left");
+    expect(read({ style: "float: right; clear: both" })).toMatchObject({
+      float: "right",
+      clear: "both",
+    });
+    expect(read({}).float).toBe("none");
+    // CSS computes `float: none` on an out-of-flow box.
+    expect(read({ style: "float: left; position: absolute" }).float).toBe("none");
+    expect(read({ style: "float: left; position: fixed" }).float).toBe("none");
+    // Its `clear` stays readable; layout ignores it off the block flow.
+    expect(read({ style: "clear: left; position: absolute" }).clear).toBe("left");
+  });
+});

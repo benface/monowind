@@ -83,6 +83,18 @@ export interface Overflow {
   y: OverflowAxis;
 }
 export type Position = "static" | "relative" | "absolute" | "fixed" | "sticky";
+
+/** `float` and `clear` (specs/float.md); `start`/`end` compute to the
+ * LTR side. */
+export type Float = "none" | "left" | "right";
+export type Clear = "none" | "left" | "right" | "both";
+
+/** A leaf line's row and the cells floats leave it (specs/float.md). */
+export interface LineBand {
+  row: number;
+  x: number;
+  width: number;
+}
 /** `nowrap` disables soft wrapping; `pre` additionally preserves the
  * source's spaces and newlines (specs/cell-model.md). Everything else
  * (`pre-wrap` included) behaves as `normal`. */
@@ -353,6 +365,11 @@ export interface CellStyle {
   /** See specs/positioning.md: fixed behaves as absolute anchored to the
    * host; sticky behaves as relative until the scrolling milestone. */
   position: Position;
+  /** specs/float.md: honored on the in-flow children of a block
+   * container, `none` on an out-of-flow box as CSS computes it. */
+  float: Float;
+  /** The floats a box moves below, in its own container (specs/float.md). */
+  clear: Clear;
   /** `top/right/bottom/left`; `null` = `auto`. Percentages resolve against
    * the containing block (width for left/right, height for top/bottom). */
   insets: PerSide<CellLength | null>;
@@ -606,6 +623,11 @@ export interface LayoutNode {
    * written by the leaf pass; scrollable-overflow accounting reads it
    * instead of re-wrapping. */
   textExtent?: { width: number; rows: number };
+  /** Per-line row, x, and usable width in the leaf's content box, the
+   * bands floats left its lines (specs/float.md) — written by the leaf
+   * pass beside floats, and what a later re-derivation of the leaf's
+   * lines (the paint's) wraps against. */
+  lineBands?: LineBand[];
   /** Scroll geometry (specs/scrolling.md), written by layoutNode on
    * containers with a scroll axis: content extent and the derived
    * max offset, both in cells. Absent elsewhere. */
@@ -734,6 +756,8 @@ export function defaultCellStyle(): CellStyle {
     padding: zeroInsets(),
     margin: { top: 0, right: 0, bottom: 0, left: 0 },
     position: "static",
+    float: "none",
+    clear: "none",
     insets: { top: null, right: null, bottom: null, left: null },
     gapX: 0,
     gapY: 0,

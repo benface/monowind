@@ -11,7 +11,9 @@ import type {
   CellLength,
   CellMetrics,
   CellStyle,
+  Clear,
   Display,
+  Float,
   GapRule,
   GridArea,
   GridAreas,
@@ -221,6 +223,10 @@ export function readCellStyle(
     padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     position: readPosition(cs.position),
+    // Per CSS an out-of-flow box computes `float: none`; headless DOMs
+    // report the authored value, so the engine applies the rule itself.
+    float: isOutOfFlowPosition(cs.position) ? "none" : readFloat(cs.float),
+    clear: readClear(cs.clear),
     insets: readInsets(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     // `column-gap: normal` is 0 in flex/grid but 1em in multicol, per
     // CSS (specs/multicol.md "Reading"). Headless DOMs report unset as
@@ -762,6 +768,40 @@ function readPosition(value: string): Position {
       return value;
     default:
       return "static";
+  }
+}
+
+function isOutOfFlowPosition(value: string): boolean {
+  return value === "absolute" || value === "fixed";
+}
+
+/** `inline-start`/`inline-end` are the logical spellings a browser may
+ * report for `float-start`/`float-end`; LTR maps them to the sides. */
+function readFloat(value: string): Float {
+  switch (value) {
+    case "left":
+    case "inline-start":
+      return "left";
+    case "right":
+    case "inline-end":
+      return "right";
+    default:
+      return "none";
+  }
+}
+
+function readClear(value: string): Clear {
+  switch (value) {
+    case "left":
+    case "inline-start":
+      return "left";
+    case "right":
+    case "inline-end":
+      return "right";
+    case "both":
+      return "both";
+    default:
+      return "none";
   }
 }
 

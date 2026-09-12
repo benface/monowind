@@ -40,6 +40,10 @@ anticipates (core-architecture.md D4).
   registry, and what framework wrappers bind to. Property wins over
   attribute. Missing/unknown font warns and falls back to the plain
   text — same content-never-disappears principle.
+- `trim` attribute (added 2026-09-11 with floats, specs/float.md): the
+  blank rows and columns around the art dropped — a glyph's leading
+  space column, the font's descender row — so a drop cap floated
+  beside text sits tight against it.
 - No size knob — none exists in the formats: character HEIGHT is
   fixed per font (the header's `height`; TOIlet's mono9/mono12 are
   one face at different sizes) and WIDTH varies per glyph. Bigger art

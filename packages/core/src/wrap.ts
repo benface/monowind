@@ -41,6 +41,11 @@ export interface WrapOptions {
    * (the paint layer offsets that line's x by the same amount). Per CSS,
    * subsequent hard lines (`<br>`-separated) don't re-indent. */
   firstLineIndent?: number | undefined;
+  /** Opens line box `index`, given the lines closed before it, and
+   * returns the cells it may use (specs/float.md): the caller picks the
+   * line's row and the band floats leave there. Absent, every line has
+   * the full width. */
+  openLine?: ((index: number, closed: readonly LineSpan[]) => number) | undefined;
 }
 
 export function wrapLines(text: string, width: number, options: WrapOptions = {}): string[] {
@@ -83,7 +88,7 @@ export function wrapLineSpans(text: string, width: number, options: WrapOptions 
   let indent = options.firstLineIndent ?? 0;
   for (let i = 0; i <= text.length; i++) {
     if (i === text.length || text[i] === "\n") {
-      spans.push(...wrapHardLine(text, lineStart, i, width, options, indent));
+      wrapHardLine(text, lineStart, i, width, options, indent, spans);
       indent = 0; // Only the very first hard line gets the indent.
       lineStart = i + 1;
     }
@@ -224,19 +229,39 @@ function wordRanges(text: string, start: number, end: number): LineSpan[] {
   return words;
 }
 
+/** Wraps one hard line, pushing its line boxes onto `lines` — the flat
+ * list of the leaf's lines so far, which `openLine` sees. */
 function wrapHardLine(
   text: string,
   start: number,
   end: number,
   width: number,
-  { advances, tracking = 0 }: WrapOptions,
-  firstLineIndent = 0,
-): LineSpan[] {
+  { advances, tracking = 0, openLine }: WrapOptions,
+  firstLineIndent: number,
+  lines: LineSpan[],
+): void {
+  // Every line box opens through the caller, an empty one included.
+  let bandIndex = -1;
+  let bandWidth = width;
+  const band = (): number => {
+    if (bandIndex !== lines.length) {
+      bandIndex = lines.length;
+      bandWidth = openLine?.(bandIndex, lines) ?? width;
+    }
+    return bandWidth;
+  };
   const words = wordRanges(text, start, end);
-  if (words.length === 0) return [{ start, end: start }];
-  if (width <= 0) return [{ start: words[0]!.start, end: words[words.length - 1]!.end }];
+  if (words.length === 0) {
+    band();
+    lines.push({ start, end: start });
+    return;
+  }
+  if (width <= 0) {
+    band();
+    lines.push({ start: words[0]!.start, end: words[words.length - 1]!.end });
+    return;
+  }
 
-  const lines: LineSpan[] = [];
   let current: LineSpan | null = null;
   // Advances accumulated over the current line, with words joined by ONE
   // space each regardless of the source whitespace run (collapsing).
@@ -244,7 +269,7 @@ function wrapHardLine(
   // Only the first line box (before the first `lines.push`) is charged
   // the text-indent — subsequent lines get the full width back.
   let lineIndent = Math.max(0, firstLineIndent);
-  const availableWidth = () => width - lineIndent;
+  const availableWidth = () => band() - lineIndent;
 
   for (const word of words) {
     let joinsPrevious = false; // segments after the first attach with no space
@@ -283,5 +308,4 @@ function wrapHardLine(
     }
   }
   if (current !== null) lines.push(current);
-  return lines;
 }

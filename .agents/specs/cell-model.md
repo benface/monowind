@@ -313,10 +313,12 @@ so a mixed BLOCK container keeps its in-flow block children in the
 browser's flow instead — FLOW CHILDREN, engine-sized like any laid-out
 box, `position: static`, with engine margins that put them where the
 engine did, the container's half-leading translate and a run's native
-line boxes (`lines × (1 + gap)` rows) counted in. A flow child is its
-own formatting context (`contain: layout`), and the shadow slot one
-for the host's, so a first child's top margin stays inside its
-container as the engine placed it. The runs' native lines then fall
+line boxes (`lines × (1 + gap)` rows) counted in. A flow child that is
+a formatting-context root — a container, or a leaf CSS makes one —
+keeps its own (`contain: layout`), and the shadow slot one for the
+host's, so a first child's top margin stays inside its container as
+the engine placed it; a plain leaf flow child carries none, so a
+float's exclusion reaches its lines (specs/float.md). The runs' native lines then fall
 on their rows through the typography lock, exactly as a leaf's do: the
 text is selectable and copied, a link in a run is clickable at its
 cells, a triple-click selects the run, find-in-page lands. In a mixed
@@ -325,8 +327,10 @@ browser flows it (deviation 7).
 CSS blockification then falls out for free: an authored `block`/`flex` on
 a `<span>` makes it a layout node; `position: absolute`/`fixed` blockifies
 at computed-value time, so a positioned span leaves the run and becomes an
-out-of-flow box (see `positioning.md`); and every element child of a
-flex/grid container is an item, exactly as CSS makes it. `display: none`
+out-of-flow box (see `positioning.md`); a `float` blockifies the same way,
+so a floated span leaves its run and the text around it becomes anonymous
+runs (see `float.md`); and every element child of a flex/grid container is
+an item, exactly as CSS makes it. `display: none`
 children are ignored entirely (their text never joins the run).
 
 **Leaves with out-of-flow children**: out-of-flow (absolute/fixed)
@@ -718,3 +722,12 @@ lines); the explicit zero `clip` rect still drops them.
     count is scaled into a cell-sized box on the grid, and the
     transparent native text keeps the font's advances (its selection
     and drags are the engine's, so the drift never shows).
+11. A FLOW CHILD's `position: relative` insets move it on the grid only:
+    natively it is `position: static` so the browser's flow can place
+    it (see Inline content), and the engine's own offset never reaches
+    the light DOM. A float is a flow child natively too
+    (specs/float.md).
+12. Floats deviate as specs/float.md lists: every container is a BFC
+    root (it contains its floats and steps aside from a sibling's), a
+    float directly in a multicol container is ignored and warned, and
+    `shape-outside` is ignored.

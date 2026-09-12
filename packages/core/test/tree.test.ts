@@ -207,6 +207,14 @@ describe("buildTree", () => {
     expect(flex.children.map((child) => child.anonymous)).toEqual([true, undefined, true]);
   });
 
+  it("takes a floated inline out of its run, the text around it a run (specs/float.md)", () => {
+    const node = buildTree(el('<div>before <span style="float: left">A</span> after</div>'), 16)!;
+    expect(node.text).toBe("");
+    expect(node.children.map((child) => child.text)).toEqual(["before", "A", "after"]);
+    expect(node.children.map((child) => child.style.float)).toEqual(["none", "left", "none"]);
+    expect(node.children.map((child) => child.anonymous)).toEqual([true, undefined, true]);
+  });
+
   it("keeps edge <br> line boxes like browsers (final one excepted)", () => {
     // a<br><br> renders one blank line; <br>a renders a blank first line;
     // a lone <br> makes the leaf one line tall (probed, all engines).

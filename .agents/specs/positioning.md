@@ -15,7 +15,8 @@ element. Behavior:
   element becomes a containing block for absolute descendants.
 - **absolute**: removed from flow (siblings lay out as if it didn't exist;
   it contributes nothing to the parent's content size). Positioned against
-  its containing block by the resolved insets.
+  its containing block by the resolved insets. Its `float` computes to
+  `none`, per CSS (specs/float.md).
 - **fixed**: treated as `absolute` with the `<mono-wind>` host as the
   containing block. **Deviation** (CSS anchors to the viewport) — a
   component shouldn't escape its host; revisit only if a real use case

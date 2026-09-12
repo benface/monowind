@@ -447,25 +447,29 @@ function forEachLeafCell(
   for (let i = 0; i < spans.length; i++) {
     const span = spans[i]!;
     const row = contentY + textY[i]!;
+    // A line beside a float aligns within its band (specs/float.md),
+    // from the band's edge.
+    const band = node.lineBands?.[i];
+    const lineAlignWidth = band ? band.width : alignWidth;
     // First-line indent reduces the usable width and shifts the origin
     // (per CSS, `<br>` doesn't re-indent, so only spans[0] is charged).
     const indent = i === 0 ? style.textIndent : 0;
     const truncated =
       style.whiteSpace !== "normal" && style.overflow.x === "clip"
-        ? truncateSpan(node.text, span, alignWidth - indent, node.advances, style)
+        ? truncateSpan(node.text, span, lineAlignWidth - indent, node.advances, style)
         : { end: span.end, ellipsis: false };
     // `text-align: end` offsets each line to the content box's right
     // edge; `center` to floor((W − line) / 2). Whole cells; a line at
     // or over the width stays at start, matching truncation.
     const lineWidth = lineAdvance(node.text, span.start, span.end, node.advances, style.tracking);
-    const leftover = Math.max(0, alignWidth - indent - lineWidth);
+    const leftover = Math.max(0, lineAlignWidth - indent - lineWidth);
     const alignOffset =
       style.textAlign === "end"
         ? leftover
         : style.textAlign === "center"
           ? Math.floor(leftover / 2)
           : 0;
-    let x = contentX + (multicol?.lineX[i] ?? 0) + alignOffset + indent;
+    let x = contentX + (multicol?.lineX[i] ?? 0) + (band?.x ?? 0) + alignOffset + indent;
     const advances = node.advances;
     for (let k = span.start; k < truncated.end;) {
       const advance = advanceOf(k, k + 1, advances);

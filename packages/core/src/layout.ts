@@ -30,11 +30,14 @@ import type { TableData } from "./table.ts";
 import { walkPositioned } from "./positioning.ts";
 import { inlineBoxesOf, scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
 import { warnOnce } from "./warn.ts";
+import { bandAt, clearanceBelow, floatsBottom, placeFloat } from "./floats.ts";
+import type { FloatBox } from "./floats.ts";
 import type {
   CellLength,
   CellStyle,
   Insets,
   LayoutNode,
+  LineBand,
   MulticolLeafGeometry,
   NullableInsets,
   PerSide,
@@ -77,6 +80,32 @@ export function layoutRoot(root: LayoutNode, availableWidth: number): { height: 
 /** absolute / fixed boxes are out of normal flow. */
 export function isOutOfFlow(style: CellStyle): boolean {
   return style.position === "absolute" || style.position === "fixed";
+}
+
+/** A formatting-context root beside floats (specs/float.md): it steps
+ * aside from them as one box, where a text leaf or an empty box passes
+ * under with its lines shortened — a container of in-flow children, a
+ * non-block display (flex, grid, table, multicol), or an overflow other
+ * than visible (a scroll container, clipping, truncation), which CSS
+ * makes roots too. */
+export function isFormattingContextRoot(node: LayoutNode): boolean {
+  const { display, overflow } = node.style;
+  return (
+    display !== "block" ||
+    overflow.x !== "visible" ||
+    overflow.y !== "visible" ||
+    node.children.some((child) => !child.inlineBox && !isOutOfFlow(child.style))
+  );
+}
+
+/** The floats a leaf's lines wrap against (specs/float.md): its
+ * container's exclusion boxes and content width, and the leaf's
+ * border-box origin in that content box. */
+export interface Intrusions {
+  boxes: FloatBox[];
+  contentWidth: number;
+  x: number;
+  y: number;
 }
 
 /** A containing block for absolute descendants, per CSS. */
@@ -129,6 +158,7 @@ export function layoutNode(
      * keeps it regardless of the new extent — no oscillation. */
     gutter?: { right: boolean; bottom: boolean };
   },
+  intrusions?: Intrusions,
 ): void {
   const style = node.style;
   const forcedHeight = forced?.height;
@@ -140,6 +170,7 @@ export function layoutNode(
   delete node.multicolFlowSpan;
   delete node.flow;
   delete node.textExtent;
+  delete node.lineBands;
 
   // Width is clamped to min/max BEFORE laying out content — wrapping and
   // child sizing must see the constrained width, not the raw resolved one.
@@ -219,6 +250,7 @@ export function layoutNode(
         maxInnerHeight,
         padding,
         cache,
+        intrusions,
       );
     }
     if (style.display === "flex" && style.flexDirection === "row") {
@@ -250,6 +282,14 @@ export function layoutNode(
       return layoutTable(node, inner.width, definiteInner, style.border, padding, cache);
     }
     if (style.display === "multicol") {
+      for (const child of node.children) {
+        if (child.style.float === "none") continue;
+        warnOnce(
+          child.source,
+          "float on a multicol container's own child is ignored — it lays out as a " +
+            "column item; float it inside a child instead (specs/float.md).",
+        );
+      }
       return layoutMulticol(
         node,
         inner.width,
@@ -363,6 +403,7 @@ function layoutTextLeaf(
   maxInnerHeight: number | undefined,
   padding: Insets,
   cache: IntrinsicCache,
+  intrusions?: Intrusions,
 ): number {
   const style = node.style;
   let contentHeight: number;
@@ -377,7 +418,13 @@ function layoutTextLeaf(
       layoutNode(box, innerWidth, undefined, 0, 0, "shrink", cache);
       node.advances![charIndex] = Math.max(1, box.localRect.width);
     });
-    let geometry: { spans: LineSpan[]; lineY: number[]; textY: number[]; totalRows: number };
+    let geometry: {
+      spans: LineSpan[];
+      lineY: number[];
+      textY: number[];
+      totalRows: number;
+      bands?: LineBand[] | undefined;
+    };
     let lineX: number[] | undefined;
     if (style.display === "multicol") {
       // Direct-text multicol leaf (specs/multicol.md): fragment the
@@ -399,15 +446,18 @@ function layoutTextLeaf(
       geometry = multicol;
       lineX = multicol.lineX;
     } else {
-      geometry = leafLineGeometry(node, innerWidth);
+      geometry = leafLineGeometry(node, innerWidth, intrusions);
+      if (geometry.bands) node.lineBands = geometry.bands;
     }
     contentHeight = geometry.totalRows;
+    const bands = node.lineBands;
     node.textExtent = {
       width: geometry.spans.reduce(
-        (max, span) =>
+        (max, span, index) =>
           Math.max(
             max,
-            lineAdvance(node.text, span.start, span.end, node.advances, style.tracking),
+            (bands?.[index]?.x ?? 0) +
+              lineAdvance(node.text, span.start, span.end, node.advances, style.tracking),
           ),
         0,
       ),
@@ -441,6 +491,7 @@ function layoutTextLeaf(
             style.border.left +
             padding.left +
             (lineX?.[line] ?? 0) +
+            (bands?.[line]?.x ?? 0) +
             advanceOf(span.start, charIndex, node.advances),
           y: style.border.top + padding.top + geometry.lineY[line]!,
         };
@@ -555,30 +606,100 @@ function alignLeafText(
 export function leafLineGeometry(
   node: LayoutNode,
   contentWidth: number,
-): { spans: LineSpan[]; lineY: number[]; textY: number[]; totalRows: number } {
-  const spans = leafLineSpans(node, contentWidth);
+  intrusions?: Intrusions,
+): {
+  spans: LineSpan[];
+  lineY: number[];
+  textY: number[];
+  totalRows: number;
+  bands: LineBand[] | undefined;
+} {
+  // Beside floats the opener records the bands; a later pass (the
+  // paint's) replays the recorded ones.
+  let bands: LineBand[] | undefined;
+  let opener: LineOpener | undefined;
+  if (intrusions) {
+    bands = [];
+    opener = lineOpener(node, contentWidth, intrusions, bands);
+  } else if (node.lineBands) {
+    const recorded = node.lineBands;
+    bands = recorded;
+    opener = (index) => recorded[index]?.width ?? contentWidth;
+  }
+  const spans = leafLineSpans(node, contentWidth, opener);
   const { heights, textOffsets } = leafLineMetrics(node, spans);
   const lineY: number[] = [];
   const textY: number[] = [];
   let y = 0;
   for (let s = 0; s < spans.length; s++) {
+    if (bands) y = bands[s]!.row;
     lineY.push(y);
     textY.push(y + textOffsets[s]!);
     y += heights[s]! + (s < spans.length - 1 ? node.style.lineGap : 0);
   }
-  return { spans, lineY, textY, totalRows: y };
+  return { spans, lineY, textY, totalRows: y, bands };
+}
+
+type LineOpener = (index: number, closed: readonly LineSpan[]) => number;
+
+/** The line opener for a leaf beside floats (specs/float.md "A line box
+ * opens at the first row with a free cell"): line `index` starts on the
+ * row after the closed lines, moved down past rows the floats leave
+ * nothing of — until the floats end — and gets that row's band clipped
+ * to the leaf's content box, in the leaf's cells; each band is recorded
+ * for the paint. */
+function lineOpener(
+  node: LayoutNode,
+  contentWidth: number,
+  intrusions: Intrusions,
+  bands: LineBand[],
+): LineOpener {
+  const { border, lineGap } = node.style;
+  const padding = node.resolvedPadding;
+  const x0 = intrusions.x + border.left + padding.left;
+  const y0 = intrusions.y + border.top + padding.top;
+  const floatsEnd = floatsBottom(intrusions.boxes);
+  // Only an inline box makes a line taller than a row.
+  const hasBoxes = inlineBoxesOf(node).length > 0;
+  return (index, closed) => {
+    let row = 0;
+    if (index > 0) {
+      const height = hasBoxes ? leafLineMetrics(node, closed).heights[index - 1]! : 1;
+      row = bands[index - 1]!.row + height + lineGap;
+    }
+    for (;;) {
+      const band = bandAt(intrusions.boxes, intrusions.contentWidth, y0 + row);
+      const start = Math.max(band.x, x0);
+      const end = Math.min(band.x + band.width, x0 + contentWidth);
+      if (end > start || y0 + row >= floatsEnd) {
+        const band = { row, x: Math.max(0, start - x0), width: Math.max(0, end - start) };
+        bands[index] = band;
+        return band.width;
+      }
+      row++;
+    }
+  };
 }
 
 /** A leaf's line spans: hard `<br>` lines under nowrap/pre, greedy
- * word-wrap at the content width otherwise. */
-export function leafLineSpans(node: LayoutNode, contentWidth: number): LineSpan[] {
-  return node.style.whiteSpace !== "normal"
-    ? hardLineSpans(node.text)
-    : wrapLineSpans(node.text, contentWidth, {
-        advances: node.advances,
-        tracking: node.style.tracking,
-        firstLineIndent: node.style.textIndent,
-      });
+ * word-wrap at the content width otherwise — each line opened through
+ * `openLine` when given (a hard line takes its row's band too). */
+export function leafLineSpans(
+  node: LayoutNode,
+  contentWidth: number,
+  openLine?: LineOpener,
+): LineSpan[] {
+  if (node.style.whiteSpace !== "normal") {
+    const spans = hardLineSpans(node.text);
+    if (openLine) spans.forEach((_, index) => openLine(index, spans.slice(0, index)));
+    return spans;
+  }
+  return wrapLineSpans(node.text, contentWidth, {
+    advances: node.advances,
+    tracking: node.style.tracking,
+    firstLineIndent: node.style.textIndent,
+    openLine,
+  });
 }
 
 /**
@@ -593,7 +714,7 @@ export function leafLineSpans(node: LayoutNode, contentWidth: number): LineSpan[
  */
 export function leafLineMetrics(
   node: LayoutNode,
-  spans: LineSpan[],
+  spans: readonly LineSpan[],
 ): { heights: number[]; textOffsets: number[] } {
   const boxes = inlineBoxesOf(node);
   const heights: number[] = [];
@@ -705,6 +826,8 @@ function layoutBlock(
 ): number {
   const originX = border.left + padding.left;
   const startY = border.top + padding.top;
+  // The floats placed so far, in content-box cells (specs/float.md).
+  const floats: FloatBox[] = [];
   let y = startY;
   let previousMarginBottom: number | null = null;
   for (const child of node.children) {
@@ -713,44 +836,133 @@ function layoutBlock(
     const marginBottom = childMargin.bottom ?? 0;
     const marginLeft = childMargin.left ?? 0;
     const marginRight = childMargin.right ?? 0;
-    if (isOutOfFlow(child.style)) {
-      // Record the CSS static position (where the box would have started in
-      // flow) without consuming space or disturbing margin collapsing.
-      child.staticSlot = {
-        kind: "block",
-        x: originX + marginLeft,
-        y:
-          y +
-          (previousMarginBottom === null
-            ? marginTop
-            : collapseMargins(previousMarginBottom, marginTop)),
-      };
-      continue;
-    }
-    layoutNode(
-      child,
-      Math.max(0, innerWidth - marginLeft - marginRight),
-      definiteInnerHeight,
-      0,
-      0,
-      "fill",
-      cache,
-    );
-    const crossOffset = blockCrossOffset(childMargin, innerWidth, child.localRect.width);
-
     // `y` tracks the position where the next child's top edge goes. Margins
     // are added JUST BEFORE placing each child, then only the child's height
     // afterwards — the child's own bottom margin waits until the next
     // sibling (or the end-of-container) so we can collapse them properly.
-    y +=
-      previousMarginBottom === null ? marginTop : collapseMargins(previousMarginBottom, marginTop);
-    child.localRect = { ...child.localRect, x: originX + crossOffset, y };
-    y += child.localRect.height;
+    const hypothetical =
+      y +
+      (previousMarginBottom === null
+        ? marginTop
+        : collapseMargins(previousMarginBottom, marginTop));
+    if (isOutOfFlow(child.style)) {
+      // Record the CSS static position (where the box would have started in
+      // flow) without consuming space or disturbing margin collapsing.
+      child.staticSlot = { kind: "block", x: originX + marginLeft, y: hypothetical };
+      continue;
+    }
+    const availableWidth = Math.max(0, innerWidth - marginLeft - marginRight);
+    if (child.style.float !== "none") {
+      // A float's margins collapse with nothing: its margin box starts
+      // where the previous bottom margin ends, cleared, and CSS 2.1
+      // §9.5.1 places it; the cursor never sees it.
+      const top = clearanceBelow(
+        floats,
+        child.style.clear,
+        y + (previousMarginBottom ?? 0) - startY,
+      );
+      layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "shrink", cache);
+      const width = child.localRect.width + marginLeft + marginRight;
+      const height = child.localRect.height + marginTop + marginBottom;
+      const placed = placeFloat(floats, innerWidth, child.style.float, top, width, height);
+      floats.push({ ...placed, width, height, side: child.style.float });
+      child.localRect = {
+        ...child.localRect,
+        x: originX + placed.x + marginLeft,
+        y: startY + placed.y + marginTop,
+      };
+      continue;
+    }
+    // Clearance: the border top is the later of the hypothetical top and
+    // the named floats' bottom (§9.5.2).
+    const top = startY + clearanceBelow(floats, child.style.clear, hypothetical - startY);
+    if (floats.length > 0 && isFormattingContextRoot(child)) {
+      const placed = layoutRootBesideFloats(
+        child,
+        floats,
+        innerWidth,
+        top - startY,
+        childMargin,
+        definiteInnerHeight,
+        cache,
+      );
+      child.localRect = { ...child.localRect, x: originX + placed.x, y: startY + placed.y };
+    } else {
+      // The child keeps its slot; beside floats a leaf wraps against them
+      // from its own top, laid out again at its cross offset when auto
+      // margins move it (its width being known).
+      const lay = (offsetX: number): void =>
+        layoutNode(
+          child,
+          availableWidth,
+          definiteInnerHeight,
+          0,
+          0,
+          "fill",
+          cache,
+          undefined,
+          floats.length > 0
+            ? { boxes: floats, contentWidth: innerWidth, x: offsetX, y: top - startY }
+            : undefined,
+        );
+      lay(marginLeft);
+      let crossOffset = blockCrossOffset(childMargin, innerWidth, child.localRect.width);
+      if (floats.length > 0 && crossOffset !== marginLeft) {
+        lay(crossOffset);
+        crossOffset = blockCrossOffset(childMargin, innerWidth, child.localRect.width);
+      }
+      child.localRect = { ...child.localRect, x: originX + crossOffset, y: top };
+    }
+    y = child.localRect.y + child.localRect.height;
     previousMarginBottom = marginBottom;
   }
   if (previousMarginBottom !== null) y += previousMarginBottom;
-  if (node.children.some((child) => child.anonymous)) placeFlowChildren(node, originX, startY);
-  return y - startY;
+  if (floats.length > 0 || node.children.some((child) => child.anonymous)) {
+    placeFlowChildren(node, originX, startY, innerWidth, floats);
+  }
+  // A container contains its floats (specs/float.md).
+  return Math.max(y - startY, floatsBottom(floats));
+}
+
+/** Lays out a formatting-context root beside the floats and returns its
+ * border-box origin in the container's content box, as browsers place
+ * one (CSS 2.1 §9.5, specs/float.md): at the first row from `top` —
+ * that row, then each float bottom below it — whose band holds its
+ * margin box, an auto width shrinking to the band, and laid out again
+ * when a float lower down narrows the band over the height that came
+ * out. Below every float the full width is back. */
+function layoutRootBesideFloats(
+  child: LayoutNode,
+  floats: FloatBox[],
+  innerWidth: number,
+  top: number,
+  margin: NullableInsets,
+  definiteInnerHeight: number | undefined,
+  cache: IntrinsicCache,
+): { x: number; y: number } {
+  const marginX = (margin.left ?? 0) + (margin.right ?? 0);
+  const minWidth = widthContribution(child, "min", cache) + marginX;
+  const lay = (width: number): void =>
+    layoutNode(child, Math.max(0, width - marginX), definiteInnerHeight, 0, 0, "fill", cache);
+  const rows = [...new Set(floats.map((box) => box.y + box.height))]
+    .filter((bottom) => bottom > top)
+    .sort((a, b) => a - b);
+  for (const row of [top, ...rows.slice(0, -1)]) {
+    let band = bandAt(floats, innerWidth, row);
+    while (band.width >= minWidth) {
+      lay(band.width);
+      const over = bandAt(floats, innerWidth, row, child.localRect.height);
+      if (over.width >= child.localRect.width + marginX) {
+        return { x: over.x + blockCrossOffset(margin, over.width, child.localRect.width), y: row };
+      }
+      // Nothing narrower to try: an explicit width the band can't hold.
+      if (over.width === band.width) break;
+      band = over;
+    }
+  }
+  const below = rows[rows.length - 1] ?? top;
+  lay(innerWidth);
+  return { x: blockCrossOffset(margin, innerWidth, child.localRect.width), y: below };
 }
 
 /** Native margins that put a mixed container's in-flow block children,
@@ -758,22 +970,67 @@ function layoutBlock(
  * "Inline content"): a run advances the native cursor by its line
  * boxes, `lines × (1 + gap)` rows, a child by its height, and the
  * container's half-leading translate lifts it all, so a child starts
- * half a gap below its engine row. */
-function placeFlowChildren(node: LayoutNode, originX: number, startY: number): void {
+ * half a gap below its engine row. A float moves no cursor and keeps
+ * its authored margins, the browser placing it as the engine did from
+ * the same base: the child before it carries its pending bottom margin
+ * natively (a float sits past it, probed), the float's top margin
+ * absorbing any part it does not, and the child after collapses its
+ * top margin with it as siblings do. A root beside a float has its
+ * left margin measured from the band's edge, where the browser adds it
+ * (specs/float.md). */
+function placeFlowChildren(
+  node: LayoutNode,
+  originX: number,
+  startY: number,
+  innerWidth: number,
+  floats: FloatBox[],
+): void {
   const gap = node.style.lineGap;
+  const pendingBottom = (child: LayoutNode) =>
+    resolveMargin(child.style.margin, innerWidth).bottom ?? 0;
   let cursor = startY;
   let previous: LayoutNode | undefined;
+  const floated: { float: LayoutNode; previous: LayoutNode | undefined }[] = [];
   for (const child of node.children) {
     if (isOutOfFlow(child.style)) continue;
     const { x, y, height } = child.localRect;
+    if (child.style.float !== "none") {
+      if (previous?.flow) previous.flow.bottom = Math.max(0, pendingBottom(previous));
+      floated.push({ float: child, previous });
+      continue;
+    }
     if (child.anonymous) {
       if (previous?.flow) previous.flow.bottom = y - cursor;
       cursor = y + height + gap;
     } else {
-      child.flow = { top: y + gap / 2 - cursor, right: 0, bottom: 0, left: x - originX };
+      const bandX =
+        floats.length > 0 && isFormattingContextRoot(child)
+          ? bandAt(floats, innerWidth, y - startY, height).x
+          : 0;
+      // Against the margin the child before carries, the top margin that
+      // collapses to the distance: the distance itself when it is the
+      // larger, else the mixed-sign sum's remainder.
+      const carried = previous?.flow?.bottom ?? 0;
+      const distance = y + gap / 2 - cursor;
+      child.flow = {
+        top: distance >= carried ? distance : distance - carried,
+        right: 0,
+        bottom: 0,
+        left: x - originX - bandX,
+      };
       cursor = y + gap / 2 + height;
     }
     previous = child;
+  }
+  for (const { float, previous: before } of floated) {
+    const margin = resolveMargin(float.style.margin, innerWidth);
+    const absorbed = before?.flow ? pendingBottom(before) - (before.flow.bottom ?? 0) : 0;
+    float.flow = {
+      top: (margin.top ?? 0) + absorbed,
+      right: margin.right ?? 0,
+      bottom: margin.bottom ?? 0,
+      left: margin.left ?? 0,
+    };
   }
 }
 
@@ -952,6 +1209,23 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   }
   const widest = inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "max", cache)), 0);
   if (node.style.display === "multicol") return multicolIntrinsicInnerWidth(node.style, widest);
+  if (node.style.display === "block" && inFlow.some((c) => c.style.float !== "none")) {
+    // Floats share a line with the content beside them; a cleared child
+    // starts a new one (specs/float.md).
+    let widest = 0;
+    let floatsWidth = 0;
+    let beside = 0;
+    for (const c of inFlow) {
+      const width = widthContribution(c, "max", cache);
+      if (c.style.float !== "none") floatsWidth += width;
+      else if (c.style.clear !== "none") {
+        widest = Math.max(widest, floatsWidth + beside);
+        floatsWidth = 0;
+        beside = width;
+      } else beside = Math.max(beside, width);
+    }
+    return Math.max(widest, floatsWidth + beside);
+  }
   return widest;
 }
 

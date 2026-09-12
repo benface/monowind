@@ -333,6 +333,9 @@ avoid`): a child with a border, padding, background, explicit
 6. Min-content width uses the block default (widest child) rather than
    a column-aware contribution; max-content is column-aware (see
    "Used column count and width").
+7. A float whose parent is the multicol container itself is laid out
+   as a plain column item and warned once (specs/float.md); floats
+   inside the container's children work as anywhere.
 
 ## Implementation probes — PROBED 2026-08-31, all three engines agree
 

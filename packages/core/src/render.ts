@@ -1,4 +1,5 @@
 import { paintOrderedChildren, paintsInPositionedStep } from "./borders.ts";
+import { isFormattingContextRoot } from "./layout.ts";
 import type { LayoutNode, PerSide } from "./types.ts";
 
 /**
@@ -36,6 +37,13 @@ function setVar(el: HTMLElement, prop: string, value: string): void {
 /** removeProperty, skipped when the property isn't set. */
 function clearVar(el: HTMLElement, prop: string): void {
   if (el.style.getPropertyValue(prop) !== "") el.style.removeProperty(prop);
+}
+
+/** A valued attribute, removed when null, written only on change. */
+function setAttr(el: Element, name: string, value: string | null): void {
+  if (el.getAttribute(name) === value) return;
+  if (value === null) el.removeAttribute(name);
+  else el.setAttribute(name, value);
 }
 
 /** Boolean attribute toggle, skipped when already in the target state. */
@@ -140,7 +148,16 @@ function positionElement(node: LayoutNode): void {
   setFlag(el, "data-mw-inline-box", Boolean(node.inlineBox));
   setFlag(el, "data-mw-multicol-flow", Boolean(flow));
   setFlag(el, "data-mw-multicol-flow-span", Boolean(flowSpan));
-  setFlag(el, "data-mw-flow", Boolean(node.flow));
+  // A flow child (specs/cell-model.md "Inline content"): a formatting-
+  // context root keeps one natively, a leaf's lines stay open to a
+  // sibling float; a float floats natively (specs/float.md).
+  const float = node.flow && node.style.float !== "none" ? node.style.float : null;
+  setAttr(el, "data-mw-float", float);
+  setAttr(
+    el,
+    "data-mw-flow",
+    node.flow && !float ? (isFormattingContextRoot(node) ? "box" : "text") : null,
+  );
   const flowMargins = flow ?? flowSpan ?? node.flow;
   if (flowMargins) {
     setVar(el, "--mw-mt", String(flowMargins.top ?? 0));

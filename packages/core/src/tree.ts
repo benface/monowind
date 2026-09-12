@@ -520,6 +520,9 @@ function childRole(el: Element): ChildRole {
   const cs = getComputedStyle(el);
   if (cs.display === "none") return "none";
   if (cs.position === "absolute" || cs.position === "fixed") return "out-of-flow";
+  // A float is block-level whatever its display (specs/float.md): it
+  // leaves the text run, which re-wraps around it as anonymous runs.
+  if (isFloated(cs.float)) return "block";
   // Registered leaf renderers are always block participants — an
   // unstyled custom element computes to `inline`, which would fold
   // its semantic text into the parent's run instead of rendering.
@@ -883,6 +886,13 @@ function hasDirectText(el: Element): boolean {
   return Array.from(el.childNodes).some(
     (child) => child.nodeType === Node.TEXT_NODE && /[^ \t\r\n\f]/.test(child.textContent ?? ""),
   );
+}
+
+/** A computed `float` that takes the element out of the text run
+ * (specs/float.md); `inline-start`/`inline-end` are the logical
+ * spellings a browser may report. */
+function isFloated(value: string): boolean {
+  return value !== "none" && value !== "";
 }
 
 /** True for tags whose value/caret/selection are handled by the browser

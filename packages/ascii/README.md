@@ -75,6 +75,9 @@ below.
   the attribute.
 - `effect` attribute: `rainbow` or `metal` — per-cell color mapped to
   the `--mw-ansi-*` theme tokens, so effects follow your theme.
+- `trim` attribute: drops the blank rows and columns around the art —
+  a FIGlet glyph keeps its font's leading space column and descender
+  row, so a drop cap floated beside text (`float-left`) sits tight.
 - `registerAsciiFont(name, data)`: register raw `.flf`/`.tlf` text —
   the bring-your-own-file path for fonts this package doesn't
   redistribute (zipped fonts must be extracted first). SGR color

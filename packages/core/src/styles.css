@@ -154,7 +154,7 @@
    * despite `pointer-events: none`, and would show an arrow there.
    * Interactives keep their own (UA and authored cursors win). */
   mono-wind[select="grid"]
-    :is([data-mw-laid-out], [data-mw-flow]):not(
+    :is([data-mw-laid-out], [data-mw-flow], [data-mw-float]):not(
       a,
       button,
       input,
@@ -486,7 +486,8 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
 mono-wind:not([measuring]) [data-mw-laid-out],
 mono-wind:not([measuring]) [data-mw-inline-box],
 mono-wind:not([measuring]) [data-mw-multicol-flow-span],
-mono-wind:not([measuring]) [data-mw-flow] {
+mono-wind:not([measuring]) [data-mw-flow],
+mono-wind:not([measuring]) [data-mw-float] {
   box-sizing: border-box !important;
   /* Trailing-gap allowance: a tracked box's lines end with a phantom
    * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
@@ -625,7 +626,8 @@ mono-wind:not([measuring]) [data-mw-multicol-flow] {
 mono-wind:not([measuring])[data-mw-leaf],
 mono-wind:not([measuring]) [data-mw-laid-out],
 mono-wind:not([measuring]) [data-mw-multicol-flow],
-mono-wind:not([measuring]) [data-mw-flow] {
+mono-wind:not([measuring]) [data-mw-flow],
+mono-wind:not([measuring]) [data-mw-float] {
   text-indent: calc(var(--mw-ti, 0) * var(--mw-cw, 1px)) !important;
 }
 
@@ -638,6 +640,7 @@ mono-wind:not([measuring]) [data-mw-flow] {
  * block for their absolutized descendants (a transformed box contains
  * them like a positioned one). */
 mono-wind:not([measuring]) [data-mw-flow],
+mono-wind:not([measuring]) [data-mw-float],
 mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
   position: static !important;
   margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
@@ -649,11 +652,35 @@ mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
 mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
   column-span: all !important;
 }
-/* A flow child's own formatting context: its first child's top margin
- * stays inside it, where the engine put that child (the shadow slot
- * does the same for the host's, element.ts). */
-mono-wind:not([measuring]) [data-mw-flow] {
+/* A formatting-context root among flow children — a container, or a leaf
+ * CSS makes one — keeps its own: its first child's top margin stays
+ * inside it, where the engine put that child (the shadow slot does the
+ * same for the host's, element.ts), and it steps aside from a float
+ * rather than passing under (specs/float.md). */
+mono-wind:not([measuring]) [data-mw-flow="box"] {
   contain: layout !important;
+}
+/* A float (specs/float.md): the browser floats the engine's box, and
+ * the lines of the leaf flow children beside it shorten as the engine
+ * shortened them, while a root flow child steps aside as the engine
+ * placed it. Both margin boxes take part in the browser's fit — a
+ * float's is the exclusion, a root's must not overlap one — so each
+ * gives back the shared rule's widening on its right margin: the
+ * tracking allowance and, as a quarter pixel, the layout-unit headroom.
+ * A root or a later float that fits the engine's band exactly then
+ * fits natively too, and a line beside a float keeps its headroom. */
+mono-wind:not([measuring]) [data-mw-float],
+mono-wind:not([measuring]) [data-mw-flow="box"] {
+  margin-right: calc(
+    (var(--mw-mr, 0) - max(0, var(--mw-ls, 0) - var(--mw-pr, 0) - var(--mw-br, 0))) *
+      var(--mw-cw, 1px) - 0.25px
+  ) !important;
+}
+mono-wind:not([measuring]) [data-mw-float="left"] {
+  float: left !important;
+}
+mono-wind:not([measuring]) [data-mw-float="right"] {
+  float: right !important;
 }
 
 /* Spanner-split paragraph flow trusts the NATIVE balancer per segment

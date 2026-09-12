@@ -30,7 +30,8 @@ forms, and accessibility semantics stay fully intact.
 > areas included), multi-column (`columns-*`, balancing, spanners,
 > column rules), and table layout (collapsed borders as shared
 > box-drawing lattices), gap decorations (`rule-*` separators with
-> junction glyphs), text wrap, margins, and scrolling
+> junction glyphs), text wrap, floats (`float-*`/`clear-*`, text
+> wrapping beside them), margins, and scrolling
 > (`overflow-auto`/`-scroll` scroll containers with native physics and engine-drawn
 > TUI scrollbars) work. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light

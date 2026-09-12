@@ -409,6 +409,7 @@ function isFragmentableLeaf(child: LayoutNode, container: CellStyle): boolean {
     child.text !== "" &&
     child.children.length === 0 &&
     style.display === "block" &&
+    style.float === "none" &&
     style.position === "static" &&
     !style.columnSpan &&
     style.whiteSpace === "normal" &&
