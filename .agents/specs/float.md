@@ -286,6 +286,11 @@ float's own top margin on top.
   right float of different heights with a line between them, landing
   at the named floats' bottom and wrapping beside the other float.
 - Visual: the four stories' goldens in the sweep.
+- Deviation 2's story: "Container Beside a Float" asserts CSS's
+  behavior for a container beside a float — the container spanning the
+  content width, only its lines shortened — and fails today; it is
+  tagged out of the test run (`!test`) until the rewrite, its golden
+  recording the current rendering.
 
 ## Touch points on implementation
 

@@ -18,20 +18,22 @@ const read = (style: string, metrics?: CellMetrics): BoxShadow[] => {
   return readCellStyle(el, 16, metrics).boxShadow;
 };
 
-/** A bordered 4×3 box at the origin of an 8×5 root, its shadows. */
-const rows = (boxShadow: BoxShadow[], glyphSet: string | null = null): string[] => {
+/** A bordered 4-wide box at the origin of an 8×5 root, its shadows —
+ * three rows around its text, or `height` rows with the text left out. */
+const rows = (boxShadow: BoxShadow[], glyphSet: string | null = null, height = 0): string[] => {
   const root = makeNode({
     style: { width: { kind: "cells", value: 8 }, height: { kind: "cells", value: 5 } },
     children: [
       makeNode({
         style: {
           width: { kind: "cells", value: 4 },
+          ...(height > 0 ? { height: { kind: "cells", value: height } } : {}),
           border: { top: 1, right: 1, bottom: 1, left: 1 },
           boxShadow,
           glyphSet,
         },
-        text: "ab",
-        intrinsicWidth: 2,
+        text: height > 0 ? "" : "ab",
+        intrinsicWidth: height > 0 ? 0 : 2,
       }),
     ],
   });
@@ -44,6 +46,11 @@ const shadow = (x: number, y: number, blur = 0, spread = 0, color = "red"): BoxS
   blur,
   spread,
   color,
+  inset: false,
+});
+const inset = (x: number, y: number, blur = 0, spread = 0, color = "red"): BoxShadow => ({
+  ...shadow(x, y, blur, spread, color),
+  inset: true,
 });
 
 describe("box-shadow read", () => {
@@ -64,8 +71,9 @@ describe("box-shadow read", () => {
     expect(read("box-shadow: -30px 40px 0 0 red", metrics)).toEqual([shadow(-3, 2)]);
   });
 
-  it("drops inset shadows and reads none as none", () => {
+  it("keeps the inset keyword and reads none as none", () => {
     expect(read("box-shadow: inset 0px 2px 4px 0px rgb(0, 0, 0), 4px 4px 0px 0px red")).toEqual([
+      inset(0, 1, 1, 0, "rgb(0, 0, 0)"),
       shadow(1, 1),
     ]);
     expect(read("box-shadow: none")).toEqual([]);
@@ -118,7 +126,7 @@ describe("box-shadow paint", () => {
     expect(rows([shadow(1, 1, 0, 0, "transparent")])[3] ?? "").toBe("");
     const out: BorderRun[] = [];
     const style = { ...defaultCellStyle(), boxShadow: [shadow(1, 1, 0, 0, "rgba(0, 0, 0, 0.1)")] };
-    collectShadowRuns(style, { x: 0, y: 0, width: 4, height: 3 }, out);
+    collectShadowRuns(style, { x: 0, y: 0, width: 4, height: 3 }, false, out);
     expect(out[0]!.color).toBe(
       "color-mix(in srgb, rgba(0, 0, 0, 0.1) 10%, var(--mw-fg, canvastext))",
     );
@@ -127,16 +135,31 @@ describe("box-shadow paint", () => {
   it("fades each ring's ink toward transparent, a level per ring", () => {
     const out: BorderRun[] = [];
     const style = { ...defaultCellStyle(), boxShadow: [shadow(0, 0, 4)] };
-    collectShadowRuns(style, { x: 0, y: 0, width: 4, height: 3 }, out);
+    collectShadowRuns(style, { x: 0, y: 0, width: 4, height: 3 }, false, out);
     const colorAt = (x: number, y: number) => out.find((run) => run.x === x && run.y === y)!.color;
     expect(colorAt(4, 1)).toBe("color-mix(in srgb, red 67%, transparent)");
     expect(colorAt(5, 1)).toBe("color-mix(in srgb, red 33%, transparent)");
   });
 
+  it("draws an inset shadow inside the padding box, fading into the box", () => {
+    // The lit rectangle moved a cell right and down: the padding box's
+    // top row and left column shade, under the border and around text.
+    expect(rows([inset(1, 1)]).slice(0, 3)).toEqual(["┌──┐", "│ab│", "└──┘"]);
+    const tall = rows([inset(1, 1)], null, 4);
+    expect(tall.slice(0, 4)).toEqual(["┌──┐", "│██│", "│█ │", "└──┘"]);
+    expect(rows([inset(0, 0, 2)], null, 4).slice(0, 4)).toEqual(["┌──┐", "│░░│", "│░░│", "└──┘"]);
+    expect(rows([inset(0, 0, 0, 1)], null, 4).slice(0, 4)).toEqual([
+      "┌──┐",
+      "│██│",
+      "│██│",
+      "└──┘",
+    ]);
+  });
+
   it("paints the first declared shadow on top", () => {
     const out: BorderRun[] = [];
     const style = { ...defaultCellStyle(), boxShadow: [shadow(1, 1), shadow(2, 2, 0, 0, "blue")] };
-    collectShadowRuns(style, { x: 0, y: 0, width: 4, height: 3 }, out);
+    collectShadowRuns(style, { x: 0, y: 0, width: 4, height: 3 }, false, out);
     const at = out.filter((run) => run.x === 4 && run.y === 3);
     expect(at.map((run) => run.color)).toEqual(["blue", "red"]);
   });

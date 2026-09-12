@@ -102,6 +102,73 @@ export const DropCap: StoryObj = {
 };
 
 /**
+ * A container beside a float — a figure floated left, then a `<div>`
+ * holding two paragraphs. CSS lets the float intrude into the div: the
+ * div spans the content width, its paragraphs' lines shortened beside
+ * the figure and full again below it. The engine treats the div as a
+ * formatting-context root instead (specs/float.md, deviation 2): the
+ * whole div takes the band beside the figure, every line narrowed,
+ * below it too. This story asserts CSS's behavior and fails until the
+ * rewrite lands (excluded from the test run by its tag).
+ */
+export const ContainerBesideAFloat: StoryObj = {
+  name: "Container Beside a Float",
+  tags: ["!test"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="section" class="border border-neutral-500 px-3 py-1">
+        <div data-test="figure" class="float-left mr-2 mb-1 border border-amber-300 px-1">
+          fig.<br />1
+        </div>
+        <div data-test="article">
+          <p data-test="first">
+            A raccoon walked into the corner bakery this Tuesday, took one long look at the display
+            case, and left without paying for a sourdough loaf clutched under its left arm.
+          </p>
+          <p data-test="second" class="mt-1">
+            The proprietor described the incident as unusually polite: the animal reportedly closed
+            the door behind itself and made brief eye contact on the way out.
+          </p>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { by, cells, width, height, measure } = await readyGrid(canvasElement);
+    const [section, figure, article, first] = [
+      by("section"),
+      by("figure"),
+      by("article"),
+      by("first"),
+    ];
+    const { boxOf, expectNativeOnGrid } = measure();
+    const origin = {
+      row: boxOf(section).row + cells(section, "--mw-bt") + cells(section, "--mw-pt"),
+      col: boxOf(section).col + cells(section, "--mw-bl") + cells(section, "--mw-pl"),
+    };
+    const contentWidth =
+      width(section) -
+      cells(section, "--mw-bl") -
+      cells(section, "--mw-br") -
+      cells(section, "--mw-pl") -
+      cells(section, "--mw-pr");
+    const textCol = origin.col + width(figure) + cells(figure, "--mw-mr");
+    const figureRows = height(figure) + cells(figure, "--mw-mb");
+    // The div is a plain block: it spans the content width from the
+    // content origin, the float intruding into its lines.
+    expect(boxOf(article)).toEqual(origin);
+    expect(width(article)).toBe(contentWidth);
+    // Its first paragraph's lines start past the figure, then at the
+    // content origin once below it — on the grid and natively.
+    const lines = expectNativeOnGrid(first);
+    expect(lines[0]!.row).toBe(origin.row);
+    for (const { row, col } of lines) {
+      expect(col).toBe(row < origin.row + figureRows ? textCol : origin.col);
+    }
+  },
+};
+
+/**
  * A left and a right float side by side with prose between them; a
  * box with a width passes under the quote — its box at the content
  * origin, its text below the quote, as CSS flows a plain block; a

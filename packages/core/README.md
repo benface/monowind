@@ -137,8 +137,9 @@ to it, so rows never show a seam.
 the glyph set: offsets in whole cells (a `4px` offset is one cell, the
 classic DOS shadow), blur as rings that fade outward, spread in cells,
 a translucent color as a lighter shade leaning on the theme's
-foreground. Tailwind's presets are pixel recipes, and their blur and
-spread convert on the spacing scale (4px to a cell), so `shadow-2xl`
+foreground, `inset` shadows inside the padding box. Tailwind's presets
+are pixel recipes, and their blur and spread convert on the spacing
+scale (4px to a cell), so `shadow-2xl`
 is a six-ring halo. For presets tuned to the grid, redefine them in
 your Tailwind theme:
 

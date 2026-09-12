@@ -33,8 +33,8 @@ A container becomes multicol when its computed `column-count` or
   `normal` special-cased per display — 0 for flex/grid, `1em` for
   multicol (16px → 4 cells at default sizes), per CSS. Headless DOMs
   report unset as an empty string; that reads as `normal` too. The
-  gap floors at the rule width, exactly like gap decorations
-  elsewhere.
+  gap floors at the rule's cells (its weight band's thickness),
+  exactly like gap decorations elsewhere.
 - **`column-fill`** (`auto` | `balance`, initial `balance`): read as
   computed; `balance-all` behaves as `balance`.
 - **`column-span`** on children (`column-span: all` via Tailwind's

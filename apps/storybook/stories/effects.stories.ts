@@ -69,7 +69,8 @@ export const Outline: StoryObj = {
  * `box-shadow` on the grid (specs/box-shadow.md): the box's silhouette
  * moved by its offsets and grown by its spread, in the set's shades,
  * blur stepping through them outward — the DOS shadow, Tailwind's
- * presets, a spread ring, the `ascii` ramp.
+ * presets, a spread ring, the `ascii` ramp, and inset shadows inside
+ * the padding box.
  */
 export const BoxShadow: StoryObj = {
   render: () => html`
@@ -86,6 +87,10 @@ export const BoxShadow: StoryObj = {
         >
           ascii blur
         </div>
+        <div data-test="inset" class="border p-1 shadow-[inset_4px_4px_0_0_var(--mw-fg)]">
+          inset
+        </div>
+        <div data-test="inner" class="border p-1 shadow-inner">shadow-inner</div>
       </div>
     </mono-wind>
   `,
@@ -121,6 +126,12 @@ export const BoxShadow: StoryObj = {
     // The ascii ramp: a solid core, a dotted ring.
     expect(cell("ascii", height(by("ascii")), 1)).toBe("#");
     expect(cell("ascii", height(by("ascii")) + 1, 1)).toBe(".");
+    // Inset: the padding box's top row and left column, inside the
+    // border, around the text; shadow-inner a faint ring inside.
+    expect(cell("inset", 1, 1)).toBe("█");
+    expect(cell("inset", 2, 1)).toBe("█");
+    expect(cell("inset", 3, 2)).toBe(" ");
+    expect(cell("inner", 1, 1)).toMatch(shade);
   },
 };
 

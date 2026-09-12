@@ -23,8 +23,8 @@ converts on the spacing scale, rounded; the blur stays unrounded for
 the ring count, on the spacing scale too, so softness grows with the
 preset (`shadow-md` one ring, `-xl` three, `-2xl` six). The color is
 the computed one (`currentcolor` spelled out by the browser); a
-translucent one reads as a lighter shade (Locked decisions). An
-`inset` shadow is dropped (Deviations).
+translucent one reads as a lighter shade (Locked decisions). `inset`
+marks a shadow drawn inside the padding box.
 
 ## Locked decisions
 
@@ -59,13 +59,20 @@ translucent one reads as a lighter shade (Locked decisions). An
   CSS clips an outer shadow from. Shadows paint from the last declared
   to the first, so the first is on top, as CSS. A clipping ancestor
   culls a shadow with the rest of the element's ink.
+- **An inset shadow lights a rectangle inside the padding box**: the
+  padding box moved by `x` and `y` and shrunk by `spread` is lit, and
+  the padding box around it is the shadow, its rings fading INTO the
+  lit rectangle over `round(blur / 2)` cells. It paints after the
+  box's own background fill and before its borders and text, as CSS
+  layers it, so text sits on the shade and the border covers its edge.
 - **The light DOM's own shadow is off**: the companion locks
   `box-shadow: none` on every element, like backgrounds — the grid
   owns the shadow, form controls included.
 
 ## Deviations from CSS (summary)
 
-1. `inset` shadows are ignored.
+1. An inset shadow's cells are whole cells of the padding box; under
+   text, the glyph is the text's and the shade shows only around it.
 2. Blur is stepped by the cell: `round(blur / 2)` rings, each one
    glyph and ink level; a blur under a cell adds none.
 3. A shadow covers the glyph beneath (one glyph per cell); a color's
@@ -80,13 +87,14 @@ translucent one reads as a lighter shade (Locked decisions). An
 ## Testing
 
 - Node: the read (Chromium's serialization, bare zeros, several
-  shadows, `inset` dropped, a keyword and a function color, physical
+  shadows, `inset` kept, a keyword and a function color, physical
   offsets against measured cells with the one-cell floor); the
   paint — an offset shadow's L shape beside and below the box, the
   cells under the box untouched, spread, blur rings from the ramp,
   two shadows with the first on top, the `ascii` ramp, a translucent
   color's shade and lean, a transparent one painting nothing, the
-  rings' ink fading by level.
+  rings' ink fading by level, an inset shadow's strip inside the
+  border with its offsets, blur, and spread.
 - Storybook: the DOS shadow in the theme foreground, the `shadow-md`
-  to `-xl` presets (rings), a spread-only ring, the `ascii` ramp;
-  golden.
+  to `-xl` presets (rings), a spread-only ring, the `ascii` ramp, an
+  inset DOS shadow and `shadow-inner`; golden.

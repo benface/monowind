@@ -276,23 +276,23 @@ function walk(
   const alphaPaint = (paint: CellPaint | undefined): CellPaint | undefined =>
     alpha >= 1 ? paint : { ...paint, opacity: String(Math.round(alpha * 1000) / 1000) };
 
-  // Outer shadows first (specs/box-shadow.md): behind the box, over
-  // what painted before it, in the shadow's color on the cells' own
-  // backgrounds.
-  const shadowRuns: BorderRun[] = [];
-  collectShadowRuns(
-    style,
-    { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height },
-    shadowRuns,
-  );
-  for (const run of shadowRuns) {
-    put(
-      run.x,
-      run.y,
-      run.glyph,
-      alphaPaint(run.color === undefined ? undefined : { color: run.color }),
-    );
-  }
+  // Shadows (specs/box-shadow.md): the outer ones before the box's own
+  // fill, behind it and over what painted before; the inset ones after
+  // the fill, over its background and under its borders and text.
+  const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
+  const paintShadows = (inset: boolean): void => {
+    const runs: BorderRun[] = [];
+    collectShadowRuns(style, box, inset, runs);
+    for (const run of runs) {
+      put(
+        run.x,
+        run.y,
+        run.glyph,
+        alphaPaint(run.color === undefined ? undefined : { color: run.color }),
+      );
+    }
+  };
+  paintShadows(false);
 
   // Fill the border-box with painted spaces so this element's bg
   // wipes ancestor decoration glyphs at these cells; own borders /
@@ -312,6 +312,7 @@ function walk(
       }
     }
   }
+  paintShadows(true);
 
   const borderRuns: BorderRun[] = [];
   collectBorderRuns(

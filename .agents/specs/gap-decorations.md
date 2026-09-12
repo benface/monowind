@@ -23,8 +23,8 @@ column gaps — vertical lines — like `gap-x` sizes them):
 
 | class                                                                        | effect                                                                     |
 | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `rule-x`, `rule-x-<n>`                                                       | column-rule width 1px / `<n>` px                                           |
-| `rule-y`, `rule-y-<n>`                                                       | row-rule width 1px / `<n>` px                                              |
+| `rule-x`, `rule-x-<n>`                                                       | column-rule width 1px / `<n>` px — the rule's WEIGHT, one cell wide        |
+| `rule-y`, `rule-y-<n>`                                                       | row-rule width 1px / `<n>` px — likewise                                   |
 | `rule`, `rule-<n>`                                                           | both axes                                                                  |
 | `rule-solid` / `rule-dashed` / `rule-dotted` / `rule-double`                 | style, both axes                                                           |
 | `rule-<color>`                                                               | color, both axes (default `currentColor`, like borders)                    |
@@ -33,7 +33,10 @@ column gaps — vertical lines — like `gap-x` sizes them):
 | `rule-inset-overlap-join`                                                    | extend junction endpoints into the crossing gap so meeting rules connect   |
 | `rule-visibility-all` / `rule-visibility-around` / `rule-visibility-between` | `rule-visibility-items`: which segments paint next to empty grid areas     |
 
-Widths and insets quantize like borders (1px = 1 cell). Per-axis
+A rule's width picks its weight band exactly as a border's does
+(`cell-model.md` "Box model"): the band's glyphs, at the band's
+thickness — one cell by default (heavy from 2px), or the rings a set
+registers instead. Insets quantize 1px = 1 cell. Per-axis
 style/color/break/inset variants are deferred until a need shows up.
 
 ## Custom-property contract
@@ -161,10 +164,12 @@ counts); the per-line column bands already end flush at their line.
 
 ## Deviations from css-gaps-1
 
-1. Rules take layout space: the used gap floors at the rule width (in
-   CSS rules never affect layout — a rule wider than its gap overflows
-   the items, one with no gap is invisible). Same principle as borders
-   occupying whole cells: ink needs cells.
+1. Rules take layout space: the used gap floors at the rule's cells,
+   its weight band's thickness (in CSS rules never affect layout — a
+   rule wider than its gap overflows the items, one with no gap is
+   invisible). Same principle as borders occupying whole cells: ink
+   needs cells. A rule meeting a border of another weight junctions in
+   the heavier weight's glyph, as borders do.
 2. `rule-inset` is one uniform value: the per-axis and per-endpoint
    longhands (`column-rule-inset-cap-start`, …), percentages, and
    negative insets are unsupported until needed. Same for per-axis

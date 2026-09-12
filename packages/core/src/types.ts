@@ -119,14 +119,16 @@ export type SizeLimit = CellLength | "min-content" | "max-content" | "fit-conten
 /** A box's corners, top-left through bottom-right. */
 export type CornerRole = "tl" | "tr" | "bl" | "br";
 
-/** One outer `box-shadow` (specs/box-shadow.md): offsets and spread in
- * cells, the blur in cells unrounded, the color as computed. */
+/** One `box-shadow` (specs/box-shadow.md): offsets and spread in cells,
+ * the blur in cells unrounded, the color as computed, `inset` for one
+ * drawn inside the padding box. */
 export interface BoxShadow {
   x: number;
   y: number;
   blur: number;
   spread: number;
   color: string;
+  inset: boolean;
 }
 export type TextOverflow = "clip" | "ellipsis";
 
@@ -518,7 +520,7 @@ export interface CellStyle {
    * default) — the theming vocabulary borders/lattices/rules resolve
    * through (specs/theming.md); resolved on the decoration's owner. */
   glyphSet: string | null;
-  /** Outer shadows as declared, first on top (specs/box-shadow.md). */
+  /** Shadows as declared, first on top (specs/box-shadow.md). */
   boxShadow: BoxShadow[];
   /** Authored `z-index` (`null` = auto). Browser stacking is native;
    * the renderers walk children in this order (stable, document-order

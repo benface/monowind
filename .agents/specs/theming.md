@@ -67,7 +67,19 @@ tr?, bl?, br? }` in cells: a corner draws the registration nearest
   empty) or a plain corner for a style replaces the defaults' arcs
   there, so `ascii`, `blocks`, and `rounded` keep their corners at any
   radius and `cp437` and `single` stay square (no arcs in the codepage,
-  nor on one-line-style hardware). Built-in
+  nor on one-line-style hardware). A table's `weights` lists WEIGHT
+  bands, `{ width, cells?, h?, v?, tl?, …, cross? }` keyed by a
+  `border-width` in px: a role table with per-glyph fallback to the
+  plain table, and `cells`, the border's thickness (1 unless said),
+  drawn as that many rings. A border draws the band nearest its width
+  (`cell-model.md` "Box model"), the plain table at one cell counting
+  as the 1px band. The defaults register the heavy tables from 2px for
+  solid, dashed, and dotted; `single` and `ascii` register `{ width:
+2, cells: 2 }`, two rings of their lines; `cp437` the double table
+  at 2px (the codepage has double, not heavy); `blocks` two cells of
+  its blocks. The thickness is read with the style, so a set
+  registered late relayouts connected hosts like any registration.
+  Built-in
   roster: `default`, `rounded` (solid corners → arcs), `ascii` (7-bit;
   double as `+=+`, dotted as `.`/`:`),
   `single` (double/dashed/dotted all downgrade to light — DEC-style

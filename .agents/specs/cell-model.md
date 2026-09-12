@@ -26,10 +26,14 @@ section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
   on flex items resolves against the parent's content width, per CSS. One
   small approximation remains: for a margined child in block flow (or a
   column's cross axis), the basis excludes the child's own margins.
-- **Border scale: 1px = 1 cell.** Tailwind's border scale is in px (`border` =
-  1px, `border-2` = 2px), so border-width in px maps directly to border cells.
-  This is intentionally a different scale from spacing — document it prominently
-  in user-facing docs.
+- **Border width is a weight the glyph set interprets.** A border's px
+  width picks the WEIGHT BAND the owner's glyph set registers nearest
+  it, and the band says both what to draw and how many cells thick:
+  the defaults draw `border` (1px) as light `─ │` and `border-2` and
+  up as heavy `━ ┃`, one cell thick either way, while a set whose font
+  has no heavy glyphs may register two cells of its plain lines
+  instead — "Borders: glyph mapping". Gap-decoration rules take their
+  weight from their width the same way (`gap-decorations.md`).
 - **Viewport-relative lengths** (`h-screen`, `h-dvh`/`svh`/`lvh`,
   `w-screen`, arbitrary values like `h-[95dvh]`, and the min/max
   variants) express PHYSICAL screen intent, so they convert via the
@@ -100,17 +104,22 @@ specs: deterministic, document order.)
 
 - All boxes are **border-box**: `width`/`height` include border cells and
   padding cells, matching Tailwind's global default.
-- A border consumes N cells on each enabled edge, where N is its cell-mapped
-  width. Multi-cell borders render as **concentric rings** of the same style:
+- A border consumes the cells its weight band says — one, by default,
+  whatever the width; the width selects the band (heavy from 2px in
+  the default set):
 
   ```text
-  border-2:
-  ┌──────────────────────┐
-  │┌────────────────────┐│
-  ││       content      ││
-  │└────────────────────┘│
-  └──────────────────────┘
+  border:                  border-2 (default set):   border-2 (a rings band):
+  ┌────────────────┐       ┏━━━━━━━━━━━━━━━━┓        ┌────────────────┐
+  │    content     │       ┃    content     ┃        │┌──────────────┐│
+  └────────────────┘       ┗━━━━━━━━━━━━━━━━┛        ││   content    ││
+                                                     │└──────────────┘│
+                                                     └────────────────┘
   ```
+
+  A band of N cells draws N concentric rings of its glyphs; the
+  allocation is read with the style, so a set registered later
+  relayouts connected hosts as any registration does.
 
 - **Margins are supported** (`m-*`, `mx-*`, `-m-*`…). `space-x/y-*` is
   deliberately **not** supported — use `gap-*` (which is supported).
@@ -377,21 +386,23 @@ not supported (documented deviation).
 
 ## Borders: glyph mapping
 
-`border-style` selects the glyph set; width selects ring count (above).
-Styles and colors are per-side (`border-t-cyan-400`,
+`border-style` selects the glyph table, `border-width` its weight
+(above). Styles and colors are per-side (`border-t-cyan-400`,
 `[border-top-style:double]`): each edge uses its own style's glyphs and its
 own color. A corner where both adjacent edges share a style uses that
 style's corner glyph; mixed-style corners fall back to the light corners
 (Unicode has no mixed junction glyphs for most pairs — same convention as
 dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
 
-| style            | H   | V   | corners       | junctions       |
-| ---------------- | --- | --- | ------------- | --------------- |
-| `solid` (light)  | `─` | `│` | `┌ ┐ └ ┘`     | `├ ┤ ┬ ┴ ┼`     |
-| `double`         | `═` | `║` | `╔ ╗ ╚ ╝`     | `╠ ╣ ╦ ╩ ╬`     |
-| `dashed`         | `╌` | `╎` | light corners | light junctions |
-| `dotted`         | `┄` | `┊` | light corners | light junctions |
-| heavy (reserved) | `━` | `┃` | `┏ ┓ ┗ ┛`     | `┣ ┫ ┳ ┻ ╋`     |
+| style           | H   | V   | corners       | junctions       |
+| --------------- | --- | --- | ------------- | --------------- |
+| `solid` (light) | `─` | `│` | `┌ ┐ └ ┘`     | `├ ┤ ┬ ┴ ┼`     |
+| `solid`, heavy  | `━` | `┃` | `┏ ┓ ┗ ┛`     | `┣ ┫ ┳ ┻ ╋`     |
+| `double`        | `═` | `║` | `╔ ╗ ╚ ╝`     | `╠ ╣ ╦ ╩ ╬`     |
+| `dashed`        | `╌` | `╎` | light corners | light junctions |
+| `dashed`, heavy | `╍` | `╏` | heavy corners | heavy junctions |
+| `dotted`        | `┄` | `┊` | light corners | light junctions |
+| `dotted`, heavy | `┉` | `┋` | heavy corners | heavy junctions |
 
 - Unicode has no dashed/dotted corners or junctions; solid-light stands in
   (standard TUI convention).
@@ -402,14 +413,28 @@ dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
   the plain corner is the registration at 0, and the defaults register
   the arcs `╭ ╮ ╰ ╯` at one cell for the light-line styles (solid,
   dashed, dotted), so `rounded-xs` (half a cell) and up round and
-  `rounded-[1px]` stays square; double has no arcs. A ring inside loses
-  a cell of radius, as CSS's inner edge does (`border-2 rounded` rounds
-  the outer ring only). A set registers its own bands per style
+  `rounded-[1px]` stays square; double and heavy have no arcs. Where a
+  weight band draws rings, a ring inside loses a cell of radius, as
+  CSS's inner edge does. A set registers its own bands per style
   (`theming.md`); a collapsed lattice ignores radius, as CSS does.
-- Heavy has no CSS `border-style` keyword (`double` claims `═`); exposure is
-  TBD — likely a monowind-specific opt-in (e.g. an owned custom property).
-- Mixed-style junctions (light meets double: `╞ ╤ ╧ ╡` exist; light meets
-  heavy: partial coverage) — resolution rules TBD in the decoration renderer.
+- **Weight comes from `border-width`**: a glyph set registers WEIGHT
+  bands per style (`theming.md`), each a role table plus a thickness
+  in `cells` (1 unless said), keyed by a width in px; a border draws
+  the band nearest its width, ties to the wider, the plain table at
+  1px and one cell counting as a band. The defaults register the heavy
+  tables above from 2px for solid, dashed, and dotted, one cell thick;
+  double has no heavier weight and keeps `═ ║` at any width. A set
+  without heavy glyphs registers what its hardware had instead — two
+  rings of light lines (`single`, `ascii`), double lines (`cp437`, as
+  DOS interfaces emphasized), two cells of blocks (`blocks`). A heavy
+  corner has no arc, so `rounded-*` leaves it square, like double. In
+  a collapsed lattice the wider border wins a shared edge, as CSS
+  collapses, and its band draws the line at the band's thickness; a
+  junction where weights meet draws the heavier weight's glyph
+  (Unicode's mixed-weight junctions, `┿ ╂ ┝ …`, are a later
+  refinement).
+- Mixed-style junctions (light meets double: `╞ ╤ ╧ ╡` exist) —
+  resolution rules TBD in the decoration renderer; today light stands in.
 
 ## Text alignment
 

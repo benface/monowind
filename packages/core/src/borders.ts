@@ -87,17 +87,32 @@ export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[])
 }
 
 /**
- * Emit a box's outer shadows (specs/box-shadow.md): each the border box
- * moved by its offsets and grown by its spread, blurred into
- * `round(blur / 2)` rings of the owner's shade ramp fading outward,
- * the cells under the box left out — the last declared first, so the
- * first paints on top.
+ * Emit a box's shadows (specs/box-shadow.md), `inset` the ones drawn
+ * inside the padding box, else the outer ones: each a silhouette in the
+ * owner's shade ramp — an outer shadow the border box moved by its
+ * offsets and grown by its spread, blurred into `round(blur / 2)` rings
+ * fading outward, the cells under the box left out; an inset shadow the
+ * padding box less that same rectangle moved inward, its rings fading
+ * into the box — the last declared first, so the first paints on top.
  */
-export function collectShadowRuns(style: CellStyle, box: Rect, out: BorderRun[]): void {
-  if (style.boxShadow.length === 0) return;
+export function collectShadowRuns(
+  style: CellStyle,
+  box: Rect,
+  inset: boolean,
+  out: BorderRun[],
+): void {
+  const shadows = style.boxShadow.filter((shadow) => shadow.inset === inset);
+  if (shadows.length === 0) return;
   const ramp = shadowRamp(glyphSetFor(style.glyphSet));
   const last = ramp.length - 1;
-  for (const shadow of style.boxShadow.slice().reverse()) {
+  const { border } = style;
+  const padding = {
+    x: box.x + border.left,
+    y: box.y + border.top,
+    width: box.width - border.left - border.right,
+    height: box.height - border.top - border.bottom,
+  };
+  for (const shadow of shadows.slice().reverse()) {
     // A translucent color: its alpha picks the base shade (a tenth is
     // the second-lightest, leaving blur room to fade), and the ink leans
     // on the theme's foreground by the rest — Tailwind's default, black
@@ -118,6 +133,26 @@ export function collectShadowRuns(style: CellStyle, box: Rect, out: BorderRun[])
       const fade = Math.round((100 * (depth + 1)) / (rings + 1));
       return { glyph: ramp[index]!, color: `color-mix(in srgb, ${color} ${fade}%, transparent)` };
     });
+    if (inset) {
+      // The lit rectangle: the padding box moved by the offsets and shrunk
+      // by the spread; the shadow is the padding box around it, fading
+      // into it over the rings.
+      const lit = {
+        x0: padding.x + shadow.x + shadow.spread,
+        y0: padding.y + shadow.y + shadow.spread,
+        x1: padding.x + shadow.x + padding.width - shadow.spread,
+        y1: padding.y + shadow.y + padding.height - shadow.spread,
+      };
+      for (let y = padding.y; y < padding.y + padding.height; y++) {
+        for (let x = padding.x; x < padding.x + padding.width; x++) {
+          const inside = Math.min(x - lit.x0, lit.x1 - 1 - x, y - lit.y0, lit.y1 - 1 - y);
+          if (inside >= rings) continue;
+          const depth = inside < 0 ? rings : rings - 1 - inside;
+          out.push({ ...levels[depth]!, x, y, length: 1 });
+        }
+      }
+      continue;
+    }
     const grow = shadow.spread + rings;
     const x0 = box.x + shadow.x - grow;
     const y0 = box.y + shadow.y - grow;

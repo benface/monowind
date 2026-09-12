@@ -889,13 +889,12 @@ function authoredPercentInset(
   return undefined;
 }
 
-/** The outer shadows of a computed `box-shadow` (specs/box-shadow.md):
- * per comma-separated shadow, `x y blur spread` — px once computed, a
- * bare `0` allowed — the offsets physical cells (a displacement: the
+/** The shadows of a computed `box-shadow` (specs/box-shadow.md): per
+ * comma-separated shadow, `x y blur spread` — px once computed, a bare
+ * `0` allowed — the offsets physical cells (a displacement: the
  * measured cell, the spacing scale before a measurement, a nonzero one
  * at least a cell), the blur unrounded and the spread on the spacing
- * scale, and its color, the token that is no length; `inset` shadows
- * dropped. */
+ * scale, its color, the token that is no length, and its `inset`. */
 function readBoxShadow(
   value: string,
   rootFontSizePx: number,
@@ -911,7 +910,6 @@ function readBoxShadow(
   const shadows: BoxShadow[] = [];
   for (const part of splitCommas(value)) {
     const tokens = splitTopLevel(part);
-    if (tokens.includes("inset")) continue;
     const lengths = tokens.filter(isLength).map(parseFloat);
     if (lengths.length < 2) continue;
     const [x, y, blur = 0, spread = 0] = lengths;
@@ -920,7 +918,8 @@ function readBoxShadow(
       y: offset(y!, metrics?.height),
       blur: blur / (0.25 * rootFontSizePx),
       spread: pxToCells(spread, rootFontSizePx),
-      color: tokens.find((token) => !isLength(token)) ?? "currentcolor",
+      color: tokens.find((token) => !isLength(token) && token !== "inset") ?? "currentcolor",
+      inset: tokens.includes("inset"),
     });
   }
   return shadows;
