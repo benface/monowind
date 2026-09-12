@@ -19,10 +19,12 @@ nothing sticks.
 ## Reading
 
 `position: sticky` and the insets are read already (`positioning.md`
-"Insets"): each side a cell length, `auto`, or a percentage. For a
-sticky box a percentage inset resolves against the corresponding
-dimension of its scroll container's scrollport (probed — see "Browser
-agreement").
+"Insets"): each side a cell length, `auto`, a percentage, or a `calc()`
+of a percentage and cells. For a sticky box a percentage resolves
+against the corresponding dimension of its scroll container's
+scrollport (probed — see "Browser agreement"), so
+`top-[calc(100%-(--spacing(2)))]` holds a box two rows above the
+scrollport's bottom.
 
 ## Locked decisions
 
@@ -211,7 +213,8 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   heading placed directly in the scroller pinned to the end of the
   scroll; a sticky footer (`bottom`); a sticky column (`left`) in an
   x-scroller; nested sticky; a sticky box inside a plain box inside the
-  scroller; a percent inset; all insets `auto` → no shift; no scrolling
+  scroller; a percent inset; a calc inset of the scrollport's height
+  less two rows; all insets `auto` → no shift; no scrolling
   ancestor → no shift; a sticky `thead` in a bordered table at rest
   (today's lattice) and stuck (its lines along, `┼` where its bottom
   line meets the column lines, the body's lattice intact), a sticky
@@ -228,7 +231,8 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   paint awaited, the heading's row at the scrollport's top on the grid
   and the native box on the same cell; the hand-over at a section
   boundary; a bordered table with a sticky header and a sticky first
-  column, scrolled both ways.
+  column, scrolled both ways; a bar hidden until the scroll reaches it,
+  then held on the scrollport's bottom row by a calc inset.
 - Visual: the story's golden mid-scroll (the play scrolls before the
   screenshot).
 

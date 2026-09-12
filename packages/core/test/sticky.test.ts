@@ -6,7 +6,7 @@ import { charIndexAtCell } from "../src/plain-text.ts";
 import { hitStack } from "../src/pointer.ts";
 import { buildTree } from "../src/tree.ts";
 import { applyStickyShifts, collectStickyBoxes, stickyShiftAxis } from "../src/sticky.ts";
-import type { LayoutNode, OverflowAxis } from "../src/types.ts";
+import type { CellLength, LayoutNode, OverflowAxis } from "../src/types.ts";
 import { makeNode } from "./helpers.ts";
 
 /** Sticky positioning (specs/sticky.md): the paint-time shift a scroll
@@ -58,7 +58,7 @@ const scroller = (
 const spacer = (rows: number) => makeNode({ style: { height: { kind: "cells", value: rows } } });
 const sticky = (
   text: string,
-  insets: Partial<Record<"top" | "right" | "bottom" | "left", number>>,
+  insets: Partial<Record<"top" | "right" | "bottom" | "left", CellLength>>,
   extra: Parameters<typeof makeNode>[0] = {},
 ) =>
   makeNode({
@@ -148,11 +148,20 @@ describe("sticky boxes in a scroller", () => {
   });
 
   it("resolves a percent inset against the scrollport", () => {
-    const heading = sticky("H", { top: { percent: 50 } as unknown as number });
+    const heading = sticky("H", { top: { percent: 50 } });
     const box = scroller([heading, spacer(10)]);
     const root = makeNode({ children: [box] });
     layoutRoot(root, 20);
     expect(rowsAt(root, box, 5)[2]!.startsWith("H")).toBe(true);
+  });
+
+  it("resolves a calc inset: the scrollport's height less two rows holds a box above the bottom", () => {
+    const teaser = sticky("H", { top: { percent: 100, cells: -2 } });
+    const box = scroller([teaser, spacer(10)]);
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 20);
+    expect(rowsAt(root, box, 0)[2]!.startsWith("H")).toBe(true);
+    expect(rowsAt(root, box, 3)[2]!.startsWith("H")).toBe(true);
   });
 
   it("shifts nothing with every inset auto, or without a scrolling ancestor", () => {

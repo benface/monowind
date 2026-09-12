@@ -281,6 +281,42 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
   });
 });
 
+describe("calc() spacing lengths", () => {
+  it("keeps a percentage symbolic beside cells: an inset short of the scrollport", () => {
+    expect(read({ style: "position: sticky; top: calc(100% - 1rem)" }).insets.top).toEqual({
+      percent: 100,
+      cells: -4,
+    });
+    expect(read({ style: "position: relative; left: calc(50% + 8px)" }).insets.left).toEqual({
+      percent: 50,
+      cells: 2,
+    });
+    expect(read({ style: "position: relative; top: calc(2rem - 4px)" }).insets.top).toBe(7);
+    expect(read({ style: "position: relative; top: calc(100% + 0px)" }).insets.top).toEqual({
+      percent: 100,
+    });
+    expect(read({ style: "margin-top: calc(50% + 1rem)" }).margin.top).toEqual({
+      percent: 50,
+      cells: 4,
+    });
+  });
+
+  it("reads a percentage inset utility from the class list, the used px having resolved it", () => {
+    expect(read({ class: "sticky top-[calc(100%-(--spacing(2)))]" }).insets.top).toEqual({
+      percent: 100,
+      cells: -2,
+    });
+    expect(read({ class: "absolute inset-y-[calc(50%_+_1rem)]" }).insets.bottom).toEqual({
+      percent: 50,
+      cells: 4,
+    });
+    expect(read({ class: "relative top-1/2" }).insets.top).toEqual({ percent: 50 });
+    expect(read({ class: "relative -left-1/4" }).insets.left).toEqual({ percent: -25 });
+    expect(read({ class: "absolute inset-x-full" }).insets.right).toEqual({ percent: 100 });
+    expect(read({ class: "absolute top-[10%]" }).insets.top).toEqual({ percent: 10 });
+  });
+});
+
 describe("mixed-unit calc()", () => {
   const metrics = { width: 9, height: 18, letterSpacing: 0 };
   const rows = Math.floor(window.innerHeight / 18);

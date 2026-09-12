@@ -758,7 +758,8 @@ export function resolveGap(style: CellStyle, axis: "x" | "y", basis: number | un
  * An indefinite basis (percent gap in an unbounded axis) resolves to 0. */
 export function resolveLength(length: CellLength, basis: number | undefined): number {
   if (typeof length === "number") return length;
-  return basis === undefined || !Number.isFinite(basis) ? 0 : percentToCells(length.percent, basis);
+  if (basis === undefined || !Number.isFinite(basis)) return 0;
+  return percentToCells(length.percent, basis) + (length.cells ?? 0);
 }
 
 /** Resolve all four margin sides (preserving `auto` as null) against the
@@ -789,7 +790,8 @@ export function resolveLimit(
 ): number | undefined {
   if (limit === undefined || typeof limit === "string") return undefined;
   if (typeof limit === "number") return limit;
-  return available === undefined ? undefined : percentToCells(limit.percent, available);
+  if (available === undefined) return undefined;
+  return percentToCells(limit.percent, available) + (limit.cells ?? 0);
 }
 
 /** Resolve a WIDTH limit to cells — like resolveLimit, but intrinsic

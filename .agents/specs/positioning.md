@@ -37,7 +37,9 @@ browser expands to longhands before we read them) are read as
   rows, horizontal → columns), rounded per the cell-model rules. Negative
   values are fine.
 - Percentages resolve against the **containing block**: width for
-  left/right, height for top/bottom, per CSS.
+  left/right, height for top/bottom, per CSS. A `calc()` of a
+  percentage and lengths keeps both, the lengths as cells added once
+  the percentage resolves (`cell-model.md` "Mixed-unit calc()").
 - Over-constrained axes follow CSS LTR resolution: `top` wins over
   `bottom`, `left` wins over `right` (for relative, the losing side is
   ignored; for absolute with a definite size, the losing inset yields).

@@ -705,9 +705,9 @@ function readMargin(
       if (logicalValue === "auto") return null;
       // Percent margins must stay symbolic (getComputedStyle would hand
       // back a used px value resolved against the pre-grid natural layout).
-      if (physicalValue?.endsWith("%")) {
-        const percent = parseFloat(physicalValue);
-        if (Number.isFinite(percent) && percent !== 0) return { percent };
+      if (physicalValue && (physicalValue.endsWith("%") || physicalValue.startsWith("calc("))) {
+        const length = readSpacing(physicalValue, rootFontSizePx);
+        if (length !== 0) return length;
       }
     } else if (
       autoClassPattern.test(classAttr) ||
@@ -814,7 +814,9 @@ function readClear(value: string): Clear {
  * e.g. wrongly trigger the absolute stretch branch). Typed OM returns
  * *computed* values, so `auto` survives. The no-Typed-OM fallback trusts a
  * side only when an inline style or a Tailwind inset utility for it is
- * authored (then the used value equals the authored one). LTR only.
+ * authored (then the used value equals the authored one) — a percentage
+ * utility read from the class list, its used px having resolved the
+ * percentage already. LTR only.
  */
 function readInsets(
   cs: CSSStyleDeclaration,
@@ -823,10 +825,7 @@ function readInsets(
   inlineStyle: CSSStyleDeclaration,
   rootFontSizePx: number,
 ): PerSide<CellLength | null> {
-  const side = (
-    prop: "top" | "right" | "bottom" | "left",
-    utilityPattern: RegExp,
-  ): CellLength | null => {
+  const side = (prop: "top" | "right" | "bottom" | "left", stems: string): CellLength | null => {
     if (csm) {
       const value = csm.get(prop)?.toString().trim();
       if (!value || value === "auto") return null;
@@ -834,16 +833,52 @@ function readInsets(
     }
     const inline = inlineStyle[prop];
     if (inline) return inline === "auto" ? null : readSpacing(inline, rootFontSizePx);
-    if (!utilityPattern.test(classAttr)) return null;
+    if (!new RegExp(`(?:^|[\\s:.[!])-?(?:${stems})-`).test(classAttr)) return null;
+    // An inactive variant resolves to `auto`; no resolved value at all
+    // (headless, stylesheet not loaded) trusts the class.
     const value = cs.getPropertyValue(prop);
-    return !value || value === "auto" ? null : readSpacing(value, rootFontSizePx);
+    if (value === "auto") return null;
+    const authored = authoredPercentInset(classAttr, stems, rootFontSizePx);
+    if (authored !== undefined) return authored;
+    return value ? readSpacing(value, rootFontSizePx) : null;
   };
   return {
-    top: side("top", /(?:^|[\s:.[!])-?(?:top|inset|inset-y)-/),
-    right: side("right", /(?:^|[\s:.[!])-?(?:right|end|inset|inset-x)-/),
-    bottom: side("bottom", /(?:^|[\s:.[!])-?(?:bottom|inset|inset-y)-/),
-    left: side("left", /(?:^|[\s:.[!])-?(?:left|start|inset|inset-x)-/),
+    top: side("top", "top|inset|inset-y"),
+    right: side("right", "right|end|inset|inset-x"),
+    bottom: side("bottom", "bottom|inset|inset-y"),
+    left: side("left", "left|start|inset|inset-x"),
   };
+}
+
+/** A percentage inset utility — a fraction (`top-1/2`), `full`, or an
+ * arbitrary percentage or calc() — from the class list, negated by its
+ * `-` prefix; undefined for any other utility. */
+function authoredPercentInset(
+  classAttr: string,
+  stems: string,
+  rootFontSizePx: number,
+): CellLength | undefined {
+  const lead = `(?:^|[\\s:.[!])(-?)(?:${stems})-`;
+  const signed = (sign: string, length: CellLength): CellLength => {
+    if (sign !== "-") return length;
+    if (typeof length === "number") return -length;
+    return length.cells === undefined
+      ? { percent: -length.percent }
+      : { percent: -length.percent, cells: -length.cells };
+  };
+  const fraction = new RegExp(`${lead}(\\d+)/(\\d+)(?![\\w./])`).exec(classAttr);
+  if (fraction) {
+    return signed(fraction[1]!, { percent: (100 * Number(fraction[2])) / Number(fraction[3]) });
+  }
+  const full = new RegExp(`${lead}full(?![\\w-])`).exec(classAttr);
+  if (full) return signed(full[1]!, { percent: 100 });
+  const arbitrary = new RegExp(`${lead}\\[(calc\\([^\\]]*\\)|\\d+(?:\\.\\d+)?%)\\]`).exec(
+    classAttr,
+  );
+  if (arbitrary) {
+    return signed(arbitrary[1]!, readSpacing(arbitrary[2]!.replaceAll("_", " "), rootFontSizePx));
+  }
+  return undefined;
 }
 
 function mapBorderStyle(value: string): BorderStyle {
@@ -882,6 +917,15 @@ function readLimit(value: string, rootFontSizePx: number): SizeLimit | undefined
  */
 function readSpacing(value: string, rootFontSizePx: number): CellLength {
   if (!value || value === "auto" || value === "none") return 0;
+  // A calc() the browser computed keeps only a percentage symbolic,
+  // every other term in px: a percentage plus cells.
+  if (value.startsWith("calc(")) {
+    const calc = evaluateCalc(value, "width", undefined, rootFontSizePx);
+    if (!calc || calc.unitless) return 0;
+    const cells = roundHalfAwayFromZero(calc.cells);
+    if (calc.percent === 0) return cells;
+    return cells === 0 ? { percent: calc.percent } : { percent: calc.percent, cells };
+  }
   if (value.endsWith("%")) {
     const percent = parseFloat(value);
     return Number.isFinite(percent) && percent !== 0 ? { percent } : 0;
@@ -1088,8 +1132,8 @@ function physicalCells(
  * computed px can no longer say. Sourced from the inline style or the
  * arbitrary-value utility (`max-h-[calc(…)]`, `_` for spaces), and
  * active-checked against the computed px like viewport utilities. A
- * term the evaluator does not model (%, em, var()) leaves the value to
- * the computed px. undefined = no authored calc. */
+ * percentage term, or one the evaluator does not model (em, var()),
+ * leaves the value to the computed px. undefined = no authored calc. */
 function authoredCalcCells(
   csm: StylePropertyMapReadOnly | null,
   property: string,
@@ -1111,7 +1155,7 @@ function authoredCalcCells(
   const authored = fromInline ? inline : utility?.[1]?.replaceAll("_", " ");
   if (!authored) return undefined;
   const value = evaluateCalc(authored, key, metrics, rootFontSizePx);
-  if (!value || value.unitless) return undefined;
+  if (!value || value.unitless || value.percent !== 0) return undefined;
   const cells = Math.max(0, roundHalfAwayFromZero(value.cells));
   // The inline style wins by cascade; a class needs the active-check: an
   // inactive variant or an overriding declaration resolves elsewhere — to
@@ -1127,10 +1171,12 @@ function authoredCalcCells(
 }
 
 /** A calc term carried two ways: the engine's cells (per-unit
- * semantics) and the px the browser computes (for the active-check). */
+ * semantics) and the px the browser computes (for the active-check),
+ * with a percentage kept symbolic. */
 interface CalcValue {
   cells: number;
   px: number;
+  percent: number;
   unitless: boolean;
 }
 
@@ -1147,7 +1193,12 @@ function evaluateCalc(
   let i = 0;
   const peek = (): string | undefined => tokens[i];
   const next = (): string | undefined => tokens[i++];
-  const length = (cells: number, px: number): CalcValue => ({ cells, px, unitless: false });
+  const length = (cells: number, px: number): CalcValue => ({
+    cells,
+    px,
+    percent: 0,
+    unitless: false,
+  });
   const term = (token: string): CalcValue | null => {
     const spacing = /^--spacing\(\s*(-?[\d.]+)\s*\)$/.exec(token);
     if (spacing) {
@@ -1159,7 +1210,8 @@ function evaluateCalc(
     const amount = parseFloat(match[1]!);
     const unit = match[2]!;
     if (!Number.isFinite(amount)) return null;
-    if (unit === "") return { cells: amount, px: amount, unitless: true };
+    if (unit === "") return { cells: amount, px: amount, percent: 0, unitless: true };
+    if (unit === "%") return { cells: 0, px: 0, percent: amount, unitless: false };
     if (unit === "px") return length(amount / (rootFontSizePx / 4), amount);
     if (unit === "rem") return length(amount * 4, amount * rootFontSizePx);
     const viewport = viewportLengthPx(token);
@@ -1170,22 +1222,37 @@ function evaluateCalc(
     if (op === "+" || op === "-") {
       if (a.unitless !== b.unitless) return null;
       const sign = op === "+" ? 1 : -1;
-      return { cells: a.cells + sign * b.cells, px: a.px + sign * b.px, unitless: a.unitless };
+      return {
+        cells: a.cells + sign * b.cells,
+        px: a.px + sign * b.px,
+        percent: a.percent + sign * b.percent,
+        unitless: a.unitless,
+      };
     }
     if (op === "*") {
       if (!a.unitless && !b.unitless) return null;
       const [n, v] = a.unitless ? [a, b] : [b, a];
-      return { cells: v.cells * n.cells, px: v.px * n.px, unitless: v.unitless && n.unitless };
+      return {
+        cells: v.cells * n.cells,
+        px: v.px * n.px,
+        percent: v.percent * n.cells,
+        unitless: v.unitless && n.unitless,
+      };
     }
     if (!b.unitless || b.px === 0) return null;
-    return { cells: a.cells / b.cells, px: a.px / b.px, unitless: a.unitless };
+    return {
+      cells: a.cells / b.cells,
+      px: a.px / b.px,
+      percent: a.percent / b.cells,
+      unitless: a.unitless,
+    };
   };
   const factor = (): CalcValue | null => {
     const token = next();
     if (token === undefined) return null;
     if (token === "-") {
       const value = factor();
-      return value && { cells: -value.cells, px: -value.px, unitless: value.unitless };
+      return value && { ...value, cells: -value.cells, px: -value.px, percent: -value.percent };
     }
     if (token === "calc") return next() === "(" ? group() : null;
     if (token === "(") return group();

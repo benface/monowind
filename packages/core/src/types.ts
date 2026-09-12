@@ -105,8 +105,11 @@ export type WhiteSpace = "normal" | "nowrap" | "pre";
  * Percentages resolve against the CSS-appropriate basis at layout time:
  * the available extent for min/max (`max-w-full` = 100%), the containing
  * block's WIDTH for padding and margins (all four sides, per CSS), and the
- * container's own content box in the gap's axis for gaps. */
-export type CellLength = number | { percent: number };
+ * container's own content box in the gap's axis for gaps. A `calc()` of a
+ * percentage and lengths keeps the percentage symbolic and carries the
+ * lengths as `cells`, added once it resolves (specs/cell-model.md
+ * "Mixed-unit calc()"). */
+export type CellLength = number | { percent: number; cells?: number };
 
 /** A min/max constraint: a CellLength, or an intrinsic sizing keyword
  * (`max-w-max` = `max-width: max-content`, …). Keywords are honored on

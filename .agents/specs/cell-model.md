@@ -66,6 +66,17 @@ A term outside that model (`%`, `em`, `var()`) leaves the whole value to
 the computed px, as before. Plain-stylesheet calc() shares the viewport
 deviation above.
 
+Insets and margins read the browser's computed `calc()` instead, which
+keeps only a percentage symbolic and every other term in px: a
+percentage plus cells (`{ percent, cells }`), the cells added once the
+percentage resolves against its basis — `top-[calc(100%-(--spacing(2)))]`
+on a sticky box is the scrollport's height less two rows
+(`sticky.md`). Viewport terms there arrive as px, on the spacing scale.
+Without Typed OM (Firefox before 157) an inset's used px has resolved
+the percentage already, so a percentage inset utility — a fraction,
+`full`, an arbitrary percentage or calc() — is read from the class
+list, like the sizing utilities' fallback.
+
 ### Rounding
 
 After conversion to cells, every value is rounded to the **nearest integer,
