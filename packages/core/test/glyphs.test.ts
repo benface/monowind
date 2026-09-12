@@ -26,6 +26,108 @@ const box = (glyphSet: string | null, style: CellStyle["borderStyle"]["top"] = "
   return renderPlainText(root);
 };
 
+/** A bordered box's four corner glyphs, outer ring then inner. */
+const corners = (
+  overrides: Partial<CellStyle>,
+  rings = 1,
+): { outer: string[]; inner: string[] } => {
+  const root = makeNode({
+    children: [
+      makeNode({
+        style: {
+          border: { top: rings, right: rings, bottom: rings, left: rings },
+          ...overrides,
+        },
+        text: "x",
+        intrinsicWidth: 1,
+      }),
+    ],
+  });
+  layoutRoot(root, 7);
+  const rows = renderPlainText(root).split("\n");
+  const last = rows.length - 1;
+  const width = rows[0]!.length;
+  const at = (row: number, col: number) => rows[row]![col]!;
+  return {
+    outer: [at(0, 0), at(0, width - 1), at(last, 0), at(last, width - 1)],
+    inner: [at(1, 1), at(1, width - 2), at(last - 1, 1), at(last - 1, width - 2)],
+  };
+};
+const radius = (tl: number, tr = tl, bl = tl, br = tl) => ({ tl, tr, bl, br });
+
+describe("border radius corners", () => {
+  it("rounds a light-line box's corners to arcs, per corner, from half a cell", () => {
+    expect(corners({ borderRadius: radius(1) }).outer).toEqual(["╭", "╮", "╰", "╯"]);
+    expect(corners({ borderRadius: radius(2, 2, 0, 0) }).outer).toEqual(["╭", "╮", "└", "┘"]);
+    expect(corners({ borderRadius: radius(0.5) }).outer).toEqual(["╭", "╮", "╰", "╯"]);
+    expect(corners({ borderRadius: radius(0.25) }).outer).toEqual(["┌", "┐", "└", "┘"]);
+    expect(corners({ borderRadius: radius(Infinity) }).outer).toEqual(["╭", "╮", "╰", "╯"]);
+    const dashed = { top: "dashed", right: "dashed", bottom: "dashed", left: "dashed" } as const;
+    expect(corners({ borderRadius: radius(1), borderStyle: dashed }).outer).toEqual([
+      "╭",
+      "╮",
+      "╰",
+      "╯",
+    ]);
+  });
+
+  it("keeps double square, and a set's own corners at any radius", () => {
+    const double = { top: "double", right: "double", bottom: "double", left: "double" } as const;
+    expect(corners({ borderRadius: radius(3), borderStyle: double }).outer).toEqual([
+      "╔",
+      "╗",
+      "╚",
+      "╝",
+    ]);
+    expect(corners({ borderRadius: radius(3), glyphSet: "ascii" }).outer).toEqual([
+      "+",
+      "+",
+      "+",
+      "+",
+    ]);
+    expect(corners({ borderRadius: radius(3), glyphSet: "cp437" }).outer).toEqual([
+      "┌",
+      "┐",
+      "└",
+      "┘",
+    ]);
+    expect(corners({ borderRadius: radius(3), glyphSet: "single" }).outer).toEqual([
+      "┌",
+      "┐",
+      "└",
+      "┘",
+    ]);
+    expect(corners({ borderRadius: radius(0), glyphSet: "rounded" }).outer).toEqual([
+      "╭",
+      "╮",
+      "╰",
+      "╯",
+    ]);
+  });
+
+  it("gives a ring inside a cell less of radius", () => {
+    expect(corners({ borderRadius: radius(2) }, 2).inner).toEqual(["╭", "╮", "╰", "╯"]);
+    expect(corners({ borderRadius: radius(1) }, 2).inner).toEqual(["┌", "┐", "└", "┘"]);
+    expect(corners({ borderRadius: radius(1) }, 2).outer).toEqual(["╭", "╮", "╰", "╯"]);
+  });
+
+  it("draws a set's registration nearest the radius, ties to the larger, per corner", () => {
+    registerBorderGlyphs("test-corners", {
+      solid: { rounded: [{ radius: 3, tl: "◜", tr: "◝", bl: "◟" }] },
+    });
+    const glyphSet = "test-corners";
+    expect(corners({ borderRadius: radius(3), glyphSet }).outer).toEqual(["◜", "◝", "◟", "┘"]);
+    expect(corners({ borderRadius: radius(2), glyphSet }).outer).toEqual(["◜", "◝", "◟", "┘"]);
+    expect(corners({ borderRadius: radius(1), glyphSet }).outer).toEqual(["┌", "┐", "└", "┘"]);
+    expect(corners({ borderRadius: radius(Infinity), glyphSet }).outer).toEqual([
+      "◜",
+      "◝",
+      "◟",
+      "┘",
+    ]);
+  });
+});
+
 describe("border glyph sets", () => {
   it("defaults stay untouched with no set", () => {
     expect(box(null)).toMatch(/^┌─+┐/);

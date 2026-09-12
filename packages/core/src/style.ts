@@ -8,6 +8,7 @@ import type {
   Overflow,
   OverflowAxis,
   BorderStyle,
+  BoxShadow,
   CellLength,
   CellMetrics,
   CellStyle,
@@ -247,6 +248,12 @@ export function readCellStyle(
       bottom: mapBorderStyle(cs.borderBottomStyle),
       left: mapBorderStyle(cs.borderLeftStyle),
     },
+    borderRadius: {
+      tl: readRadius(cs.borderTopLeftRadius, rootFontSizePx),
+      tr: readRadius(cs.borderTopRightRadius, rootFontSizePx),
+      bl: readRadius(cs.borderBottomLeftRadius, rootFontSizePx),
+      br: readRadius(cs.borderBottomRightRadius, rootFontSizePx),
+    },
     overflow: readOverflow(cs),
     scrollbarWidth: readScrollbarWidth(el, cs),
     scrollbarColor: readScrollbarColor(cs.scrollbarColor),
@@ -280,6 +287,7 @@ export function readCellStyle(
     },
     opacity: readOpacity(cs.opacity),
     glyphSet: cs.getPropertyValue("--mw-border-glyphs").trim() || null,
+    boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
     latticeBorder: null,
     ruleX:
@@ -879,6 +887,76 @@ function authoredPercentInset(
     return signed(arbitrary[1]!, readSpacing(arbitrary[2]!.replaceAll("_", " "), rootFontSizePx));
   }
   return undefined;
+}
+
+/** The outer shadows of a computed `box-shadow` (specs/box-shadow.md):
+ * per comma-separated shadow, `x y blur spread` — px once computed, a
+ * bare `0` allowed — the offsets physical cells (a displacement: the
+ * measured cell, the spacing scale before a measurement, a nonzero one
+ * at least a cell), the blur unrounded and the spread on the spacing
+ * scale, and its color, the token that is no length; `inset` shadows
+ * dropped. */
+function readBoxShadow(
+  value: string,
+  rootFontSizePx: number,
+  metrics: CellMetrics | undefined,
+): BoxShadow[] {
+  if (!value || value === "none") return [];
+  const isLength = (token: string) => /^-?[\d.]+(?:e[+-]?\d+)?(?:px)?$/i.test(token);
+  const offset = (px: number, cellPx: number | undefined): number => {
+    if (px === 0) return 0;
+    const cells = cellPx ? Math.abs(px) / cellPx : Math.abs(pxToCells(px, rootFontSizePx));
+    return Math.sign(px) * Math.max(1, Math.round(cells));
+  };
+  const shadows: BoxShadow[] = [];
+  for (const part of splitCommas(value)) {
+    const tokens = splitTopLevel(part);
+    if (tokens.includes("inset")) continue;
+    const lengths = tokens.filter(isLength).map(parseFloat);
+    if (lengths.length < 2) continue;
+    const [x, y, blur = 0, spread = 0] = lengths;
+    shadows.push({
+      x: offset(x!, metrics?.width),
+      y: offset(y!, metrics?.height),
+      blur: blur / (0.25 * rootFontSizePx),
+      spread: pxToCells(spread, rootFontSizePx),
+      color: tokens.find((token) => !isLength(token)) ?? "currentcolor",
+    });
+  }
+  return shadows;
+}
+
+/** A value's comma-separated parts, commas inside parentheses kept. */
+function splitCommas(value: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "(") depth++;
+    else if (char === ")") depth--;
+    else if (char === "," && depth === 0) {
+      parts.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(value.slice(start));
+  return parts;
+}
+
+/** A corner's radius in cells on the spacing scale, unrounded — the
+ * nearest registered corner glyph draws it; a percentage is `Infinity`
+ * (the largest registration), an elliptical pair its smaller radius. */
+function readRadius(value: string, rootFontSizePx: number): number {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 0;
+  let radius = Infinity;
+  for (const part of parts) {
+    const amount = parseFloat(part);
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
+    radius = Math.min(radius, part.endsWith("%") ? Infinity : amount / (0.25 * rootFontSizePx));
+  }
+  return radius;
 }
 
 function mapBorderStyle(value: string): BorderStyle {

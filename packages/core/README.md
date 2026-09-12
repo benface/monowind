@@ -111,10 +111,48 @@ registerBorderGlyphs("stars", { solid: { tl: "✧", tr: "✧", bl: "✧", br: "�
 }
 ```
 
+A set can also register corner glyphs by `border-radius` — a corner
+draws the registration nearest its radius in cells, the plain corner
+counting at 0 (the defaults round light-line corners to `╭ ╮ ╰ ╯`
+from `rounded-xs` up) — and the shade ramp box shadows step through,
+densest first (default `█ ▓ ▒ ░`):
+
+```js
+registerBorderGlyphs("soft", {
+  solid: {
+    rounded: [{ radius: 2, tl: "◜", tr: "◝", bl: "◟", br: "◞" }],
+    shadow: ["▓", "▒", "░", "·"],
+  },
+});
+```
+
 Borders, blocks, and scrollbars tile in any font: where a font draws
 its box-drawing or block glyphs shorter than the row (Menlo and SF
 Mono do, and any font under a taller `leading-*`), the grid fits them
 to it, so rows never show a seam.
+
+## Shadows and rounded corners
+
+`shadow-*` paints a box's silhouette behind it in shade glyphs from
+the glyph set: offsets in whole cells (a `4px` offset is one cell, the
+classic DOS shadow), blur as rings that fade outward, spread in cells,
+a translucent color as a lighter shade leaning on the theme's
+foreground. Tailwind's presets are pixel recipes, and their blur and
+spread convert on the spacing scale (4px to a cell), so `shadow-2xl`
+is a six-ring halo. For presets tuned to the grid, redefine them in
+your Tailwind theme:
+
+```css
+@theme {
+  --shadow-sm: 4px 4px 0 0 rgb(0 0 0 / 0.1);
+  --shadow-md: 4px 4px 8px 0 rgb(0 0 0 / 0.1);
+  --shadow-lg: 4px 4px 16px 0 rgb(0 0 0 / 0.1);
+}
+```
+
+`rounded-*` picks the corner glyphs a set registers nearest the radius
+— the defaults' `╭ ╮ ╰ ╯` for light-line borders — while double
+borders stay square.
 
 ## Companion packages
 

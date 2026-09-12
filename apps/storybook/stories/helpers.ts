@@ -107,74 +107,86 @@ export async function expectBrowserRowsToMatchEngine(
 ): Promise<void> {
   const host = canvasElement.querySelector("mono-wind")!;
   const leaves = await textLeaves(host);
-  const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-  const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-  for (const el of leaves) {
-    const cells = (name: string) => Number(el.style.getPropertyValue(name));
-    const contentRows =
-      cells("--mw-h") - cells("--mw-bt") - cells("--mw-bb") - cells("--mw-pt") - cells("--mw-pb");
-    // N lines occupy N + (N − 1) × gap rows, with gap = rows per line − 1.
-    const rowsPerLine = cells("--mw-lh") || 1;
-    const engineLines = (contentRows + rowsPerLine - 1) / rowsPerLine;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    // Fragments on one line can differ slightly in top (an italic or bold
-    // fallback face has its own ascent), so count rows by the fragment's
-    // vertical centre rather than distinct tops.
-    const top = el.getBoundingClientRect().top;
-    const lines = new Set(
-      Array.from(range.getClientRects(), (r) =>
-        Math.floor((r.top + r.height / 2 - top) / cellHeight),
-      ),
-    );
-    if (allowStretchedLeaves) {
-      expect(lines.size, `"${el.textContent!.trim()}" lines`).toBeGreaterThan(0);
-      expect(lines.size, `"${el.textContent!.trim()}" lines`).toBeLessThanOrEqual(engineLines);
-    } else {
-      expect(lines.size, `"${el.textContent!.trim()}" lines`).toBe(engineLines);
-    }
-    // Horizontal agreement: the text must hug the element's content
-    // origin (left padding edge) — or the right edge for end-aligned
-    // text. Guards against the browser laying the text out relative to
-    // some OTHER box than the engine's — e.g. an absolutely positioned
-    // grid child's §10.1 grid-area containing block before styles.css
-    // neutralized grid placement.
-    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0);
-    if (rects.length > 0) {
-      const box = el.getBoundingClientRect();
-      const textAlign = getComputedStyle(el).textAlign;
-      const label = el.textContent!.trim();
-      if (/right|end/.test(textAlign)) {
-        const textRight = Math.max(...rects.map((r) => r.right));
-        const expectedRight =
-          box.left + (cells("--mw-w") - cells("--mw-br") - cells("--mw-pr")) * cellWidth;
-        expect(Math.abs(textRight - expectedRight), `"${label}" text end`).toBeLessThan(1.5);
-      } else if (/center/.test(textAlign)) {
-        // Engine centers at floor(leftover / 2) whole cells; the
-        // browser's own centering is fractional — they agree within
-        // half a cell (specs/cell-model.md "Text alignment").
-        const widest = rects.reduce((a, b) => (b.width > a.width ? b : a));
-        const contentCells =
-          cells("--mw-w") -
-          cells("--mw-bl") -
-          cells("--mw-br") -
-          cells("--mw-pl") -
-          cells("--mw-pr");
-        const lineCells = Math.round(widest.width / cellWidth);
-        const expectedLeft =
-          box.left +
-          (cells("--mw-bl") + cells("--mw-pl")) * cellWidth +
-          Math.floor(Math.max(0, contentCells - lineCells) / 2) * cellWidth;
-        expect(Math.abs(widest.left - expectedLeft), `"${label}" text center`).toBeLessThan(
-          cellWidth / 2 + 1.5,
+  // Retried: a late font load swaps the cell metrics and relays out a
+  // frame after `fonts.ready`; the browser's lines and the engine's rows
+  // agree once both have settled.
+  await waitFor(
+    () => {
+      const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+      const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+      for (const el of leaves) {
+        const cells = (name: string) => Number(el.style.getPropertyValue(name));
+        const contentRows =
+          cells("--mw-h") -
+          cells("--mw-bt") -
+          cells("--mw-bb") -
+          cells("--mw-pt") -
+          cells("--mw-pb");
+        // N lines occupy N + (N − 1) × gap rows, with gap = rows per line − 1.
+        const rowsPerLine = cells("--mw-lh") || 1;
+        const engineLines = (contentRows + rowsPerLine - 1) / rowsPerLine;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        // Fragments on one line can differ slightly in top (an italic or bold
+        // fallback face has its own ascent), so count rows by the fragment's
+        // vertical centre rather than distinct tops.
+        const top = el.getBoundingClientRect().top;
+        const lines = new Set(
+          Array.from(range.getClientRects(), (r) =>
+            Math.floor((r.top + r.height / 2 - top) / cellHeight),
+          ),
         );
-      } else {
-        const textLeft = Math.min(...rects.map((r) => r.left));
-        const expectedLeft = box.left + (cells("--mw-bl") + cells("--mw-pl")) * cellWidth;
-        expect(Math.abs(textLeft - expectedLeft), `"${label}" text start`).toBeLessThan(1.5);
+        if (allowStretchedLeaves) {
+          expect(lines.size, `"${el.textContent!.trim()}" lines`).toBeGreaterThan(0);
+          expect(lines.size, `"${el.textContent!.trim()}" lines`).toBeLessThanOrEqual(engineLines);
+        } else {
+          expect(lines.size, `"${el.textContent!.trim()}" lines`).toBe(engineLines);
+        }
+        // Horizontal agreement: the text must hug the element's content
+        // origin (left padding edge) — or the right edge for end-aligned
+        // text. Guards against the browser laying the text out relative to
+        // some OTHER box than the engine's — e.g. an absolutely positioned
+        // grid child's §10.1 grid-area containing block before styles.css
+        // neutralized grid placement.
+        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0);
+        if (rects.length > 0) {
+          const box = el.getBoundingClientRect();
+          const textAlign = getComputedStyle(el).textAlign;
+          const label = el.textContent!.trim();
+          if (/right|end/.test(textAlign)) {
+            const textRight = Math.max(...rects.map((r) => r.right));
+            const expectedRight =
+              box.left + (cells("--mw-w") - cells("--mw-br") - cells("--mw-pr")) * cellWidth;
+            expect(Math.abs(textRight - expectedRight), `"${label}" text end`).toBeLessThan(1.5);
+          } else if (/center/.test(textAlign)) {
+            // Engine centers at floor(leftover / 2) whole cells; the
+            // browser's own centering is fractional — they agree within
+            // half a cell (specs/cell-model.md "Text alignment").
+            const widest = rects.reduce((a, b) => (b.width > a.width ? b : a));
+            const contentCells =
+              cells("--mw-w") -
+              cells("--mw-bl") -
+              cells("--mw-br") -
+              cells("--mw-pl") -
+              cells("--mw-pr");
+            const lineCells = Math.round(widest.width / cellWidth);
+            const expectedLeft =
+              box.left +
+              (cells("--mw-bl") + cells("--mw-pl")) * cellWidth +
+              Math.floor(Math.max(0, contentCells - lineCells) / 2) * cellWidth;
+            expect(Math.abs(widest.left - expectedLeft), `"${label}" text center`).toBeLessThan(
+              cellWidth / 2 + 1.5,
+            );
+          } else {
+            const textLeft = Math.min(...rects.map((r) => r.left));
+            const expectedLeft = box.left + (cells("--mw-bl") + cells("--mw-pl")) * cellWidth;
+            expect(Math.abs(textLeft - expectedLeft), `"${label}" text start`).toBeLessThan(1.5);
+          }
+        }
       }
-    }
-  }
+    },
+    { timeout: 10_000 },
+  );
 }
 
 /** Assert the browser broke each leaf's lines at the exact character

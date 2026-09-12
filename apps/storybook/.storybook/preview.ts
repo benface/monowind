@@ -1,3 +1,4 @@
+import { html } from "lit";
 import { addons } from "storybook/preview-api";
 import { GLOBALS_UPDATED, STORY_RENDERED, UPDATE_GLOBALS } from "storybook/internal/core-events";
 import type { Preview } from "@storybook/web-components-vite";
@@ -8,14 +9,26 @@ import "./styles.css";
 
 defineMonoWind();
 
-// Canvas + text colors from Tailwind theme tokens (resolved in the preview
-// iframe, where the compiled theme's CSS variables exist). One tradeoff:
-// the toolbar's tiny color swatch renders in the manager UI, which doesn't
-// load the preview CSS, so the swatch chip appears blank there.
+// The backgrounds: light and dark from Tailwind theme tokens (resolved
+// in the preview iframe, where the compiled theme's CSS variables exist;
+// the manager's swatch chip stays blank for them), and the
+// @monowind/themes themes, each worn as a class around every story
+// (the decorator below) with its own canvas and text — a theme's colors
+// are its own, so light/dark has no say over it. Kept in step with the
+// theme files' `--mw-bg`/`--mw-fg`.
 const THEMES = {
-  light: { canvas: "var(--color-bg-light)", text: "var(--color-fg-light)" },
-  dark: { canvas: "var(--color-bg-dark)", text: "var(--color-fg-dark)" },
+  light: { canvas: "var(--color-bg-light)", text: "var(--color-fg-light)", dark: false },
+  dark: { canvas: "var(--color-bg-dark)", text: "var(--color-fg-dark)", dark: true },
+  dos: { canvas: "#000000", text: "#aaaaaa", dark: true },
+  "dos-blue": { canvas: "#0000aa", text: "#aaaaaa", dark: true },
+  c64: { canvas: "#40318d", text: "#7869c4", dark: true },
+  "green-phosphor": { canvas: "#000000", text: "#0adb53", dark: true },
+  amber: { canvas: "#000000", text: "#ffb000", dark: true },
+  teletype: { canvas: "#f5f1e6", text: "#20201c", dark: false },
+  bbs: { canvas: "#000000", text: "#aaaaaa", dark: true },
 } as const;
+type Background = keyof typeof THEMES;
+const isTheme = (name: Background): boolean => name !== "light" && name !== "dark";
 
 // Default the background toggle to the system theme (the toolbar toggle
 // still overrides it per-session).
@@ -23,20 +36,22 @@ const systemTheme = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matc
   ? "dark"
   : "light";
 
-// Theming beyond the addon's canvas paint: text color, `color-scheme`, and
-// the `.dark` class that drives the `dark:` variant and the canvas colors
-// (see styles.css).
-function applyTheme(background: unknown): void {
-  const name = background === "dark" ? "dark" : "light";
-  document.body.style.color = THEMES[name].text;
-  document.body.style.colorScheme = name;
-  document.documentElement.classList.toggle("dark", name === "dark");
-  // Engine-painted glyph colors are baked at layout time, and the theme
-  // flips outside the hosts' subtrees — nudge each host so its observer
-  // triggers a fresh layout (see the dynamic-style question in the
-  // architecture doc).
-  for (const host of document.querySelectorAll<HTMLElement>("mono-wind"))
-    host.style.setProperty("--sb-theme", name);
+// Theming beyond the addon's canvas paint: the canvas color (`--sb-canvas`,
+// read by styles.css), the text color, `color-scheme`, and the `.dark`
+// class that drives the `dark:` variant. The theme class itself comes
+// from the decorator, so a story's hosts connect themed and never lay
+// out in the default font first.
+const backgroundOf = (value: unknown): Background =>
+  typeof value === "string" && value in THEMES ? (value as Background) : "light";
+let background: Background = systemTheme;
+function applyTheme(value: unknown): void {
+  background = backgroundOf(value);
+  const theme = THEMES[background];
+  document.documentElement.style.setProperty("--sb-canvas", theme.canvas);
+  document.body.style.color = theme.text;
+  document.body.style.colorScheme = theme.dark ? "dark" : "light";
+  document.documentElement.classList.toggle("dark", theme.dark);
+  applyModes();
 }
 
 // A toolbar toggle only reaches decorators after Storybook re-renders the
@@ -47,20 +62,22 @@ addons.getChannel().on(UPDATE_GLOBALS, ({ globals }: { globals: Record<string, u
   const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
   if (value !== undefined) applyTheme(value);
 });
-// Boot: nothing emits an event for the initial value (the addon only
-// paints the canvas), so dark-system users otherwise start half-themed.
-applyTheme(systemTheme);
-
-// The select and focus toggles, via the channel like the theme (a
+// The select and focus toggles, via the channel like the background (a
 // decorator would also need a hook for re-applying after story
 // navigation). Start at the defaults to match initialGlobals (the boot
 // value emits no event).
-const modes: Record<string, string> = { select: "grid", focus: "tab" };
+const modes = { select: "grid", focus: "tab" };
 function applyModes(): void {
-  // Explicit both ways: a removed attribute reflects back to the
-  // default, so the other value must be written, not implied by absence.
-  for (const host of document.querySelectorAll("mono-wind")) {
-    for (const [name, value] of Object.entries(modes)) host.setAttribute(name, value);
+  for (const host of document.querySelectorAll<HTMLElement>("mono-wind")) {
+    // Explicit both ways: a removed attribute reflects back to the
+    // default, so the other value must be written, not implied by absence.
+    host.setAttribute("select", modes.select);
+    host.setAttribute("focus", modes.focus);
+    // Engine-painted glyph colors are baked at layout time, and a
+    // light/dark flip happens outside the hosts' subtrees — nudge each
+    // host so its observer triggers a fresh layout (see the
+    // dynamic-style question in the architecture doc).
+    host.style.setProperty("--sb-theme", background);
   }
 }
 // GLOBALS_UPDATED also covers values restored from the URL/session at
@@ -69,9 +86,10 @@ addons.getChannel().on(GLOBALS_UPDATED, ({ globals }: { globals: Record<string, 
   const value = (globals.backgrounds as { value?: unknown } | undefined)?.value;
   if (value !== undefined) applyTheme(value);
   let changed = false;
-  for (const name of Object.keys(modes)) {
-    if (typeof globals[name] === "string") {
-      modes[name] = globals[name];
+  for (const name of Object.keys(modes) as (keyof typeof modes)[]) {
+    const value = globals[name];
+    if (typeof value === "string") {
+      modes[name] = value;
       changed = true;
     }
   }
@@ -81,8 +99,20 @@ addons.getChannel().on(STORY_RENDERED, () => {
   // The event can precede the new canvas's paint; apply a frame later.
   requestAnimationFrame(applyModes);
 });
+// Boot: nothing emits an event for the initial value (the addon only
+// paints the canvas), so dark-system users otherwise start half-themed.
+applyTheme(systemTheme);
 
 const preview: Preview = {
+  // A theme wraps the story in its class (the @monowind/themes
+  // contract: `.theme-<name> mono-wind`), re-rendered when the
+  // background changes.
+  decorators: [
+    (story, context) => {
+      const name = backgroundOf((context.globals.backgrounds as { value?: unknown })?.value);
+      return html`<div class=${isTheme(name) ? `theme-${name}` : ""}>${story()}</div>`;
+    },
+  ],
   globalTypes: {
     select: {
       description: "Text selection: the whole cell grid (default) or element text",

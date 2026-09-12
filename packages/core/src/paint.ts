@@ -64,7 +64,14 @@ export function paintGrid(
 ): boolean {
   const glyphs = options.glyphs;
   const render: RenderOptions = {};
-  if (glyphs) render.boxed = (cluster, cells, paint) => glyphs.box(cluster, cells, paint) !== null;
+  // A translucent line or block glyph is boxed too: rows are separate
+  // spans, and its vertical overshoot — what joins rows at full opacity
+  // — would composite twice at the join (specs/cell-model.md "Opacity").
+  if (glyphs) {
+    render.boxed = (cluster, cells, paint) =>
+      glyphs.box(cluster, cells, paint) !== null ||
+      (paint?.opacity !== undefined && isLineGlyph(cluster));
+  }
   if (options.selection) render.selection = options.selection;
   const { segments: rows, cells } = renderGridRows(root, render);
   const signature = signatureOf(rows);
@@ -125,6 +132,12 @@ export function paintGrid(
   previous.cells = cells;
   if (saved) restoreSelection(target, saved);
   return true;
+}
+
+/** A box-drawing or block-element glyph (U+2500–U+259F). */
+function isLineGlyph(cluster: string): boolean {
+  const code = cluster.codePointAt(0) ?? 0;
+  return code >= 0x2500 && code <= 0x259f;
 }
 
 /** A row's nodes: bare text for unpainted runs, a span per painted one. */

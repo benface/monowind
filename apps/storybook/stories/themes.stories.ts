@@ -3,14 +3,16 @@ import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
- * @monowind/themes: class-scoped themes modeled on real systems —
+ * @monowind/themes, test-only (the Backgrounds toggle wears a theme on
+ * every story): class-scoped themes modeled on real systems —
  * palette (every Tailwind color token quantized to the system's),
  * period font, fg/bg, ANSI tokens, and era-correct border glyphs, all
  * from one CSS file per theme. Two hosts on one page can wear
  * different themes; no class means core defaults.
  */
 const meta: Meta = {
-  title: "Themes / Gallery",
+  title: "Test / Themes",
+  tags: ["!dev"],
 };
 export default meta;
 

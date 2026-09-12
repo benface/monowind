@@ -33,8 +33,10 @@ forms, and accessibility semantics stay fully intact.
 > junction glyphs), text wrap, floats (`float-*`/`clear-*`, text
 > wrapping beside them), margins, scrolling
 > (`overflow-auto`/`-scroll` scroll containers with native physics and engine-drawn
-> TUI scrollbars), and sticky positioning (`sticky` boxes, table
-> headers and columns included) work. The unified-render
+> TUI scrollbars), sticky positioning (`sticky` boxes, table
+> headers and columns included), rounded corners (`rounded-*` picks a
+> theme's corner glyphs), and box shadows (`shadow-*` as shade glyphs)
+> work. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and

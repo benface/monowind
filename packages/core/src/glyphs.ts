@@ -1,4 +1,4 @@
-import type { BorderStyle } from "./types.ts";
+import type { BorderStyle, CornerRole } from "./types.ts";
 
 /**
  * Border glyph sets (specs/theming.md): the rendering vocabulary
@@ -41,6 +41,24 @@ export interface GlyphTable {
   qrFull?: string;
   qrUpper?: string;
   qrLower?: string;
+  /** Shadow shades from a box's shadow core outward (specs/box-shadow.md);
+   * `█ ▓ ▒ ░` by default. */
+  shadow?: string[];
+  /** Corner glyphs by border radius (specs/cell-model.md "Borders:
+   * glyph mapping"): a corner draws the registration nearest its
+   * radius, the plain corner counting at 0. Registering `rounded`
+   * (even empty) or a plain corner replaces the defaults' arcs. */
+  rounded?: CornerBand[];
+}
+
+/** Corner glyphs registered for a radius, in cells; every corner
+ * optional. */
+export interface CornerBand {
+  radius: number;
+  tl?: string;
+  tr?: string;
+  bl?: string;
+  br?: string;
 }
 
 export type BorderGlyphSet = Partial<Record<BorderStyle, GlyphTable>>;
@@ -74,9 +92,46 @@ export function onGlyphRegistryChange(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+/** The defaults' arcs: the light-line styles round from half a cell. */
+const ARCS: CornerBand = { radius: 1, tl: "╭", tr: "╮", bl: "╰", br: "╯" };
+const DEFAULT_BANDS: Partial<Record<BorderStyle, CornerBand[]>> = {
+  solid: [ARCS],
+  dashed: [ARCS],
+  dotted: [ARCS],
+};
+
+/** A corner's glyph for its radius: the registration nearest it,
+ * ties to the larger radius — `plain` at 0, and the set's `rounded`
+ * bands, or the defaults' for a style the set leaves untouched. */
+export function cornerGlyph(
+  style: BorderStyle,
+  role: CornerRole,
+  radius: number,
+  plain: string,
+  set?: BorderGlyphSet,
+): string {
+  const table = set?.[style];
+  const bands = table?.rounded ?? (table?.[role] === undefined ? (DEFAULT_BANDS[style] ?? []) : []);
+  let best = { radius: 0, glyph: plain };
+  for (const band of bands) {
+    const glyph = band[role];
+    if (glyph === undefined) continue;
+    const gap = Math.abs(band.radius - radius);
+    const bestGap = Math.abs(best.radius - radius);
+    if (gap < bestGap || (gap === bestGap && band.radius > best.radius)) {
+      best = { radius: band.radius, glyph };
+    }
+  }
+  return best.glyph;
+}
+
+/** A table's glyph roles: every field but the corner bands and the
+ * shadow ramp. */
+export type GlyphRole = Exclude<keyof GlyphTable, "rounded" | "shadow">;
+
 /** The role a junction bitmask (up 8 / down 4 / left 2 / right 1)
  * plays — stubs (≤1 arm per axis alone) read as plain lines. */
-export function junctionRole(mask: number): keyof GlyphTable | null {
+export function junctionRole(mask: number): GlyphRole | null {
   switch (mask) {
     case 1:
     case 2:
@@ -180,7 +235,7 @@ registerBorderGlyphs("rounded", {
 // Teletype: 7-bit ASCII only. `double` keeps emphasis via `=`.
 const asciiTable: GlyphTable = { ...uniformTable("+"), h: "-", v: "|" };
 registerBorderGlyphs("ascii", {
-  solid: { ...asciiTable, scrollTrack: "|", scrollThumb: "#" },
+  solid: { ...asciiTable, scrollTrack: "|", scrollThumb: "#", shadow: ["#", "+", ":", "."] },
   double: { ...asciiTable, h: "=" },
   dashed: asciiTable,
   dotted: { ...asciiTable, h: ".", v: ":" },
@@ -189,8 +244,11 @@ registerBorderGlyphs("ascii", {
 const lightTable = tableFrom(LIGHT_JUNCTIONS);
 
 // DEC/VT-style terminals drew one line style only: double, dashed,
-// and dotted all downgrade to solid light lines.
+// and dotted all downgrade to solid light lines — and no arcs, so
+// corners stay square at any radius (the VGA font the amber and
+// phosphor themes pair it with has none either).
 registerBorderGlyphs("single", {
+  solid: { rounded: [] },
   double: lightTable,
   dashed: lightTable,
   dotted: lightTable,
@@ -198,8 +256,16 @@ registerBorderGlyphs("single", {
 
 // CP437 hardware: double survives, but the dashed/dotted line glyphs
 // don't exist in the codepage (bitmap fonts lack them — a fallback
-// font would break the grid), so they downgrade to solid.
-registerBorderGlyphs("cp437", { dashed: lightTable, dotted: lightTable });
+// font would break the grid), so they downgrade to solid; the arcs are
+// missing too, so corners stay square at any radius.
+registerBorderGlyphs("cp437", { solid: { rounded: [] }, dashed: lightTable, dotted: lightTable });
+
+/** The shade ramp of a box's shadows through the owner's set — a
+ * solid-table role, core outward (specs/box-shadow.md). */
+export function shadowRamp(set: BorderGlyphSet | undefined): string[] {
+  const ramp = set?.solid?.shadow;
+  return ramp && ramp.length > 0 ? ramp : ["\u2588", "\u2593", "\u2592", "\u2591"];
+}
 
 /** Gutter ink through the owner's set — solid-table roles, defaults
  * `░` / `█` (specs/scrolling.md). */

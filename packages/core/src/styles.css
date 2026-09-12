@@ -372,6 +372,9 @@ mono-wind:not([measuring]) * {
    * bg-* and focus-invert both make it into the grid paint. */
   background-color: transparent !important;
   text-shadow: none !important;
+  /* Shadows paint in the grid as shades (specs/box-shadow.md), read
+   * during [measuring] like backgrounds. */
+  box-shadow: none !important;
   /* Inline-element horizontal padding, quantized: the engine writes
    * `--mw-ipl`/`--mw-ipr` (whole cells) on inline elements whose authored
    * padding it reserved in the run; everything else gets 0, so raw

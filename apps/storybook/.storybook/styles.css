@@ -20,25 +20,23 @@
   --color-fg-dark: var(--color-neutral-50);
 }
 
-/* Own the canvas colors, keyed off `.dark`. The backgrounds addon paints
- * the same colors, but only after Storybook re-renders the story (~100ms
- * behind the toolbar) and with a hardcoded 0.3s fade; these rules out-rank
- * its injected `.sb-show-main` rule (via `body.`) so the switch is
- * instant, in step with the theme applied in preview.ts. */
+/* Own the canvas color, from `--sb-canvas` as preview.ts sets it per
+ * background (a theme's own canvas included). The backgrounds addon
+ * paints the same colors, but only after Storybook re-renders the story
+ * (~100ms behind the toolbar) and with a hardcoded 0.3s fade; this rule
+ * out-ranks its injected `.sb-show-main` rule (via `body.`) so the
+ * switch is instant, in step with the theme applied in preview.ts. */
 body.sb-show-main,
 .docs-story {
-  background: var(--color-bg-light) !important;
+  background: var(--sb-canvas, var(--color-bg-light)) !important;
   transition: none !important;
 }
-html.dark body.sb-show-main,
-html.dark .docs-story {
-  background: var(--color-bg-dark) !important;
-}
 
-/* Preview default font — themed hosts keep their theme's period
- * font (a theme's base-layer font-family would lose to this
- * unlayered rule, correctly: user CSS beats themes). */
-mono-wind:where(:not([class*="theme-"])) {
+/* Preview default font — themed hosts (a theme class on the host or,
+ * the Backgrounds toggle's way, on a wrapper) keep their theme's period
+ * font (a theme's base-layer font-family would lose to this unlayered
+ * rule, correctly: user CSS beats themes). */
+mono-wind:where(:not([class*="theme-"], [class*="theme-"] *)) {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 mono-wind {

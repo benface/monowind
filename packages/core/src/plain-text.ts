@@ -1,4 +1,4 @@
-import { collectBorderRuns, paintOrderedChildren } from "./borders.ts";
+import { collectBorderRuns, collectShadowRuns, paintOrderedChildren } from "./borders.ts";
 import { resolveLattice } from "./lattice.ts";
 import type { BorderRun } from "./borders.ts";
 import { leafLineGeometry } from "./layout.ts";
@@ -275,6 +275,24 @@ function walk(
   // glyphs must stay in the grid for select="grid" selection.
   const alphaPaint = (paint: CellPaint | undefined): CellPaint | undefined =>
     alpha >= 1 ? paint : { ...paint, opacity: String(Math.round(alpha * 1000) / 1000) };
+
+  // Outer shadows first (specs/box-shadow.md): behind the box, over
+  // what painted before it, in the shadow's color on the cells' own
+  // backgrounds.
+  const shadowRuns: BorderRun[] = [];
+  collectShadowRuns(
+    style,
+    { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height },
+    shadowRuns,
+  );
+  for (const run of shadowRuns) {
+    put(
+      run.x,
+      run.y,
+      run.glyph,
+      alphaPaint(run.color === undefined ? undefined : { color: run.color }),
+    );
+  }
 
   // Fill the border-box with painted spaces so this element's bg
   // wipes ancestor decoration glyphs at these cells; own borders /

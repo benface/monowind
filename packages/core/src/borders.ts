@@ -1,4 +1,11 @@
-import { DOUBLE_JUNCTIONS, LIGHT_JUNCTIONS, glyphSetFor, junctionRole } from "./glyphs.ts";
+import {
+  DOUBLE_JUNCTIONS,
+  LIGHT_JUNCTIONS,
+  cornerGlyph,
+  glyphSetFor,
+  junctionRole,
+  shadowRamp,
+} from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type {
   RuleBreak,
@@ -6,6 +13,7 @@ import type {
   BorderRun,
   BorderStyle,
   CellStyle,
+  CornerRole,
   GapRule,
   Insets,
   LayoutNode,
@@ -59,10 +67,18 @@ export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[])
       height: box.height - (sides.top ? ring : 0) - (sides.bottom ? ring : 0),
     };
     if (ringRect.width <= 0 || ringRect.height <= 0) continue;
+    // A ring inside loses a cell of radius, as CSS's inner edge does.
+    const radii = {
+      tl: Math.max(0, style.borderRadius.tl - ring),
+      tr: Math.max(0, style.borderRadius.tr - ring),
+      bl: Math.max(0, style.borderRadius.bl - ring),
+      br: Math.max(0, style.borderRadius.br - ring),
+    };
     paintRing(
       out,
       style.borderStyle,
       style.borderColor,
+      radii,
       ringRect,
       sides,
       glyphSetFor(style.glyphSet),
@@ -71,17 +87,84 @@ export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[])
 }
 
 /**
+ * Emit a box's outer shadows (specs/box-shadow.md): each the border box
+ * moved by its offsets and grown by its spread, blurred into
+ * `round(blur / 2)` rings of the owner's shade ramp fading outward,
+ * the cells under the box left out — the last declared first, so the
+ * first paints on top.
+ */
+export function collectShadowRuns(style: CellStyle, box: Rect, out: BorderRun[]): void {
+  if (style.boxShadow.length === 0) return;
+  const ramp = shadowRamp(glyphSetFor(style.glyphSet));
+  const last = ramp.length - 1;
+  for (const shadow of style.boxShadow.slice().reverse()) {
+    // A translucent color: its alpha picks the base shade (a tenth is
+    // the second-lightest, leaving blur room to fade), and the ink leans
+    // on the theme's foreground by the rest — Tailwind's default, black
+    // at a tenth, is the text's shade on any theme.
+    const alpha = colorAlpha(shadow.color);
+    if (alpha === 0) continue;
+    const base = Math.round((1 - Math.sqrt(alpha)) * last);
+    const color =
+      alpha < 1
+        ? `color-mix(in srgb, ${shadow.color} ${Math.round(alpha * 100)}%, var(--mw-fg, canvastext))`
+        : shadow.color;
+    const rings = Math.max(0, Math.round(shadow.blur / 2));
+    // The rings fade from the base to the lightest glyph at the edge, and
+    // in ink toward transparent — a level per ring, the core the last.
+    const levels = Array.from({ length: rings + 1 }, (_, depth) => {
+      if (depth === rings) return { glyph: ramp[base]!, color };
+      const index = base + Math.round(((rings - depth) * (last - base)) / rings);
+      const fade = Math.round((100 * (depth + 1)) / (rings + 1));
+      return { glyph: ramp[index]!, color: `color-mix(in srgb, ${color} ${fade}%, transparent)` };
+    });
+    const grow = shadow.spread + rings;
+    const x0 = box.x + shadow.x - grow;
+    const y0 = box.y + shadow.y - grow;
+    const x1 = box.x + shadow.x + box.width + grow;
+    const y1 = box.y + shadow.y + box.height + grow;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const under = x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height;
+        if (under) continue;
+        const depth = Math.min(x - x0, x1 - 1 - x, y - y0, y1 - 1 - y, rings);
+        out.push({ ...levels[depth]!, x, y, length: 1 });
+      }
+    }
+  }
+}
+
+/** A computed color's alpha: a modern function's `/ a`, the fourth
+ * component of `rgba()`/`hsla()`, `transparent` 0, anything else 1. */
+function colorAlpha(color: string): number {
+  const value = color.trim().toLowerCase();
+  if (value === "transparent") return 0;
+  const part = (text: string): number => {
+    const amount = parseFloat(text);
+    if (!Number.isFinite(amount)) return 1;
+    return Math.min(1, Math.max(0, text.trim().endsWith("%") ? amount / 100 : amount));
+  };
+  const slash = /\/\s*([\d.]+%?)\s*\)$/.exec(value);
+  if (slash) return part(slash[1]!);
+  const legacy = /^(?:rgba|hsla)\(([^)]*)\)$/.exec(value);
+  if (!legacy) return 1;
+  const components = legacy[1]!.split(",");
+  return components.length === 4 ? part(components[3]!) : 1;
+}
+
+/**
  * Paint one ring, honoring per-side styles and colors. Each edge uses its
  * own style's glyphs. A corner where both adjacent edges share a style uses
  * that style's corner glyph; mixed-style corners fall back to the light
  * corners (Unicode has no mixed junction glyphs for most pairs — same
  * convention as dashed/dotted). Corner color comes from the horizontal
- * (top/bottom) edge.
+ * (top/bottom) edge. A corner's radius picks its glyph (cornerGlyph).
  */
 function paintRing(
   out: BorderRun[],
   styles: PerSide<BorderStyle>,
   colors: PerSide<string | undefined>,
+  radii: Record<CornerRole, number>,
   rect: Rect,
   sides: RingSides,
   set?: BorderGlyphSet,
@@ -90,8 +173,10 @@ function paintRing(
   const right = borderGlyphs(styles.right, set);
   const bottom = borderGlyphs(styles.bottom, set);
   const left = borderGlyphs(styles.left, set);
-  const corner = (a: BorderStyle, b: BorderStyle, pick: (g: Glyphs) => string): string =>
-    a === b ? pick(borderGlyphs(a, set)) : pick(borderGlyphs("solid", set));
+  const corner = (a: BorderStyle, b: BorderStyle, role: CornerRole): string => {
+    const style = a === b ? a : "solid";
+    return cornerGlyph(style, role, radii[role], borderGlyphs(style, set)[role], set);
+  };
   const { x, y, width, height } = rect;
   const hasCorners = width >= 2 && height >= 2;
   const interiorStartX = x + (sides.left ? 1 : 0);
@@ -131,7 +216,7 @@ function paintRing(
   if (hasCorners) {
     if (sides.top && sides.left)
       out.push({
-        glyph: corner(styles.top, styles.left, (g) => g.tl),
+        glyph: corner(styles.top, styles.left, "tl"),
         x,
         y,
         length: 1,
@@ -139,7 +224,7 @@ function paintRing(
       });
     if (sides.top && sides.right)
       out.push({
-        glyph: corner(styles.top, styles.right, (g) => g.tr),
+        glyph: corner(styles.top, styles.right, "tr"),
         x: x + width - 1,
         y,
         length: 1,
@@ -147,7 +232,7 @@ function paintRing(
       });
     if (sides.bottom && sides.left)
       out.push({
-        glyph: corner(styles.bottom, styles.left, (g) => g.bl),
+        glyph: corner(styles.bottom, styles.left, "bl"),
         x,
         y: y + height - 1,
         length: 1,
@@ -155,7 +240,7 @@ function paintRing(
       });
     if (sides.bottom && sides.right)
       out.push({
-        glyph: corner(styles.bottom, styles.right, (g) => g.br),
+        glyph: corner(styles.bottom, styles.right, "br"),
         x: x + width - 1,
         y: y + height - 1,
         length: 1,

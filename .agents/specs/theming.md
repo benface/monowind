@@ -60,8 +60,16 @@ truth.
 - Set shape: per-STYLE tables of named ROLES (`h`, `v`, `tl/tr/bl/br`,
   `teeUp/teeDown/teeLeft/teeRight`, `cross`) — `registerBorderGlyphs`
   in core's glyphs.ts; junction bitmasks map to roles (stub masks read
-  as lines). Built-in roster: `default`, `rounded` (solid corners →
-  arcs), `ascii` (7-bit; double as `+=+`, dotted as `.`/`:`),
+  as lines). A table's `rounded` lists corner BANDS, `{ radius, tl?,
+tr?, bl?, br? }` in cells: a corner draws the registration nearest
+  its `border-radius` (`cell-model.md` "Borders: glyph mapping"), the
+  plain corner counting at 0 — a set registering `rounded` (even
+  empty) or a plain corner for a style replaces the defaults' arcs
+  there, so `ascii`, `blocks`, and `rounded` keep their corners at any
+  radius and `cp437` and `single` stay square (no arcs in the codepage,
+  nor on one-line-style hardware). Built-in
+  roster: `default`, `rounded` (solid corners → arcs), `ascii` (7-bit;
+  double as `+=+`, dotted as `.`/`:`),
   `single` (double/dashed/dotted all downgrade to light — DEC-style
   one-line-style hardware), `blocks` (uniform CP437 blocks per role;
   styles map to shade density — solid/double `█`, dashed `▒`, dotted
@@ -70,7 +78,9 @@ truth.
   break the bitmap grid).
 - Glyph tables also carry the scrollbar roles `scrollTrack` /
   `scrollThumb` (defaults `░` / `█`; `ascii` maps `|` / `#`) —
-  specs/scrolling.md.
+  specs/scrolling.md — and the `shadow` ramp, shades from a box's
+  shadow core outward (default `█ ▓ ▒ ░`; `ascii` `# + : .`) —
+  specs/box-shadow.md.
 - ANSI defaults live in core's companion (`mono-wind` base block);
   `@monowind/ascii` no longer ships duplicates.
 - Authoring sugar shipped: `borders-default/rounded/ascii/single/blocks/cp437`

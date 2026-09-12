@@ -395,8 +395,17 @@ dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
 
 - Unicode has no dashed/dotted corners or junctions; solid-light stands in
   (standard TUI convention).
-- `border-radius > 0` maps corners to arcs `╭ ╮ ╰ ╯` (light-line only, so
-  applies to solid/dashed/dotted; double/heavy ignore radius).
+- `border-radius` picks each corner's glyph: a corner's radius, in cells
+  on the spacing scale (unrounded; a percentage counts as infinite, an
+  elliptical pair as its smaller radius), selects the corner glyph the
+  owner's glyph set registers NEAREST it, ties to the larger radius —
+  the plain corner is the registration at 0, and the defaults register
+  the arcs `╭ ╮ ╰ ╯` at one cell for the light-line styles (solid,
+  dashed, dotted), so `rounded-xs` (half a cell) and up round and
+  `rounded-[1px]` stays square; double has no arcs. A ring inside loses
+  a cell of radius, as CSS's inner edge does (`border-2 rounded` rounds
+  the outer ring only). A set registers its own bands per style
+  (`theming.md`); a collapsed lattice ignores radius, as CSS does.
 - Heavy has no CSS `border-style` keyword (`double` claims `═`); exposure is
   TBD — likely a monowind-specific opt-in (e.g. an owned custom property).
 - Mixed-style junctions (light meets double: `╞ ╤ ╧ ╡` exist; light meets
@@ -450,7 +459,24 @@ a cell outright, as always); opacity on INLINE elements (a `<span>`)
 is ignored — only block-level boxes carry it. `opacity: 0` still
 paints its glyphs — invisible but present, so `select="grid"`
 selection keeps working (unlike `invisible`). The light DOM keeps the
-authored opacity natively, so form-control ink dims in step.
+authored opacity natively, so form-control ink dims in step. A
+translucent box-drawing or block glyph is boxed to its cell (the
+tiling fit's inline-block clip): rows are separate spans, and the
+glyph's vertical overshoot, which joins rows seamlessly at full
+opacity, would composite twice at every join below it and darken the
+line there.
+
+## Outlines
+
+`outline` is native, an escape hatch: the browser draws it around the
+element's engine-sized box, above the grid, in its own px (`outline-2`
+is two pixels, `outline-offset-*` likewise) — it is never quantized to
+cells and never painted on the grid. Nothing locks it: the companion's
+focus invert sets `outline: none` at a specificity a
+`focus-visible:outline-*` utility outranks, so an author's focus ring
+draws together with the invert, and a static `outline-*` draws as
+authored. Verified in three engines (`keyboard.spec.ts`: the focused
+control's ring).
 
 ## Animation
 

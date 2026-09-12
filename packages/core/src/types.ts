@@ -116,6 +116,18 @@ export type CellLength = number | { percent: number; cells?: number };
  * width limits and behave as "no constraint" on height limits (content
  * height already is the intrinsic height). */
 export type SizeLimit = CellLength | "min-content" | "max-content" | "fit-content";
+/** A box's corners, top-left through bottom-right. */
+export type CornerRole = "tl" | "tr" | "bl" | "br";
+
+/** One outer `box-shadow` (specs/box-shadow.md): offsets and spread in
+ * cells, the blur in cells unrounded, the color as computed. */
+export interface BoxShadow {
+  x: number;
+  y: number;
+  blur: number;
+  spread: number;
+  color: string;
+}
 export type TextOverflow = "clip" | "ellipsis";
 
 /** One bound of a grid track size (specs/grid.md). `fr` is only valid as a
@@ -411,6 +423,10 @@ export interface CellStyle {
   border: Insets;
   borderStyle: PerSide<BorderStyle>;
   borderColor: PerSide<string | undefined>;
+  /** Each corner's radius in cells, unrounded — the corner glyph
+   * registered nearest it draws (specs/cell-model.md "Borders: glyph
+   * mapping"); `Infinity` for a percentage. */
+  borderRadius: Record<CornerRole, number>;
   overflow: Overflow;
   /** `scrollbar-width: none` suppresses the gutter and bar entirely;
    * `thin` and `auto` both defer to `scrollbarSize`
@@ -502,6 +518,8 @@ export interface CellStyle {
    * default) — the theming vocabulary borders/lattices/rules resolve
    * through (specs/theming.md); resolved on the decoration's owner. */
   glyphSet: string | null;
+  /** Outer shadows as declared, first on top (specs/box-shadow.md). */
+  boxShadow: BoxShadow[];
   /** Authored `z-index` (`null` = auto). Browser stacking is native;
    * the renderers walk children in this order (stable, document-order
    * ties) so decorations and plain text agree with it at overlaps. */
@@ -809,6 +827,7 @@ export function defaultCellStyle(): CellStyle {
     gapY: 0,
     border: zeroInsets(),
     borderStyle: { top: "solid", right: "solid", bottom: "solid", left: "solid" },
+    borderRadius: { tl: 0, tr: 0, bl: 0, br: 0 },
     overflow: { x: "visible", y: "visible" },
     scrollbarWidth: "auto",
     scrollbarSize: { x: 1, y: 1 },
@@ -838,6 +857,7 @@ export function defaultCellStyle(): CellStyle {
     captionSide: "top",
     verticalAlign: "start",
     glyphSet: null,
+    boxShadow: [],
     opacity: 1,
     zIndex: null,
     latticeBorder: null,
