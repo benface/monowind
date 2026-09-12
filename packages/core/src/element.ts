@@ -731,13 +731,12 @@ export class MonoWindElement extends HTMLElementBase {
     this.#settleAfter(target, SETTLE_QUIESCE_MS);
   };
 
-  /** Snap the native position to the cell the grid already SHOWS
-   * (the same quantization as the paint) — never a different cell,
-   * or the grid would visibly jump after the gesture. Idempotent: its
-   * own scroll event changes no cell. The max cell settles on the
-   * native CEILING, not the multiple: leftover native room would
-   * latch the next text-mode gesture to an invisible scroll instead
-   * of chaining. */
+  /** Snap the native position to the cell the grid shows for it (the
+   * paint's own quantization, so the grid never jumps after the
+   * gesture). Idempotent: its own scroll event changes no cell. The
+   * max cell settles on the native CEILING, not the multiple: leftover
+   * native room would latch the next text-mode gesture to an invisible
+   * scroll instead of chaining. */
   #settle(el: HTMLElement): void {
     if (this.#thumbDrag?.el === el) return; // release settles
     // Repaint unconditionally: scroll events can coalesce away under
@@ -748,8 +747,9 @@ export class MonoWindElement extends HTMLElementBase {
     const node = this.#scrollNodes.find((candidate) => candidate.source === el);
     if (!metrics || !node) return;
     const range = node.scrollRange!;
-    // The painted cell: the settle lands where the grid already is.
-    const cells = node.scroll ?? this.#quantize(node, metrics);
+    // Quantized from the live position: a scroll since the last paint
+    // (its event still to come) settles on its own cell.
+    const cells = this.#quantize(node, metrics);
     const top =
       cells.y === range.maxY ? el.scrollHeight - el.clientHeight : cells.y * metrics.height;
     const left = cells.x === range.maxX ? el.scrollWidth - el.clientWidth : cells.x * metrics.width;

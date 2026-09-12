@@ -60,12 +60,15 @@ truth.
   gone quiet (`scrollend` plus a short debounce — a held key fires
   scrollend after every step, and an instant settle would cut the next
   step's animation short) the engine snaps the native position to the
-  cell the grid already shows — never a different cell, or the grid
-  would jump after the gesture (the max cell settles on the ceiling) —
-  restoring exact overlay alignment (selection and hit-testing read
-  the settled state). The snap is idempotent — its scroll event
-  changes no cell and the follow-up settle no-ops. No CSS scroll-snap
-  — content has no per-row snap targets.
+  cell the grid shows for it — the paint's own quantization from the
+  live position, so it is the shown cell, never a different one (the
+  grid would jump after the gesture; the max cell settles on the
+  ceiling), and a scroll since the last paint, its event still to
+  come, settles on its own cell rather than the old one — restoring
+  exact overlay alignment (selection and hit-testing read the settled
+  state). The snap is idempotent — its scroll event changes no cell
+  and the follow-up settle no-ops. No CSS scroll-snap — content has no
+  per-row snap targets.
 - **Mode-independent scrolling.** In `select="text"` the native path
   just works (the light DOM has pointer events). In `select="grid"`
   light elements are pointer-inert and wheel events land on the grid,

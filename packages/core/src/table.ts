@@ -1,7 +1,6 @@
 import { STYLE_RANK } from "./lattice.ts";
 import { scrollGutter } from "./types.ts";
 import { glyphSetFor } from "./glyphs.ts";
-import type { BorderGlyphSet } from "./glyphs.ts";
 import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
@@ -15,14 +14,7 @@ import {
   resolveSizeAgainst,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import type {
-  BorderStyle,
-  Insets,
-  LatticeBorder,
-  LatticeSegment,
-  LayoutNode,
-  TableLattice,
-} from "./types.ts";
+import type { Insets, LatticeBorder, LatticeSegment, LayoutNode, TableLattice } from "./types.ts";
 
 /**
  * Table layout (specs/table.md): CSS 2.1 §17 adapted to integer cells.

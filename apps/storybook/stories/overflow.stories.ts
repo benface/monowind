@@ -560,6 +560,19 @@ export const ScrollMirroring: StoryObj = {
       },
       { timeout: 10_000 },
     );
+    // A settle armed by a scroll's end can fire after a newer scroll
+    // but before its event and paint: it settles that scroll on its
+    // own cell. The newer scroll is queued on the settle's own delay
+    // (the engine's 100 ms quiesce), so the settle runs right after it.
+    setTimeout(() => (box.scrollTop = cellHeight * 4), 100);
+    box.dispatchEvent(new Event("scrollend"));
+    await waitFor(
+      () => {
+        expect(grid.textContent).toContain("line 05");
+        expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
+      },
+      { timeout: 10_000 },
+    );
     box.scrollTop = 0;
   },
 };
