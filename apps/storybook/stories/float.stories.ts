@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { dragTo, pressAt, readyHost, release } from "./helpers.ts";
+import { dragTo, pressAt, readyGrid, release } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Float",
@@ -13,88 +13,6 @@ export default meta;
  * so every line's native glyphs sit on the grid's cells — checked
  * character by character in three engines by each story below.
  */
-
-interface Cell {
-  row: number;
-  col: number;
-}
-/** A native line of an element's text: its row and its glyphs' columns. */
-interface Line extends Cell {
-  max: number;
-}
-
-/** The story's host once ready, with its readers: an element's engine
- * cells (`--mw-*`), and `measure` — the grid and its geometry, read
- * fresh each call, since a late font load swaps the cell metrics and
- * relays out a frame after `fonts.ready`; a comparison wrapped in
- * `waitFor` retries until both sides settle. */
-async function setUp(canvasElement: HTMLElement) {
-  const host = await readyHost(canvasElement);
-  const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
-  const grid = host.shadowRoot!.getElementById("grid")!;
-  const cells = (el: HTMLElement, name: string) => Number(el.style.getPropertyValue(name));
-  const measure = () => {
-    const rows = grid.textContent!.split("\n");
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-    const gridRect = grid.getBoundingClientRect();
-    const cellOf = (rect: DOMRect): Cell => ({
-      row: Math.floor((rect.top + rect.height / 2 - gridRect.top) / cellHeight),
-      col: Math.round((rect.left - gridRect.left) / cellWidth),
-    });
-    // An element box's top-left cell (a glyph rect reads by its middle).
-    const boxOf = (el: HTMLElement): Cell => {
-      const rect = el.getBoundingClientRect();
-      return {
-        row: Math.round((rect.top - gridRect.top) / cellHeight),
-        col: Math.round((rect.left - gridRect.left) / cellWidth),
-      };
-    };
-    const cellAt = (col: number, row: number) => ({
-      x: gridRect.left + (col + 0.5) * cellWidth,
-      y: gridRect.top + (row + 0.5) * cellHeight,
-    });
-    // The browser's lines of an element's text, character by character:
-    // each glyph's rect picks its row and column, and the grid must show
-    // the same characters on those cells.
-    const expectNativeOnGrid = (el: HTMLElement): Line[] => {
-      const byRow = new Map<number, { min: number; max: number; text: string }>();
-      const range = document.createRange();
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const data = (node as Text).data;
-        for (let i = 0; i < data.length; i++) {
-          if (/[ \t\r\n\f]/.test(data[i]!)) continue;
-          range.setStart(node, i);
-          range.setEnd(node, i + 1);
-          const { row, col } = cellOf(range.getBoundingClientRect());
-          const line = byRow.get(row) ?? { min: col, max: col, text: "" };
-          line.min = Math.min(line.min, col);
-          line.max = Math.max(line.max, col);
-          line.text += data[i];
-          byRow.set(row, line);
-        }
-      }
-      expect(byRow.size).toBeGreaterThan(0);
-      for (const [row, line] of byRow) {
-        expect(rows[row]!.slice(line.min, line.max + 1).replaceAll(" ", "")).toBe(line.text);
-      }
-      return [...byRow]
-        .map(([row, line]) => ({ row, col: line.min, max: line.max }))
-        .sort((a, b) => a.row - b.row);
-    };
-    return { rows, cellOf, boxOf, cellAt, expectNativeOnGrid };
-  };
-  return {
-    host,
-    by,
-    cells,
-    width: (el: HTMLElement) => cells(el, "--mw-w"),
-    height: (el: HTMLElement) => cells(el, "--mw-h"),
-    measure,
-  };
-}
-
 /**
  * A drop cap — a `<mono-ascii>` floated left — the paragraph wraps
  * around: its lines start past the cap's margin box, then at the
@@ -124,7 +42,7 @@ export const DropCap: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { host, by, cells, width, height, measure } = await setUp(canvasElement);
+    const { host, by, cells, width, height, measure } = await readyGrid(canvasElement);
     const [cap, first] = [by("cap"), by("first")];
     expect(cap).toHaveAttribute("data-mw-float", "left");
     expect(first).toHaveAttribute("data-mw-flow", "text");
@@ -224,7 +142,7 @@ export const PullQuote: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { by, width, height, measure } = await setUp(canvasElement);
+    const { by, width, height, measure } = await readyGrid(canvasElement);
     const [aside, quote, stamp1, prose, under, stamp2] = [
       by("aside"),
       by("quote"),
@@ -309,7 +227,7 @@ export const MultipleFloats: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { by, cells, width, height, measure } = await setUp(canvasElement);
+    const { by, cells, width, height, measure } = await readyGrid(canvasElement);
     const names = ["one", "two", "three", "four", "five", "six"];
     const tiles = names.map(by);
     const rightTiles = names.map((name) => by(`${name}-right`));
@@ -424,7 +342,7 @@ export const Clear: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { by, width, height, measure } = await setUp(canvasElement);
+    const { by, width, height, measure } = await readyGrid(canvasElement);
     const box = by("box");
     await waitFor(
       () => {

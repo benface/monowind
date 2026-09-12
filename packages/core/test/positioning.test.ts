@@ -40,14 +40,14 @@ describe("positioning (specs/positioning.md)", () => {
     expect(b.localRect.y).toBe(2); // flow y 1 + top 1 (bottom ignored)
   });
 
-  it("sticky behaves as relative for now", () => {
+  it("a sticky box's insets offset nothing at rest (specs/sticky.md)", () => {
     const item = makeNode({
       text: "s",
       style: { position: "sticky", insets: { top: 1, right: null, bottom: null, left: null } },
     });
     const root = makeNode({ children: [item] });
     layoutRoot(root, 10);
-    expect(item.localRect.y).toBe(1);
+    expect(item.localRect.y).toBe(0);
   });
 
   it("absolute is out of flow and positions against the nearest positioned ancestor", () => {

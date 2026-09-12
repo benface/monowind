@@ -49,8 +49,8 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
     let hit: LayoutNode | null = null;
     for (const child of paintOrderedChildren(node)) {
       if (child.tableHidden) continue;
-      const cx = x + child.localRect.x;
-      const cy = y + child.localRect.y;
+      const cx = x + child.localRect.x + (child.stickyShift?.x ?? 0);
+      const cy = y + child.localRect.y + (child.stickyShift?.y ?? 0);
       // A paragraph-flow multicol child shares the container's box with
       // its siblings; its ink is where its line fragments are.
       const inside = child.multicolFlow
@@ -59,8 +59,8 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
       if (inside) hit = child;
     }
     if (!hit) return stack;
-    const hx = x + hit.localRect.x;
-    const hy = y + hit.localRect.y;
+    const hx = x + hit.localRect.x + (hit.stickyShift?.x ?? 0);
+    const hy = y + hit.localRect.y + (hit.stickyShift?.y ?? 0);
     stack.push({ node: hit, x: hx, y: hy });
     const clip = clipBounds(hit, hx, hy);
     if (clip && (col < clip.x0 || col >= clip.x1 || row < clip.y0 || row >= clip.y1)) return stack;

@@ -702,7 +702,8 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
         tracking: childTracking,
         padLeft,
         padRight,
-        insets: cs.position === "static" ? null : inlineInsets(cs, ctx.rootFontSizePx),
+        insets: cs.position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
+        ...(cs.position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
         color: cs.color,
         backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
         fontWeight: cs.fontWeight,
@@ -738,8 +739,9 @@ function inlinePadCells(value: string, rootFontSizePx: number): number {
   return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
 }
 
-/** Authored relative insets of an inline (relative/sticky) element,
- * rewritten to whole cells by the renderer (specs/positioning.md).
+/** Authored insets of an inline relative element (offsets) or sticky
+ * element (constraints, specs/sticky.md), in whole cells
+ * (specs/positioning.md).
  * Percent insets on inline elements are unsupported (`null`), a
  * documented deviation. (Absolute/fixed inline elements never reach
  * here — they leave the run as out-of-flow boxes.) */

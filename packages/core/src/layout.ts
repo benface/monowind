@@ -165,6 +165,8 @@ export function layoutNode(
   // Fresh per layout: only the pass that runs (table lattice, flex/grid
   // gap rules, multicol) repopulates them.
   delete node.decorationRuns;
+  delete node.lattice;
+  delete node.latticeRuns;
   delete node.multicolGeometry;
   delete node.multicolFlow;
   delete node.multicolFlowSpan;

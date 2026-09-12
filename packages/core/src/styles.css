@@ -456,8 +456,10 @@ mono-wind:not([measuring]) [data-mw-nowrap][data-mw-clip] {
  * position:absolute (out of flow), so nothing consumes them anyway. */
 mono-wind:not([measuring]) [data-mw-laid-out] {
   position: absolute !important;
-  left: calc(var(--mw-x, 0) * var(--mw-cw, 1px)) !important;
-  top: calc(var(--mw-y, 0) * var(--mw-ch, 1px)) !important;
+  /* A sticky box's shift for the scroll rides beside its position
+   * (specs/sticky.md). */
+  left: calc((var(--mw-x, 0) + var(--mw-sx, 0)) * var(--mw-cw, 1px)) !important;
+  top: calc((var(--mw-y, 0) + var(--mw-sy, 0)) * var(--mw-ch, 1px)) !important;
   /* Neutralize the browser's residual grid machinery (specs/grid.md).
    * grid-area: per CSS §10.1 an ABSOLUTE child of a grid container with
    * placement properties uses its grid area as containing block — our
@@ -489,6 +491,12 @@ mono-wind:not([measuring]) [data-mw-multicol-flow-span],
 mono-wind:not([measuring]) [data-mw-flow],
 mono-wind:not([measuring]) [data-mw-float] {
   box-sizing: border-box !important;
+  /* A sticky shift (specs/sticky.md) belongs to the box the engine wrote
+   * it on: custom properties inherit, so every box resets them and only
+   * the engine's inline value — which beats an unimportant rule — moves
+   * a box. */
+  --mw-sx: 0;
+  --mw-sy: 0;
   /* Trailing-gap allowance: a tracked box's lines end with a phantom
    * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
    * room by carving it out of the engine-owned right padding/border cells;
@@ -542,6 +550,10 @@ mono-wind:not([measuring]) [data-mw-float] {
  * line) — a box taller than one row grows its line, per CSS. */
 mono-wind:not([measuring]) [data-mw-inline-box] {
   position: relative !important;
+  /* A sticky inline box's shift for the scroll (specs/sticky.md); the
+   * vars are absent otherwise. */
+  top: calc(var(--mw-sy, 0) * var(--mw-ch, 1px)) !important;
+  left: calc(var(--mw-sx, 0) * var(--mw-cw, 1px)) !important;
   vertical-align: top !important;
   /* Same half-leading cancellation as laid-out elements — without it
    * an inline box's NATIVE ink (a textarea's value under leading-*)

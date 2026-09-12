@@ -1,3 +1,4 @@
+import type { BorderGlyphSet } from "./glyphs.ts";
 export interface Rect {
   x: number;
   y: number;
@@ -259,6 +260,35 @@ export interface BorderRun {
   y: number;
   length: number;
   color: string | undefined;
+}
+
+/** A collapsed lattice segment: the border that won one piece of a line. */
+export interface LatticeSegment {
+  width: number;
+  style: BorderStyle;
+  color: string | undefined;
+}
+
+/** A collapsed table's border geometry (specs/table.md), resolved into
+ * glyphs at paint (lattice.ts) so a sticky part's lines follow it
+ * (specs/sticky.md): line thicknesses, the winning segment per line
+ * piece, the grid's cell geometry in table-local cells, and the placed
+ * cell at each grid position (spans repeated) with its row and group. */
+export interface TableLattice {
+  vLines: number[];
+  hLines: number[];
+  vSegments: (LatticeSegment | null)[][];
+  hSegments: (LatticeSegment | null)[][];
+  widths: number[];
+  rowHeights: number[];
+  colX: number[];
+  rowY: number[];
+  contentLeft: number;
+  contentTop: number;
+  cells: ({ node: LayoutNode; row: LayoutNode; group: LayoutNode | null } | undefined)[][];
+  set: BorderGlyphSet | undefined;
+  /** The parts handed cells by the last paint, to clear on the next. */
+  handed?: LayoutNode[];
 }
 
 /** A gap-decoration rule (specs/gap-decorations.md), from the rule-*
@@ -553,6 +583,10 @@ export interface LayoutNode {
     padLeft: number;
     padRight: number;
     insets: PerSide<number | null> | null;
+    /** A sticky element's insets, constraints for its shift
+     * (specs/sticky.md), and the shift for the current scroll offsets. */
+    sticky?: PerSide<number | null>;
+    stickyShift?: { x: number; y: number };
     /** Paint-only styling mirrored into the grid (the browser's own
      * ink is transparent-locked). `backgroundColor` fills the run's
      * cells — how a focus-inverted inline link shows its highlight. */
@@ -606,6 +640,11 @@ export interface LayoutNode {
    * table's border lattice; future producers (css-gaps rules,
    * specs/gap-decorations.md) plug in here with no renderer changes. */
   decorationRuns?: BorderRun[];
+  /** A collapsed table's border lattice, resolved at paint (lattice.ts). */
+  lattice?: TableLattice;
+  /** A sticky table part's lattice cells for this paint, in grid cells,
+   * handed over by its table to paint in the part's own turn. */
+  latticeRuns?: BorderRun[];
   /** True on a node the table pass removed from rendering: misparented
    * table content (no anonymous boxes — specs/table.md) and `<col>`/
    * `<colgroup>` boxes (width carriers, never rendered). */
@@ -635,6 +674,10 @@ export interface LayoutNode {
   /** Current scroll offset in cells (paint-time input, written by the
    * element from native scrollTop/scrollLeft; absent = 0/0). */
   scroll?: { x: number; y: number };
+  /** A sticky box's shift for the current scroll offsets (specs/sticky.md),
+   * a paint-time input like `scroll`, added by every walk where it adds
+   * the box's own position; absent = none. */
+  stickyShift?: { x: number; y: number };
   /** The gutter cells this container actually reserved — `scroll`
    * axes always, `auto` axes only when content overflows (the layout
    * second pass). Paint, hit-testing, and thumb drags read THIS, not

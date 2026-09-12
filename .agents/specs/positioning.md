@@ -21,9 +21,11 @@ element. Behavior:
   containing block. **Deviation** (CSS anchors to the viewport) — a
   component shouldn't escape its host; revisit only if a real use case
   appears.
-- **sticky**: treated as `relative`. This is exactly CSS sticky behavior in
-  the absence of scrolling; **proper sticky positioning must be implemented
-  with the scrolling milestone** (tracked there).
+- **sticky**: normal flow, then a paint-time shift that keeps the box
+  inside its scroll container's scrollport by its insets, per
+  css-position-3 §3.4 — `sticky.md`. The insets are constraints, not
+  offsets: at rest the box is where flow put it. The element becomes a
+  containing block for absolute descendants.
 
 ## Insets
 
@@ -76,11 +78,13 @@ content box (its containing block in flow).
 
 Inline descendants of a leaf are browser-rendered, so authored inset
 values would paint off-grid (`top-1` = 0.25rem = 4px ≠ 1 row). The engine
-detects inline elements whose computed position is relative (or sticky)
-with non-auto insets during the measure pass, converts each inset to whole
-cells, and rewrites the offset through engine-owned custom properties so
-the browser applies a whole-cell shift (`calc(n × cell)`), keeping the
-author's `position: relative` itself intact.
+detects inline elements whose computed position is relative with non-auto
+insets during the measure pass, converts each inset to whole cells, and
+rewrites the offset through engine-owned custom properties so the browser
+applies a whole-cell shift (`calc(n × cell)`), keeping the author's
+`position: relative` itself intact. An inline sticky element's insets are
+constraints for its scroll-time shift (`sticky.md`), carried natively
+through the same properties.
 
 - Only cell-mappable lengths are supported on inline insets; **percent
   insets on inline elements are treated as 0** (deviation — their CSS
@@ -115,9 +119,9 @@ character's inline element, so its whole-cell insets move the glyphs.
 ## Deviations from CSS (summary)
 
 1. `fixed` anchors to the `<mono-wind>` host, not the viewport.
-2. `sticky` behaves as `relative` until the scrolling milestone.
-3. Percent insets on inline elements are treated as 0.
-4. An out-of-flow element extracted from a text run takes its leaf's
+2. Percent insets on inline elements are treated as 0.
+3. An out-of-flow element extracted from a text run takes its leaf's
    content-box origin as its static position, not CSS's hypothetical
    inline position.
-5. All cell-model deviations (integer rounding, etc.) apply.
+4. All cell-model deviations (integer rounding, etc.) apply; sticky's
+   own are in `sticky.md`.

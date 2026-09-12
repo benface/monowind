@@ -1,4 +1,4 @@
-import { junctionGlyph, lineGlyph } from "./borders.ts";
+import { STYLE_RANK } from "./lattice.ts";
 import { scrollGutter } from "./types.ts";
 import { glyphSetFor } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
@@ -15,7 +15,14 @@ import {
   resolveSizeAgainst,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import type { BorderRun, BorderStyle, Insets, LatticeBorder, LayoutNode } from "./types.ts";
+import type {
+  BorderStyle,
+  Insets,
+  LatticeBorder,
+  LatticeSegment,
+  LayoutNode,
+  TableLattice,
+} from "./types.ts";
 
 /**
  * Table layout (specs/table.md): CSS 2.1 §17 adapted to integer cells.
@@ -400,12 +407,6 @@ function fixedLayoutColumns(
 // ---------------------------------------------------------------------------
 // Border lattice (collapsed) and spacing (separate) geometry
 
-interface LatticeSegment {
-  width: number;
-  style: BorderStyle;
-  color: string | undefined;
-}
-
 interface TableChrome {
   collapsed: boolean;
   /** Collapsed: per-line widths (columnCount + 1 / rowCount + 1); the
@@ -422,8 +423,6 @@ interface TableChrome {
 }
 
 type Side = "top" | "right" | "bottom" | "left";
-
-const STYLE_RANK: Record<BorderStyle, number> = { double: 3, solid: 2, dashed: 1, dotted: 0 };
 
 /** CSS 2.1 §17.6.2.1, simplified: wider wins, then style rank, then the
  * candidate order (callers pass cell > row > row group > table). */
@@ -860,18 +859,30 @@ export function layoutTable(
   if (structure.caption && node.style.captionSide === "bottom")
     structure.caption.localRect.y = contentTop + gridBottom;
 
-  if (chrome.collapsed && C > 0 && R > 0)
-    node.decorationRuns = buildLatticeRuns(
-      chrome,
-      structure,
+  if (chrome.collapsed && C > 0 && R > 0) {
+    const cells: TableLattice["cells"] = Array.from({ length: R }, () =>
+      Array.from({ length: C }, () => undefined),
+    );
+    for (const cell of structure.cells) {
+      const placed = { node: cell.node, row: cell.rowNode, group: structure.rowGroups[cell.row]! };
+      for (let r = cell.row; r < cell.row + cell.rowSpan; r++)
+        for (let c = cell.col; c < cell.col + cell.colSpan; c++) cells[r]![c] = placed;
+    }
+    node.lattice = {
+      vLines: chrome.vLines,
+      hLines: chrome.hLines,
+      vSegments: chrome.vSegments,
+      hSegments: chrome.hSegments,
       widths,
       rowHeights,
       colX,
       rowY,
       contentLeft,
       contentTop,
-      glyphSetFor(node.style.glyphSet),
-    );
+      cells,
+      set: glyphSetFor(node.style.glyphSet),
+    };
+  }
 
   // A top caption is already inside gridBottom (via gridTop).
   return node.style.captionSide === "bottom" ? gridBottom + captionHeight : gridBottom;
@@ -901,105 +912,4 @@ function alignCellContent(cell: LayoutNode, delta: number): void {
       child.localRect.y += offset;
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Lattice painting
-
-function buildLatticeRuns(
-  chrome: TableChrome,
-  structure: TableStructure,
-  widths: number[],
-  rowHeights: number[],
-  colX: number[],
-  rowY: number[],
-  contentLeft: number,
-  contentTop: number,
-  set?: BorderGlyphSet,
-): BorderRun[] {
-  const C = structure.columnCount;
-  const R = structure.rows.length;
-  const out: BorderRun[] = [];
-  const lineX = (i: number) =>
-    i < C ? colX[i]! - chrome.vLines[i]! : colX[C - 1]! + widths[C - 1]!;
-  const lineY = (j: number) =>
-    j < R ? rowY[j]! - chrome.hLines[j]! : rowY[R - 1]! + rowHeights[R - 1]!;
-
-  // Straight vertical segments.
-  for (let i = 0; i <= C; i++) {
-    const segments = chrome.vSegments[i]!;
-    for (let r = 0; r < R; r++) {
-      const seg = segments[r];
-      if (!seg) continue;
-      // A segment narrower than its line paints from the line's start
-      // (CSS centers collapsed borders; sub-cell centering can't).
-      const glyph = lineGlyph(seg.style, "v", set);
-      for (let t = 0; t < seg.width; t++)
-        for (let yy = rowY[r]!; yy < rowY[r]! + rowHeights[r]!; yy++)
-          out.push({
-            glyph,
-            x: contentLeft + lineX(i) + t,
-            y: contentTop + yy,
-            length: 1,
-            color: seg.color,
-          });
-    }
-  }
-  // Straight horizontal segments.
-  for (let j = 0; j <= R; j++) {
-    const segments = chrome.hSegments[j]!;
-    for (let c = 0; c < C; c++) {
-      const seg = segments[c];
-      if (!seg) continue;
-      const glyph = lineGlyph(seg.style, "h", set);
-      for (let t = 0; t < seg.width; t++)
-        out.push({
-          glyph,
-          x: contentLeft + colX[c]!,
-          y: contentTop + lineY(j) + t,
-          length: widths[c]!,
-          color: seg.color,
-        });
-    }
-  }
-  // Junction blocks where a vertical and a horizontal line cross.
-  for (let i = 0; i <= C; i++) {
-    if (chrome.vLines[i]! <= 0) continue;
-    for (let j = 0; j <= R; j++) {
-      if (chrome.hLines[j]! <= 0) continue;
-      const up = j > 0 ? chrome.vSegments[i]![j - 1] : null;
-      const down = j < R ? chrome.vSegments[i]![j] : null;
-      const left = i > 0 ? chrome.hSegments[j]![i - 1] : null;
-      const right = i < C ? chrome.hSegments[j]![i] : null;
-      const arms = [up, down, left, right].filter((s): s is LatticeSegment => s !== null);
-      if (arms.length === 0) continue;
-      // Junction style: double only when every arm is double (the corner
-      // convention); color from the dominant arm.
-      const style: BorderStyle = arms.every((s) => s.style === "double") ? "double" : "solid";
-      const dominant = arms.reduce((a, b) =>
-        b.width > a.width || (b.width === a.width && STYLE_RANK[b.style] > STYLE_RANK[a.style])
-          ? b
-          : a,
-      );
-      const glyph = junctionGlyph(
-        style,
-        up !== null,
-        down !== null,
-        left !== null,
-        right !== null,
-        set,
-      );
-      // Thick lines fill the whole crossing block with the junction glyph.
-      for (let t = 0; t < chrome.vLines[i]!; t++)
-        for (let u = 0; u < chrome.hLines[j]!; u++)
-          out.push({
-            glyph,
-            x: contentLeft + lineX(i) + t,
-            y: contentTop + lineY(j) + u,
-            length: 1,
-            color: dominant.color,
-          });
-    }
-  }
-  return out;
 }

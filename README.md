@@ -31,9 +31,10 @@ forms, and accessibility semantics stay fully intact.
 > column rules), and table layout (collapsed borders as shared
 > box-drawing lattices), gap decorations (`rule-*` separators with
 > junction glyphs), text wrap, floats (`float-*`/`clear-*`, text
-> wrapping beside them), margins, and scrolling
+> wrapping beside them), margins, scrolling
 > (`overflow-auto`/`-scroll` scroll containers with native physics and engine-drawn
-> TUI scrollbars) work. The unified-render
+> TUI scrollbars), and sticky positioning (`sticky` boxes, table
+> headers and columns included) work. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and

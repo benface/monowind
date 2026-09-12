@@ -118,7 +118,7 @@ specs: deterministic, document order.)
 ## Positioning and insets
 
 Normative spec: `positioning.md` (static/relative/absolute per CSS,
-fixed → host-anchored absolute, sticky → relative until scrolling, insets
+fixed → host-anchored absolute, sticky per `sticky.md`, insets
 on the spacing scale, CSS containing blocks and static positions, inline
 relative rescaling).
 

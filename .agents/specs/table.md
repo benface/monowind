@@ -1,6 +1,7 @@
 # Spec: table layout
 
-Status: implemented (`table.ts`; lattice glyphs in `borders.ts`).
+Status: implemented (`table.ts`; the lattice resolved at paint in
+`lattice.ts`, its glyphs in `borders.ts`).
 Cell-unit fundamentals (rounding, box model) live in `cell-model.md`;
 column sizing reuses the integer-distribution and intrinsic-contribution
 machinery from `flex.md`/`grid.md`. The normative sources are CSS 2.1
@@ -196,6 +197,13 @@ Conflict resolution at each line segment, per §17.6.2.1: `hidden` wins
 `solid` > `dashed` > `dotted`), then origin (cell > row > row group >
 table; `<col>`/`<colgroup>` borders are not read — they carry widths
 only). Color comes from the winner.
+
+Rendering: the lattice is geometry until paint — the winning segment
+per line piece, kept on the table node — and `lattice.ts` resolves it
+then from the segments landing on each cell, so a sticky row group,
+row, or cell takes its own lines along (`sticky.md`); it paints after
+the table's rows and cells, over their backgrounds, as CSS layers
+collapsed borders above every background.
 
 Rendering: junction glyphs. At each lattice intersection the glyph is
 picked from which of the four arms exist — `┼ ├ ┤ ┬ ┴ ─ │` and the

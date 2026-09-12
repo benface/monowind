@@ -35,9 +35,14 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
     <div>issue 001</div>
   </div>
   <div class="overflow-y-auto px-3 py-1">
-    <h1 class="mb-1 text-center font-bold text-yellow-300">· A polite theft on Maple Street ·</h1>
+    <h1 class="sticky top-0 -mt-1 bg-clear py-1 text-center font-bold text-yellow-300 in-focus-visible:bg-(--mw-fg)">·&nbsp;A polite theft on Maple Street&nbsp;·</h1>
     <div class="columns-1 gap-5 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
-      <p><mono-ascii font="small" trim class="float-left mr-2 mb-1 text-yellow-300">A</mono-ascii> raccoon walked into the corner bakery at <span class="text-sky-300">6:47 AM</span> this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.</p>
+      <p>
+        <mono-ascii font="small" trim class="float-left mr-2 mb-1 text-yellow-300">A</mono-ascii>
+        raccoon walked into the corner bakery at
+        <span class="text-sky-300">6:47 AM</span>
+        this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.
+      </p>
       <p class="mt-1">The proprietor, Mrs. Henshaw, described the incident as <em>unusually polite</em>: the animal reportedly closed the door behind itself and made brief eye contact on the way out. Officer J. Kimball is investigating but concedes the bread was probably day-old anyway.</p>
       <p class="mt-1">The bakery's security camera, pointed at a wall for reasons Mrs. Henshaw could not remember, offered no leads.</p>
       <p class="mt-1">In related news, the bakery's Wednesday special is a new <code class="text-lime-300">olive-and-rosemary focaccia</code> that Mrs. Henshaw insists no raccoon would touch. She is, she added, prepared to be proven wrong.</p>
@@ -249,6 +254,11 @@ const INLINE_TAGS = new Set(
 );
 
 const escapeAttr = (value) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+// Text nodes re-escaped for the source: the parser decoded entities,
+// and a no-break space goes back as one — it is content, not spacing.
+const escapeText = (text) => escapeHtml(text).replaceAll("\u00a0", "&nbsp;");
+// Collapsible whitespace only (a no-break space is a character to keep).
+const collapse = (text) => text.replace(/[ \t\r\n\f]+/g, " ").replace(/^ | $/g, "");
 
 const openTag = (node) => {
   const attrs = [...node.attributes]
@@ -270,7 +280,7 @@ const isInline = (node) =>
   (node.nodeType === Node.ELEMENT_NODE && INLINE_TAGS.has(node.tagName.toLowerCase()));
 
 const serializeInline = (node) => {
-  if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.data);
+  if (node.nodeType === Node.TEXT_NODE) return escapeText(node.data);
   if (node.nodeType === Node.COMMENT_NODE) return `<!--${node.data}-->`;
   const tag = node.tagName.toLowerCase();
   const open = openTag(node);
@@ -288,7 +298,7 @@ const tidy = (html) => {
     if (node.nodeType === Node.TEXT_NODE) {
       // Re-escape: the parser decoded entities, so raw text like an
       // authored `&lt;div&gt;` would otherwise re-parse as markup.
-      const text = escapeHtml(node.data.replace(/\s+/g, " ").trim());
+      const text = escapeText(collapse(node.data));
       if (text) lines.push(pad + text);
       return;
     }
@@ -317,7 +327,7 @@ const tidy = (html) => {
     if (kids.every(isInline)) {
       // Phrasing content stays on one line (with the whitespace between
       // its children collapsed to a single space).
-      const inner = [...node.childNodes].map(serializeInline).join("").replace(/\s+/g, " ").trim();
+      const inner = collapse([...node.childNodes].map(serializeInline).join(""));
       lines.push(pad + open + inner + `</${tag}>`);
       return;
     }

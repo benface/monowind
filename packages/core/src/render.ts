@@ -1,5 +1,6 @@
 import { paintOrderedChildren, paintsInPositionedStep } from "./borders.ts";
 import { isFormattingContextRoot } from "./layout.ts";
+import type { StickyBox } from "./sticky.ts";
 import type { LayoutNode, PerSide } from "./types.ts";
 
 /**
@@ -55,7 +56,7 @@ function setFlag(el: Element, name: string, on: boolean): void {
 
 function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Element>): void {
   if (node.inlineElements) {
-    for (const { element, tracking, padLeft, padRight, insets } of node.inlineElements) {
+    for (const { element, tracking, padLeft, padRight, insets, sticky } of node.inlineElements) {
       const el = element as HTMLElement;
       setVar(el, "--mw-ls", String(tracking));
       // Quantized horizontal padding (specs/cell-model.md): the companion
@@ -66,9 +67,10 @@ function walk(node: LayoutNode, isRoot: boolean, inlineInsetElements: Set<Elemen
       else clearVar(el, "--mw-ipl");
       if (padRight > 0) setVar(el, "--mw-ipr", String(padRight));
       else clearVar(el, "--mw-ipr");
-      if (insets) {
+      if (insets || sticky) {
         inlineInsetElements.add(element);
-        applyInlineInsets(el, insets);
+        // A sticky element's shift arrives with the paint (syncStickyVars).
+        applyInlineInsets(el, insets ?? { top: 0, right: null, bottom: null, left: 0 });
       }
     }
   }
@@ -133,9 +135,38 @@ function applyInlineInsets(el: HTMLElement, insets: PerSide<number | null>): voi
   write("--mw-il", insets.left);
 }
 
+/** The sticky shifts for the current scroll offsets (specs/sticky.md),
+ * written after the paint computes them: a box's as `--mw-sx`/`--mw-sy`
+ * beside its position, an inline element's as its inset properties. */
+export function syncStickyVars(boxes: StickyBox[]): void {
+  for (const { node } of boxes) {
+    if (node.style.position === "sticky") {
+      const el = node.source as HTMLElement;
+      const shift = node.stickyShift;
+      if (shift) {
+        setVar(el, "--mw-sx", String(shift.x));
+        setVar(el, "--mw-sy", String(shift.y));
+      } else {
+        clearVar(el, "--mw-sx");
+        clearVar(el, "--mw-sy");
+      }
+    }
+    for (const entry of node.inlineElements ?? []) {
+      if (entry.sticky === undefined) continue;
+      const el = entry.element as HTMLElement;
+      setVar(el, "--mw-it", String(entry.stickyShift?.y ?? 0));
+      setVar(el, "--mw-il", String(entry.stickyShift?.x ?? 0));
+    }
+  }
+}
+
 function positionElement(node: LayoutNode): void {
   const el = node.source as HTMLElement;
   const rect = node.localRect;
+  if (node.style.position !== "sticky") {
+    clearVar(el, "--mw-sx");
+    clearVar(el, "--mw-sy");
+  }
   const padding = node.resolvedPadding;
   const { border, textAlignBlocked, overflow, whiteSpace, tracking, lineGap } = node.style;
   // Atomic inline boxes and paragraph-flow multicol children stay IN

@@ -306,8 +306,9 @@ none` on EVERY element — a one-time pristine-probe detects that and
   no per-row elements to carry them (text rows are not boxes at all).
   The engine's `scrollend` snap (`scrollTo` with `behavior:
 "instant"` to the cell multiple) is exact and simpler.
-- **`position: sticky`**: out of scope here; becomes implementable on
-  top of the clip/offset machinery (tracked as its own future spec).
+- **`position: sticky`**: built on this machinery — `sticky.md`: a
+  sticky box's shift is computed from the cell-quantized offset at every
+  paint and written to the light DOM in the same frame.
 
 ## Interactions with existing machinery
 

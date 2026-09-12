@@ -269,3 +269,84 @@ export function expectGridOnItsCells(host: HTMLElement): void {
     if (row.length > 0) expect(Math.abs(right - left - gridRect.width)).toBeLessThan(cellWidth / 2);
   });
 }
+
+export interface Cell {
+  row: number;
+  col: number;
+}
+/** A native line of an element's text: its row and its glyphs' columns. */
+export interface Line extends Cell {
+  max: number;
+}
+
+/** The story's host once ready, with its readers: an element's engine
+ * cells (`--mw-*`), and `measure` — the grid and its geometry, read
+ * fresh each call, since a late font load swaps the cell metrics and
+ * relays out a frame after `fonts.ready`; a comparison wrapped in
+ * `waitFor` retries until both sides settle. */
+export async function readyGrid(canvasElement: HTMLElement) {
+  const host = await readyHost(canvasElement);
+  const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+  const grid = host.shadowRoot!.getElementById("grid")!;
+  const cells = (el: HTMLElement, name: string) => Number(el.style.getPropertyValue(name));
+  const measure = () => {
+    const rows = grid.textContent!.split("\n");
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const gridRect = grid.getBoundingClientRect();
+    const cellOf = (rect: DOMRect): Cell => ({
+      row: Math.floor((rect.top + rect.height / 2 - gridRect.top) / cellHeight),
+      col: Math.round((rect.left - gridRect.left) / cellWidth),
+    });
+    // An element box's top-left cell (a glyph rect reads by its middle).
+    const boxOf = (el: HTMLElement): Cell => {
+      const rect = el.getBoundingClientRect();
+      return {
+        row: Math.round((rect.top - gridRect.top) / cellHeight),
+        col: Math.round((rect.left - gridRect.left) / cellWidth),
+      };
+    };
+    const cellAt = (col: number, row: number) => ({
+      x: gridRect.left + (col + 0.5) * cellWidth,
+      y: gridRect.top + (row + 0.5) * cellHeight,
+    });
+    // The browser's lines of an element's text, character by character:
+    // each glyph's rect picks its row and column, and the grid must show
+    // the same characters on those cells.
+    const expectNativeOnGrid = (el: HTMLElement): Line[] => {
+      const byRow = new Map<number, { min: number; max: number; text: string }>();
+      const range = document.createRange();
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const data = (node as Text).data;
+        for (let i = 0; i < data.length; i++) {
+          if (/[ \t\r\n\f]/.test(data[i]!)) continue;
+          range.setStart(node, i);
+          range.setEnd(node, i + 1);
+          const { row, col } = cellOf(range.getBoundingClientRect());
+          const line = byRow.get(row) ?? { min: col, max: col, text: "" };
+          line.min = Math.min(line.min, col);
+          line.max = Math.max(line.max, col);
+          line.text += data[i];
+          byRow.set(row, line);
+        }
+      }
+      expect(byRow.size).toBeGreaterThan(0);
+      for (const [row, line] of byRow) {
+        expect(rows[row]!.slice(line.min, line.max + 1).replaceAll(" ", "")).toBe(line.text);
+      }
+      return [...byRow]
+        .map(([row, line]) => ({ row, col: line.min, max: line.max }))
+        .sort((a, b) => a.row - b.row);
+    };
+    return { rows, cellOf, boxOf, cellAt, expectNativeOnGrid };
+  };
+  return {
+    host,
+    by,
+    cells,
+    width: (el: HTMLElement) => cells(el, "--mw-w"),
+    height: (el: HTMLElement) => cells(el, "--mw-h"),
+    measure,
+  };
+}

@@ -91,8 +91,8 @@ export function focusableRects(root: LayoutNode): Focusable[] {
   const out: Focusable[] = [];
   const walk = (node: LayoutNode, parentX: number, parentY: number, isRoot: boolean) => {
     if (node.tableHidden) return;
-    const x = parentX + node.localRect.x;
-    const y = parentY + node.localRect.y;
+    const x = parentX + node.localRect.x + (node.stickyShift?.x ?? 0);
+    const y = parentY + node.localRect.y + (node.stickyShift?.y ?? 0);
     if (!isRoot && !node.anonymous && isFocusable(node.source)) {
       out.push({
         element: node.source,

@@ -24,10 +24,11 @@ import type { CellLength, CellStyle, LayoutNode, Rect } from "./types.ts";
 
 type Effective = "static" | "relative" | "absolute";
 
-/** sticky behaves as relative (no scrolling yet); fixed as absolute. */
+/** Sticky lays out as static — its shift is the paint's (specs/sticky.md);
+ * fixed as absolute. */
 function effectivePosition(style: CellStyle): Effective {
   if (style.position === "absolute" || style.position === "fixed") return "absolute";
-  if (style.position === "relative" || style.position === "sticky") return "relative";
+  if (style.position === "relative") return "relative";
   return "static";
 }
 

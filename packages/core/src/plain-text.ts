@@ -1,4 +1,5 @@
 import { collectBorderRuns, paintOrderedChildren } from "./borders.ts";
+import { resolveLattice } from "./lattice.ts";
 import type { BorderRun } from "./borders.ts";
 import { leafLineGeometry } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
@@ -262,10 +263,11 @@ function walk(
   options: RenderOptions,
   put: PutGlyph,
   alpha = 1,
+  visible: (x: number, y: number) => boolean = () => true,
 ): void {
   if (node.tableHidden) return;
-  const absX = parentAbsX + node.localRect.x;
-  const absY = parentAbsY + node.localRect.y;
+  const absX = parentAbsX + node.localRect.x + (node.stickyShift?.x ?? 0);
+  const absY = parentAbsY + node.localRect.y + (node.stickyShift?.y ?? 0);
   const style = node.style;
   // Effective opacity (specs/cell-model.md "Opacity"): ancestors
   // multiply (CSS nests, it doesn't inherit) and the value rides on
@@ -309,6 +311,31 @@ function walk(
       for (let i = 0; i < run.length; i++) put(absX + run.x + i, absY + run.y, run.glyph, paint);
     }
   }
+  // A collapsed table's lattice, resolved for its parts' sticky shifts
+  // (lattice.ts): a shifted part is handed its cells to paint in its
+  // turn, over what it slid onto; the table paints its own after its
+  // rows and cells, over their backgrounds, as CSS layers collapsed
+  // borders.
+  const lattice = node.lattice
+    ? resolveLattice(node, node.lattice, (x, y) => visible(absX + x, absY + y))
+    : null;
+  if (node.lattice && lattice) {
+    for (const part of node.lattice.handed ?? []) delete part.latticeRuns;
+    node.lattice.handed = [...lattice.parts.keys()];
+    for (const [part, own] of lattice.parts) {
+      part.latticeRuns = own.map((run) => ({ ...run, x: absX + run.x, y: absY + run.y }));
+    }
+  }
+  if (node.latticeRuns) {
+    for (const run of node.latticeRuns) {
+      put(
+        run.x,
+        run.y,
+        run.glyph,
+        alphaPaint(run.color === undefined ? undefined : { color: run.color }),
+      );
+    }
+  }
 
   // Overflow (specs/scrolling.md): a clipping/scrolling axis culls the
   // node's CONTENT ink (text and children — own decorations paint
@@ -319,10 +346,12 @@ function walk(
   const scrolledX = absX - (node.scroll?.x ?? 0);
   const scrolledY = absY - (node.scroll?.y ?? 0);
   let contentPut = put;
+  let contentVisible = visible;
   const clip = clipBounds(node, absX, absY);
   if (clip) {
     const { x0, y0, x1, y1 } = clip;
     const clipped = (x: number, y: number) => x < x0 || x >= x1 || y < y0 || y >= y1;
+    contentVisible = (x, y) => !clipped(x, y) && visible(x, y);
     contentPut = (x, y, glyph, paint, cells = 1) => {
       if (cells === 1) {
         if (!clipped(x, y)) put(x, y, glyph, paint);
@@ -345,6 +374,30 @@ function walk(
     const leafPaint = alphaPaint(textPaint(style));
     const inlinePaints = node.inlineElements?.map((entry) => alphaPaint(textPaint(entry)));
     const selection = options.selection?.get(node);
+    type Entry = NonNullable<LayoutNode["inlineElements"]>[number];
+    const paintCell = (
+      k: number,
+      length: number,
+      x: number,
+      y: number,
+      entry: Entry | undefined,
+      paint: CellPaint | undefined,
+    ): void => {
+      // INLINE_PAD marks a blank inline-padding cell: no glyph, but
+      // its element's background still fills it.
+      if (node.text[k] === INLINE_PAD) {
+        if (entry?.backgroundColor) {
+          contentPut(x, y, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
+        }
+        return;
+      }
+      const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
+      const cells = clusterWidth(cluster);
+      if (cells > 0) contentPut(x, y, cluster, paint, cells);
+    };
+    // A sticky inline element's glyphs paint after the rest of the
+    // leaf's, over the line they were shifted onto (specs/sticky.md).
+    const shifted: Parameters<typeof paintCell>[] = [];
     forEachLeafCell(
       node,
       scrolledX,
@@ -356,24 +409,30 @@ function walk(
         if (selection && k >= selection.start && k < selection.end) {
           paint = { ...paint, selected: true };
         }
-        // INLINE_PAD marks a blank inline-padding cell: no glyph, but
-        // its element's background still fills it.
-        if (node.text[k] === INLINE_PAD) {
-          if (entry?.backgroundColor) {
-            contentPut(x, y, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
-          }
-          return;
-        }
-        const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
-        const cells = clusterWidth(cluster);
-        if (cells > 0) contentPut(x, y, cluster, paint, cells);
+        if (entry?.stickyShift) shifted.push([k, length, x, y, entry, paint]);
+        else paintCell(k, length, x, y, entry, paint);
       },
       (x, y) => contentPut(x, y, "…", leafPaint),
     );
+    for (const args of shifted) paintCell(...args);
   }
 
   for (const child of paintOrderedChildren(node)) {
-    walk(child, scrolledX, scrolledY, options, contentPut, alpha * child.style.opacity);
+    walk(
+      child,
+      scrolledX,
+      scrolledY,
+      options,
+      contentPut,
+      alpha * child.style.opacity,
+      contentVisible,
+    );
+  }
+  if (lattice) {
+    for (const run of lattice.runs) {
+      const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
+      put(absX + run.x, absY + run.y, run.glyph, paint);
+    }
   }
 
   // Scrollbars last, over content (specs/scrolling.md): every
@@ -477,10 +536,16 @@ function forEachLeafCell(
       if (advances) while (k + length < truncated.end && advances[k + length] === 0) length++;
       if (node.text[k] !== OBJECT_REPLACEMENT && advance > 0) {
         // Inline relative shifts, whole cells (specs/positioning.md):
-        // the over-constrained sides resolve like CSS (top/left win).
-        const insets = node.inlineElements?.[node.charInline?.[k] ?? -1]?.insets;
-        const dx = insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0;
-        const dy = insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0;
+        // the over-constrained sides resolve like CSS (top/left win);
+        // a sticky element's shift for the scroll (specs/sticky.md).
+        const entry = node.inlineElements?.[node.charInline?.[k] ?? -1];
+        const insets = entry?.insets;
+        const dx =
+          (insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0) +
+          (entry?.stickyShift?.x ?? 0);
+        const dy =
+          (insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0) +
+          (entry?.stickyShift?.y ?? 0);
         onChar(k, length, x + dx, row + dy, advance);
       }
       x += advance;
@@ -558,7 +623,11 @@ export function charIndexAtCell(
     absX - (node.scroll?.x ?? 0),
     absY - (node.scroll?.y ?? 0),
     (k, _length, x, y, advance) => {
-      if (found === null && y === row && col >= x && col < x + advance) found = k;
+      if (y !== row || col < x || col >= x + advance) return;
+      // A sticky inline element's glyph paints over the line it was
+      // shifted onto, so it is the one at the cell.
+      const sticky = node.inlineElements?.[node.charInline?.[k] ?? -1]?.stickyShift !== undefined;
+      if (found === null || sticky) found = k;
     },
   );
   return found;

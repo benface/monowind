@@ -23,7 +23,9 @@ import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
 import { gridOffsetAt, paintedCell, paintGrid } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
-import { render } from "./render.ts";
+import { render, syncStickyVars } from "./render.ts";
+import { applyStickyShifts, collectStickyBoxes } from "./sticky.ts";
+import type { StickyBox } from "./sticky.ts";
 import { buildChildren, buildRootLeaf, hostLeafStyle } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
 import { zeroInsets } from "./types.ts";
@@ -288,6 +290,9 @@ export class MonoWindElement extends HTMLElementBase {
   #paintPending = false;
   /** Scroll containers of the LAST layout (specs/scrolling.md). */
   #scrollNodes: LayoutNode[] = [];
+  /** The sticky boxes of the last layout, shifted on every paint
+   * (specs/sticky.md). */
+  #stickyBoxes: StickyBox[] = [];
   #settleTimers = new Map<Element, ReturnType<typeof setTimeout>>();
   /** Last routed-scroll activity per scroll container (a wheel tick, an
    * auto-scroll tick): each scrollBy is a separate PROGRAMMATIC scroll,
@@ -582,6 +587,11 @@ export class MonoWindElement extends HTMLElementBase {
       const metrics = this.#cellMetrics;
       if (!this.isConnected || !this.#lastLayout || !metrics) return;
       this.#syncScrollOffsets(metrics);
+      // Sticky boxes follow the offsets; their light-DOM shift writes
+      // are the engine's own, drained like a layout pass's.
+      applyStickyShifts(this.#stickyBoxes);
+      syncStickyVars(this.#stickyBoxes);
+      this.#mutationObserver?.takeRecords();
       this.#paintHeld = !this.#paint(this.#lastLayout);
       this.#followContainerScroll();
       // The cells under a stationary pointer changed with the scroll.
@@ -1917,6 +1927,9 @@ export class MonoWindElement extends HTMLElementBase {
       render(virtualRoot);
       this.#scrollNodes = collectScrollContainers(virtualRoot);
       this.#syncScrollOffsets(metrics, scrollState);
+      this.#stickyBoxes = collectStickyBoxes(virtualRoot);
+      applyStickyShifts(this.#stickyBoxes);
+      syncStickyVars(this.#stickyBoxes);
       // Style-only paints patch nodes in place (drag anchors survive);
       // a STRUCTURAL rebuild while a primary press holds a selection
       // anchor in the grid is deferred to release — a drag in flight
