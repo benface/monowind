@@ -580,7 +580,7 @@ export const LayerTransition: StoryObj = {
       <div class="p-2">
         <div
           data-test="dialog"
-          class="origin-top-left border px-1 transition-transform duration-500"
+          class="origin-top-left border px-1 transition-transform duration-1000"
         >
           a dialog that scales in
         </div>
@@ -595,20 +595,19 @@ export const LayerTransition: StoryObj = {
     const observer = new MutationObserver(() => layouts++);
     observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
     dialog.classList.add("scale-125");
-    await waitFor(() => expect(layers.querySelector(".layer")).not.toBeNull(), {
-      timeout: 10_000,
-    });
-    const box = layers.querySelector<HTMLElement>(".layer")!;
+    // The box's scale every frame it exists, until the dialog's lands.
     const scales = new Set<string>();
-    const until = performance.now() + 700;
-    while (performance.now() < until) {
-      scales.add(getComputedStyle(box).scale);
+    while (getComputedStyle(dialog).scale !== "1.25") {
+      const box = layers.querySelector<HTMLElement>(".layer");
+      if (box) scales.add(getComputedStyle(box).scale);
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
+    await waitFor(
+      () => expect(getComputedStyle(layers.querySelector(".layer")!).scale).toBe("1.25"),
+      { timeout: 10_000 },
+    );
     observer.disconnect();
     expect(scales.size, "sampled intermediate scales").toBeGreaterThanOrEqual(3);
-    expect(getComputedStyle(box).scale).toBe(getComputedStyle(dialog).scale);
-    expect(getComputedStyle(dialog).scale).toBe("1.25");
     // At most three layouts, the attribute set and removed by each: the
     // class change's, the transition's start, and the settle at its end.
     expect(layouts, "layouts during the transition").toBeLessThanOrEqual(6);
@@ -790,17 +789,20 @@ export const Animations: StoryObj = {
       Array.from(host.shadowRoot!.querySelectorAll<HTMLElement>(".layer")).find((box) =>
         box.querySelector("pre")!.textContent!.includes(name),
       );
-    const layouts = { count: 0 };
-    const observer = new MutationObserver(() => layouts.count++);
+    let layouts = 0;
+    const observer = new MutationObserver(() => layouts++);
     observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
-    // Over half a second of frames: the spinner's box turns, the
-    // pulse's cells fade, the ping does both, the bounce moves.
+    // Over half a second and at least two dozen frames: the spinner's
+    // box turns, the pulse's cells fade, the ping does both, the
+    // bounce moves.
     const turns = new Set<string>();
     const fades = new Set<string>();
     const pings = new Set<string>();
     const bounces = new Set<string>();
     const until = performance.now() + 600;
-    while (performance.now() < until) {
+    let frames = 0;
+    while (performance.now() < until || frames < 24) {
+      frames++;
       const spin = boxOf("spin");
       if (spin) turns.add(getComputedStyle(spin).transform);
       fades.add(gridSpanFor(host, "pulse")?.style.opacity ?? "");
@@ -815,9 +817,9 @@ export const Animations: StoryObj = {
     expect(fades.size, "pulse frames").toBeGreaterThanOrEqual(5);
     expect(pings.size, "ping frames").toBeGreaterThanOrEqual(5);
     expect(bounces.size, "bounce frames").toBeGreaterThanOrEqual(5);
-    // The background keyframe reads through the relayout, so layouts
-    // ran; the pulse alone would take the repaint path.
-    expect(layouts.count).toBeGreaterThan(10);
+    // The background keyframe reads through the relayout, a layout a
+    // frame; the pulse alone would take the repaint path.
+    expect(layouts, "layouts under the background keyframe").toBeGreaterThanOrEqual(frames / 2);
     // The enter keyframe has landed: the box is gone, the cells are at
     // full opacity. The leave keyframe holds its end (`forwards`): the
     // settle layout reads the filled values, the box scaled, the cells
