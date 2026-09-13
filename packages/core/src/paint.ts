@@ -46,6 +46,7 @@ export interface PaintOptions {
   holdStructural?: boolean;
   glyphs?: PaintGlyphs;
   selection?: RenderOptions["selection"];
+  cell?: RenderOptions["cell"];
 }
 
 /** True when a Selection boundary (a collapsed press anchor counts —
@@ -73,6 +74,7 @@ export function paintGrid(
       (paint?.opacity !== undefined && isLineGlyph(cluster));
   }
   if (options.selection) render.selection = options.selection;
+  if (options.cell) render.cell = options.cell;
   const { segments: rows, cells } = renderGridRows(root, render);
   const signature = signatureOf(rows);
   if (lastPaintSignature.get(target) === signature) return true;
@@ -207,7 +209,13 @@ function applySegment(
 }
 
 function sameSegment(a: CellSegment, b: CellSegment): boolean {
-  return samePaint(a, b) && a.box === b.box && a.cells === b.cells;
+  return (
+    samePaint(a, b) &&
+    a.box === b.box &&
+    a.cells === b.cells &&
+    a.backgrounds?.join(",") === b.backgrounds?.join(",") &&
+    a.colors?.join(",") === b.colors?.join(",")
+  );
 }
 
 function rowStructureMatches(
@@ -305,6 +313,8 @@ function signatureOf(rows: CellSegment[][]): string {
         s.text,
         s.color ?? "",
         s.backgroundColor ?? "",
+        s.backgrounds?.join(",") ?? "",
+        s.colors?.join(",") ?? "",
         s.fontWeight ?? "",
         s.fontStyle ?? "",
         s.textDecorationLine ?? "",

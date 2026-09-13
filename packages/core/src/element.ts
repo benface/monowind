@@ -1502,10 +1502,12 @@ export class MonoWindElement extends HTMLElementBase {
    * while a native drag may be in flight. */
   #paint(root: LayoutNode): boolean {
     const range = this.#elementSelection();
+    const metrics = this.#cellMetrics;
     return paintGrid(root, this.#grid, {
       holdStructural: this.#holdsNativeDrag(),
       glyphs: this.#glyphs,
       selection: range ? selectedRanges(root, range) : undefined,
+      cell: metrics ? { width: metrics.width, height: metrics.height } : undefined,
     });
   }
 

@@ -285,3 +285,144 @@ export const TransitionSampling: StoryObj = {
     );
   },
 };
+
+/**
+ * Gradient backgrounds (specs/gradients.md): a color per cell at the
+ * cell's center — Tailwind's linear presets and angles, stops with
+ * positions, radial and conic forms, layers, a translucent stop over
+ * a plain color, the oklch and hsl spaces with a hue mode, and
+ * `background-clip`: the padding box, and `text`, the gradient
+ * through transparent glyphs; elsewhere glyphs keep their own color.
+ */
+export const Gradients: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <div data-test="to-r" class="bg-linear-to-r from-cyan-500 to-blue-600 px-1">
+          bg-linear-to-r from-cyan-500 to-blue-600
+        </div>
+        <div data-test="angle" class="bg-linear-45 from-amber-400 to-pink-600 px-1 py-4">
+          bg-linear-45 from-amber-400 to-pink-600
+        </div>
+        <div
+          data-test="via"
+          class="bg-linear-to-br from-emerald-400 via-teal-600 to-slate-900 px-1 py-4"
+        >
+          bg-linear-to-br from-emerald-400 via-teal-600 to-slate-900
+        </div>
+        <div
+          data-test="positions"
+          class="bg-linear-to-r from-red-500 from-10% to-yellow-400 to-90% px-1"
+        >
+          from-10% to-90%
+        </div>
+        <div data-test="srgb" class="bg-linear-to-r/srgb from-cyan-500 to-blue-600 px-1">
+          bg-linear-to-r/srgb
+        </div>
+        <div data-test="radial" class="bg-radial from-violet-500 to-fuchsia-900 px-1 py-4">
+          bg-radial from-violet-500 to-fuchsia-900
+        </div>
+        <div data-test="radial-at" class="bg-radial-[at_25%_25%] from-white to-zinc-900 px-1 py-4">
+          bg-radial-[at_25%_25%]
+        </div>
+        <div data-test="conic" class="bg-conic from-red-500 via-lime-400 to-red-500 px-1 py-4">
+          bg-conic from-red-500 via-lime-400 to-red-500
+        </div>
+        <div data-test="conic-from" class="bg-conic-180 from-sky-400 to-indigo-900 px-1 py-4">
+          bg-conic-180
+        </div>
+        <div
+          data-test="layers"
+          class="bg-[linear-gradient(to_right,rgb(255_0_0/0.5),transparent),radial-gradient(circle,white,black)] px-1 py-4"
+        >
+          two layers
+        </div>
+        <div data-test="over" class="bg-red-500 bg-linear-to-r from-transparent to-white px-1">
+          bg-red-500 under from-transparent to-white
+        </div>
+        <div
+          data-test="current"
+          class="bg-linear-to-r from-current to-transparent px-1 text-cyan-500"
+        >
+          from-current
+        </div>
+        <div data-test="oklch" class="bg-linear-to-r/oklch from-cyan-500 to-blue-600 px-1">
+          bg-linear-to-r/oklch
+        </div>
+        <div data-test="longer" class="bg-linear-to-r/longer from-cyan-500 to-blue-600 px-1">
+          bg-linear-to-r/longer
+        </div>
+        <div data-test="hsl" class="bg-linear-to-r/hsl from-red-500 to-blue-500 px-1">
+          bg-linear-to-r/hsl
+        </div>
+        <div
+          data-test="clip-padding"
+          class="border-2 border-neutral-400 bg-linear-to-r from-amber-400 to-pink-600 bg-clip-padding px-1"
+        >
+          border-2 bg-clip-padding
+        </div>
+        <div
+          data-test="clip-text"
+          class="bg-linear-to-r from-amber-400 via-pink-600 to-violet-600 bg-clip-text px-1 font-bold text-transparent"
+        >
+          bg-clip-text text-transparent: the gradient through the glyphs
+        </div>
+        <div class="bg-sky-900 px-1 py-1">
+          <div
+            data-test="clip-text-over"
+            class="bg-linear-to-r from-amber-400 via-pink-600 to-violet-600 bg-clip-text text-transparent"
+          >
+            … and over a parent's bg-sky-900, which stays under the glyphs
+          </div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    await waitFor(
+      () => {
+        const spans = Array.from(host.shadowRoot!.getElementById("grid")!.querySelectorAll("span"));
+        // A color per cell, a row of them one span's hard stops: far
+        // more distinct colors than boxes.
+        const colors = spans.flatMap(
+          (span) => span.style.backgroundImage.match(/rgb\([^)]*\)/g) ?? [],
+        );
+        expect(new Set(colors).size).toBeGreaterThan(200);
+        // The transparent stop over bg-red-500 starts beside red-500 at
+        // the left edge, its text over the same colors.
+        const over = spans.find((span) => span.textContent!.startsWith("bg-red-500"))!;
+        const [r, g, b] = over.style.backgroundImage
+          .match(/rgb\((\d+),? (\d+),? (\d+)/)!
+          .slice(1)
+          .map(Number);
+        expect(Math.abs(r! - 251) + Math.abs(g! - 44) + Math.abs(b! - 54)).toBeLessThan(12);
+        // The longer hue arc from cyan to blue runs the long way round:
+        // its middle is nowhere near the oklch row's.
+        const middle = (name: string) => {
+          const span = spans.find((span) => span.textContent!.startsWith(name))!;
+          const stops = span.style.backgroundImage.match(/rgb\([^)]*\)/g)!;
+          return stops[Math.floor(stops.length / 2)]!;
+        };
+        expect(middle("bg-linear-to-r/longer")).not.toBe(middle("bg-linear-to-r/oklch"));
+        // Clipped to text, the row is one span whose hard stops show
+        // through its glyphs.
+        const clipped = spans.find((span) => span.textContent!.startsWith("bg-clip-text"))!;
+        expect(clipped.style.backgroundClip).toBe("text");
+        expect(clipped.style.color).toBe("transparent");
+        expect(clipped.style.backgroundImage.match(/rgb\(/g)!.length).toBeGreaterThan(40);
+        // Over a filled parent the glyphs keep a span each, the
+        // parent's color under every one.
+        const onSky = spans.filter(
+          (span) =>
+            span.textContent!.length === 1 &&
+            span.style.color.startsWith("rgb(") &&
+            span.style.backgroundColor !== "" &&
+            span.style.backgroundClip === "",
+        );
+        expect(onSky.length).toBeGreaterThan(40);
+      },
+      { timeout: 10_000 },
+    );
+  },
+};

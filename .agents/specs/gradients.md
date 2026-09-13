@@ -1,9 +1,10 @@
 # Spec: gradients
 
-Status: **proposed** (2026-09-12), awaiting review. Cell-unit
+Status: **implemented** (2026-09-12; `color.ts`, `gradient.ts`, the
+`backgroundImage` read in `style.ts`, the fill in `plain-text.ts`). Cell-unit
 fundamentals live in `cell-model.md`; backgrounds in `cell-model.md`
-"Box model" (the border-box fill); shade glyphs, which this does NOT
-use, in `box-shadow.md`.
+"Box model" (the border-box fill); the shade glyphs of shadows in
+`box-shadow.md`.
 
 ## Motivation
 
@@ -21,9 +22,13 @@ comma-separated list of layers, each a `linear-gradient()`,
 forms too), or something else (`url()`, `none`), which is ignored.
 Each gradient's direction (an angle, `to <side-or-corner>`, a radial
 shape and position, a conic angle and position), its interpolation
-hint (`in oklab`, Tailwind's default, or `in srgb`, …), and its color
-stops (computed colors with optional positions in percent or px)
-are parsed. Positions in px convert on the spacing scale.
+space (`in oklab`, the default, or `in srgb`, `in oklch longer hue`,
+…; srgb where every stop is a legacy `rgb()` color, as CSS defaults),
+and its color stops (computed colors with optional positions in
+percent, px, or, for a conic, an angle, and transition hints) are
+parsed. Positions in px convert on the spacing scale.
+`background-clip` is read beside it: `border-box` (the default),
+`padding-box`, `content-box`, or `text`.
 
 ## Locked decisions
 
@@ -36,11 +41,12 @@ are parsed. Positions in px convert on the spacing scale.
   shapes CSS names), or its angle (conic, `from` and `at` honored),
   with the stops resolved as CSS resolves them (missing positions
   spread evenly, hints honored, repeating forms tiled) and
-  interpolated in the named color space (oklab and srgb at least;
-  others fall back to oklab). A cell is a grid cell, not a square: the
-  math runs in px from the measured cell, so a diagonal is CSS's
-  diagonal. The cell's glyphs keep their color; only
-  the background changes, as with any fill.
+  interpolated in the named color space (oklab, oklch, srgb,
+  srgb-linear, hsl, the polar ones with the four hue modes; others
+  fall back to oklab). A cell is a grid cell, not a square: the math
+  runs in px from the measured cell, so a diagonal is CSS's diagonal.
+  The cell's glyphs keep their color; only the background changes, as
+  with any fill.
 - **It is the box's fill.** The gradient replaces the plain
   background fill in the paint walk: it wipes ancestor decorations at
   its cells like `bg-*` does, layers paint from the last declared to
@@ -48,6 +54,14 @@ are parsed. Positions in px convert on the spacing scale.
   through transparent stops as CSS composites it — approximated by
   compositing each cell's color over the plain color — and `bg-clear`
   keeps its wipe under a gradient with transparent stops.
+  `background-clip` says where the fill paints — the border box, the
+  padding box, or the content box, the gradient's geometry the border
+  box's either way — and `text` paints no fill at all: the box's own
+  glyphs take the gradient's color at their cell, each glyph's own
+  color composited over it, so `text-transparent` shows the gradient
+  through the text and an opaque color hides it, as CSS clips the
+  background to the glyphs. The plain `background-color` clips the
+  same way.
 - **The light DOM's own gradient is off**: the companion locks
   `background-image: none` beside its `background-color` lock; the
   grid owns backgrounds.
@@ -58,16 +72,30 @@ are parsed. Positions in px convert on the spacing scale.
 ## Deviations from CSS (summary)
 
 1. One color per cell, at the cell's center: a gradient's edge within
-   a cell is quantized to the cell.
-2. `background-size`, `background-position`, `background-repeat`, and
-   `background-clip` are ignored: a gradient always covers the border
-   box once.
+   a cell is quantized to the cell, and a px length in it (a stop
+   position, a radius, a position) is cells of the cell width on the
+   spacing scale, whichever axis it lies on.
+2. `background-size`, `background-position`, and `background-repeat`
+   are ignored: a gradient always covers the border box once.
+   `background-clip: text` colors whole glyph cells, where CSS clips
+   to the glyph shapes, and applies to the box's own text; the clip is
+   read once, the first layer's, for every layer.
 3. `url()` images are ignored.
-4. Interpolation spaces other than oklab and srgb interpolate in
-   oklab.
-5. Cost: a row of a gradient is one span per distinct color, so a
-   wide gradient is a span per cell on every row it covers. Fine for
-   a card or a bar; a full-page gradient is a large grid.
+4. Interpolation spaces other than oklab, oklch, srgb, srgb-linear,
+   and hsl interpolate in oklab.
+5. Cost: a gradient box computes a color per cell once per layout
+   (kept between layouts). In the DOM a run of cells apart only in
+   their gradient background is one span, its colors as hard stops of
+   a `linear-gradient` at the cell width, so a box row is one node; a
+   run of gradient-colored glyphs likewise, the stops shown through
+   the text, where the cells have no background of their own (a span's
+   text clip would clip that away, and Firefox draws no per-layer
+   clip).
+6. An editable's native selection (`styles.css`, its `--mw-ground`)
+   sits on the plain `background-color` under a gradient, not on the
+   gradient's color at its cells.
+7. A stop outside sRGB (Tailwind's wide-gamut `oklch()` colors) clips
+   to sRGB per channel, where CSS gamut-maps by reducing chroma.
 
 ## Testing
 
@@ -77,17 +105,22 @@ are parsed. Positions in px convert on the spacing scale.
   a two-stop horizontal gradient's colors per column, a vertical one
   per row, a diagonal, a radial's rings, a conic's sweep, stops at
   positions, a translucent stop over a `background-color`, glyphs
-  keeping their color, selection inverting a cell.
+  keeping their color, selection inverting a cell; the clip boxes and
+  the text clip over transparent, opaque, and translucent glyph
+  colors; the hue modes on red to blue in hsl; the span runs.
 - Storybook: Tailwind's `bg-linear-*` presets with `from-*`/`via-*`/
-  `to-*`, a radial and a conic, text over a gradient card, a
-  selection across it; golden.
+  `to-*`, radial and conic forms, layers, a translucent stop over a
+  plain color, text over the cards; golden. Selection inverts per
+  cell as for any fill, pinned in the node tests.
 
 ## Touch points on implementation
 
-- style.ts / types.ts: `backgroundImage: Gradient[]` on `CellStyle`,
-  the parser (colors, stops, directions, spaces).
-- A `gradient.ts` module: the color at a cell (direction math, stop
-  resolution, oklab/srgb interpolation, compositing).
+- style.ts / types.ts: `backgroundImage: Gradient[]` and
+  `backgroundClip` on `CellStyle`, the parser (colors, stops,
+  directions, spaces, hue modes).
+- `color.ts`: computed colors parsed, prepared per space, mixed with
+  the hue modes, composited; `gradient.ts`: the color at a cell
+  (direction math, stop resolution, compositing), kept per box.
 - plain-text.ts `walk`: the fill step paints per-cell colors when
   gradients are present.
 - styles.css: the `background-image: none` lock.

@@ -172,6 +172,17 @@ your Tailwind theme:
 — the defaults' `╭ ╮ ╰ ╯` for light-line borders — while heavy and
 double borders stay square.
 
+## Gradients
+
+`bg-linear-*`, `bg-radial`, and `bg-conic` (with `from-*`, `via-*`,
+`to-*`, positions, and a space such as `/srgb`, `/oklch`, `/longer`)
+paint a color per cell: each cell takes the gradient's color at its
+center, in CSS's geometry for the box, the stops interpolated as CSS
+does, layers composited over the plain color. Text keeps its own
+color, and `bg-clip-text text-transparent` shows the gradient through
+it. Sizes, positions, and repeats of the background image are ignored,
+as are `url()` images: a gradient always covers the box once.
+
 ## Companion packages
 
 The core is self-contained; these are optional:

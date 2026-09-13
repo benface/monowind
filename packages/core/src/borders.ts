@@ -7,6 +7,7 @@ import {
   weightBand,
 } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
+import { colorAlpha } from "./color.ts";
 import type {
   RuleBreak,
   RuleVisibilityItems,
@@ -162,24 +163,6 @@ export function collectShadowRuns(
       }
     }
   }
-}
-
-/** A computed color's alpha: a modern function's `/ a`, the fourth
- * component of `rgba()`/`hsla()`, `transparent` 0, anything else 1. */
-function colorAlpha(color: string): number {
-  const value = color.trim().toLowerCase();
-  if (value === "transparent") return 0;
-  const part = (text: string): number => {
-    const amount = parseFloat(text);
-    if (!Number.isFinite(amount)) return 1;
-    return Math.min(1, Math.max(0, text.trim().endsWith("%") ? amount / 100 : amount));
-  };
-  const slash = /\/\s*([\d.]+%?)\s*\)$/.exec(value);
-  if (slash) return part(slash[1]!);
-  const legacy = /^(?:rgba|hsla)\(([^)]*)\)$/.exec(value);
-  if (!legacy) return 1;
-  const components = legacy[1]!.split(",");
-  return components.length === 4 ? part(components[3]!) : 1;
 }
 
 /**

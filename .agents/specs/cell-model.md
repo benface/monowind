@@ -121,6 +121,9 @@ specs: deterministic, document order.)
   allocation is read with the style, so a set registered later
   relayouts connected hosts as any registration does.
 
+- A `background-color` fills the border box in the grid, wiping what
+  ancestors painted there; a gradient `background-image` fills it a
+  color per cell (`gradients.md`).
 - **Margins are supported** (`m-*`, `mx-*`, `-m-*`…). `space-x/y-*` is
   deliberately **not** supported — use `gap-*` (which is supported).
 - Margin collapsing: **adjacent-sibling collapsing only** (the visible gap is

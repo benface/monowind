@@ -371,6 +371,9 @@ mono-wind:not([measuring]) * {
    * background-color during [measuring] (this rule is off then), so
    * bg-* and focus-invert both make it into the grid paint. */
   background-color: transparent !important;
+  /* Gradients paint in the grid as a color per cell (specs/gradients.md),
+   * read during [measuring] like the color. */
+  background-image: none !important;
   text-shadow: none !important;
   /* Shadows paint in the grid as shades (specs/box-shadow.md), read
    * during [measuring] like backgrounds. */

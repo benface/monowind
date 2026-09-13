@@ -38,7 +38,7 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
     <h1 class="sticky top-0 -mt-1 bg-clear py-1 text-center font-bold text-yellow-300 in-focus-visible:bg-(--mw-fg)">·&nbsp;A polite theft on Maple Street&nbsp;·</h1>
     <div class="columns-1 gap-5 rule-neutral-500 rule-dashed rule-x sm:columns-2 lg:columns-3">
       <p>
-        <mono-ascii font="small" trim class="float-left mr-2 mb-1 text-yellow-300">A</mono-ascii>
+        <mono-ascii font="small" trim class="float-left mr-2 mb-1 bg-linear-to-b from-yellow-300 to-orange-400 bg-clip-text text-transparent">A</mono-ascii>
         raccoon walked into the corner bakery at
         <span class="text-sky-300">6:47 AM</span>
         this Tuesday, took one long look at the display case, and left without paying for a sourdough loaf clutched under its left arm.
@@ -54,7 +54,7 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
         <p>And if you've followed us for a while, please consider donating. Your support makes a huge difference.</p>
         <p class="mt-auto">- The Monowind Daily Editors</p>
       </div>
-      <mono-qr class="max-w-full max-sm:mx-auto">benface.com</mono-qr>
+      <mono-qr class="max-w-full bg-linear-to-b from-yellow-300 via-orange-400 to-pink-500 bg-clip-text text-transparent max-sm:mx-auto">benface.com</mono-qr>
     </div>
   </div>
   <div class="flex shrink-0 items-center justify-between gap-3 px-2 py-1 text-neutral-400">

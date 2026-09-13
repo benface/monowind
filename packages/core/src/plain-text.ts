@@ -1,11 +1,16 @@
 import { collectBorderRuns, collectShadowRuns, paintOrderedChildren } from "./borders.ts";
 import { resolveLattice } from "./lattice.ts";
 import type { BorderRun } from "./borders.ts";
+import { compositeColors, parseColor, serializeColor } from "./color.ts";
+import type { Rgba } from "./color.ts";
+import { DEFAULT_CELL, gradientCells } from "./gradient.ts";
+import type { CellSize } from "./gradient.ts";
 import { leafLineGeometry } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
-import type { LayoutNode, Rect } from "./types.ts";
+import { zeroInsets } from "./types.ts";
+import type { Insets, LayoutNode, Rect } from "./types.ts";
 import { clusterWidth } from "./width.ts";
 
 /**
@@ -40,6 +45,17 @@ export interface CellPaint {
   /** `string | undefined` (not just optional): a bg-clear fill merges
    * an EXPLICIT undefined over the cell to erase the bg beneath. */
   backgroundColor?: string | undefined;
+  /** The cell's background (`fill`) or glyph color (`text`) is a
+   * gradient's color for the cell (specs/gradients.md): such cells
+   * join into one run. A later fill merges an EXPLICIT undefined over
+   * the cell to clear it. */
+  gradient?: "fill" | "text" | undefined;
+  /** A background, or a glyph color, per cell of a run of gradient
+   * cells: one span, its cells' colors as hard stops of a background
+   * (shown through the glyphs for `colors`), in place of a span per
+   * cell. */
+  backgrounds?: string[];
+  colors?: string[];
   fontWeight?: string;
   fontStyle?: string;
   textDecorationLine?: string;
@@ -72,6 +88,9 @@ export interface CellSegment extends CellPaint {
 export interface RenderOptions {
   boxed?: (cluster: string, cells: number, paint: CellPaint | undefined) => boolean;
   selection?: Map<LayoutNode, { start: number; end: number }>;
+  /** The cell in px, for paint that measures — a gradient's geometry
+   * (specs/gradients.md); a 1:2 cell without. */
+  cell?: CellSize;
 }
 
 /** Row-major cell segments. Each row is `rowSegments(grid[y],
@@ -105,6 +124,7 @@ function rowSegments(
   boxed?: RenderOptions["boxed"],
 ): CellSegment[] {
   const segments: CellSegment[] = [];
+  let lastCells = 0;
   for (let x = 0; x < row.length; x++) {
     const cell = row[x]!;
     if (cell === "") continue;
@@ -113,19 +133,82 @@ function rowSegments(
     while (row[x + cells] === "") cells++;
     if (boxed && (cell.length > 1 || cell.charCodeAt(0) >= 0x80) && boxed(cell, cells, paint)) {
       segments.push({ text: cell, cells, box: true, ...paint });
+      lastCells = 0;
       continue;
     }
     const last = segments[segments.length - 1];
-    if (last && !last.box && samePaint(last, paint)) last.text += cell;
-    else segments.push({ text: cell, ...paint });
+    if (last && !last.box && samePaint(last, paint)) {
+      last.text += cell;
+      lastCells += cells;
+    } else if (
+      last &&
+      !last.box &&
+      paint &&
+      (last.backgrounds || last.backgroundColor !== undefined) &&
+      joinsGradientRun(last, paint, "backgroundColor")
+    ) {
+      // Gradient cells apart only in background join as one run of them.
+      last.backgrounds ??= Array.from({ length: lastCells }, () => last.backgroundColor!);
+      delete last.backgroundColor;
+      last.text += cell;
+      lastCells += cells;
+      for (let k = 0; k < cells; k++) last.backgrounds.push(paint.backgroundColor!);
+    } else if (
+      last &&
+      !last.box &&
+      paint &&
+      paint.backgroundColor === undefined &&
+      (last.colors || last.color !== undefined) &&
+      joinsGradientRun(last, paint, "color")
+    ) {
+      // Gradient-colored glyphs apart only in color, likewise — with no
+      // background of their own: the run's text clip would clip it
+      // away, and Firefox draws no per-layer clip.
+      last.colors ??= Array.from({ length: lastCells }, () => last.color!);
+      delete last.color;
+      last.text += cell;
+      lastCells += cells;
+      for (let k = 0; k < cells; k++) last.colors.push(paint.color!);
+    } else {
+      segments.push({ text: cell, ...paint });
+      lastCells = cells;
+    }
   }
   return segments;
+}
+
+/** Whether a gradient cell joins the run before it: both painted by
+ * a gradient in `field` (the background of a fill, the glyph color of
+ * a text clip), unselected (a selected cell swaps its colors, so it
+ * stays a run of its own), alike in everything but that field. */
+function joinsGradientRun(
+  run: CellSegment,
+  paint: CellPaint,
+  field: "backgroundColor" | "color",
+): boolean {
+  const kind = field === "color" ? "text" : "fill";
+  const other = field === "color" ? "backgroundColor" : "color";
+  return (
+    run.gradient === kind &&
+    paint.gradient === kind &&
+    paint[field] !== undefined &&
+    run.selected === undefined &&
+    paint.selected === undefined &&
+    run[other] === paint[other] &&
+    run.fontWeight === paint.fontWeight &&
+    run.fontStyle === paint.fontStyle &&
+    run.textDecorationLine === paint.textDecorationLine &&
+    run.opacity === paint.opacity
+  );
 }
 
 export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
   return (
     a.color === b?.color &&
     a.backgroundColor === b?.backgroundColor &&
+    a.gradient === b?.gradient &&
+    a.backgrounds === b?.backgrounds &&
+    a.colors === b?.colors &&
     a.fontWeight === b?.fontWeight &&
     a.fontStyle === b?.fontStyle &&
     a.textDecorationLine === b?.textDecorationLine &&
@@ -144,11 +227,68 @@ export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): vo
   } else {
     if (paint.color !== undefined) style.color = paint.color;
     if (paint.backgroundColor !== undefined) style.backgroundColor = paint.backgroundColor;
+    if (paint.backgrounds) {
+      style.backgroundImage = `linear-gradient(to right, ${cellStops(paint.backgrounds)})`;
+    }
+    if (paint.colors) {
+      style.backgroundImage = `linear-gradient(to right, ${cellStops(paint.colors)})`;
+      style.webkitBackgroundClip = "text";
+      style.backgroundClip = "text";
+      style.color = "transparent";
+    }
   }
   if (paint.fontWeight !== undefined) style.fontWeight = paint.fontWeight;
   if (paint.fontStyle !== undefined) style.fontStyle = paint.fontStyle;
   if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
   if (paint.opacity !== undefined) style.opacity = paint.opacity;
+}
+
+/** The glyph paint of a box clipped to `text` (specs/gradients.md):
+ * a glyph's own color composited over the background's color at its
+ * cell — the gradient through `text-transparent`, an opaque color
+ * as it is — for a color the parser reads; any other stays. */
+function glyphTint(
+  colors: (string | null)[][],
+  boxX: number,
+  boxY: number,
+): (paint: CellPaint | undefined, x: number, y: number) => CellPaint | undefined {
+  const parsed = new Map<string, Rgba | null>();
+  return (paint, x, y) => {
+    const under = colors[y - boxY]?.[x - boxX];
+    if (under === null || under === undefined || paint?.color === undefined) return paint;
+    let own = parsed.get(paint.color);
+    if (own === undefined) parsed.set(paint.color, (own = parseColor(paint.color)));
+    if (own === null || own.a >= 1) return paint;
+    const ground = parseColor(under);
+    if (!ground) return paint;
+    return { ...paint, color: serializeColor(compositeColors(own, ground)), gradient: "text" };
+  };
+}
+
+/** The cells a box's padding box or content box sits inside from its
+ * border box, per side. */
+function paddingBoxInset(node: LayoutNode, clip: "padding-box" | "content-box"): Insets {
+  const { border } = node.style;
+  if (clip === "padding-box") return border;
+  const padding = node.resolvedPadding;
+  return {
+    top: border.top + padding.top,
+    right: border.right + padding.right,
+    bottom: border.bottom + padding.bottom,
+    left: border.left + padding.left,
+  };
+}
+
+/** A run's colors as hard stops in the grid's cell width, each from
+ * the stop before it (a start of 0 floors to it) to its last cell. */
+function cellStops(colors: string[]): string {
+  const stops: string[] = [];
+  for (let i = 0; i < colors.length; i++) {
+    const color = colors[i]!;
+    if (colors[i + 1] === color) continue;
+    stops.push(`${color} 0 calc(var(--mw-cw, 1ch) * ${i + 1})`);
+  }
+  return stops.join(", ");
 }
 
 /** True when a segment carries no paint — the DOM adapter emits a bare
@@ -157,6 +297,8 @@ export function isBarePaint(paint: CellPaint): boolean {
   return (
     paint.color === undefined &&
     paint.backgroundColor === undefined &&
+    paint.backgrounds === undefined &&
+    paint.colors === undefined &&
     paint.fontWeight === undefined &&
     paint.fontStyle === undefined &&
     paint.textDecorationLine === undefined &&
@@ -228,17 +370,22 @@ function renderGrids(
 
 /** Non-default text styling only, so unstyled runs stay bare.
  * `backgroundColor` rides along for INLINE elements (a leaf's own bg
- * paints via the border-box fill instead). */
-function textPaint(source: {
-  color: string | undefined;
-  backgroundColor?: string | undefined;
-  fontWeight: string;
-  fontStyle: string;
-  textDecorationLine: string;
-}): CellPaint {
+ * paints via the border-box fill instead), and `background` false
+ * leaves it out: a leaf's glyphs over its gradient keep the fill's
+ * colors. */
+function textPaint(
+  source: {
+    color: string | undefined;
+    backgroundColor?: string | undefined;
+    fontWeight: string;
+    fontStyle: string;
+    textDecorationLine: string;
+  },
+  background = true,
+): CellPaint {
   const paint: CellPaint = {};
   if (source.color) paint.color = source.color;
-  if (source.backgroundColor) paint.backgroundColor = source.backgroundColor;
+  if (background && source.backgroundColor) paint.backgroundColor = source.backgroundColor;
   if (source.fontWeight !== "400" && source.fontWeight !== "normal" && source.fontWeight !== "")
     paint.fontWeight = source.fontWeight;
   if (source.fontStyle !== "normal" && source.fontStyle !== "") paint.fontStyle = source.fontStyle;
@@ -296,21 +443,47 @@ function walk(
 
   // Fill the border-box with painted spaces so this element's bg
   // wipes ancestor decoration glyphs at these cells; own borders /
-  // text / decoration paint after and layer on top. `bg-clear` runs
-  // the same fill without a visible color.
-  if (style.backgroundColor !== undefined || style.backgroundClear) {
-    // bg-clear fills with an EXPLICIT undefined so the merge in put()
-    // strips the cell's painted background too — the wipe covers
-    // ancestor backgrounds, not just their glyphs.
-    const fillPaint: CellPaint | undefined =
-      style.backgroundColor !== undefined
-        ? alphaPaint({ backgroundColor: style.backgroundColor })
-        : { backgroundColor: undefined };
+  // text / decoration paint after and layer on top. `bg-clear` wipes
+  // first, with an EXPLICIT undefined so the merge in put() strips the
+  // cell's painted background too — the wipe covers ancestor
+  // backgrounds, not just their glyphs. Gradient layers then fill a
+  // color per cell, composited over the plain color, inside the box
+  // `background-clip` names, a cell they leave clear as it was; clipped
+  // to `text`, the colors go to the glyphs instead (`tint`, below), the
+  // plain color with them.
+  const layers = style.backgroundImage;
+  const textClip = style.backgroundClip === "text";
+  const cellSize = options.cell ?? DEFAULT_CELL;
+  const fill = (paint: CellPaint | undefined): void => {
+    const own: CellPaint = { gradient: undefined, ...paint };
     for (let dy = 0; dy < node.localRect.height; dy++) {
-      for (let dx = 0; dx < node.localRect.width; dx++) {
-        put(absX + dx, absY + dy, " ", fillPaint);
+      for (let dx = 0; dx < node.localRect.width; dx++) put(absX + dx, absY + dy, " ", own);
+    }
+  };
+  if (style.backgroundClear) fill({ backgroundColor: undefined });
+  let tint: ReturnType<typeof glyphTint> | null = null;
+  if (textClip && (layers.length > 0 || style.backgroundColor !== undefined)) {
+    const { width, height } = node.localRect;
+    tint = glyphTint(
+      gradientCells(layers, style.backgroundColor, width, height, cellSize),
+      absX,
+      absY,
+    );
+  } else if (layers.length > 0) {
+    const { width, height } = node.localRect;
+    const colors = gradientCells(layers, style.backgroundColor, width, height, cellSize);
+    const clip = style.backgroundClip;
+    const inset =
+      clip === "padding-box" || clip === "content-box" ? paddingBoxInset(node, clip) : zeroInsets();
+    for (let dy = inset.top; dy < height - inset.bottom; dy++) {
+      for (let dx = inset.left; dx < width - inset.right; dx++) {
+        const color = colors[dy]![dx];
+        if (color)
+          put(absX + dx, absY + dy, " ", alphaPaint({ backgroundColor: color, gradient: "fill" }));
       }
     }
+  } else if (style.backgroundColor !== undefined) {
+    fill(alphaPaint({ backgroundColor: style.backgroundColor }));
   }
   paintShadows(true);
 
@@ -390,7 +563,8 @@ function walk(
       !child.inlineBox && child.style.position !== "absolute" && child.style.position !== "fixed",
   );
   if (!hasInFlowChildren && node.text) {
-    const leafPaint = alphaPaint(textPaint(style));
+    // The plain color rides along only where it filled the box.
+    const leafPaint = alphaPaint(textPaint(style, layers.length === 0 && !tint));
     const inlinePaints = node.inlineElements?.map((entry) => alphaPaint(textPaint(entry)));
     const selection = options.selection?.get(node);
     type Entry = NonNullable<LayoutNode["inlineElements"]>[number];
@@ -412,7 +586,7 @@ function walk(
       }
       const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
       const cells = clusterWidth(cluster);
-      if (cells > 0) contentPut(x, y, cluster, paint, cells);
+      if (cells > 0) contentPut(x, y, cluster, tint ? tint(paint, x, y) : paint, cells);
     };
     // A sticky inline element's glyphs paint after the rest of the
     // leaf's, over the line they were shifted onto (specs/sticky.md).

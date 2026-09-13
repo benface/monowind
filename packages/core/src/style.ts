@@ -1,4 +1,6 @@
 import { trackBackground } from "./animate.ts";
+import { isLegacyColor, parseColor } from "./color.ts";
+import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
@@ -11,6 +13,12 @@ import type {
   OverflowAxis,
   BorderStyle,
   BoxShadow,
+  BackgroundClip,
+  Gradient,
+  GradientLength,
+  GradientPoint,
+  GradientStop,
+  RadialSize,
   CellLength,
   CellMetrics,
   CellStyle,
@@ -278,6 +286,8 @@ export function readCellStyle(
     fontStyle: cs.fontStyle,
     backgroundColor: readAnimatedBackground(el, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
+    backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
+    backgroundClip: readBackgroundClip(cs.backgroundClip),
     borderColor: {
       top: cs.borderTopColor,
       right: cs.borderRightColor,
@@ -928,6 +938,185 @@ function readBoxShadow(
     });
   }
   return shadows;
+}
+
+/** The gradient layers of a computed `background-image`
+ * (specs/gradients.md), in the forms engines serialize: a direction,
+ * shape, size, position, or space first when present, then the stops
+ * with their positions and hints, a `currentcolor` stop the element's
+ * `color`; other layers (`url()`, `none`) are left out. */
+function readBackgroundImage(value: string, color: string, rootFontSizePx: number): Gradient[] {
+  const gradients: Gradient[] = [];
+  if (!value || value === "none") return gradients;
+  for (const layer of splitCommas(value.replace(/\bcurrentcolor\b/gi, color))) {
+    const match = /^\s*(repeating-)?(linear|radial|conic)-gradient\((.*)\)\s*$/s.exec(layer);
+    if (!match) continue;
+    const [, repeating, kind, inner] = match;
+    const args = splitTopLevelCommas(inner!).map((arg) => arg.trim());
+    const leads = args.length > 0 && !startsWithColor(args[0]!);
+    const head = leads ? splitTopLevel(args[0]!) : [];
+    const stopArgs = leads ? args.slice(1) : args;
+    const stops = readGradientStops(stopArgs, rootFontSizePx);
+    if (stops.length < 2) continue;
+    const base = { repeating: repeating !== undefined, ...gradientSpace(head, stopArgs), stops };
+    if (kind === "linear") {
+      gradients.push({ kind, ...base, direction: linearDirection(head) });
+    } else if (kind === "radial") {
+      gradients.push({ kind, ...base, ...radialGeometry(head, rootFontSizePx) });
+    } else {
+      const from = head.indexOf("from");
+      gradients.push({
+        kind: "conic",
+        ...base,
+        from: from >= 0 ? readAngle(head[from + 1] ?? "") : 0,
+        at: readGradientAt(head, rootFontSizePx),
+      });
+    }
+  }
+  return gradients;
+}
+
+/** Whether a gradient argument opens with a color: a stop, then. */
+const startsWithColor = (arg: string): boolean =>
+  /^(?:rgba?|hsla?|oklab|oklch|color)\(|^transparent\b/i.test(arg);
+
+const SPACES: ColorSpace[] = ["oklab", "oklch", "srgb", "srgb-linear", "hsl"];
+const HUE_MODES: HueMode[] = ["shorter", "longer", "increasing", "decreasing"];
+
+/** The interpolation space and hue mode: named with `in <space>
+ * [<mode> hue]`, else oklab, or srgb when every stop is a legacy
+ * color (CSS's default for those); a space outside the engine's
+ * reads as oklab. */
+function gradientSpace(head: string[], stopArgs: string[]): { space: ColorSpace; hue: HueMode } {
+  const at = head.indexOf("in");
+  if (at >= 0) {
+    const named = head[at + 1] as ColorSpace;
+    const mode = head[at + 2] as HueMode;
+    return {
+      space: SPACES.includes(named) ? named : "oklab",
+      hue: HUE_MODES.includes(mode) ? mode : "shorter",
+    };
+  }
+  const colors = stopArgs.filter(startsWithColor);
+  const legacy = colors.every((arg) => isLegacyColor(splitTopLevel(arg)[0] ?? ""));
+  return { space: legacy ? "srgb" : "oklab", hue: "shorter" };
+}
+
+/** Where the background paints, the first layer's keyword. */
+function readBackgroundClip(value: string): BackgroundClip {
+  const first = value.split(",")[0]!.trim();
+  return first === "text" || first === "padding-box" || first === "content-box"
+    ? first
+    : "border-box";
+}
+
+/** An angle in degrees from a CSS angle token. */
+function readAngle(token: string): number {
+  const amount = parseFloat(token);
+  if (!Number.isFinite(amount)) return 0;
+  if (token.endsWith("grad")) return amount * 0.9;
+  if (token.endsWith("rad")) return (amount * 180) / Math.PI;
+  if (token.endsWith("turn")) return amount * 360;
+  return amount;
+}
+
+/** `to <side-or-corner>` or an angle; `to bottom` (180deg) by default. */
+function linearDirection(head: string[]): { angle: number } | { toX: number; toY: number } {
+  if (head[0] === "to") {
+    let toX = 0;
+    let toY = 0;
+    for (const side of head.slice(1)) {
+      if (side === "left") toX = -1;
+      else if (side === "right") toX = 1;
+      else if (side === "top") toY = -1;
+      else if (side === "bottom") toY = 1;
+    }
+    return { toX, toY };
+  }
+  const angle = head.find((token) => /^-?[\d.]+(?:deg|grad|rad|turn)$/.test(token));
+  return angle === undefined ? { angle: 180 } : { angle: readAngle(angle) };
+}
+
+/** A gradient length: a percentage as a fraction, an angle (a conic's
+ * positions) as a fraction of the turn, a px length as cells on the
+ * spacing scale. */
+function gradientLength(token: string, rootFontSizePx: number): GradientLength | null {
+  const amount = parseFloat(token);
+  if (!Number.isFinite(amount)) return null;
+  if (token.endsWith("%")) return { fraction: amount / 100 };
+  if (/(?:deg|grad|rad|turn)$/.test(token)) return { fraction: readAngle(token) / 360 };
+  return { cells: pxToCells(amount, rootFontSizePx) };
+}
+
+/** The `at <position>` of a radial or conic gradient, the center by
+ * default: keywords and lengths, one value centering the other axis. */
+function readGradientAt(head: string[], rootFontSizePx: number): GradientPoint {
+  const at = head.indexOf("at");
+  const center = { fraction: 0.5 };
+  if (at < 0) return { x: center, y: center };
+  const keyword: Record<string, GradientLength> = {
+    left: { fraction: 0 },
+    top: { fraction: 0 },
+    center,
+    right: { fraction: 1 },
+    bottom: { fraction: 1 },
+  };
+  const values = head.slice(at + 1, at + 3).filter((token) => token !== "in");
+  const [first, second] = values.map(
+    (token) => keyword[token] ?? gradientLength(token, rootFontSizePx),
+  );
+  const swap =
+    values[0] === "top" || values[0] === "bottom" || values[1] === "left" || values[1] === "right";
+  const x = (swap ? second : first) ?? center;
+  const y = (swap ? first : second) ?? center;
+  return { x, y };
+}
+
+/** A radial gradient's shape, size, and position: `ellipse` and
+ * `farthest-corner` by default, a lone length a circle's radius, a
+ * pair an ellipse's radii. */
+function radialGeometry(
+  head: string[],
+  rootFontSizePx: number,
+): { shape: "circle" | "ellipse"; size: RadialSize; at: GradientPoint } {
+  const at = head.indexOf("at");
+  const own = at < 0 ? head : head.slice(0, at);
+  const keyword = own.find((token) =>
+    ["closest-side", "farthest-side", "closest-corner", "farthest-corner"].includes(token),
+  ) as Exclude<RadialSize, object> | undefined;
+  const lengths = own
+    .map((token) => (/^[\d.]/.test(token) ? gradientLength(token, rootFontSizePx) : null))
+    .filter((length): length is GradientLength => length !== null);
+  let shape: "circle" | "ellipse" = own.includes("circle") ? "circle" : "ellipse";
+  let size: RadialSize = keyword ?? "farthest-corner";
+  if (lengths.length === 1) {
+    shape = "circle";
+    size = { rx: lengths[0]!, ry: lengths[0]! };
+  } else if (lengths.length >= 2) {
+    shape = "ellipse";
+    size = { rx: lengths[0]!, ry: lengths[1]! };
+  }
+  return { shape, size, at: readGradientAt(head, rootFontSizePx) };
+}
+
+/** The stops of a gradient, each a color and up to two positions
+ * (two make two stops), a lone length between stops a hint. */
+function readGradientStops(args: string[], rootFontSizePx: number): GradientStop[] {
+  const stops: GradientStop[] = [];
+  for (const arg of args) {
+    const tokens = splitTopLevel(arg);
+    const color = parseColor(tokens[0] ?? "");
+    if (!color) {
+      const hint = gradientLength(tokens[0] ?? "", rootFontSizePx);
+      const last = stops[stops.length - 1];
+      if (hint && last) last.hint = hint;
+      continue;
+    }
+    const positions = tokens.slice(1, 3).map((token) => gradientLength(token, rootFontSizePx));
+    if (positions.length === 0) positions.push(null);
+    for (const position of positions) stops.push({ color, position });
+  }
+  return stops;
 }
 
 /** A value's comma-separated parts, commas inside parentheses kept. */

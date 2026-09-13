@@ -1,4 +1,5 @@
 import type { BorderGlyphSet } from "./glyphs.ts";
+import type { ColorSpace, HueMode, Rgba } from "./color.ts";
 export interface Rect {
   x: number;
   y: number;
@@ -130,6 +131,54 @@ export interface BoxShadow {
   color: string;
   inset: boolean;
 }
+
+/** A length along a gradient (specs/gradients.md): a fraction of the
+ * line, ellipse, or box, or cells on the spacing scale (a px length),
+ * resolved to px at paint by the measured cell. */
+export type GradientLength = { fraction: number } | { cells: number };
+export interface GradientPoint {
+  x: GradientLength;
+  y: GradientLength;
+}
+export interface GradientStop {
+  color: Rgba;
+  /** Along the line; null spreads evenly between its neighbours. */
+  position: GradientLength | null;
+  /** The transition hint after this stop, where the midpoint sits. */
+  hint?: GradientLength;
+}
+export type RadialSize =
+  | "closest-side"
+  | "farthest-side"
+  | "closest-corner"
+  | "farthest-corner"
+  | { rx: GradientLength; ry: GradientLength };
+interface GradientBase {
+  repeating: boolean;
+  /** The interpolation space: as named, else oklab, or srgb when
+   * every stop is a legacy color, as CSS defaults. */
+  space: ColorSpace;
+  /** How a polar space's hue turns between stops, `shorter` unless
+   * named. */
+  hue: HueMode;
+  stops: GradientStop[];
+}
+export type BackgroundClip = "border-box" | "padding-box" | "content-box" | "text";
+/** A `background-image` layer the grid paints as a color per cell. */
+export type Gradient =
+  | (GradientBase & {
+      kind: "linear";
+      /** Degrees clockwise from `to top`, or a side or corner (`toX`,
+       * `toY` in −1, 0, 1), whose angle the box decides at paint. */
+      direction: { angle: number } | { toX: number; toY: number };
+    })
+  | (GradientBase & {
+      kind: "radial";
+      shape: "circle" | "ellipse";
+      size: RadialSize;
+      at: GradientPoint;
+    })
+  | (GradientBase & { kind: "conic"; from: number; at: GradientPoint });
 export type TextOverflow = "clip" | "ellipsis";
 
 /** One bound of a grid track size (specs/grid.md). `fr` is only valid as a
@@ -495,6 +544,10 @@ export interface CellStyle {
    * `backgroundColor` stays undefined; the renderer fills with plain
    * spaces instead of colored spaces. */
   backgroundClear: boolean;
+  /** Gradient layers, first declared first (specs/gradients.md). */
+  backgroundImage: Gradient[];
+  /** Where the background paints: a box, or the glyphs (`text`). */
+  backgroundClip: BackgroundClip;
   /** Paint-only text styling, passed through to the browser and
    * mirrored per-segment by the plain-text mode's spans. */
   fontWeight: string;
@@ -864,6 +917,8 @@ export function defaultCellStyle(): CellStyle {
     color: undefined,
     backgroundColor: undefined,
     backgroundClear: false,
+    backgroundImage: [],
+    backgroundClip: "border-box",
     fontWeight: "400",
     fontStyle: "normal",
     textDecorationLine: "none",
