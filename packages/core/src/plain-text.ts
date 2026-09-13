@@ -457,6 +457,9 @@ interface Walk {
   covers: Covers;
   width: number;
   height: number;
+  /** The grid's own put, unclipped: a fixed box paints through it past
+   * its ancestors' clips. */
+  put: PutGlyph;
 }
 
 function renderGrids(
@@ -467,8 +470,13 @@ function renderGrids(
   const height = Math.max(0, root.localRect.height);
   const covers: Covers = new Map();
   const store = cellStore(width, height, covers);
-  const walking: Walk = { options, layers: [], layer: null, covers, width, height };
-  walk(root, 0, 0, walking, store.put);
+  const walking: Walk = { options, layers: [], layer: null, covers, width, height, put: store.put };
+  walk(root, 0, 0, walking, walking.put);
+  // The stack after the tree (specs/top-layer.md), each element with
+  // its own opacity alone: the top layer escapes its ancestors'.
+  for (const { node } of root.topLayer ?? []) {
+    walk(node, 0, 0, walking, walking.put, node.style.opacity);
+  }
   return { store, layers: walking.layers };
 }
 
@@ -648,8 +656,12 @@ function walk(
   parentClip: Clip | null = null,
 ): void {
   if (node.tableHidden) return;
-  const absX = parentAbsX + node.localRect.x + (node.stickyShift?.x ?? 0);
-  const absY = parentAbsY + node.localRect.y + (node.stickyShift?.y ?? 0);
+  // A fixed box, a top-layer element's included, paints from the host's
+  // origin, outside its ancestors' scroll and clips
+  // (specs/positioning.md, specs/top-layer.md).
+  const hoisted = node.hostRect;
+  const absX = hoisted ? hoisted.x : parentAbsX + node.localRect.x + (node.stickyShift?.x ?? 0);
+  const absY = hoisted ? hoisted.y : parentAbsY + node.localRect.y + (node.stickyShift?.y ?? 0);
   const style = node.style;
   const { options } = parentWalk;
   // A layer root's own paint and its subtree's go to a grid of the
@@ -658,10 +670,10 @@ function walk(
   // unclipped.
   const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
   const opened = style.layer ? openLayer(parentWalk, node, box, parentClip) : null;
-  const put = opened ? opened.put : parentPut;
-  const clip = opened ? null : parentClip;
+  const put = opened ? opened.put : hoisted ? parentWalk.put : parentPut;
+  const clip = opened || hoisted ? null : parentClip;
   const walking = opened
-    ? { ...parentWalk, layer: opened.layer, covers: opened.covers }
+    ? { ...parentWalk, layer: opened.layer, covers: opened.covers, put: opened.put }
     : parentWalk;
   // Effective opacity (specs/cell-model.md "Opacity"): ancestors
   // multiply (CSS nests, it doesn't inherit) and the value rides on
@@ -844,6 +856,8 @@ function walk(
   }
 
   for (const child of paintOrderedChildren(node)) {
+    // The stack paints after the tree (specs/top-layer.md).
+    if (child.topLayerRank !== undefined) continue;
     walk(
       child,
       scrolledX,

@@ -225,6 +225,9 @@ function placeAbsolute(
   }
 
   child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
+  // The walks paint and hit a fixed box from the host's origin
+  // (specs/positioning.md).
+  if (fixed) child.hostRect = { x, y };
 }
 
 /** The sole-item static position along the main axis is exactly where a

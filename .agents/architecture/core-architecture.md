@@ -114,6 +114,14 @@ default lives in one place) selects the rendered ASCII grid directly,
 reflected the same way, adds arrow-key focus navigation on the engine's
 geometry under `focus="arrows"` (specs/focus-navigation.md).
 
+The platform's top layer (specs/top-layer.md) is the one place the
+light DOM's own rendering leaves the host: an open popover or a modal
+dialog resolves against the viewport, so the engine places its light
+element `fixed` from the grid's client origin, paints its cells last
+in a stack the `toggle` events order, and draws its `::backdrop` as a
+box beneath them in the shadow viewport, the native one locked
+transparent like any light-DOM background.
+
 The plan file `../plans/2026-08-30-unified-render-initiative.md`
 documents how this arrived; the code and specs (`../specs/cell-model.md`)
 are the current source of truth.

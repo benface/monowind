@@ -10,7 +10,7 @@ import {
 } from "./plain-text.ts";
 import type { CellSegment, LayerRows, PaintedLayer, RenderOptions } from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
-import type { LayoutNode } from "./types.ts";
+import type { LayoutNode, Backdrop } from "./types.ts";
 
 /**
  * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`) and
@@ -92,7 +92,8 @@ export function paintGrid(
   if (options.cell) render.cell = options.cell;
   const { segments, cells, layers } = renderGridRows(root, render);
   if (!paintRows(target, segments, cells, options)) return false;
-  return options.layers ? paintLayers(options.layers, layers, options) : true;
+  const size = { width: cells[0]?.length ?? 0, height: cells.length };
+  return options.layers ? paintLayers(options.layers, layers, options, size) : true;
 }
 
 /** A layer's nodes (specs/layers.md): a positioned box carrying the
@@ -106,6 +107,9 @@ interface LayerNodes {
   box: HTMLElement;
   grid: HTMLElement;
   clipNode: HTMLElement | null;
+  /** A top-layer element's backdrop box, just beneath its own
+   * (specs/top-layer.md). */
+  backdrop: HTMLElement | null;
   layer: PaintedLayer;
   parent: LayerNodes | null;
   left: number;
@@ -218,7 +222,12 @@ function localPoint(nodes: LayerNodes, x: number, y: number): { x: number; y: nu
 /** Every layer's box placed in the container — a nested one in its
  * parent's box — in paint order, its cells painted; a layer painted no
  * more loses its nodes. */
-function paintLayers(container: HTMLElement, layers: LayerRows[], options: PaintOptions): boolean {
+function paintLayers(
+  container: HTMLElement,
+  layers: LayerRows[],
+  options: PaintOptions,
+  size: { width: number; height: number },
+): boolean {
   let set = layerSets.get(container);
   if (!set) layerSets.set(container, (set = { nodes: new Map(), order: [], cell: DEFAULT_CELL }));
   set.cell = options.cell ?? DEFAULT_CELL;
@@ -239,6 +248,7 @@ function paintLayers(container: HTMLElement, layers: LayerRows[], options: Paint
         box,
         grid,
         clipNode: null,
+        backdrop: null,
         layer,
         parent: null,
         left: 0,
@@ -265,14 +275,29 @@ function paintLayers(container: HTMLElement, layers: LayerRows[], options: Paint
       nodes.clipNode = null;
     }
     const outer = nodes.clipNode ?? nodes.box;
+    // A backdrop box beneath a top-layer element's, over the whole
+    // grid, the box moved in or out as the backdrop comes and goes.
+    const backdrop = layer.node.style.backdrop;
+    if (backdrop && !nodes.backdrop) {
+      nodes.backdrop = document.createElement("div");
+      nodes.backdrop.className = "backdrop";
+    } else if (!backdrop && nodes.backdrop) {
+      nodes.backdrop.remove();
+      nodes.backdrop = null;
+    }
     // In paint order: after the previous sibling layer's, else first
     // — past a parent box's own grid.
     const parent = nodes.parent?.box ?? container;
     const previous = last.get(parent);
     const first = nodes.parent ? nodes.parent.grid.nextSibling : parent.firstChild;
-    const anchor = previous ? previous.nextSibling : first;
+    let anchor = previous ? previous.nextSibling : first;
+    if (nodes.backdrop) {
+      if (nodes.backdrop !== anchor) parent.insertBefore(nodes.backdrop, anchor);
+      anchor = nodes.backdrop.nextSibling;
+    }
     if (outer !== anchor) parent.insertBefore(outer, anchor);
     last.set(parent, outer);
+    if (nodes.backdrop && backdrop) placeBackdrop(nodes.backdrop, backdrop, size, set.cell);
     if (options.placeLayers !== false) placeLayer(nodes, set.cell);
     if (!paintRows(nodes.grid, segments, layer.grid, options)) held = true;
   }
@@ -280,9 +305,27 @@ function paintLayers(container: HTMLElement, layers: LayerRows[], options: Paint
   for (const [source, nodes] of set.nodes) {
     if (painted.has(nodes)) continue;
     (nodes.clipNode ?? nodes.box).remove();
+    nodes.backdrop?.remove();
     set.nodes.delete(source);
   }
   return !held;
+}
+
+/** The backdrop box over the grid, in px of the measured cell, with
+ * the `::backdrop`'s look as read. */
+function placeBackdrop(
+  box: HTMLElement,
+  backdrop: Backdrop,
+  size: { width: number; height: number },
+  cell: CellSize,
+): void {
+  const style = box.style;
+  style.width = `${size.width * cell.width}px`;
+  style.height = `${size.height * cell.height}px`;
+  style.backgroundColor = backdrop.backgroundColor;
+  style.backgroundImage = backdrop.backgroundImage;
+  style.backdropFilter = backdrop.backdropFilter;
+  style.opacity = backdrop.opacity;
 }
 
 /** The box at the layer's extent, in px of the measured cell, with

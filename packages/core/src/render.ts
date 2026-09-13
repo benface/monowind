@@ -162,7 +162,7 @@ function applyInlineInsets(el: HTMLElement, insets: PerSide<number | null>): voi
  * written after the paint computes them: a box's as `--mw-sx`/`--mw-sy`
  * beside its position, an inline element's as its inset properties. */
 export function syncStickyVars(boxes: StickyBox[]): void {
-  for (const { node } of boxes) {
+  for (const { node, ancestors } of boxes) {
     if (node.style.position === "sticky") {
       const el = node.source as HTMLElement;
       const shift = node.stickyShift;
@@ -173,6 +173,19 @@ export function syncStickyVars(boxes: StickyBox[]): void {
         clearVar(el, "--mw-sx");
         clearVar(el, "--mw-sy");
       }
+    } else if (node.hostRect) {
+      // A fixed box's light element takes back its ancestors' scroll,
+      // and their sticky shifts, which a fixed box escapes, so it sits
+      // at the host's cells the grid paints it on (specs/positioning.md).
+      const el = node.source as HTMLElement;
+      let x = 0;
+      let y = 0;
+      for (const ancestor of ancestors) {
+        x += (ancestor.scroll?.x ?? 0) - (ancestor.stickyShift?.x ?? 0);
+        y += (ancestor.scroll?.y ?? 0) - (ancestor.stickyShift?.y ?? 0);
+      }
+      setVar(el, "--mw-sx", String(x));
+      setVar(el, "--mw-sy", String(y));
     }
     for (const entry of node.inlineElements ?? []) {
       if (entry.sticky === undefined) continue;
@@ -185,7 +198,12 @@ export function syncStickyVars(boxes: StickyBox[]): void {
 
 function positionElement(node: LayoutNode): void {
   const el = node.source as HTMLElement;
-  const rect = node.localRect;
+  // A top-layer element's box is the viewport's (specs/top-layer.md):
+  // the companion places it from the grid's client origin, in the
+  // host's cells.
+  const top = node.topLayerRank !== undefined;
+  const rect = top ? { ...node.localRect, ...node.hostRect } : node.localRect;
+  setFlag(el, "data-mw-top", top);
   if (node.style.position !== "sticky") {
     clearVar(el, "--mw-sx");
     clearVar(el, "--mw-sy");

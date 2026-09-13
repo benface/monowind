@@ -1,5 +1,6 @@
 import { trackBackground } from "./animate.ts";
 import { animatesEffect } from "./animation.ts";
+import { isTopLayer } from "./top-layer.ts";
 import { isLegacyColor, parseColor } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
@@ -41,6 +42,7 @@ import type {
   TableRole,
   TrackBreadth,
   TrackSize,
+  Backdrop,
 } from "./types.ts";
 
 /**
@@ -188,6 +190,11 @@ export function readCellStyle(
     }
   }
 
+  // A top-layer box (specs/top-layer.md), and a displayed popover
+  // through its exit, keeps the UA's geometry where the author sets
+  // none.
+  const topLayer = isTopLayer(el);
+  const hoisted = topLayer || el.hasAttribute("popover");
   const style: CellStyle = {
     display,
     tableRole,
@@ -291,6 +298,8 @@ export function readCellStyle(
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
     layer: readLayer(el, cs),
+    topLayer,
+    backdrop: hoisted ? readBackdrop(el) : null,
     glyphSet,
     boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
@@ -323,7 +332,63 @@ export function readCellStyle(
     breakInsideAvoid: cs.breakInside === "avoid" || cs.breakInside === "avoid-column",
   };
   applyBorderCollapse(style, cs);
+  if (hoisted) {
+    applyTopLayerGeometry(style, classAttr, inlineStyle);
+    // A backdrop's element paints in a box of its own, above the
+    // backdrop box (specs/top-layer.md): a layer root.
+    if (style.backdrop) style.layer ??= { backdropFilter: "none" };
+  }
   return style;
+}
+
+/** The UA's geometry of a top-layer box — a fixed box at `inset: 0`,
+ * sized `fit-content`, its margins `auto` — where the author's classes
+ * and inline style say nothing: the browsers resolve the UA's `auto`
+ * margins to used pixels, and without the Typed OM the insets read
+ * from the class list alone. */
+function applyTopLayerGeometry(
+  style: CellStyle,
+  classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
+): void {
+  style.position = "fixed";
+  for (const side of ["top", "right", "bottom", "left"] as const) {
+    style.insets[side] ??= 0;
+  }
+  if (style.width === undefined || style.width.kind === "auto")
+    style.width = { kind: "fit-content" };
+  if (style.height === undefined || style.height.kind === "auto") {
+    style.height = { kind: "fit-content" };
+  }
+  const authored = (stems: string, physical: string): boolean =>
+    new RegExp(`(?:^|[\\s:.[!])-?(?:${stems})-`).test(classAttr) ||
+    inlineStyle.getPropertyValue(physical) !== "";
+  if (!authored("m|my|mt", "margin-top")) style.margin.top = null;
+  if (!authored("m|mx|mr|me", "margin-right")) style.margin.right = null;
+  if (!authored("m|my|mb", "margin-bottom")) style.margin.bottom = null;
+  if (!authored("m|mx|ml|ms", "margin-left")) style.margin.left = null;
+}
+
+/** The `::backdrop`'s look, read while the companion's lock is off;
+ * null when nothing of it shows, or where a headless DOM has no
+ * pseudo-elements. */
+function readBackdrop(el: Element): Backdrop | null {
+  try {
+    const cs = getComputedStyle(el, "::backdrop");
+    const backgroundColor = cs.backgroundColor;
+    const backgroundImage = cs.backgroundImage || "none";
+    const backdropFilter = cs.backdropFilter || "none";
+    if (
+      isTransparentColor(backgroundColor) &&
+      backgroundImage === "none" &&
+      backdropFilter === "none"
+    ) {
+      return null;
+    }
+    return { backgroundColor, backgroundImage, backdropFilter, opacity: cs.opacity || "1" };
+  } catch {
+    return null;
+  }
 }
 
 /** Collapsed-table participants surrender their borders to the lattice

@@ -29,6 +29,7 @@ import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render, syncStickyVars } from "./render.ts";
 import { applyStickyShifts, collectStickyBoxes } from "./sticky.ts";
+import { TopLayer, isTopLayer } from "./top-layer.ts";
 import type { StickyBox } from "./sticky.ts";
 import { buildChildren, buildRootLeaf, hostLeafStyle } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
@@ -70,7 +71,7 @@ const SHADOW_TEMPLATE = `
    * transform and filter, its grid transparent where the subtree
    * painted nothing; a nested box sits in its parent's, a clipped one
    * in a clipping box at its ancestors' clip. */
-  #layers, .layer, .clip { position: absolute; top: 0; left: 0; pointer-events: none; }
+  #layers, .layer, .clip, .backdrop { position: absolute; top: 0; left: 0; pointer-events: none; }
   .clip { overflow: clip; }
   .layer > .grid { background: transparent; }
   /* A background reaches the row's edges: the host's measured half-gap
@@ -526,6 +527,8 @@ export class MonoWindElement extends HTMLElementBase {
     this.addEventListener("animationiteration", this.#onAnimationStart);
     this.addEventListener("animationend", this.#onAnimationDone);
     this.addEventListener("animationcancel", this.#onAnimationDone);
+    // A popover's or a dialog's toggle bubbles from neither: captured.
+    this.addEventListener("toggle", this.#onToggle, true);
 
     // Synthesized pointer states (specs/cell-model.md "Pointer
     // states"): under select="grid" the light DOM is pointer-events:
@@ -584,6 +587,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("animationiteration", this.#onAnimationStart);
     this.removeEventListener("animationend", this.#onAnimationDone);
     this.removeEventListener("animationcancel", this.#onAnimationDone);
+    this.removeEventListener("toggle", this.#onToggle, true);
     this.#activeTransitions = 0;
     this.#animated.clear();
     this.removeEventListener("pointermove", this.#onPointerMove);
@@ -1098,15 +1102,23 @@ export class MonoWindElement extends HTMLElementBase {
     if (e.button !== 0) return;
     const mode = this.getAttribute("select");
     const onGrid = this.#onGrid(e.composedPath());
-    if (mode === "grid") {
-      if (!onGrid && !this.#isPhantomTarget(e.target)) return;
-    } else if (mode !== "text" || !this.#isTextTarget(e.target)) return;
+    // Under a modal dialog the grid is blocked (specs/top-layer.md
+    // deviation 7): a press inside the dialog selects as text mode's.
+    const asText =
+      mode === "text" ||
+      (mode === "grid" &&
+        !onGrid &&
+        e.target instanceof Element &&
+        e.target.closest("dialog:modal") !== null);
+    if (asText) {
+      if (!this.#isTextTarget(e.target)) return;
+    } else if (mode !== "grid" || (!onGrid && !this.#isPhantomTarget(e.target))) return;
     const finePointer = this.#lastPointerType === "mouse" || this.#lastPointerType === "pen";
     if (e.detail <= 1) {
       if (e.detail !== 1) return;
       this.removeAttribute(SEMANTIC_SELECTION);
       if (!finePointer) return;
-      if (mode === "text") {
+      if (asText) {
         this.#startCharacterDrag(e);
         this.#startAutoscroll(e);
         return;
@@ -1654,13 +1666,14 @@ export class MonoWindElement extends HTMLElementBase {
   };
 
   #onAnyScroll = (event: Event): void => {
-    if (!this.#hoverClient) return;
     // Container scrolls are #onScroll's: hover refreshes in the paint frame
     // AFTER the offsets sync (a per-event refresh here would read
     // stale offsets), and a container's scroll never moves the grid itself.
     const target = event.target;
     if (target instanceof HTMLElement && target.hasAttribute("data-mw-scroll")) return;
     this.#gridOrigin = null;
+    this.#syncTopLayerOrigin();
+    if (!this.#hoverClient) return;
     this.#followPointer();
     this.#updatePointerStates();
   };
@@ -1767,6 +1780,29 @@ export class MonoWindElement extends HTMLElementBase {
     return el !== this && this.contains(el);
   }
 
+  /** The host's top-layer stack (specs/top-layer.md). */
+  #topLayer = new TopLayer();
+
+  /** A popover's or a dialog's toggle: an opening into the top layer
+   * enters the stack, and either state lays out — nothing else of a
+   * popover's opening reaches the observers. */
+  #onToggle = (event: Event): void => {
+    const el = event.target;
+    if (!(el instanceof Element) || !this.#owns(el)) return;
+    if (isTopLayer(el)) this.#topLayer.enter(el);
+    this.#scheduleLayout();
+  };
+
+  /** The grid's client origin onto the host, for the companion to
+   * place the top-layer elements' light boxes in the viewport
+   * (specs/top-layer.md); current through layouts and page scrolls. */
+  #syncTopLayerOrigin(): void {
+    if (!this.#lastLayout?.topLayer) return;
+    const rect = this.#grid.getBoundingClientRect();
+    this.style.setProperty("--mw-ox", `${rect.left}px`);
+    this.style.setProperty("--mw-oy", `${rect.top}px`);
+  }
+
   /** An element found animating joins the set with its path — a
    * layout's until its animations answer — and the loop runs. */
   #follow(el: Element): void {
@@ -1813,6 +1849,12 @@ export class MonoWindElement extends HTMLElementBase {
 
   #onTransitionDone = (event: Event): void => {
     const property = (event as TransitionEvent).propertyName;
+    // A popover's exit rides a display or overlay transition: its end
+    // lands with a layout (specs/top-layer.md).
+    if (property === "display" || property === "overlay") {
+      this.#scheduleLayout();
+      return;
+    }
     if (!SAMPLED_TRANSITION.test(property)) return;
     if (LAYER_TRANSITION.test(property)) {
       this.#activeLayerTransitions = Math.max(0, this.#activeLayerTransitions - 1);
@@ -2098,8 +2140,9 @@ export class MonoWindElement extends HTMLElementBase {
         buildRootLeaf(this, rootFontSizePx, metrics, textareaWidths) ??
         this.#buildRootContainer(rootFontSizePx, metrics, textareaWidths);
 
-      // (4) Compute integer layout.
+      // (4) Compute integer layout, and the top-layer stack over it.
       const { height } = layoutRoot(virtualRoot, availableCols);
+      this.#topLayer.assign(virtualRoot);
 
       // (5) Write geometry to light DOM + paint the shadow grid. Do this
       // before clearing the measuring attribute so the browser only
@@ -2209,6 +2252,7 @@ export class MonoWindElement extends HTMLElementBase {
       // re-derive the synthesized pointer states (cheap when nothing
       // changed; a chain change coalesces into the next frame).
       this.#gridOrigin = null;
+      this.#syncTopLayerOrigin();
       this.#followContainerScroll();
       if (this.#hoverClient) this.#updatePointerStates();
     }

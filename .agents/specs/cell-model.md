@@ -141,9 +141,11 @@ specs: deterministic, document order.)
 ## Positioning and insets
 
 Normative spec: `positioning.md` (static/relative/absolute per CSS,
-fixed → host-anchored absolute, sticky per `sticky.md`, insets
-on the spacing scale, CSS containing blocks and static positions, inline
-relative rescaling).
+fixed → host-anchored absolute painted outside its ancestors' clips,
+sticky per `sticky.md`, insets on the spacing scale, CSS containing
+blocks and static positions, inline relative rescaling). Popovers and
+modal dialogs paint last, in a stack above everything, a backdrop a
+box the browser draws beneath them (`top-layer.md`).
 
 ## Overflow
 

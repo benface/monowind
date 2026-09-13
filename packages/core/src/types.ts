@@ -599,6 +599,12 @@ export interface CellStyle {
   /** Set on a layer root — an element with a transform or a filter —
    * whose subtree paints into its own node (specs/layers.md). */
   layer: Layer | null;
+  /** In the platform's top layer — an open popover, a modal dialog —
+   * for the host's stack (specs/top-layer.md). */
+  topLayer: boolean;
+  /** The `::backdrop`'s look, for the box the browser draws under a
+   * top-layer element (specs/top-layer.md); null for none. */
+  backdrop: Backdrop | null;
   /** The border glyph SET name from `--mw-border-glyphs` (`null` =
    * default) — the theming vocabulary borders/lattices/rules resolve
    * through (specs/theming.md); resolved on the decoration's owner. */
@@ -638,6 +644,20 @@ export interface CellStyle {
   /** `break-inside: avoid` / `avoid-column` — a paragraph-flow child
    * fragments as one unbreakable unit (specs/multicol.md). */
   breakInsideAvoid: boolean;
+}
+
+/** A `::backdrop`'s computed look, as the backdrop box copies it. */
+export interface Backdrop {
+  backgroundColor: string;
+  backgroundImage: string;
+  backdropFilter: string;
+  opacity: string;
+}
+
+/** A top-layer element's node with its ancestors from the root down. */
+export interface TopLayerEntry {
+  node: LayoutNode;
+  ancestors: LayoutNode[];
 }
 
 export interface LayoutNode {
@@ -784,6 +804,17 @@ export interface LayoutNode {
    * a paint-time input like `scroll`, added by every walk where it adds
    * the box's own position; absent = none. */
   stickyShift?: { x: number; y: number };
+  /** A fixed box's origin in the host's cells (specs/positioning.md),
+   * written by the positioning pass: the walks paint and hit it from
+   * here, outside its ancestors' scroll and clips. */
+  hostRect?: { x: number; y: number };
+  /** The box's place in the host's top-layer stack
+   * (specs/top-layer.md), assigned per layout: the walks skip it in
+   * place and take it after the tree, in this order. */
+  topLayerRank?: number;
+  /** The root's top-layer stack in paint order, each element with its
+   * ancestors from the root down; absent when empty. */
+  topLayer?: TopLayerEntry[];
   /** The gutter cells this container actually reserved — `scroll`
    * axes always, `auto` axes only when content overflows (the layout
    * second pass). Paint, hit-testing, and thumb drags read THIS, not
@@ -948,6 +979,8 @@ export function defaultCellStyle(): CellStyle {
     boxShadow: [],
     opacity: 1,
     layer: null,
+    topLayer: false,
+    backdrop: null,
     zIndex: null,
     latticeBorder: null,
     ruleX: null,

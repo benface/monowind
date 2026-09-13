@@ -41,8 +41,10 @@ export function stickyShiftAxis(
   return 0;
 }
 
-/** A sticky box, or a leaf holding sticky inline elements, with its
- * ancestors from the root down — gathered once per layout. */
+/** A sticky box, a leaf holding sticky inline elements, or a fixed box
+ * off the top-layer stack — whose light element takes its ancestors'
+ * scroll back (render.ts) — with its ancestors from the root down,
+ * gathered once per layout. */
 export interface StickyBox {
   node: LayoutNode;
   ancestors: LayoutNode[];
@@ -52,7 +54,7 @@ export function collectStickyBoxes(root: LayoutNode): StickyBox[] {
   const out: StickyBox[] = [];
   const chain: LayoutNode[] = [];
   const visit = (node: LayoutNode): void => {
-    if (chain.length > 0 && isSticky(node)) out.push({ node, ancestors: chain.slice() });
+    if (chain.length > 0 && shiftedForScroll(node)) out.push({ node, ancestors: chain.slice() });
     chain.push(node);
     for (const child of node.children) visit(child);
     chain.pop();
@@ -61,10 +63,13 @@ export function collectStickyBoxes(root: LayoutNode): StickyBox[] {
   return out;
 }
 
-function isSticky(node: LayoutNode): boolean {
+/** A box whose light element moves for a scroll: a sticky one with
+ * the scroll, a fixed one against it. */
+function shiftedForScroll(node: LayoutNode): boolean {
   return (
     node.style.position === "sticky" ||
-    (node.inlineElements?.some((entry) => entry.sticky !== undefined) ?? false)
+    (node.inlineElements?.some((entry) => entry.sticky !== undefined) ?? false) ||
+    (node.hostRect !== undefined && node.topLayerRank === undefined)
   );
 }
 

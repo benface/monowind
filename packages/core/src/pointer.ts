@@ -39,36 +39,70 @@ export function hitRect(node: LayoutNode, x: number, y: number): Rect {
  * attribute does too. Overlapping siblings resolve to the TOPMOST in
  * paint order (z-index, document-order ties), matching what the grid
  * shows at that cell; the descent stops where a clipping container's
- * paint does. */
+ * paint does, a fixed box hit from the host's origin past it. The
+ * top-layer stack is tried first, from the top (specs/top-layer.md):
+ * a hit in it is the element's ancestors, then the element and its
+ * own descent. */
 export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[] {
-  const stack: HitEntry[] = [];
-  let node = root;
-  let x = root.localRect.x;
-  let y = root.localRect.y;
-  for (;;) {
-    let hit: LayoutNode | null = null;
-    for (const child of paintOrderedChildren(node)) {
-      if (child.tableHidden) continue;
-      const cx = x + child.localRect.x + (child.stickyShift?.x ?? 0);
-      const cy = y + child.localRect.y + (child.stickyShift?.y ?? 0);
-      // A paragraph-flow multicol child shares the container's box with
-      // its siblings; its ink is where its line fragments are.
-      const inside = child.multicolFlow
-        ? leafLineCovers(child, cx, cy, col, row)
-        : covers(hitRect(child, cx, cy), col, row);
-      if (inside) hit = child;
+  const top = root.topLayer ?? [];
+  for (let i = top.length - 1; i >= 0; i--) {
+    const { node, ancestors } = top[i]!;
+    const { x, y } = node.hostRect!;
+    if (!covers(hitRect(node, x, y), col, row)) continue;
+    const stack: HitEntry[] = [];
+    let ax = root.localRect.x;
+    let ay = root.localRect.y;
+    for (const ancestor of ancestors.slice(1)) {
+      ax += ancestor.localRect.x + (ancestor.stickyShift?.x ?? 0);
+      ay += ancestor.localRect.y + (ancestor.stickyShift?.y ?? 0);
+      stack.push({ node: ancestor, x: ax, y: ay });
+      ax -= ancestor.scroll?.x ?? 0;
+      ay -= ancestor.scroll?.y ?? 0;
     }
-    if (!hit) return stack;
-    const hx = x + hit.localRect.x + (hit.stickyShift?.x ?? 0);
-    const hy = y + hit.localRect.y + (hit.stickyShift?.y ?? 0);
-    stack.push({ node: hit, x: hx, y: hy });
-    const clip = clipBounds(hit, hx, hy);
-    if (clip && (col < clip.x0 || col >= clip.x1 || row < clip.y0 || row >= clip.y1)) return stack;
-    // Descend with the hit's scroll applied: its children paint (and
-    // therefore hit) shifted by the offset (specs/scrolling.md).
-    x = hx - (hit.scroll?.x ?? 0);
-    y = hy - (hit.scroll?.y ?? 0);
-    node = hit;
+    stack.push({ node, x, y });
+    descend(node, x, y, col, row, stack);
+    return stack;
+  }
+  const stack: HitEntry[] = [];
+  descend(root, root.localRect.x, root.localRect.y, col, row, stack);
+  return stack;
+}
+
+/** The hit entries under `node`, painted at `x`, `y`, onto `stack`:
+ * the topmost covering child and its own descent, a fixed child from
+ * the host's origin, the stack's elements left to the stack. */
+function descend(
+  node: LayoutNode,
+  x: number,
+  y: number,
+  col: number,
+  row: number,
+  stack: HitEntry[],
+): void {
+  const clip = clipBounds(node, x, y);
+  const past =
+    clip !== null && (col < clip.x0 || col >= clip.x1 || row < clip.y0 || row >= clip.y1);
+  // Children paint (and therefore hit) shifted by the node's scroll
+  // offset (specs/scrolling.md).
+  const childX = x - (node.scroll?.x ?? 0);
+  const childY = y - (node.scroll?.y ?? 0);
+  const children = paintOrderedChildren(node);
+  for (let i = children.length - 1; i >= 0; i--) {
+    const child = children[i]!;
+    if (child.tableHidden || child.topLayerRank !== undefined) continue;
+    const hoisted = child.hostRect;
+    if (past && !hoisted) continue;
+    const cx = hoisted ? hoisted.x : childX + child.localRect.x + (child.stickyShift?.x ?? 0);
+    const cy = hoisted ? hoisted.y : childY + child.localRect.y + (child.stickyShift?.y ?? 0);
+    // A paragraph-flow multicol child shares the container's box with
+    // its siblings; its ink is where its line fragments are.
+    const inside = child.multicolFlow
+      ? leafLineCovers(child, cx, cy, col, row)
+      : covers(hitRect(child, cx, cy), col, row);
+    if (!inside) continue;
+    stack.push({ node: child, x: cx, y: cy });
+    descend(child, cx, cy, col, row, stack);
+    return;
   }
 }
 

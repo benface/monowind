@@ -183,6 +183,15 @@ mono-wind[select="grid"]
   :is(a, button, input, select, textarea, label, [tabindex], [role="button"]) {
   pointer-events: auto !important;
 }
+/* A modal dialog blocks the page, the grid included (specs/top-layer.md
+ * deviation 7): inside it, grid mode falls back to the light DOM's own
+ * pointer events and selection, the highlight showing over the grid as
+ * in text mode. */
+mono-wind[select="grid"] :is(dialog:modal, dialog:modal *) {
+  pointer-events: auto !important;
+  user-select: text;
+  -webkit-user-select: text;
+}
 /* While a drag that began on the grid is in flight, interactives drop
  * their pointer events too, so the native selection sweeps through
  * their cells instead of stalling at their edge (a click is a press and
@@ -336,6 +345,16 @@ mono-wind[settling] * {
     color, border-color, opacity, transform, translate, rotate, scale, filter !important;
 }
 
+/* A popover's or dialog's exit rides a discrete display transition
+ * (specs/top-layer.md): on them, and them alone, the mask keeps
+ * display and overlay alive across the passes — no lock toggles either
+ * there, while the grid-template read assist below toggles display. */
+mono-wind[measuring] :is([popover], dialog),
+mono-wind[settling] :is([popover], dialog) {
+  transition-property:
+    color, border-color, opacity, transform, translate, rotate, scale, filter, display, overlay !important;
+}
+
 /* Grid-template read assist (specs/grid.md), no-Typed-OM engines only
  * (Firefox pre-157): getComputedStyle on a live grid container returns
  * the USED `grid-template-*` track list (expanded px) — the authored
@@ -390,6 +409,14 @@ mono-wind:not([measuring]) * {
    * and passes through untouched. */
   padding-left: calc(var(--mw-ipl, 0) * var(--mw-cw, 1px)) !important;
   padding-right: calc(var(--mw-ipr, 0) * var(--mw-cw, 1px)) !important;
+}
+
+/* A top-layer element's backdrop is a box of the grid's beneath its
+ * own (specs/top-layer.md), read during [measuring] like backgrounds. */
+mono-wind:not([measuring]) [popover]::backdrop,
+mono-wind:not([measuring]) dialog::backdrop {
+  background: transparent !important;
+  backdrop-filter: none !important;
 }
 
 /* Light-DOM text goes invisible so the grid is the only visible copy;
@@ -497,6 +524,17 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   grid-template-rows: none !important;
   place-content: start !important;
   place-items: stretch !important;
+}
+
+/* A top-layer element's box is the viewport's (specs/top-layer.md):
+ * its cells count from the grid's client origin, which the engine
+ * writes on the host in px and keeps current through page scrolls. */
+mono-wind:not([measuring]) [data-mw-laid-out][data-mw-top] {
+  position: fixed !important;
+  left: calc(var(--mw-ox, 0px) + (var(--mw-x, 0) + var(--mw-sx, 0)) * var(--mw-cw, 1px)) !important;
+  top: calc(
+    var(--mw-oy, 0px) + (var(--mw-y, 0) + var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)
+  ) !important;
 }
 
 /* Shared cell geometry for engine-sized boxes — engine-POSITIONED

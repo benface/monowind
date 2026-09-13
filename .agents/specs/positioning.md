@@ -3,6 +3,10 @@
 Status: normative. Written spec-first for the positioning work (Milestone 3
 scope, expanded to include `absolute`). Cell-unit fundamentals live in
 `cell-model.md`; this spec covers `position` and the inset properties.
+Two sibling specs build on it: `anchor-positioning.md` places an
+out-of-flow box against a named anchor (`position-area`), and
+`top-layer.md` lays out an open popover or a modal dialog as a fixed
+box of the host, painted last in a stack.
 
 ## Values
 
@@ -18,9 +22,12 @@ element. Behavior:
   its containing block by the resolved insets. Its `float` computes to
   `none`, per CSS (specs/float.md).
 - **fixed**: treated as `absolute` with the `<mono-wind>` host as the
-  containing block. **Deviation** (CSS anchors to the viewport) — a
-  component shouldn't escape its host; revisit only if a real use case
-  appears.
+  containing block, and painted and hit-tested from the host's origin,
+  outside its ancestors' clips and scroll offsets, as CSS paints a
+  fixed box outside its scrollers; a layer root above it captures it
+  (specs/layers.md), as a transformed ancestor does in CSS.
+  **Deviation** (CSS anchors to the viewport) — a component shouldn't
+  escape its host; revisit only if a real use case appears.
 - **sticky**: normal flow, then a paint-time shift that keeps the box
   inside its scroll container's scrollport by its insets, per
   css-position-3 §3.4 — `sticky.md`. The insets are constraints, not
