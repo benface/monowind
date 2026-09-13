@@ -94,10 +94,16 @@ export function animationPath(
 }
 
 /** Whether `el` animates a layer effect, for the read: a running
- * animation of one keeps the element a layer root through its
- * identity frames. */
+ * animation or transition of one keeps the element a layer root
+ * through its identity frames, a transition's first among them. A
+ * `transition-duration` of zero skips the call. */
 export function animatesEffect(el: Element, cs: CSSStyleDeclaration): boolean {
   for (const property of animatedProperties(el, cs)) if (EFFECTS.has(property)) return true;
+  if (!/[1-9]/.test(cs.transitionDuration)) return false;
+  for (const animation of el.getAnimations?.() ?? []) {
+    if (!("transitionProperty" in animation) || animation.playState !== "running") continue;
+    if (EFFECTS.has(animation.transitionProperty as string)) return true;
+  }
   return false;
 }
 

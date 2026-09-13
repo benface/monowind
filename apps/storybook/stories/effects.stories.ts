@@ -580,7 +580,7 @@ export const LayerTransition: StoryObj = {
       <div class="p-2">
         <div
           data-test="dialog"
-          class="origin-top-left border px-1 transition-transform duration-1000"
+          class="origin-top-left border px-1 transition-transform delay-300 duration-1000"
         >
           a dialog that scales in
         </div>
@@ -595,7 +595,8 @@ export const LayerTransition: StoryObj = {
     const observer = new MutationObserver(() => layouts++);
     observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
     dialog.classList.add("scale-125");
-    // The box's scale every frame it exists, until the dialog's lands.
+    // The box's scale every frame it exists, until the dialog's lands:
+    // the layer opens on the identity the delay holds.
     const scales = new Set<string>();
     while (getComputedStyle(dialog).scale !== "1.25") {
       const box = layers.querySelector<HTMLElement>(".layer");
@@ -607,7 +608,8 @@ export const LayerTransition: StoryObj = {
       { timeout: 10_000 },
     );
     observer.disconnect();
-    expect(scales.size, "sampled intermediate scales").toBeGreaterThanOrEqual(3);
+    expect(scales.has("1"), "the box at the identity").toBe(true);
+    expect(scales.size, "sampled intermediate scales").toBeGreaterThanOrEqual(4);
     // At most three layouts, the attribute set and removed by each: the
     // class change's, the transition's start, and the settle at its end.
     expect(layouts, "layouts during the transition").toBeLessThanOrEqual(6);

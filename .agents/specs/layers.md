@@ -32,7 +32,9 @@ Read per element during the measure pass: `transform`, the individual
 an element with any of them other than `none` (an identity — a unit
 matrix, `scale: 1`, `rotate: 0deg`, `translate: 0px` — counts as
 none, so a dialog resting at `scale-100` after its transition returns
-to the grid) is a **layer root**. The `backdrop-filter` is kept
+to the grid) is a **layer root**; so is one whose effect is in
+transition or animation, through the identity it leaves from or
+passes (specs/animations.md). The `backdrop-filter` is kept
 from this read: the companion locks it on the light element, whose
 backdrop would take in the layer's own cells beneath it. The other
 effects and `transform-origin` the layer's box copies from the
@@ -95,8 +97,9 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   `translate`, `rotate`, `scale`, and `filter` join the sampled
   transition properties, so a `transition-transform` re-copies the
   computed values every frame and the layer follows the browser's own
-  easing; the layout runs once, at the settle when the transition
-  ends. A keyframe animation of an effect samples the same way, and
+  easing; a layout at the transition's start opens the layer, on the
+  identity it may leave from, and one at the settle when it ends lands
+  it. A keyframe animation of an effect samples the same way; either
   keeps its element a layer root through identity frames
   (specs/animations.md).
 - **Selection and copy see the grid, not the transform.** A layer's

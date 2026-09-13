@@ -1208,7 +1208,7 @@ function readOpacity(value: string): number {
 }
 
 /** A layer root — an element with a transform or a filter set, or a
- * running animation of one (specs/animations.md) — and its
+ * running animation or transition of one (specs/animations.md) — and its
  * `backdrop-filter`, read while the companion's lock is off. An
  * identity (Tailwind's `transform`, `transform-gpu`, a dialog resting
  * at `scale-100` after its transition) is none. */

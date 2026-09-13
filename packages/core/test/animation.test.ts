@@ -113,6 +113,31 @@ describe("the read", () => {
     expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none" });
   });
 
+  it("keeps an element whose effect is in transition a layer root, from the identity", () => {
+    const el = document.createElement("div");
+    el.setAttribute("style", "transition-duration: 1s; scale: 1");
+    document.body.appendChild(el);
+    let calls = 0;
+    el.getAnimations = () => (
+      calls++,
+      [
+        { transitionProperty: "scale", playState: "running" },
+        { transitionProperty: "color", playState: "running" },
+      ] as unknown as Animation[]
+    );
+    expect(animatesEffect(el, getComputedStyle(el))).toBe(true);
+    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none" });
+    el.getAnimations = () => [
+      { transitionProperty: "color", playState: "running" } as unknown as Animation,
+    ];
+    expect(readCellStyle(el, 16).layer).toBeNull();
+    // Without a duration there is no transition to ask for.
+    el.style.transitionDuration = "0s";
+    calls = 0;
+    expect(readCellStyle(el, 16).layer).toBeNull();
+    expect(calls).toBe(0);
+  });
+
   it("leaves an element animating its opacity off the layers", () => {
     const el = animating([[{ opacity: "1" }, { opacity: "0.5" }]], "animation-name: spin");
     expect(animatesEffect(el, getComputedStyle(el))).toBe(false);

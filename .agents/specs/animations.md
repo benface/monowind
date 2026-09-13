@@ -20,10 +20,13 @@ engine has only to sample it, as it samples transitions.
 
 ## Reading
 
-Nothing new is read per element. `animationstart` bubbles from the
-light elements to the host; the target's `getAnimations()` gives its
-running `CSSAnimation`s, each with its keyframes' property names and
-its play state. A **sampled animation** is one whose keyframes touch a sampled
+The measure pass reads, per element, only whether to ask: an
+`animation-name` other than none, or a `transition-duration` other
+than zero, has `getAnimations()` say what runs on the element, for
+the layer root it keeps (Locked decisions). `animationstart` bubbles
+from the light elements to the host; the target's `getAnimations()`
+gives its running `CSSAnimation`s, each with its keyframes' property
+names and its play state. A **sampled animation** is one whose keyframes touch a sampled
 property: `color`, the `border-*-color` longhands, `opacity`,
 `background-color`, or a layer effect (`transform`, `translate`,
 `rotate`, `scale`, `filter`, `backdrop-filter`). Any other keyframe
@@ -65,8 +68,11 @@ through the relayout it drives.
 - **An element animating an effect is a layer root while it animates**,
   identity frames included, so `animate-spin` keeps its box through
   `rotate(0)` and a scale that passes through 1 stays a layer: the
-  read treats a running animation of a layer effect as an effect. At
-  its end the element returns to the grid like any resting identity.
+  read treats a running animation of a layer effect as an effect, and
+  a running transition of one the same, so the layout at a
+  transition's start opens the layer on the identity a dialog leaves
+  from. At its end the element returns to the grid like any resting
+  identity.
 - **The animated value is the browser's.** A read during an animation
   takes the computed value as it is: the synthesized background fade
   yields to a running animation of `background-color`, and no easing
@@ -93,11 +99,12 @@ through the relayout it drives.
 ## Testing
 
 - Node: the keyframe classification into the three paths, a lattice's
-  border and a backdrop filter included; the read treating a running effect animation as an
-  effect through a stubbed `getAnimations`, and noting its find for
-  the host; the background tracker yielding to a background keyframe
-  alone; the paint-style resample; the node index leaving an
-  anonymous run to its element.
+  border and a backdrop filter included; the read treating a running
+  animation or transition of an effect as an effect through a stubbed
+  `getAnimations`, and noting an animation's find for the host; the
+  background tracker yielding to a background keyframe alone; the
+  paint-style resample; the node index leaving an anonymous run to its
+  element.
 - Storybook: `animate-spin` on a glyph — the layer's rotation changes
   across frames and the box never disappears at the identity;
   `animate-pulse` on a skeleton — the cells' opacity changes across
@@ -120,9 +127,9 @@ through the relayout it drives.
   counters, re-classified per tick and joined by the reads' finds per
   layout; the tick's three paths (`syncLayers`, a repaint after a style
   resample, the relayout).
-- style.ts `readLayer`: a running animation of a layer effect counts
-  as an effect (`getAnimations()` on elements with an
-  `animation-name`).
+- style.ts `readLayer`: a running animation or transition of a layer
+  effect counts as an effect (`getAnimations()` on elements with an
+  `animation-name` or a `transition-duration`).
 - animate.ts `trackBackground`: a running `background-color` animation
   ends a synthesized fade and reads as it is.
 - paint.ts / plain-text.ts: none (the repaint path writes
