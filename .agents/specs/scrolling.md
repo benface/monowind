@@ -37,8 +37,10 @@ truth.
 - **Scrolling is PAINT-ONLY.** Layout is scroll-independent: content
   is laid out at its natural size inside the container's fixed box;
   a scroll offset only changes which cells the subtree's ink lands on.
-  A `scroll` event therefore triggers a repaint pass, never a layout
-  pass — new plumbing: a schedulePaint path beside scheduleLayout that
+  A `scroll` event therefore triggers a repaint pass, not a layout
+  pass (the one exception: a container whose scroll moves an anchor
+  under an anchored box that stays, which lays out again —
+  anchor-positioning.md) — new plumbing: a schedulePaint path beside scheduleLayout that
   reruns paintGrid from the LAST layout, with each container's current
   offset read at paint time. The walk offsets the container's
   descendants by the cell-quantized scroll and CULLS ink at the

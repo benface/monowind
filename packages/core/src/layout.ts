@@ -58,9 +58,16 @@ import type {
  * Layout entry point: mutates localRect on the root and each descendant.
  * Coordinates are parent-relative (root's rect is at 0,0).
  */
-export function layoutRoot(root: LayoutNode, availableWidth: number): { height: number } {
+export function layoutRoot(
+  root: LayoutNode,
+  availableWidth: number,
+  syncScroll?: (root: LayoutNode) => void,
+): { height: number } {
   const cache = makeIntrinsicCache();
   layoutNode(root, availableWidth, undefined, 0, 0, "fill", cache);
+  // The scroll containers' offsets, for the anchors the positioning
+  // pass reads through them (specs/anchor-positioning.md).
+  syncScroll?.(root);
   // Positioning pass (specs/positioning.md): out-of-flow boxes were skipped
   // by flow layout; place them against their containing blocks, and apply
   // relative offsets. Runs top-down so ancestor rects are final first.

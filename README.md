@@ -43,7 +43,9 @@ forms, and accessibility semantics stay fully intact.
 > and CSS animations (`animate-spin`, `animate-pulse`, keyframe enters
 > and exits) are sampled like transitions; popovers and modal dialogs
 > (`popover`, `showModal()`) paint in a top layer above everything,
-> their `backdrop:` drawn beneath. The unified-render
+> their `backdrop:` drawn beneath, and anchor positioning
+> (`anchor-name`, `position-area`, `position-try-fallbacks`) places a
+> menu under its button in cells. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and

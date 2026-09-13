@@ -1,7 +1,7 @@
 import { paintOrderedChildren, paintsInPositionedStep } from "./borders.ts";
 import { isFormattingContextRoot } from "./layout.ts";
 import type { StickyBox } from "./sticky.ts";
-import type { LayoutNode, PerSide } from "./types.ts";
+import type { AreaSide, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
 /**
  * Write geometry custom properties, quantized inline padding, and z-index
@@ -196,6 +196,27 @@ export function syncStickyVars(boxes: StickyBox[]): void {
   }
 }
 
+/** The physical keyword of a side on each axis; `center` and `span-all`
+ * are their own. */
+const ACROSS: Partial<Record<AreaSide, string>> = {
+  start: "left",
+  end: "right",
+  "span-start": "span-left",
+  "span-end": "span-right",
+};
+const DOWN: Partial<Record<AreaSide, string>> = {
+  start: "top",
+  end: "bottom",
+  "span-start": "span-top",
+  "span-end": "span-bottom",
+};
+
+/** An area as the physical keywords the browsers serialize, across
+ * first. */
+function areaKeywords({ x, y }: PositionArea): string {
+  return `${ACROSS[x] ?? x} ${DOWN[y] ?? y}`;
+}
+
 /** The row of a box's native baseline within it: its last line's, or
  * its last run's last line's; undefined for a box that draws no line
  * of its own, whose baseline is its bottom edge. */
@@ -256,6 +277,9 @@ function positionElement(node: LayoutNode): void {
     clearVar(el, "--mw-mb");
     clearVar(el, "--mw-ml");
   }
+  // The area an anchored box took (specs/anchor-positioning.md), for a
+  // style to follow a flip.
+  setAttr(el, "data-mw-area", node.anchorArea ? areaKeywords(node.anchorArea) : null);
   // Bottom-aligned atomic boxes keep their browser alignment (grid-exact,
   // probed); a middle-aligned one takes a whole-row baseline length
   // (specs/cell-model.md "Typography"): rows from its own baseline —

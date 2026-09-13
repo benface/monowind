@@ -37,7 +37,7 @@ transitions inside a host, in the three engines:
 
 Spec `top-layer.md`, plan `2026-09-13-top-layer.md`.
 
-### 2. Anchor positioning
+### 2. Anchor positioning — implemented 2026-09-13
 
 Spec `anchor-positioning.md`, plan `2026-09-13-anchor-positioning.md`.
 

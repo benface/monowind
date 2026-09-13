@@ -1,9 +1,30 @@
 # Anchor positioning implementation plan
 
-Status: **proposed** (2026-09-13). Spec: `anchor-positioning.md` —
-normative; `positioning.md` for the absolute pass it extends,
-`top-layer.md` for the popovers it usually places; this plan only
-sequences them. Phase 2 of `2026-09-13-components.md`.
+Status: **implemented** (2026-09-13; every phase green, the golden
+recorded). Spec: `anchor-positioning.md` — normative; `positioning.md`
+for the absolute pass it extends, `top-layer.md` for the popovers it
+usually places; this plan only sequences them. Phase 2 of
+`2026-09-13-components.md`. What shipped differently from the phases
+below:
+
+- Inline elements anchor too: a `<span>` in a paragraph run is not a
+  node, so its entry carries the name and the positioning pass
+  records its first fragment's rect.
+- The engines compute the initial `position-anchor` as `normal`
+  (the current spec's initial value; `auto` is its older spelling),
+  both read as the implicit anchor.
+- A fallback may be a `position-area` of its own, not only flip
+  keywords, as the spec allows; `position-anchor: match-parent` reads
+  the parent's.
+- A scroll follows through a relayout: the scroll offsets land on the
+  tree before the positioning pass, an anchor's rect is moved by the
+  scrollers the box escapes, and a scroll of such a scroller
+  schedules a layout (`anchorScrollers` on the root).
+- The stories live in `anchor.stories.ts` (Features / Anchor
+  Positioning): `Placement` and `Fallbacks` (the flips live, through
+  a scroll and the pane's width), goldens, and `InScroller`, hidden.
+- `anchor-name` lists every name; `anchor-center` in `justify-self`
+  or `align-self` centers on the anchor from any side.
 
 ## Shape
 

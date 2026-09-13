@@ -12,7 +12,8 @@ import {
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
 import { alignCrossOffset, effectiveAlign, effectiveJustify, mainAxisOffsets } from "./flex.ts";
-import type { CellLength, CellStyle, LayoutNode, Rect } from "./types.ts";
+import { inlineElementRects } from "./plain-text.ts";
+import type { AreaSide, CellLength, CellStyle, LayoutNode, PositionArea, Rect } from "./types.ts";
 
 /**
  * Positioning pass (specs/positioning.md): after flow layout, place
@@ -38,12 +39,21 @@ interface Frame {
   absY: number;
 }
 
+/** An anchor as the boxes after it see it: its border box in the
+ * host's cells as laid out, and the scroll containers above it, whose
+ * offsets move it (specs/anchor-positioning.md). */
+interface Anchor {
+  rect: Rect;
+  scrollers: LayoutNode[];
+}
+
 export function walkPositioned(
   node: LayoutNode,
   absX: number,
   absY: number,
   ancestors: Frame[],
   cache: IntrinsicCache,
+  anchors: Map<string, Anchor> = new Map(),
 ): void {
   for (const child of node.children) {
     const effective = effectivePosition(child.style);
@@ -73,8 +83,9 @@ export function walkPositioned(
         contentH,
       );
     } else if (effective === "absolute") {
-      placeAbsolute(child, node, absX, absY, ancestors, cache);
+      placeAbsolute(child, node, absX, absY, ancestors, cache, anchors);
     }
+    recordAnchors(child, absX + child.localRect.x, absY + child.localRect.y, ancestors, anchors);
     walkPositioned(
       child,
       absX + child.localRect.x,
@@ -84,6 +95,7 @@ export function walkPositioned(
         { node: child, absX: absX + child.localRect.x, absY: absY + child.localRect.y },
       ],
       cache,
+      anchors,
     );
   }
 }
@@ -92,6 +104,45 @@ function relativeOffset(start: CellLength | null, end: CellLength | null, basis:
   if (start !== null) return resolveLength(start, basis);
   if (end !== null) return -resolveLength(end, basis);
   return 0;
+}
+
+/** A placed box's names, for the boxes after it in tree order
+ * (specs/anchor-positioning.md): its border box, or for a named inline
+ * element in its runs the element's first fragment, with the scroll
+ * containers above whose offsets move it. */
+function recordAnchors(
+  child: LayoutNode,
+  absX: number,
+  absY: number,
+  ancestors: Frame[],
+  anchors: Map<string, Anchor>,
+): void {
+  const inline = child.inlineElements?.some((entry) => entry.anchorNames.length > 0) ?? false;
+  if (child.style.anchorNames.length === 0 && !inline) return;
+  const scrollers = scrollersOf(ancestors);
+  const { width, height } = child.localRect;
+  for (const name of child.style.anchorNames) {
+    anchors.set(name, { rect: { x: absX, y: absY, width, height }, scrollers });
+  }
+  if (!inline) return;
+  const named = new Map<Element, string[]>();
+  for (const entry of child.inlineElements!) {
+    if (entry.anchorNames.length > 0 && !named.has(entry.element)) {
+      named.set(entry.element, entry.anchorNames);
+    }
+  }
+  for (const { element, rect } of inlineElementRects(child, absX, absY)) {
+    const names = named.get(element);
+    if (names === undefined) continue;
+    for (const name of names) anchors.set(name, { rect, scrollers });
+    named.delete(element);
+  }
+}
+
+/** The scroll containers among a box's ancestors, whose offsets move
+ * it (specs/scrolling.md). */
+function scrollersOf(ancestors: Frame[]): LayoutNode[] {
+  return ancestors.map((frame) => frame.node).filter((box) => box.scroll);
 }
 
 /** The containing block's padding box, in absolute cells: the nearest
@@ -126,6 +177,7 @@ function placeAbsolute(
   parentAbsY: number,
   ancestors: Frame[],
   cache: IntrinsicCache,
+  anchors: Map<string, Anchor>,
 ): void {
   const style = child.style;
   const fixed = style.position === "fixed";
@@ -141,6 +193,38 @@ function placeAbsolute(
           height: slot.area.height,
         }
       : containingBlock(ancestors, fixed);
+  const anchor = style.positionAnchor === null ? undefined : anchors.get(style.positionAnchor);
+  if (style.positionArea && anchor) {
+    // A fixed box, painted from the host, escapes every scroll.
+    const { rect, movers } = anchorRectFor(anchor, fixed ? [] : scrollersOf(ancestors));
+    if (movers.length > 0) {
+      const root = ancestors[0]!.node;
+      root.anchorScrollers ??= new Set();
+      for (const scroller of movers) root.anchorScrollers.add(scroller.source);
+    }
+    placeAnchored(child, parentAbsX, parentAbsY, cb, rect, style.positionArea, cache);
+  } else {
+    placeByInsets(child, parent, parentAbsX, parentAbsY, cb, cache);
+  }
+  // The walks paint and hit a fixed box from the host's origin
+  // (specs/positioning.md).
+  if (fixed) {
+    child.hostRect = { x: parentAbsX + child.localRect.x, y: parentAbsY + child.localRect.y };
+  }
+}
+
+/** An absolute box placed by its insets and margins in its containing
+ * block, its static position where both an axis's insets are auto. */
+function placeByInsets(
+  child: LayoutNode,
+  parent: LayoutNode,
+  parentAbsX: number,
+  parentAbsY: number,
+  cb: Rect,
+  cache: IntrinsicCache,
+): void {
+  const style = child.style;
+  delete child.anchorArea;
   const left = style.insets.left === null ? null : resolveLength(style.insets.left, cb.width);
   const right = style.insets.right === null ? null : resolveLength(style.insets.right, cb.width);
   const top = style.insets.top === null ? null : resolveLength(style.insets.top, cb.height);
@@ -157,30 +241,10 @@ function placeAbsolute(
   // an auto width stretch the box between them; otherwise shrink-to-fit
   // (fit-content) within the space the insets and margins leave. All
   // clamped by the element's min/max against the containing block.
-  const widthAuto = style.width === undefined || style.width.kind === "auto";
   const heightAuto = style.height === undefined || style.height.kind === "auto";
-  const minW = resolveWidthLimit(style.minWidth, cb.width, child, cache) ?? 0;
-  const maxW = resolveWidthLimit(style.maxWidth, cb.width, child, cache);
-  const forced: { width?: number; height?: number } = {};
-  if (!widthAuto) {
-    forced.width = clampSize(resolveSizeAgainst(style.width!, cb.width, child, cache), minW, maxW);
-  } else if (left !== null && right !== null) {
-    forced.width = clampSize(
-      Math.max(0, cb.width - left - right - marginLeft - marginRight),
-      minW,
-      maxW,
-    );
-  } else {
-    const available = Math.max(0, cb.width - (left ?? 0) - (right ?? 0) - marginLeft - marginRight);
-    forced.width = clampSize(
-      Math.min(
-        intrinsicOuterWidth(child, cache),
-        Math.max(minContentOuterWidth(child, cache), available),
-      ),
-      minW,
-      maxW,
-    );
-  }
+  const forced: { width?: number; height?: number } = {
+    width: absoluteWidth(child, cb.width, left, right, marginLeft + marginRight, cache),
+  };
   if (top !== null && bottom !== null && heightAuto) {
     forced.height = clampSize(
       Math.max(0, cb.height - top - bottom - marginTop - marginBottom),
@@ -225,9 +289,204 @@ function placeAbsolute(
   }
 
   child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
-  // The walks paint and hit a fixed box from the host's origin
-  // (specs/positioning.md).
-  if (fixed) child.hostRect = { x, y };
+}
+
+/** An anchor's rect as a box sees it: moved by the scroll of the
+ * scroll containers that move the anchor and not the box, and back by
+ * those that move the box alone — the movers, whose scroll takes a
+ * relayout. */
+function anchorRectFor(
+  anchor: Anchor,
+  boxScrollers: LayoutNode[],
+): { rect: Rect; movers: LayoutNode[] } {
+  let dx = 0;
+  let dy = 0;
+  const movers: LayoutNode[] = [];
+  for (const scroller of anchor.scrollers) {
+    if (boxScrollers.includes(scroller)) continue;
+    dx -= scroller.scroll!.x;
+    dy -= scroller.scroll!.y;
+    movers.push(scroller);
+  }
+  for (const scroller of boxScrollers) {
+    if (anchor.scrollers.includes(scroller)) continue;
+    dx += scroller.scroll!.x;
+    dy += scroller.scroll!.y;
+    movers.push(scroller);
+  }
+  return { rect: { ...anchor.rect, x: anchor.rect.x + dx, y: anchor.rect.y + dy }, movers };
+}
+
+/** An absolute box's used width, per CSS: its own, resolved and clamped
+ * against the containing block; else the space between two set insets
+ * and the margins; else shrink-to-fit in the space they leave. */
+function absoluteWidth(
+  child: LayoutNode,
+  cbWidth: number,
+  left: number | null,
+  right: number | null,
+  margins: number,
+  cache: IntrinsicCache,
+): number {
+  const style = child.style;
+  const minW = resolveWidthLimit(style.minWidth, cbWidth, child, cache) ?? 0;
+  const maxW = resolveWidthLimit(style.maxWidth, cbWidth, child, cache);
+  if (style.width !== undefined && style.width.kind !== "auto") {
+    return clampSize(resolveSizeAgainst(style.width, cbWidth, child, cache), minW, maxW);
+  }
+  if (left !== null && right !== null) {
+    return clampSize(Math.max(0, cbWidth - left - right - margins), minW, maxW);
+  }
+  const available = Math.max(0, cbWidth - (left ?? 0) - (right ?? 0) - margins);
+  return clampSize(
+    Math.min(
+      intrinsicOuterWidth(child, cache),
+      Math.max(minContentOuterWidth(child, cache), available),
+    ),
+    minW,
+    maxW,
+  );
+}
+
+/** An anchored box (specs/anchor-positioning.md): laid out with its
+ * area — a cell of the anchor's 3×3 grid over the containing block —
+ * as its containing block and aligned toward the anchor, the fallbacks
+ * tried in order until one fits, the first standing when none does. */
+function placeAnchored(
+  child: LayoutNode,
+  parentAbsX: number,
+  parentAbsY: number,
+  cb: Rect,
+  anchor: Rect,
+  first: PositionArea,
+  cache: IntrinsicCache,
+): void {
+  const style = child.style;
+  const tries = [
+    first,
+    ...style.positionTryFallbacks.map((fallback) =>
+      "flipBlock" in fallback ? flipArea(first, fallback) : fallback,
+    ),
+  ];
+  const place = (area: PositionArea): boolean => {
+    const [x0, width0] = areaSpan(area.x, cb.x, cb.width, anchor.x, anchor.width);
+    const [y0, height0] = areaSpan(area.y, cb.y, cb.height, anchor.y, anchor.height);
+    const region: Rect = { x: x0, y: y0, width: width0, height: height0 };
+    const margin = resolveMargin(style.margin, region.width);
+    const across = (margin.left ?? 0) + (margin.right ?? 0);
+    const down = (margin.top ?? 0) + (margin.bottom ?? 0);
+    layoutNode(child, region.width, region.height, 0, 0, "shrink", cache, {
+      width: absoluteWidth(child, region.width, null, null, across, cache),
+    });
+    const { width, height } = child.localRect;
+    const x = alignInArea(
+      area.x,
+      region.x,
+      region.width,
+      anchor.x,
+      anchor.width,
+      width,
+      margin.left ?? 0,
+      margin.right ?? 0,
+      style.anchorCenter.x ? "anchor-center" : style.justifySelf,
+    );
+    const y = alignInArea(
+      area.y,
+      region.y,
+      region.height,
+      anchor.y,
+      anchor.height,
+      height,
+      margin.top ?? 0,
+      margin.bottom ?? 0,
+      style.anchorCenter.y ? "anchor-center" : style.alignSelf,
+    );
+    child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
+    child.anchorArea = area;
+    return width + across <= region.width && height + down <= region.height;
+  };
+  for (const area of tries) if (place(area)) return;
+  place(first);
+}
+
+/** One axis of an area, as its start and size: the span the side
+ * names, an anchor edge past the containing block leaving it empty. */
+function areaSpan(
+  side: AreaSide,
+  cbStart: number,
+  cbSize: number,
+  anchorStart: number,
+  anchorSize: number,
+): [number, number] {
+  const cbEnd = cbStart + cbSize;
+  const anchorEnd = anchorStart + anchorSize;
+  switch (side) {
+    case "start":
+      return [cbStart, Math.max(0, anchorStart - cbStart)];
+    case "end":
+      return [anchorEnd, Math.max(0, cbEnd - anchorEnd)];
+    case "center":
+      return [anchorStart, anchorSize];
+    case "span-start":
+      return [cbStart, Math.max(0, anchorEnd - cbStart)];
+    case "span-end":
+      return [anchorStart, Math.max(0, cbEnd - anchorStart)];
+    case "span-all":
+      return [cbStart, cbSize];
+  }
+}
+
+/** The box's start on one axis of its area: against the anchor from a
+ * side, along the edge a span keeps, centered on it (inside the area)
+ * under `center`, `span-all`, and `anchor-center`, or where
+ * `justify-self`/`align-self` says. */
+function alignInArea(
+  side: AreaSide,
+  regionStart: number,
+  regionSize: number,
+  anchorStart: number,
+  anchorSize: number,
+  size: number,
+  before: number,
+  after: number,
+  self: CellStyle["alignSelf"] | "anchor-center",
+): number {
+  const atStart = regionStart + before;
+  const atEnd = regionStart + regionSize - after - size;
+  if (self === "start") return atStart;
+  if (self === "end") return atEnd;
+  if (self === "center") {
+    return regionStart + Math.floor((regionSize - size - before - after) / 2) + before;
+  }
+  if (self !== "anchor-center") {
+    if (side === "start" || side === "span-start") return atEnd;
+    if (side === "end" || side === "span-end") return atStart;
+  }
+  const centered = anchorStart + Math.floor((anchorSize - size - before - after) / 2) + before;
+  return Math.max(atStart, Math.min(centered, atEnd));
+}
+
+/** A side mirrored across the anchor. */
+const MIRRORED: Record<AreaSide, AreaSide> = {
+  start: "end",
+  end: "start",
+  center: "center",
+  "span-start": "span-end",
+  "span-end": "span-start",
+  "span-all": "span-all",
+};
+
+/** An area under a fallback's tactics: the block axis mirrored, the
+ * inline one, the two swapped. */
+function flipArea(
+  area: PositionArea,
+  tactic: { flipBlock: boolean; flipInline: boolean; flipStart: boolean },
+): PositionArea {
+  let { x, y } = area;
+  if (tactic.flipBlock) y = MIRRORED[y];
+  if (tactic.flipInline) x = MIRRORED[x];
+  if (tactic.flipStart) [x, y] = [y, x];
+  return { x, y };
 }
 
 /** The sole-item static position along the main axis is exactly where a

@@ -73,6 +73,22 @@ export function dragTo(target: Element, at: Point): void {
   );
 }
 
+/** The host's shadow grid, and its text as rows. */
+export const gridOf = (host: HTMLElement): HTMLElement => host.shadowRoot!.getElementById("grid")!;
+export const rowsOf = (host: HTMLElement): string[] => gridOf(host).textContent!.split("\n");
+
+/** The light element's box against the grid cells the engine gave it. */
+export function expectOnItsCells(host: HTMLElement, el: HTMLElement): void {
+  const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+  const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+  const x = parseFloat(el.style.getPropertyValue("--mw-x"));
+  const y = parseFloat(el.style.getPropertyValue("--mw-y"));
+  const grid = gridOf(host).getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  expect(Math.abs(rect.left - (grid.left + x * cellWidth))).toBeLessThan(1);
+  expect(Math.abs(rect.top - (grid.top + y * cellHeight))).toBeLessThan(1);
+}
+
 /** The story's host once laid out and its fonts loaded. */
 export async function readyHost(canvasElement: HTMLElement): Promise<HTMLElement> {
   const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;

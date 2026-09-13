@@ -5,6 +5,7 @@ import { pxToCells } from "./metrics.ts";
 import {
   isTransparentColor,
   lineGapRows,
+  readAnchorNames,
   readCellStyle,
   readOverflow,
   readTextStyle,
@@ -435,6 +436,7 @@ function buildRendererLeaf(
       padLeft: 0,
       padRight: 0,
       insets: null,
+      anchorNames: [],
       color: run.paint.color,
       backgroundColor: run.paint.backgroundColor,
       fontWeight: run.paint.fontWeight ?? "",
@@ -704,6 +706,7 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
         padRight,
         insets: cs.position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
         ...(cs.position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
+        anchorNames: readAnchorNames(child, cs),
         color: cs.color,
         backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
         fontWeight: cs.fontWeight,

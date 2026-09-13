@@ -501,6 +501,9 @@ mono-wind:not([measuring]) [data-mw-nowrap][data-mw-clip] {
  * position:absolute (out of flow), so nothing consumes them anyway. */
 mono-wind:not([measuring]) [data-mw-laid-out] {
   position: absolute !important;
+  /* An anchored box is the engine's to place (specs/anchor-positioning.md):
+   * the browser's own anchored placement stays off. */
+  position-area: none !important;
   /* A sticky box's shift for the scroll rides beside its position
    * (specs/sticky.md). */
   left: calc((var(--mw-x, 0) + var(--mw-sx, 0)) * var(--mw-cw, 1px)) !important;

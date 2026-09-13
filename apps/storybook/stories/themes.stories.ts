@@ -47,17 +47,25 @@ export const Gallery: StoryObj = {
       canvasElement
         .querySelector<HTMLElement>(`[data-test="theme-${theme}"]`)!
         .shadowRoot!.getElementById("grid")!;
-    const token = (theme: string, name: string) =>
-      getComputedStyle(canvasElement.querySelector(`[data-test="theme-${theme}"]`)!)
-        .getPropertyValue(name)
-        .trim();
+    // A token's color as the browser resolves it, whatever the build's
+    // spelling of the hex.
+    const token = (theme: string, name: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = getComputedStyle(
+        canvasElement.querySelector(`[data-test="theme-${theme}"]`)!,
+      ).getPropertyValue(name);
+      canvasElement.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    };
 
     await waitFor(
       () => {
         // Palette quantization is scoped per host: dos snaps red-500 to
         // VGA bright red; the phosphor theme maps it to a green step.
-        expect(token("dos", "--color-red-500")).toBe("#ff5555");
-        expect(token("green-phosphor", "--color-red-500")).toBe("#00a83c");
+        expect(token("dos", "--color-red-500")).toBe("rgb(255, 85, 85)");
+        expect(token("green-phosphor", "--color-red-500")).toBe("rgb(0, 168, 60)");
         // Era borders: c64 rounds corners, amber (single) downgrades
         // the double border, teletype draws 7-bit.
         expect(grid("c64").textContent).toContain("╭");

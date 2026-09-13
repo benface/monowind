@@ -1,7 +1,15 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { dragTo, pressAt, readyHost, release } from "./helpers.ts";
+import {
+  dragTo,
+  expectOnItsCells,
+  gridOf,
+  pressAt,
+  readyHost,
+  release,
+  rowsOf,
+} from "./helpers.ts";
 import type { Point } from "./helpers.ts";
 
 /**
@@ -16,23 +24,10 @@ const meta: Meta = {
 };
 export default meta;
 
-const gridOf = (host: HTMLElement) => host.shadowRoot!.getElementById("grid")!;
-const rowsOf = (host: HTMLElement) => gridOf(host).textContent!.split("\n");
 const spanFor = (host: HTMLElement, text: string): HTMLElement | undefined =>
   Array.from(gridOf(host).querySelectorAll("span")).find((span) =>
     span.textContent!.includes(text),
   );
-/** The light element's box against the grid cells the engine gave it. */
-const expectOnItsCells = (host: HTMLElement, el: HTMLElement): void => {
-  const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-  const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-  const x = parseFloat(el.style.getPropertyValue("--mw-x"));
-  const y = parseFloat(el.style.getPropertyValue("--mw-y"));
-  const grid = gridOf(host).getBoundingClientRect();
-  const rect = el.getBoundingClientRect();
-  expect(Math.abs(rect.left - (grid.left + x * cellWidth))).toBeLessThan(1);
-  expect(Math.abs(rect.top - (grid.top + y * cellHeight))).toBeLessThan(1);
-};
 
 /**
  * A popover opened from inside a scrolling list: it paints whole,

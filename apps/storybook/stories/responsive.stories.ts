@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { readyHost } from "./helpers.ts";
 
 /**
  * Responsive variants (`sm:`, `md:`, …) work out of the box: the browser
@@ -61,9 +62,9 @@ export const HostWidth: StoryObj = {
     </div>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
+    // The fonts first: the cell width they set is the unit measured.
+    const host = await readyHost(canvasElement);
     const sidebar = canvasElement.querySelector<HTMLElement>('[data-test="sidebar"]')!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
     const cellWidth = () => parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
     const cells = () => host.getBoundingClientRect().width / cellWidth();
     const wholeCells = (n: number) => Math.abs(n - Math.round(n)) < 0.01;

@@ -599,6 +599,16 @@ export interface CellStyle {
   /** Set on a layer root — an element with a transform or a filter —
    * whose subtree paints into its own node (specs/layers.md). */
   layer: Layer | null;
+  /** Anchor positioning (specs/anchor-positioning.md): the element's
+   * `anchor-name`s (an invoker's is synthesized from its target's id),
+   * the name it is anchored to (a popover's implicit anchor from its
+   * own id), the area it takes, the fallbacks tried on overflow, and
+   * the axes `justify-self`/`align-self` center on the anchor. */
+  anchorNames: string[];
+  positionAnchor: string | null;
+  positionArea: PositionArea | null;
+  positionTryFallbacks: AnchorFallback[];
+  anchorCenter: { x: boolean; y: boolean };
   /** In the platform's top layer — an open popover, a modal dialog —
    * for the host's stack (specs/top-layer.md). */
   topLayer: boolean;
@@ -645,6 +655,24 @@ export interface CellStyle {
    * fragments as one unbreakable unit (specs/multicol.md). */
   breakInsideAvoid: boolean;
 }
+
+/** One axis of a `position-area`, in the axis's own direction: the
+ * cell before the anchor, the anchor's own, the cell after, a span of
+ * the anchor's with one side, or the whole containing block
+ * (specs/anchor-positioning.md). */
+export type AreaSide = "start" | "center" | "end" | "span-start" | "span-end" | "span-all";
+
+/** A `position-area`, physical: `x` across, `y` down. */
+export interface PositionArea {
+  x: AreaSide;
+  y: AreaSide;
+}
+
+/** One entry of `position-try-fallbacks`: the flip tactics applied
+ * together, or an area of its own. */
+export type AnchorFallback =
+  | { flipBlock: boolean; flipInline: boolean; flipStart: boolean }
+  | PositionArea;
 
 /** A `::backdrop`'s computed look, as the backdrop box copies it. */
 export interface Backdrop {
@@ -713,6 +741,9 @@ export interface LayoutNode {
      * (specs/sticky.md), and the shift for the current scroll offsets. */
     sticky?: PerSide<number | null>;
     stickyShift?: { x: number; y: number };
+    /** Its `anchor-name`s, for the boxes anchored to it
+     * (specs/anchor-positioning.md). */
+    anchorNames: string[];
     /** Paint-only styling mirrored into the grid (the browser's own
      * ink is transparent-locked). `backgroundColor` fills the run's
      * cells — how a focus-inverted inline link shows its highlight. */
@@ -811,6 +842,9 @@ export interface LayoutNode {
   /** An inline box's line's text row, from the box's top, as the line
    * metrics settled it (specs/cell-model.md "Typography"). */
   inlineTextRow?: number;
+  /** The area an anchored box took, its fallbacks tried
+   * (specs/anchor-positioning.md); written onto the light element. */
+  anchorArea?: PositionArea;
   /** A fixed box's origin in the host's cells (specs/positioning.md),
    * written by the positioning pass: the walks paint and hit it from
    * here, outside its ancestors' scroll and clips. */
@@ -822,6 +856,10 @@ export interface LayoutNode {
   /** The root's top-layer stack in paint order, each element with its
    * ancestors from the root down; absent when empty. */
   topLayer?: TopLayerEntry[];
+  /** On the root: the scroll containers whose scroll moves an anchor
+   * under a box it does not move (specs/anchor-positioning.md), so a
+   * scroll of one relays out. */
+  anchorScrollers?: Set<Element>;
   /** The gutter cells this container actually reserved — `scroll`
    * axes always, `auto` axes only when content overflows (the layout
    * second pass). Paint, hit-testing, and thumb drags read THIS, not
@@ -990,6 +1028,11 @@ export function defaultCellStyle(): CellStyle {
     boxShadow: [],
     opacity: 1,
     layer: null,
+    anchorNames: [],
+    positionAnchor: null,
+    positionArea: null,
+    positionTryFallbacks: [],
+    anchorCenter: { x: false, y: false },
     topLayer: false,
     backdrop: null,
     zIndex: null,

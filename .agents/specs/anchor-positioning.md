@@ -1,6 +1,8 @@
 # Spec: anchor positioning — a box placed against another, in cells
 
-Status: **proposed** (2026-09-13). Builds on `positioning.md`
+Status: **implemented** (2026-09-13; `style.ts` reads the properties,
+`positioning.ts` places the box in its area and tries the fallbacks,
+`render.ts` writes the area taken). Builds on `positioning.md`
 (absolute and fixed boxes, containing blocks) and `top-layer.md`
 (popovers, which are the usual anchored boxes).
 
@@ -21,8 +23,10 @@ anchor positioning stays unused.
 ## Reading
 
 Per element during the measure pass, from computed values:
-`anchor-name` (`none`, or one or more dashed idents; the first is the
-element's name), `position-anchor` (`auto`, or a dashed ident),
+`anchor-name` (`none`, or one or more dashed idents, each a name of
+the element), and for an out-of-flow box `position-anchor` (`normal`,
+the initial, or `auto`, both the implicit anchor; `none`;
+`match-parent`, the parent's; or a dashed ident),
 `position-area` (`none`, or one or two keywords of the 3×3 grid:
 `top`, `bottom`, `left`, `right`, `center`, their `span-*` forms,
 `span-all`, and the logical and `self-*` spellings, mapped to physical
@@ -38,12 +42,13 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
 - **An anchored box is an absolutely positioned box with an anchor.**
   A box with `position: absolute`, `fixed`, or in the top layer, and
   a `position-area` other than `none`, is placed by its anchor: the
-  element named by `position-anchor`, or for `auto` its implicit
-  anchor — the button that invoked it through `popovertarget` or
-  `commandfor`. The anchor is the nearest element before it in tree
-  order whose `anchor-name` includes the name, laid out in the same
-  host; without one the box is positioned as if `position-area` were
-  `none`.
+  element named by `position-anchor`, or for `normal` and `auto` its
+  implicit anchor — the button that invoked it through
+  `popovertarget` or `commandfor`. The anchor is the nearest element
+  before it in tree order whose `anchor-name` includes the name, laid
+  out in the same host — a box, or an inline element, whose first
+  fragment is the anchor; without one the box is positioned as if
+  `position-area` were `none`.
 - **The area is a cell of the anchor's 3×3 grid.** The anchor's
   border box, in the host's cells, divides the anchored box's
   containing block (positioning.md) into three rows and three
@@ -76,7 +81,10 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
   so an anchored box follows its anchor through a scroll, a resize,
   or a relayout, and the light element takes the resolved cells like
   any positioned box, so its native hit-testing sits where the grid
-  shows it.
+  shows it. The anchor's box is where the scroll shows it: moved by
+  the scroll containers above the anchor that the box escapes (a
+  fixed box escapes them all), and a scroll of such a container lays
+  the host out again, so the box follows.
 - **Margins are the gap.** A margin on the anchored box moves it off
   the anchor's edge in cells, as it does in CSS, so `mt-1` under a
   button is the one-row gap a menu wants.
@@ -92,24 +100,44 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
    are not applied.
 4. Logical keywords map as for a horizontal, left-to-right host.
 5. `@position-try` rules are not read; only the flip keywords apply.
+6. A sticky anchor is anchored at its laid-out box; its shift for the
+   scroll is not followed.
 
 ## Testing
 
-- Node: the read of the four properties; a box under, above, beside,
-  and centered on its anchor, spanning and flush on each side; the
-  implicit anchor of a popover; a box shrunk to a narrow area and one
-  that may not wrap overflowing it; a flip at the host's bottom edge
-  and at its right edge, a `flip-start`; alignment keywords; an
-  anchor inside a scroller followed through a scroll; a margin gap.
-- Storybook: a menu under its button in every engine, the light
-  element's box at the grid's cells; the flip near the host's edge;
-  a tooltip above a word; a submenu beside its item.
+- Node (`anchor.test.ts`): the read of the properties; a box
+  under, above, beside, and centered on its anchor, spanning and
+  flush on each side; the implicit anchor of a popover; a box shrunk
+  to a narrow area and one that may not wrap overflowing it; a flip
+  at the host's bottom edge and at its right edge, a `flip-start`;
+  alignment keywords; an anchor inside a scroller followed through a
+  scroll; a margin gap.
+- Storybook (`anchor.stories.ts`): a menu under its button in every
+  engine, the light element's box at the grid's cells; the flip near
+  the host's edge; a tooltip above a word; a submenu beside its item;
+  a menu following its button through a list's scroll, flipping as
+  the button nears the host's edge; a note flipping with the host's
+  width.
 - Visual: a golden of the anchored boxes.
 
 ## Touch points on implementation
 
-- style.ts: the anchor properties on `CellStyle`.
-- layout: anchored boxes resolved after their anchors, in the
-  absolute pass.
+- style.ts: the anchor properties on `CellStyle` (`anchorNames` for
+  every element, the anchoring for out-of-flow boxes);
+  `readAnchorNames` shared with tree.ts, which names inline elements'
+  entries.
+- positioning.ts: `walkPositioned` records each anchor's rect and
+  the scroll containers above it as it places it (an inline element's
+  first fragment from `inlineElementRects`); `placeAbsolute` hands a
+  box with an area and an anchor to `placeAnchored`, which lays it
+  out in the area, aligns it, and tries the fallbacks; a fixed box
+  keeps its host rect on both paths. The scrollers whose scroll moves
+  an anchor under a box are noted on the root as `anchorScrollers`.
+- layout.ts / element.ts: the scroll offsets land on the tree between
+  the flow and positioning passes, and a scroll of an anchor scroller
+  schedules a layout.
 - render.ts: the resolved cells written onto the light element as for
   any positioned box, and the area taken as `data-mw-area`.
+- styles.css: `position-area: none` locked on laid-out elements
+  outside `[measuring]`, so an engine that positions by it natively
+  (Firefox) leaves the placement to the engine.

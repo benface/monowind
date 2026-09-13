@@ -775,6 +775,9 @@ export class MonoWindElement extends HTMLElementBase {
     if (!target.hasAttribute("data-mw-scroll")) return;
     this.#containerScrolled = true;
     this.#schedulePaint();
+    // An anchor scrolled under a box the scroll leaves: placed afresh
+    // (specs/anchor-positioning.md).
+    if (this.#lastLayout?.anchorScrollers?.has(target)) this.#scheduleLayout();
     // Routed scrolls keep their own quiesce timer (#scrollRouted).
     if (Date.now() - (this.#routedScrollAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
     // Still scrolling: a pending settle waits for scrollend — or, where
@@ -2147,15 +2150,16 @@ export class MonoWindElement extends HTMLElementBase {
         this.#buildRootContainer(rootFontSizePx, metrics, textareaWidths);
 
       // (4) Compute integer layout, and the top-layer stack over it.
-      const { height } = layoutRoot(virtualRoot, availableCols);
+      const { height } = layoutRoot(virtualRoot, availableCols, (root) => {
+        this.#scrollNodes = collectScrollContainers(root);
+        this.#syncScrollOffsets(metrics, scrollState);
+      });
       this.#topLayer.assign(virtualRoot);
 
       // (5) Write geometry to light DOM + paint the shadow grid. Do this
       // before clearing the measuring attribute so the browser only
       // paints the final state.
       render(virtualRoot);
-      this.#scrollNodes = collectScrollContainers(virtualRoot);
-      this.#syncScrollOffsets(metrics, scrollState);
       this.#stickyBoxes = collectStickyBoxes(virtualRoot);
       applyStickyShifts(this.#stickyBoxes);
       syncStickyVars(this.#stickyBoxes);

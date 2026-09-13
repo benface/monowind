@@ -43,6 +43,9 @@ import type {
   TrackBreadth,
   TrackSize,
   Backdrop,
+  AnchorFallback,
+  AreaSide,
+  PositionArea,
 } from "./types.ts";
 
 /**
@@ -195,6 +198,7 @@ export function readCellStyle(
   // none.
   const topLayer = isTopLayer(el);
   const hoisted = topLayer || el.hasAttribute("popover");
+  const outOfFlow = hoisted || cs.position === "absolute" || cs.position === "fixed";
   const style: CellStyle = {
     display,
     tableRole,
@@ -298,6 +302,7 @@ export function readCellStyle(
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
     layer: readLayer(el, cs),
+    ...readAnchoring(el, cs, outOfFlow),
     topLayer,
     backdrop: hoisted ? readBackdrop(el) : null,
     glyphSet,
@@ -339,6 +344,170 @@ export function readCellStyle(
     if (style.backdrop) style.layer ??= { backdropFilter: "none" };
   }
   return style;
+}
+
+/** The anchor positioning properties (specs/anchor-positioning.md):
+ * any element's names, and the anchoring of an out-of-flow box. */
+function readAnchoring(
+  el: Element,
+  cs: CSSStyleDeclaration,
+  outOfFlow: boolean,
+): Pick<
+  CellStyle,
+  "anchorNames" | "positionAnchor" | "positionArea" | "positionTryFallbacks" | "anchorCenter"
+> {
+  const anchorNames = readAnchorNames(el, cs);
+  if (!outOfFlow) {
+    return {
+      anchorNames,
+      positionAnchor: null,
+      positionArea: null,
+      positionTryFallbacks: [],
+      anchorCenter: { x: false, y: false },
+    };
+  }
+  return {
+    anchorNames,
+    positionAnchor: readPositionAnchor(el, cs),
+    positionArea: parsePositionArea(cs.getPropertyValue("position-area")),
+    positionTryFallbacks: parsePositionTryFallbacks(cs.getPropertyValue("position-try-fallbacks")),
+    anchorCenter: { x: cs.justifySelf === "anchor-center", y: cs.alignSelf === "anchor-center" },
+  };
+}
+
+/** An element's `position-anchor`: a name; `match-parent` its parent's;
+ * `normal` (the initial) and `auto` its implicit anchor — a popover's,
+ * synthesized from its id; a DOM without the property reads "". */
+function readPositionAnchor(el: Element, cs: CSSStyleDeclaration): string | null {
+  const anchor = cs.getPropertyValue("position-anchor").trim();
+  if (anchor.startsWith("--")) return anchor;
+  if (anchor === "match-parent") {
+    const parent = el.parentElement;
+    return parent ? readPositionAnchor(parent, getComputedStyle(parent)) : null;
+  }
+  if (["", "auto", "normal"].includes(anchor) && el.hasAttribute("popover") && el.id !== "") {
+    return `--mw:${el.id}`;
+  }
+  return null;
+}
+
+/** An element's `anchor-name`s; an invoker of a popover
+ * (`popovertarget`, `commandfor`) named for its target where the
+ * author names it not. */
+export function readAnchorNames(el: Element, cs: CSSStyleDeclaration): string[] {
+  const named = cs.getPropertyValue("anchor-name").trim();
+  if (named !== "" && named !== "none") return named.split(",").map((name) => name.trim());
+  const target = el.getAttribute("popovertarget") ?? el.getAttribute("commandfor");
+  return target ? [`--mw:${target}`] : [];
+}
+
+const AREA_X: Record<string, AreaSide> = {
+  left: "start",
+  right: "end",
+  "span-left": "span-start",
+  "span-right": "span-end",
+  "x-start": "start",
+  "x-end": "end",
+  "span-x-start": "span-start",
+  "span-x-end": "span-end",
+  "x-self-start": "start",
+  "x-self-end": "end",
+  "span-x-self-start": "span-start",
+  "span-x-self-end": "span-end",
+  "inline-start": "start",
+  "inline-end": "end",
+  "span-inline-start": "span-start",
+  "span-inline-end": "span-end",
+  "self-inline-start": "start",
+  "self-inline-end": "end",
+  "span-self-inline-start": "span-start",
+  "span-self-inline-end": "span-end",
+};
+const AREA_Y: Record<string, AreaSide> = {
+  top: "start",
+  bottom: "end",
+  "span-top": "span-start",
+  "span-bottom": "span-end",
+  "y-start": "start",
+  "y-end": "end",
+  "span-y-start": "span-start",
+  "span-y-end": "span-end",
+  "y-self-start": "start",
+  "y-self-end": "end",
+  "span-y-self-start": "span-start",
+  "span-y-self-end": "span-end",
+  "block-start": "start",
+  "block-end": "end",
+  "span-block-start": "span-start",
+  "span-block-end": "span-end",
+  "self-block-start": "start",
+  "self-block-end": "end",
+  "span-self-block-start": "span-start",
+  "span-self-block-end": "span-end",
+};
+/** The keywords of either axis: alone they name both, paired the block
+ * axis first. */
+const AREA_BOTH: Record<string, AreaSide> = {
+  start: "start",
+  end: "end",
+  center: "center",
+  "span-start": "span-start",
+  "span-end": "span-end",
+  "span-all": "span-all",
+  "self-start": "start",
+  "self-end": "end",
+  "span-self-start": "span-start",
+  "span-self-end": "span-end",
+};
+
+/** A computed `position-area` as the engines serialize it — one keyword
+ * where the other axis spans all, or an ambiguous one for both axes —
+ * mapped for a horizontal left-to-right host; null for none. */
+export function parsePositionArea(value: string): PositionArea | null {
+  const words = value.trim().split(/\s+/);
+  if (words[0] === "" || words[0] === "none") return null;
+  const kind = (word: string): ["x" | "y" | "both", AreaSide] | null =>
+    word in AREA_X
+      ? ["x", AREA_X[word]!]
+      : word in AREA_Y
+        ? ["y", AREA_Y[word]!]
+        : word in AREA_BOTH
+          ? ["both", AREA_BOTH[word]!]
+          : null;
+  const first = kind(words[0]!);
+  if (!first) return null;
+  if (words.length === 1) {
+    const [axis, side] = first;
+    if (axis === "both") return { x: side, y: side };
+    return axis === "x" ? { x: side, y: "span-all" } : { x: "span-all", y: side };
+  }
+  const second = words.length === 2 ? kind(words[1]!) : null;
+  if (!second) return null;
+  if (first[0] === "both" && second[0] === "both") return { y: first[1], x: second[1] };
+  if (first[0] === "y" || second[0] === "x") return { y: first[1], x: second[1] };
+  return { x: first[1], y: second[1] };
+}
+
+/** A computed `position-try-fallbacks`: a list of tactics, each the flip
+ * keywords applied together, or an area of its own. */
+export function parsePositionTryFallbacks(value: string): AnchorFallback[] {
+  const list = value.trim();
+  if (list === "" || list === "none") return [];
+  const fallbacks: AnchorFallback[] = [];
+  for (const entry of list.split(",")) {
+    const words = entry.trim().split(/\s+/);
+    if (words.every((word) => word.startsWith("flip-"))) {
+      fallbacks.push({
+        flipBlock: words.includes("flip-block"),
+        flipInline: words.includes("flip-inline"),
+        flipStart: words.includes("flip-start"),
+      });
+    } else {
+      const area = parsePositionArea(entry);
+      if (area) fallbacks.push(area);
+    }
+  }
+  return fallbacks;
 }
 
 /** The UA's geometry of a top-layer box — a fixed box at `inset: 0`,
@@ -738,6 +907,9 @@ function mapJustify(value: string): JustifyContent {
 function mapAlign(value: string): AlignItems {
   switch (value) {
     case "center":
+    // Centered on the anchor for an anchored box (specs/anchor-positioning.md),
+    // centered for any other.
+    case "anchor-center":
       return "center";
     case "flex-end":
     case "end":
