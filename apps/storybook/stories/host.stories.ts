@@ -8,12 +8,13 @@ import { copyText, pressAt, release } from "./helpers.ts";
  * empty grid (specs/cell-model.md "Host sizing"); its own inline
  * content is the root leaf (specs/host-leaf.md); its own text beside a
  * block child is an anonymous run, the block a flow child
- * (specs/cell-model.md "Inline content"). Hidden from the sidebar and
- * the story sweep.
+ * (specs/cell-model.md "Inline content"); a host inside another is
+ * plain content of the outer one, and a host's own animation is the
+ * browser's. Hidden from the sidebar and the story sweep.
  */
 const meta: Meta = {
   title: "Test / Host",
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
 };
 export default meta;
 
@@ -149,5 +150,57 @@ export const Content: StoryObj = {
     // Back to element children only: positioned as ever.
     host.innerHTML = '<div data-test="clean">clean</div>';
     await waitFor(() => expect(by("clean")).toHaveAttribute("data-mw-laid-out"));
+  },
+};
+
+/** A host inside another is unsupported: it warns once, its engine
+ * stays off, and the outer host lays it out as plain content. */
+export const Nested: StoryObj = {
+  render: () => html`<mono-wind data-test="outer"><p>Outer text.</p></mono-wind>`,
+  play: async ({ canvasElement }) => {
+    const outer = canvasElement.querySelector<HTMLElement>('[data-test="outer"]')!;
+    await waitFor(() => expect(outer).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(String(args[0]));
+    try {
+      const inner = document.createElement("mono-wind");
+      inner.innerHTML = "<p>Inner text.</p>";
+      outer.appendChild(inner);
+      await waitFor(
+        () =>
+          expect(outer.shadowRoot!.getElementById("grid")!.textContent).toContain("Inner text."),
+        { timeout: 10_000 },
+      );
+      expect(warnings.some((w) => w.includes("inside another <mono-wind> is unsupported"))).toBe(
+        true,
+      );
+      expect(inner.shadowRoot!.getElementById("grid")!.textContent).toBe("");
+      expect(inner.hasAttribute("data-mw-ready")).toBe(false);
+    } finally {
+      console.warn = warn;
+    }
+  },
+};
+
+/** The host's own keyframe animation is the browser's, moving the
+ * grid with the host: the engine samples nothing for it. */
+export const Animated: StoryObj = {
+  render: () => html`<mono-wind data-test="host" class="animate-pulse"><p>Loading…</p></mono-wind>`,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    let layouts = 0;
+    const observer = new MutationObserver(() => layouts++);
+    observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    const opacities = new Set<string>();
+    const until = performance.now() + 600;
+    while (performance.now() < until) {
+      opacities.add(getComputedStyle(host).opacity);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    observer.disconnect();
+    expect(opacities.size, "host frames").toBeGreaterThanOrEqual(3);
+    expect(layouts, "layouts under the host's animation").toBeLessThanOrEqual(1);
   },
 };

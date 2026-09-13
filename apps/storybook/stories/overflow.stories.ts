@@ -420,7 +420,7 @@ export const Nested: StoryObj = {
  * which scroller owns a pan in the first frames, and a relayout under
  * the finger abandons it. `pointercancel` is how iOS takes the pan. */
 export const TouchPan: StoryObj = {
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div data-test="box" class="h-6 w-32 overflow-y-scroll border px-1">
@@ -470,7 +470,7 @@ export const TouchPan: StoryObj = {
  * Firefox. The scroll itself, which only a real key starts, is
  * visual/keyboard.spec.ts. */
 export const Keyboard: StoryObj = {
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div data-test="box" tabindex="0" class="h-6 w-32 overflow-y-scroll border px-1">
@@ -512,7 +512,7 @@ export const Keyboard: StoryObj = {
  * programmatic scrolling, which visibly moves the box — in a visible
  * story that reads as a flash of wrong scroll position on load. */
 export const ScrollMirroring: StoryObj = {
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div data-test="box" class="h-6 w-32 overflow-y-scroll border px-1">

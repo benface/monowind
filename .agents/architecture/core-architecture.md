@@ -92,7 +92,8 @@ aloud. A transformed or filtered element's subtree paints into a
 
 The light DOM sits on top of the grid (later in the shadow tree). Its
 ink goes transparent (`-webkit-text-fill-color`, so computed `color`
-stays live for animation sampling) and its `background-color` goes
+stays live for the sampling of transitions and keyframe animations)
+and its `background-color` goes
 transparent too, so nothing paints twice — the grid is what the eye
 sees. Events, ARIA, focus, selection, clipboard, and form behavior all
 still work on the real elements. Relayout must never recreate or blur

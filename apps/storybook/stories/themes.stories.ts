@@ -8,7 +8,8 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
  * palette (every Tailwind color token quantized to the system's),
  * period font, fg/bg, ANSI tokens, and era-correct border glyphs, all
  * from one CSS file per theme. Two hosts on one page can wear
- * different themes; no class means core defaults.
+ * different themes; no class means core defaults. Hidden from the
+ * sidebar; the gallery's resting state stays a golden.
  */
 const meta: Meta = {
   title: "Test / Themes",

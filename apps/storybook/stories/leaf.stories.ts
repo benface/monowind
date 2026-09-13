@@ -12,7 +12,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 const meta: Meta = {
   title: "Features / Leaf renderers",
   // Test-only: the API's real showcase arrives with <mono-ascii>.
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
 };
 export default meta;
 

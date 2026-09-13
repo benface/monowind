@@ -1,4 +1,5 @@
 import { trackBackground } from "./animate.ts";
+import { animatesEffect } from "./animation.ts";
 import { isLegacyColor, parseColor } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
@@ -282,21 +283,14 @@ export function readCellStyle(
     // is gated on `:not([measuring])`.
     lineGap: lineGapRows(cs.lineHeight, fontSizePx),
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
-    color: cs.color,
+    ...readPaintStyle(cs),
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
     backgroundColor: readAnimatedBackground(el, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
-    borderColor: {
-      top: cs.borderTopColor,
-      right: cs.borderRightColor,
-      bottom: cs.borderBottomColor,
-      left: cs.borderLeftColor,
-    },
-    opacity: readOpacity(cs.opacity),
-    layer: readLayer(cs),
+    layer: readLayer(el, cs),
     glyphSet,
     boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
@@ -1213,8 +1207,9 @@ function readOpacity(value: string): number {
   return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 1;
 }
 
-/** A layer root — an element with a transform or a filter set — and
- * its `backdrop-filter`, read while the companion's lock is off. An
+/** A layer root — an element with a transform or a filter set, or a
+ * running animation of one (specs/animations.md) — and its
+ * `backdrop-filter`, read while the companion's lock is off. An
  * identity (Tailwind's `transform`, `transform-gpu`, a dialog resting
  * at `scale-100` after its transition) is none. */
 const IDENTITY = new Set([
@@ -1230,14 +1225,35 @@ const IDENTITY = new Set([
 ]);
 const TRANSFORMS = ["transform", "translate", "rotate", "scale", "filter"];
 
-function readLayer(cs: CSSStyleDeclaration): Layer | null {
+function readLayer(el: Element, cs: CSSStyleDeclaration): Layer | null {
   const effect = (property: string): string => {
     const value = cs.getPropertyValue(property).trim();
     return value === "" || IDENTITY.has(value) ? "none" : value;
   };
   const backdropFilter = effect("backdrop-filter");
-  const layered = backdropFilter !== "none" || TRANSFORMS.some((p) => effect(p) !== "none");
+  const layered =
+    backdropFilter !== "none" ||
+    TRANSFORMS.some((p) => effect(p) !== "none") ||
+    animatesEffect(el, cs);
   return layered ? { backdropFilter } : null;
+}
+
+/** The paint-only properties a frame of an animation resamples onto a
+ * node (specs/animations.md): live on the light element, read off the
+ * node by the walk. */
+export function readPaintStyle(
+  cs: CSSStyleDeclaration,
+): Pick<CellStyle, "color" | "opacity" | "borderColor"> {
+  return {
+    color: cs.color,
+    opacity: readOpacity(cs.opacity),
+    borderColor: {
+      top: cs.borderTopColor,
+      right: cs.borderRightColor,
+      bottom: cs.borderBottomColor,
+      left: cs.borderLeftColor,
+    },
+  };
 }
 
 /** `text-indent` in cells. Percentages come through as `Npx` after

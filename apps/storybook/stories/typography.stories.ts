@@ -36,7 +36,7 @@ export const Wrapping: StoryObj = {
 // in Firefox (breaks BEFORE hyphens, documented divergence) the
 // hyphenated leaves are skipped and may visually overflow their boxes.
 export const HyphenBreaks: StoryObj = {
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div class="flex flex-wrap items-start gap-2">
@@ -253,7 +253,7 @@ export const Tracking: StoryObj = {
 export const SubpixelHeadroom: StoryObj = {
   // Test-only: hidden from the Storybook sidebar (and the visual suite),
   // still run by the Vitest story tests.
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <div id="sweep-frame">
       <mono-wind style="font-family: 'DejaVu Sans Mono Subset', monospace">

@@ -153,7 +153,7 @@ export const AutoFill: StoryObj = {
 export const AutoFillResize: StoryObj = {
   // Test-only: hidden from the Storybook sidebar (and the visual suite),
   // still run by the Vitest story tests.
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => autoFillMarkup,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);

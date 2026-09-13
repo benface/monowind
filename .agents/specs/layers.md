@@ -96,7 +96,9 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   transition properties, so a `transition-transform` re-copies the
   computed values every frame and the layer follows the browser's own
   easing; the layout runs once, at the settle when the transition
-  ends.
+  ends. A keyframe animation of an effect samples the same way, and
+  keeps its element a layer root through identity frames
+  (specs/animations.md).
 - **Selection and copy see the grid, not the transform.** A layer's
   cells are grid cells at their layout positions: the text-mode
   selection paints on them, the transcript reads them, copy yields
@@ -158,9 +160,6 @@ flat, the pointer mapping taking the rotate about z (Deviations).
    dims them (as the grid hides any covered cell), a partial cover
    cuts on cell boundaries and turns with the layer, and a later text
    run's blank spaces cover too.
-10. CSS `animation` keyframes of a layer's effects are not sampled
-    (`animate-spin` holds the angle of the last layout), as for color:
-    transitions only, per cell-model.md "Animation".
 
 ## Testing
 

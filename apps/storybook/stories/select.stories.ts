@@ -7,7 +7,7 @@ const meta: Meta = {
   title: "Features / Select",
   // Test-only (the toolbar's global Select toggle is the showcase):
   // hidden from the sidebar, still exercised by the test runner.
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
 };
 export default meta;
 

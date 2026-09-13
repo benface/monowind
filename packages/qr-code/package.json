@@ -1,6 +1,6 @@
 {
   "name": "@monowind/qr-code",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "QR codes on the monowind grid: the <mono-qr> element",
   "keywords": [
     "monowind",

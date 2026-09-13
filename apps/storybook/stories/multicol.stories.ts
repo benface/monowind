@@ -486,7 +486,7 @@ export const SpannerMarginFallback: StoryObj = {
   // margin is the one trigger its visible containers can't isolate:
   // glue engines keep the flow; WebKit (slice) falls back to atomic
   // distribution.
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div class="max-w-60 columns-2 gap-5 rule-zinc-500 rule-x" data-test="margins">

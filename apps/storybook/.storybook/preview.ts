@@ -104,6 +104,9 @@ addons.getChannel().on(STORY_RENDERED, () => {
 applyTheme(systemTheme);
 
 const preview: Preview = {
+  // Every story is a golden of the visual sweep (visual/stories.spec.ts)
+  // unless it opts out with `!golden`.
+  tags: ["golden"],
   // A theme wraps the story in its class (the @monowind/themes
   // contract: `.theme-<name> mono-wind`), re-rendered when the
   // background changes.

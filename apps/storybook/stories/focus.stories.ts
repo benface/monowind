@@ -12,7 +12,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
  */
 const meta: Meta = {
   title: "Test / Focus",
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
 };
 export default meta;
 

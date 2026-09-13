@@ -39,7 +39,9 @@ forms, and accessibility semantics stay fully intact.
 > gradient backgrounds (`bg-linear-*`, `bg-radial-*`, `bg-conic-*`,
 > `bg-clip-text`), and transforms and filters (`rotate-*`, `scale-*`,
 > `translate-*`, `blur-*`, `grayscale`, `backdrop-blur-*`, … — the
-> element's cells in a layer of their own the browser transforms) work. The unified-render
+> element's cells in a layer of their own the browser transforms) work,
+> and CSS animations (`animate-spin`, `animate-pulse`, keyframe enters
+> and exits) are sampled like transitions. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and

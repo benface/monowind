@@ -1,4 +1,7 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
+import { animatedProperties, animationPath, drainAnimated, nodeIndex } from "./animation.ts";
+import type { AnimationPath } from "./animation.ts";
+import { readPaintStyle } from "./style.ts";
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafObservedAttributes, leafRendererFor, onLeafRegistryChange } from "./leaf.ts";
 import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "./focus.ts";
@@ -30,7 +33,7 @@ import type { StickyBox } from "./sticky.ts";
 import { buildChildren, buildRootLeaf, hostLeafStyle } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
 import { zeroInsets } from "./types.ts";
-import { warnSubject } from "./warn.ts";
+import { warnOnce, warnSubject } from "./warn.ts";
 import type { CellMetrics, LayoutNode } from "./types.ts";
 
 const SHADOW_TEMPLATE = `
@@ -306,6 +309,8 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #shadow: ShadowRoot;
+  /** Inside another host: the engine stays off (connectedCallback). */
+  #nested = false;
   #grid: HTMLElement;
   #layers: HTMLElement;
   #probe: HTMLElement;
@@ -440,6 +445,16 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   connectedCallback(): void {
+    // A host inside another is unsupported: it stays plain content of
+    // the outer one, laid out and painted like any element of it.
+    this.#nested = this.parentElement?.closest("mono-wind") !== null;
+    if (this.#nested) {
+      warnOnce(
+        this,
+        "A <mono-wind> inside another <mono-wind> is unsupported; it is laid out as plain content of the outer one.",
+      );
+      return;
+    }
     // attributeChangedCallback only fires on changes; an absent
     // attribute reflects its default here.
     if (!this.hasAttribute("select")) this.setAttribute("select", DEFAULT_SELECT);
@@ -504,6 +519,13 @@ export class MonoWindElement extends HTMLElementBase {
     this.addEventListener("transitionrun", this.#onTransitionRun);
     this.addEventListener("transitionend", this.#onTransitionDone);
     this.addEventListener("transitioncancel", this.#onTransitionDone);
+    // Keyframe animations join the same loop (specs/animations.md):
+    // an iteration is a start for one resumed or begun before the
+    // host listened, an end lands the state of one the loop dropped.
+    this.addEventListener("animationstart", this.#onAnimationStart);
+    this.addEventListener("animationiteration", this.#onAnimationStart);
+    this.addEventListener("animationend", this.#onAnimationDone);
+    this.addEventListener("animationcancel", this.#onAnimationDone);
 
     // Synthesized pointer states (specs/cell-model.md "Pointer
     // states"): under select="grid" the light DOM is pointer-events:
@@ -558,7 +580,12 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("transitionrun", this.#onTransitionRun);
     this.removeEventListener("transitionend", this.#onTransitionDone);
     this.removeEventListener("transitioncancel", this.#onTransitionDone);
+    this.removeEventListener("animationstart", this.#onAnimationStart);
+    this.removeEventListener("animationiteration", this.#onAnimationStart);
+    this.removeEventListener("animationend", this.#onAnimationDone);
+    this.removeEventListener("animationcancel", this.#onAnimationDone);
     this.#activeTransitions = 0;
+    this.#animated.clear();
     this.removeEventListener("pointermove", this.#onPointerMove);
     this.removeEventListener("pointerleave", this.#onPointerLeave);
     this.removeEventListener("pointerdown", this.#onPointerDown);
@@ -1708,6 +1735,68 @@ export class MonoWindElement extends HTMLElementBase {
   #activeLayerTransitions = 0;
   #samplingLoopRunning = false;
   #lastTransitionRun = 0;
+  /** The light elements with a running keyframe animation, each with
+   * what a frame does for it (specs/animations.md). */
+  #animated = new Map<Element, AnimationPath>();
+  /** The last layout's nodes by element, built when a frame needs
+   * one. */
+  #nodes: Map<Element, LayoutNode> | null = null;
+
+  /** An animation on a light element joins the sampling loop: its
+   * keyframes' properties pick its path, and a layout opens the layer
+   * it may need. The loop's ticks follow it from there — each one
+   * asks the element's animations what still runs — so an infinite
+   * animation samples for as long as it runs. */
+  #onAnimationStart = (event: Event): void => {
+    const el = event.target;
+    if (!(el instanceof Element) || !this.#owns(el) || this.#animated.has(el)) return;
+    this.#follow(el);
+    this.#scheduleLayout();
+  };
+
+  /** An end lands its state with a layout: the value it leaves beside
+   * an animation still running, or a resumed one-shot's the loop never
+   * followed, is the last layout's to read. */
+  #onAnimationDone = (event: Event): void => {
+    const el = event.target;
+    if (el instanceof Element && this.#owns(el)) this.#scheduleLayout();
+  };
+
+  /** A light element of this host. */
+  #owns(el: Element): boolean {
+    return el !== this && this.contains(el);
+  }
+
+  /** An element found animating joins the set with its path — a
+   * layout's until its animations answer — and the loop runs. */
+  #follow(el: Element): void {
+    this.#animated.set(el, this.#animationPathOf(el) ?? "layout");
+    this.#startSamplingLoop();
+  }
+
+  #animationPathOf(el: Element): AnimationPath | null {
+    return animationPath(animatedProperties(el), this.#nodeOf(el));
+  }
+
+  #nodeOf(el: Element): LayoutNode | null {
+    if (!this.#lastLayout) return null;
+    this.#nodes ??= nodeIndex(this.#lastLayout);
+    return this.#nodes.get(el) ?? null;
+  }
+
+  /** A frame of the paint path (specs/animations.md): the animated
+   * elements' live paint-only properties onto their nodes, then the
+   * last layout painted again, its layers placed with it. */
+  #resampleAndPaint(): void {
+    const layout = this.#lastLayout;
+    if (!layout) return;
+    for (const [el, path] of this.#animated) {
+      if (path !== "paint") continue;
+      const node = this.#nodeOf(el);
+      if (node) Object.assign(node.style, readPaintStyle(getComputedStyle(el)));
+    }
+    this.#paintHeld = !this.#paint(layout);
+  }
 
   #onTransitionRun = (event: Event): void => {
     const property = (event as TransitionEvent).propertyName;
@@ -1734,22 +1823,36 @@ export class MonoWindElement extends HTMLElementBase {
     if (this.#samplingLoopRunning) return;
     this.#samplingLoopRunning = true;
     const tick = (): void => {
-      const sampled = this.#activeTransitions > 0 || hasSynthesizedTransitions();
-      if (
-        !this.isConnected ||
-        (!sampled && this.#activeLayerTransitions === 0) ||
-        performance.now() - this.#lastTransitionRun > SAMPLING_VALVE_MS
-      ) {
-        this.#samplingLoopRunning = false;
+      // Each animated element's path follows its animations as they
+      // run, pause, and end.
+      for (const el of this.#animated.keys()) {
+        const path = this.#owns(el) ? this.#animationPathOf(el) : null;
+        if (path) this.#animated.set(el, path);
+        else this.#animated.delete(el);
+      }
+      // The valve is the transitions': an animation's liveness is
+      // asked above.
+      if (performance.now() - this.#lastTransitionRun > SAMPLING_VALVE_MS) {
         this.#activeTransitions = 0;
         this.#activeLayerTransitions = 0;
+      }
+      const paths = new Set(this.#animated.values());
+      const sampled =
+        this.#activeTransitions > 0 || hasSynthesizedTransitions() || paths.has("layout");
+      if (
+        !this.isConnected ||
+        (!sampled && this.#activeLayerTransitions === 0 && this.#animated.size === 0)
+      ) {
+        this.#samplingLoopRunning = false;
         // One final settle pass so the grid lands exactly on the
-        // transitions' target values.
+        // transitions' target values and an animation's end state.
         this.#scheduleLayout();
         return;
       }
-      // A layer's transform or filter alone moves only its box.
+      // A relayout reads everything; live paint-only properties need
+      // a repaint; a layer's transform or filter alone moves its box.
       if (sampled) this.#performLayoutSafely();
+      else if (paths.has("paint")) this.#resampleAndPaint();
       else syncLayers(this.#layers);
       requestAnimationFrame(tick);
     };
@@ -1873,7 +1976,7 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #scheduleLayout(): void {
-    if (this.#layoutPending) return;
+    if (this.#layoutPending || this.#nested) return;
     this.#layoutPending = true;
     requestAnimationFrame(() => {
       this.#layoutPending = false;
@@ -2017,6 +2120,7 @@ export class MonoWindElement extends HTMLElementBase {
       // roots' effects read as the light elements finally sit.
       this.#paintHeld = !this.#paint(virtualRoot, false);
       this.#lastLayout = virtualRoot;
+      this.#nodes = null;
       // The grid box is the ink extent in engine cells: a glyph a
       // fallback font draws wider still overhangs as ink, but the box
       // (and the background it inherits) never grows from it.
@@ -2079,6 +2183,9 @@ export class MonoWindElement extends HTMLElementBase {
       // `transition-property` list is readable — then the sampling loop
       // drives the fade. A pending change that did NOT arm was painted
       // stale this pass; one more relayout paints its target.
+      // The animations the reads found (specs/animations.md): resumed,
+      // or begun before this host listened.
+      for (const el of drainAnimated(this)) if (!this.#animated.has(el)) this.#follow(el);
       if (resolvePendingTransitions(this)) {
         if (hasSynthesizedTransitions()) {
           this.#lastTransitionRun = performance.now();

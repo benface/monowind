@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 
 /**
- * One screenshot test per story, discovered from the built Storybook's
- * index.json — new stories are covered automatically. Test-only stories
- * (`tags: ["!dev"]`, hidden from the sidebar) are skipped like Storybook
- * itself skips them.
+ * One screenshot test per story tagged `golden`, discovered from the
+ * built Storybook's index.json — the preview gives every story the
+ * tag, so new stories are covered automatically, and a story opts out
+ * with `!golden`: the test-only fixtures (`!dev`, hidden from the
+ * sidebar) whose state is not a picture, and a visible story that runs
+ * forever. A hidden fixture whose resting state is worth a screenshot
+ * keeps the tag.
  */
 interface IndexEntry {
   type: string;
@@ -18,7 +21,7 @@ const index = JSON.parse(
 ) as { entries: Record<string, IndexEntry> };
 
 const stories = Object.values(index.entries).filter(
-  (entry) => entry.type === "story" && entry.tags.includes("dev"),
+  (entry) => entry.type === "story" && entry.tags.includes("golden"),
 );
 
 for (const story of stories) {

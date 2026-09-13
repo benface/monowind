@@ -17,6 +17,8 @@
  * flush restores the authored `transition-property` list.
  */
 
+import { animatesBackground } from "./animation.ts";
+
 interface Rgba {
   r: number; // 0..1, sRGB
   g: number;
@@ -56,6 +58,12 @@ const active = new Map<Element, SynthesizedTransition>();
 export function trackBackground(el: Element, value: string, cs: CSSStyleDeclaration): string {
   const previous = lastBackground.get(el);
   lastBackground.set(el, value);
+  // A keyframe animation's value is the browser's, read as it is
+  // (specs/animations.md): a fade of the engine's ends under it.
+  if (animatesBackground(el, cs)) {
+    active.delete(el);
+    return value;
+  }
   const running = active.get(el);
   if (running) {
     if (value !== running.toValue) {

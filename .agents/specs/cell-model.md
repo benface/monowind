@@ -178,7 +178,9 @@ siblings (a flex or grid slot that grows because a sibling shrank), and
 the window. The height is engine-set from the content rows, as before;
 a host with nothing to lay out is zero rows — its padding and border
 only, and an empty grid. The host's own inline content is the root
-leaf (specs/host-leaf.md), laid out inside the same content box.
+leaf (specs/host-leaf.md), laid out inside the same content box. A
+host inside another host is unsupported: it warns once and keeps its
+engine off, and the outer host lays it out as plain content.
 
 ## Typography
 
@@ -554,10 +556,12 @@ interpolating premultiplied in OKLAB (sRGB for legacy rgb pairs, per
 css-color-4) and driving the same per-frame loop. The config resolves
 after the settling flush, where the authored `transition-property` is
 readable again and the reads themselves can start nothing.
-**Deviations**: transitions of other non-sampled properties
-(decoration color, geometry) flip to their target on the next relayout
-instead of fading; CSS `animation` keyframes are not yet sampled
-(transitions only).
+CSS `animation` keyframes are sampled by the same loop, per element
+by what their properties need — a repaint for live paint-only ones, a
+box placement for a layer's effects, a relayout for the rest
+(specs/animations.md). **Deviations**: transitions of other
+non-sampled properties (decoration color, geometry) flip to their
+target on the next relayout instead of fading.
 
 ## Selection
 

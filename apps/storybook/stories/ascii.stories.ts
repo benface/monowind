@@ -67,7 +67,7 @@ export const Banner: StoryObj = {
 
 /** Test-only behaviors: fallbacks, dynamic updates, property API. */
 export const Behavior: StoryObj = {
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div class="flex max-w-max flex-col gap-1">

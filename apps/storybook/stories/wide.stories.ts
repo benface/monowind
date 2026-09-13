@@ -14,7 +14,7 @@ import type { Point, PressInit } from "./helpers.ts";
  */
 const meta: Meta = {
   title: "Test / Wide",
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
 };
 export default meta;
 

@@ -15,7 +15,7 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 const meta: Meta = {
   title: "Features / Pointer",
   // Test-only: the hoverable Effects/Transitions story is the showcase.
-  tags: ["!dev"],
+  tags: ["!dev", "!golden"],
 };
 export default meta;
 
