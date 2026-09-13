@@ -318,8 +318,10 @@ mono-wind * {
  * element ON TOP of the grid (transitions beat even `!important`
  * declarations in the cascade). Restricting `transition-property` to
  * the SAMPLED properties (which no lock toggles — color stays live
- * under the text-fill lock, and nothing touches border colors or
- * opacity) snaps everything lock-owned while keeping in-flight fades
+ * under the text-fill lock, and nothing touches border colors,
+ * opacity, or a layer's transforms and filter) snaps everything
+ * lock-owned (backgrounds, geometry, backdrop-filter) while keeping
+ * in-flight fades
  * of the sampled properties alive ACROSS measuring passes. The engine
  * swaps `[measuring]` for `[settling]` and forces one style flush
  * before unmasking, so the snap-back delta always commits masked;
@@ -330,7 +332,8 @@ mono-wind[measuring],
 mono-wind[measuring] *,
 mono-wind[settling],
 mono-wind[settling] * {
-  transition-property: color, border-color, opacity !important;
+  transition-property:
+    color, border-color, opacity, transform, translate, rotate, scale, filter !important;
 }
 
 /* Grid-template read assist (specs/grid.md), no-Typed-OM engines only
@@ -474,7 +477,10 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   /* A sticky box's shift for the scroll rides beside its position
    * (specs/sticky.md). */
   left: calc((var(--mw-x, 0) + var(--mw-sx, 0)) * var(--mw-cw, 1px)) !important;
-  top: calc((var(--mw-y, 0) + var(--mw-sy, 0)) * var(--mw-ch, 1px)) !important;
+  /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
+   * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
+   * lifts the box back so every line starts on its own row. */
+  top: calc((var(--mw-y, 0) + var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
   /* Neutralize the browser's residual grid machinery (specs/grid.md).
    * grid-area: per CSS §10.1 an ABSOLUTE child of a grid container with
    * placement properties uses its grid area as containing block — our
@@ -491,10 +497,6 @@ mono-wind:not([measuring]) [data-mw-laid-out] {
   grid-template-rows: none !important;
   place-content: start !important;
   place-items: stretch !important;
-  /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
-   * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
-   * shifts the box back so every line starts on its own row. */
-  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
 }
 
 /* Shared cell geometry for engine-sized boxes — engine-POSITIONED
@@ -545,6 +547,9 @@ mono-wind:not([measuring]) [data-mw-float] {
    * engine writes --mw-z in exactly those cases; without it the calc()
    * is invalid at computed-value time and z-index falls back to auto. */
   z-index: calc(var(--mw-z)) !important;
+  /* A layer root's backdrop filter goes on its layer (specs/layers.md):
+   * the element's own would take in the layer's cells beneath it. */
+  backdrop-filter: none !important;
   padding-top: calc((var(--mw-pt, 0) + var(--mw-bt, 0)) * var(--mw-ch, 1px)) !important;
   padding-right: calc(
     max(0, var(--mw-pr, 0) + var(--mw-br, 0) - var(--mw-ls, 0)) * var(--mw-cw, 1px)
@@ -565,15 +570,14 @@ mono-wind:not([measuring]) [data-mw-float] {
  * line) — a box taller than one row grows its line, per CSS. */
 mono-wind:not([measuring]) [data-mw-inline-box] {
   position: relative !important;
-  /* A sticky inline box's shift for the scroll (specs/sticky.md); the
-   * vars are absent otherwise. */
-  top: calc(var(--mw-sy, 0) * var(--mw-ch, 1px)) !important;
+  /* A sticky inline box's shift for the scroll (specs/sticky.md; the
+   * vars are absent otherwise) and the same half-leading lift as
+   * laid-out elements — without it an inline box's NATIVE ink (a
+   * textarea's value under leading-*) sits centered in its line boxes
+   * instead of on its rows. */
+  top: calc((var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
   left: calc(var(--mw-sx, 0) * var(--mw-cw, 1px)) !important;
   vertical-align: top !important;
-  /* Same half-leading cancellation as laid-out elements — without it
-   * an inline box's NATIVE ink (a textarea's value under leading-*)
-   * sits centered in its line boxes instead of on its rows. */
-  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
 }
 
 /* Authored `vertical-align: bottom` on an atomic inline box: grid-exact
@@ -663,18 +667,21 @@ mono-wind:not([measuring]) [data-mw-float] {
  * container's child, placed so the container's anonymous runs of text
  * land on their rows (specs/cell-model.md "Inline content"), and an
  * in-flow multicol SPANNER (specs/multicol.md), which paragraphs
- * fragment around. The half-leading translate doubles as the containing
- * block for their absolutized descendants (a transformed box contains
- * them like a positioned one). */
+ * fragment around. `relative` makes them the containing block for
+ * their absolutized descendants and carries the half-leading lift;
+ * the engine owns every inset, so an authored one stays inert. */
 mono-wind:not([measuring]) [data-mw-flow],
 mono-wind:not([measuring]) [data-mw-float],
 mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
-  position: static !important;
+  position: relative !important;
+  top: calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
   margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
   margin-right: 0 !important;
   margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
   margin-left: calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
-  translate: 0 calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
 }
 mono-wind:not([measuring]) [data-mw-multicol-flow-span] {
   column-span: all !important;

@@ -164,6 +164,14 @@ interface GradientBase {
   stops: GradientStop[];
 }
 export type BackgroundClip = "border-box" | "padding-box" | "content-box" | "text";
+/** A layer root's `backdrop-filter` as computed (specs/layers.md): the
+ * companion locks it on the light element, whose backdrop would take
+ * in the layer's own cells, so the layer's box takes it from here —
+ * the root's other effects from the element's computed style, as the
+ * box is placed. */
+export interface Layer {
+  backdropFilter: string;
+}
 /** A `background-image` layer the grid paints as a color per cell. */
 export type Gradient =
   | (GradientBase & {
@@ -588,6 +596,9 @@ export interface CellStyle {
    * page — translucency blends with what's behind the host, never with
    * covered cells (deviation; front paint wins a cell as always). */
   opacity: number;
+  /** Set on a layer root — an element with a transform or a filter —
+   * whose subtree paints into its own node (specs/layers.md). */
+  layer: Layer | null;
   /** The border glyph SET name from `--mw-border-glyphs` (`null` =
    * default) — the theming vocabulary borders/lattices/rules resolve
    * through (specs/theming.md); resolved on the decoration's owner. */
@@ -936,6 +947,7 @@ export function defaultCellStyle(): CellStyle {
     glyphSet: null,
     boxShadow: [],
     opacity: 1,
+    layer: null,
     zIndex: null,
     latticeBorder: null,
     ruleX: null,

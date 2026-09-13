@@ -1,11 +1,14 @@
 import type { GlyphBoxes } from "./glyph-box.ts";
+import { DEFAULT_CELL } from "./gradient.ts";
+import type { CellSize } from "./gradient.ts";
 import { applyCellPaint, isBarePaint, renderGridRows, samePaint } from "./plain-text.ts";
-import type { CellSegment, RenderOptions } from "./plain-text.ts";
+import type { CellSegment, LayerRows, PaintedLayer, RenderOptions } from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
 import type { LayoutNode } from "./types.ts";
 
 /**
- * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`): each
+ * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`) and
+ * the layers' grids (specs/layers.md): each
  * text line is a cell row, same-paint runs coalesce into spans, and a
  * cluster the font draws off its cell count gets a cell-sized box
  * (specs/wide-characters.md).
@@ -47,6 +50,12 @@ export interface PaintOptions {
   glyphs?: PaintGlyphs;
   selection?: RenderOptions["selection"];
   cell?: RenderOptions["cell"];
+  /** Where the layers' nodes go (specs/layers.md): a positioned box
+   * at the grid's origin. */
+  layers?: HTMLElement;
+  /** False leaves every layer's box as placed, for a caller that
+   * places them once the light elements settle (`syncLayers`). */
+  placeLayers?: boolean;
 }
 
 /** True when a Selection boundary (a collapsed press anchor counts —
@@ -75,7 +84,276 @@ export function paintGrid(
   }
   if (options.selection) render.selection = options.selection;
   if (options.cell) render.cell = options.cell;
-  const { segments: rows, cells } = renderGridRows(root, render);
+  const { segments, cells, layers } = renderGridRows(root, render);
+  if (!paintRows(target, segments, cells, options)) return false;
+  return options.layers ? paintLayers(options.layers, layers, options) : true;
+}
+
+/** A layer's nodes (specs/layers.md): a positioned box carrying the
+ * root's transform and filter, the grid of its cells inside, kept per
+ * root element across paints — the grid's node identity survives like
+ * the main grid's — with the box's geometry in px of its parent's
+ * space and the inverse of its transform, for the pointer. */
+interface LayerNodes {
+  box: HTMLElement;
+  grid: HTMLElement;
+  layer: PaintedLayer;
+  parent: LayerNodes | null;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  inverse: DOMMatrix | null;
+  /** The last placement written, to skip an unchanged one. */
+  placed: string;
+}
+/** A container's layers: by root element, and in paint order. */
+interface LayerSet {
+  nodes: Map<Element, LayerNodes>;
+  order: LayerNodes[];
+  cell: CellSize;
+}
+const layerSets = new WeakMap<HTMLElement, LayerSet>();
+
+/** Every layer's box placed again from its root's computed effects,
+ * for a transition of one of them (specs/layers.md "Animation is
+ * sampled"): the copy alone, the cells as they are. */
+export function syncLayers(container: HTMLElement): void {
+  const set = layerSets.get(container);
+  if (set) for (const nodes of set.order) placeLayer(nodes, set.cell);
+}
+
+/** A cell with the grid it is painted in — a layer's, at `x`, `y` of
+ * the main grid, or the main grid itself at 0, 0 — in main-grid
+ * cells. */
+export interface CellHit {
+  col: number;
+  row: number;
+  grid: HTMLElement;
+  x: number;
+  y: number;
+}
+
+/** The cell of a layer under the pointer (specs/layers.md): `x`, `y`
+ * in px from the grid's origin, taken through the layers' transforms
+ * — the one painted last first — to the cell of the layer's grid it
+ * lands on; null over none — a layer's blank cell past its root's
+ * border box (a shadow's, an overflowing child's) is see-through. */
+export function layerAt(container: HTMLElement, x: number, y: number): CellHit | null {
+  const set = layerSets.get(container);
+  if (!set) return null;
+  for (let i = set.order.length - 1; i >= 0; i--) {
+    const nodes = set.order[i]!;
+    const local = localPoint(nodes, x, y);
+    if (!local || local.x < 0 || local.y < 0 || local.x >= nodes.width || local.y >= nodes.height)
+      continue;
+    const { layer } = nodes;
+    const col = Math.floor(local.x / set.cell.width);
+    const row = Math.floor(local.y / set.cell.height);
+    const { box } = layer;
+    const inBox =
+      col >= box.x - layer.x &&
+      col < box.x - layer.x + box.width &&
+      row >= box.y - layer.y &&
+      row < box.y - layer.y + box.height;
+    if (!inBox && (paintedCell(nodes.grid, col, row) ?? " ") === " ") continue;
+    return { col: layer.x + col, row: layer.y + row, grid: nodes.grid, x: layer.x, y: layer.y };
+  }
+  return null;
+}
+
+/** The grid of the layer painted last over a cell, in main-grid
+ * cells, with its origin; null off every layer. */
+export function layerGridAt(
+  container: HTMLElement,
+  col: number,
+  row: number,
+): { grid: HTMLElement; x: number; y: number } | null {
+  const set = layerSets.get(container);
+  if (!set) return null;
+  for (let i = set.order.length - 1; i >= 0; i--) {
+    const { layer, grid } = set.order[i]!;
+    if (
+      col >= layer.x &&
+      col < layer.x + layer.width &&
+      row >= layer.y &&
+      row < layer.y + layer.height
+    )
+      return { grid, x: layer.x, y: layer.y };
+  }
+  return null;
+}
+
+/** A point of the grid's space in a layer box's own, through its
+ * ancestors' transforms then its own. */
+function localPoint(nodes: LayerNodes, x: number, y: number): { x: number; y: number } | null {
+  const outer = nodes.parent ? localPoint(nodes.parent, x, y) : { x, y };
+  if (!outer || !nodes.inverse) return null;
+  const point = nodes.inverse.transformPoint({ x: outer.x - nodes.left, y: outer.y - nodes.top });
+  return { x: point.x, y: point.y };
+}
+
+/** Every layer's box placed in the container — a nested one in its
+ * parent's box — in paint order, its cells painted; a layer painted no
+ * more loses its nodes. */
+function paintLayers(container: HTMLElement, layers: LayerRows[], options: PaintOptions): boolean {
+  let set = layerSets.get(container);
+  if (!set) layerSets.set(container, (set = { nodes: new Map(), order: [], cell: DEFAULT_CELL }));
+  set.cell = options.cell ?? DEFAULT_CELL;
+  set.order = [];
+  const last = new Map<HTMLElement, HTMLElement>();
+  let held = false;
+  for (const { layer, segments } of layers) {
+    const source = layer.node.source;
+    let nodes = set.nodes.get(source);
+    if (!nodes) {
+      const box = document.createElement("div");
+      box.className = "layer";
+      const grid = document.createElement("pre");
+      grid.className = "grid";
+      grid.setAttribute("aria-hidden", "true");
+      box.appendChild(grid);
+      nodes = {
+        box,
+        grid,
+        layer,
+        parent: null,
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        inverse: null,
+        placed: "",
+      };
+      set.nodes.set(source, nodes);
+    }
+    nodes.layer = layer;
+    nodes.parent = layer.parent ? set.nodes.get(layer.parent.node.source)! : null;
+    set.order.push(nodes);
+    // In paint order: after the previous sibling layer's box, else
+    // first — past a parent box's own grid.
+    const parent = nodes.parent?.box ?? container;
+    const previous = last.get(parent);
+    const first = nodes.parent ? nodes.parent.grid.nextSibling : parent.firstChild;
+    const anchor = previous ? previous.nextSibling : first;
+    if (nodes.box !== anchor) parent.insertBefore(nodes.box, anchor);
+    last.set(parent, nodes.box);
+    if (options.placeLayers !== false) placeLayer(nodes, set.cell);
+    if (!paintRows(nodes.grid, segments, layer.grid, options)) held = true;
+  }
+  const painted = new Set(set.order);
+  for (const [source, nodes] of set.nodes) {
+    if (painted.has(nodes)) continue;
+    nodes.box.remove();
+    set.nodes.delete(source);
+  }
+  return !held;
+}
+
+/** The box at the layer's extent, in px of the measured cell, with
+ * the root's effects as the browser computes them now — the origin
+ * moved by the extent's offset from the border box, so the box turns
+ * about the point the light element does, a translate percentage
+ * resolved against the border box — the backdrop filter from the
+ * read, and their inverse. */
+function placeLayer(nodes: LayerNodes, cell: CellSize): void {
+  const { layer } = nodes;
+  const cs = getComputedStyle(layer.node.source);
+  const [ox = "0", oy = "0"] = cs.transformOrigin.split(" ");
+  const originX = (parseFloat(ox) || 0) + (layer.box.x - layer.x) * cell.width;
+  const originY = (parseFloat(oy) || 0) + (layer.box.y - layer.y) * cell.height;
+  const [tx = 0, ty = 0] = cs.translate
+    .split(" ")
+    .map((part, axis) =>
+      part.endsWith("%")
+        ? (parseFloat(part) / 100) *
+          (axis === 0 ? layer.box.width * cell.width : layer.box.height * cell.height)
+        : parseFloat(part) || 0,
+    );
+  const transform = cs.transform || "none";
+  const rotate = cs.rotate || "none";
+  const scale = cs.scale || "none";
+  const filter = cs.filter || "none";
+  const { backdropFilter } = layer.node.style.layer!;
+  const at = layer.parent ? { x: layer.x - layer.parent.x, y: layer.y - layer.parent.y } : layer;
+  nodes.left = at.x * cell.width;
+  nodes.top = at.y * cell.height;
+  nodes.width = layer.width * cell.width;
+  nodes.height = layer.height * cell.height;
+  const placed = [
+    nodes.left,
+    nodes.top,
+    nodes.width,
+    nodes.height,
+    originX,
+    originY,
+    tx,
+    ty,
+    transform,
+    rotate,
+    scale,
+    filter,
+    backdropFilter,
+  ].join("|");
+  if (nodes.placed === placed) return;
+  nodes.placed = placed;
+  const style = nodes.box.style;
+  style.left = `${nodes.left}px`;
+  style.top = `${nodes.top}px`;
+  style.width = `${nodes.width}px`;
+  style.height = `${nodes.height}px`;
+  style.transformOrigin = `${originX}px ${originY}px`;
+  style.translate = cs.translate === "none" ? "none" : `${tx}px ${ty}px`;
+  style.rotate = rotate;
+  style.scale = scale;
+  style.transform = transform;
+  style.filter = filter;
+  style.backdropFilter = backdropFilter;
+  nodes.inverse = inverseOf(originX, originY, tx, ty, rotate, scale, transform);
+}
+
+/** The inverse of the box's transform, composed as CSS composes the
+ * properties — about the origin: the translate, the rotate (about z;
+ * another axis flattens to none, deviation 2), the scale, then the
+ * transform list — or null where the platform has no matrices. */
+function inverseOf(
+  originX: number,
+  originY: number,
+  tx: number,
+  ty: number,
+  rotate: string,
+  scale: string,
+  transform: string,
+): DOMMatrix | null {
+  if (typeof DOMMatrix !== "function") return null;
+  try {
+    const turn = rotate.split(" ");
+    const axis = turn.slice(0, -1).join(" ");
+    const angle = axis === "" || axis === "z" ? parseFloat(turn.at(-1)!) || 0 : 0;
+    const [sx = 1, sy = sx] = scale === "none" ? [] : scale.split(" ").map(Number);
+    const matrix = new DOMMatrix()
+      .translate(originX, originY)
+      .translate(tx, ty)
+      .rotate(angle)
+      .scale(sx, sy)
+      .multiply(transform === "none" ? new DOMMatrix() : new DOMMatrix(transform))
+      .translate(-originX, -originY);
+    const inverse = matrix.inverse();
+    // A singular transform (a zero scale) inverts to NaNs.
+    return Number.isFinite(inverse.a) ? inverse : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The rows into `target`, a `<pre>`: false when held. */
+function paintRows(
+  target: HTMLElement,
+  rows: CellSegment[][],
+  cells: string[][],
+  options: PaintOptions,
+): boolean {
+  const glyphs = options.glyphs;
   const signature = signatureOf(rows);
   if (lastPaintSignature.get(target) === signature) return true;
 

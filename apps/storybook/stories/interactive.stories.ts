@@ -163,10 +163,10 @@ And double-spaced!?</textarea>
     // content rows, + py-1 (2) + border-2 (2: heavy, one cell per edge).
     const funky = host.querySelector<HTMLElement>("#textarea-funky")!;
     expect(cells(funky)).toBe(3 + 2 + 2);
-    // The half-leading cancellation must reach inline boxes too — a
-    // textarea's native value would otherwise sit centered in its
-    // (leading-loose) line boxes instead of on its rows.
-    expect(getComputedStyle(funky).translate).not.toBe("none");
+    // The half-leading lift must reach inline boxes too — a textarea's
+    // native value would otherwise sit centered in its (leading-loose)
+    // line boxes instead of on its rows.
+    expect(parseFloat(getComputedStyle(funky).top)).toBeLessThan(0);
   },
 };
 
@@ -393,7 +393,7 @@ export const Button: StoryObj = {
         </button>
         <button
           id="btn-full"
-          class="w-full cursor-pointer truncate border px-1 text-center transition-colors duration-200 hover:not-focus-visible:text-emerald-400 focus-visible:bg-amber-400 active:opacity-50"
+          class="w-full cursor-pointer truncate border px-1 text-center transition duration-200 hover:not-focus-visible:text-emerald-400 focus-visible:bg-amber-400 active:scale-98 active:opacity-50 active:transition-none"
         >
           full-width, centered label, with custom hover, active, and focus states
         </button>

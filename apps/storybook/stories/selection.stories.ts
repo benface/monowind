@@ -48,6 +48,22 @@ export const HostText: StoryObj = {
   `,
 };
 
+/** A scaled layer beside plain text (specs/layers.md): a text-mode
+ * drag mapped through the transform, a grid-mode one on the layer's
+ * own grid. */
+export const Layer: StoryObj = {
+  render: () => html`
+    <mono-wind class="p-2">
+      <div class="flex gap-4">
+        <div data-test="target" class="origin-top-left scale-150 border px-1">
+          scaled layer text
+        </div>
+        <div class="ml-20">beside the layer</div>
+      </div>
+    </mono-wind>
+  `,
+};
+
 /**
  * Semantic selection in grid mode (specs/semantic-selection.md):
  * double- and triple-click select the element's word or paragraph,

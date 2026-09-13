@@ -86,7 +86,9 @@ root: box-drawing borders, backgrounds, and text glyphs all land in the
 same span tree, one monospace character per cell. The grid is
 `aria-hidden="true"` and inert to events (`pointer-events: none` in the
 `select="text"` mode) so it never captures clicks or gets read
-aloud.
+aloud. A transformed or filtered element's subtree paints into a
+`<pre>` of its own, a box beside the grid carrying the native effect
+(specs/layers.md).
 
 The light DOM sits on top of the grid (later in the shadow tree). Its
 ink goes transparent (`-webkit-text-fill-color`, so computed `color`

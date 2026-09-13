@@ -32,6 +32,7 @@ import type {
   GridLine,
   GridTemplate,
   JustifyContent,
+  Layer,
   PerSide,
   Position,
   Size,
@@ -295,6 +296,7 @@ export function readCellStyle(
       left: cs.borderLeftColor,
     },
     opacity: readOpacity(cs.opacity),
+    layer: readLayer(cs),
     glyphSet,
     boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
     zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
@@ -1209,6 +1211,33 @@ function readSpacing(value: string, rootFontSizePx: number): CellLength {
 function readOpacity(value: string): number {
   const parsed = parseFloat(value);
   return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 1;
+}
+
+/** A layer root — an element with a transform or a filter set — and
+ * its `backdrop-filter`, read while the companion's lock is off. An
+ * identity (Tailwind's `transform`, `transform-gpu`, a dialog resting
+ * at `scale-100` after its transition) is none. */
+const IDENTITY = new Set([
+  "matrix(1, 0, 0, 1, 0, 0)",
+  "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+  "1",
+  "1 1",
+  "1 1 1",
+  "0deg",
+  "0px",
+  "0px 0px",
+  "0px 0px 0px",
+]);
+const TRANSFORMS = ["transform", "translate", "rotate", "scale", "filter"];
+
+function readLayer(cs: CSSStyleDeclaration): Layer | null {
+  const effect = (property: string): string => {
+    const value = cs.getPropertyValue(property).trim();
+    return value === "" || IDENTITY.has(value) ? "none" : value;
+  };
+  const backdropFilter = effect("backdrop-filter");
+  const layered = backdropFilter !== "none" || TRANSFORMS.some((p) => effect(p) !== "none");
+  return layered ? { backdropFilter } : null;
 }
 
 /** `text-indent` in cells. Percentages come through as `Npx` after

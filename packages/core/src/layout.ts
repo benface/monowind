@@ -973,7 +973,7 @@ function layoutRootBesideFloats(
  * and the run after each, where the engine did (specs/cell-model.md
  * "Inline content"): a run advances the native cursor by its line
  * boxes, `lines × (1 + gap)` rows, a child by its height, and the
- * container's half-leading translate lifts it all, so a child starts
+ * container's half-leading lift raises it all, so a child starts
  * half a gap below its engine row. A float moves no cursor and keeps
  * its authored margins, the browser placing it as the engine did from
  * the same base: the child before it carries its pending bottom margin

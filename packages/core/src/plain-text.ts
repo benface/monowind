@@ -31,9 +31,9 @@ import { clusterWidth } from "./width.ts";
  * width a terminal shows it.
  */
 export function renderPlainText(root: LayoutNode): string {
-  return renderGrids(root, {})
-    .grid.map((row) => row.join("").trimEnd())
-    .join("\n");
+  const { store, layers } = renderGrids(root, {});
+  compositeLayers(store, layers);
+  return store.grid.map((row) => row.join("").trimEnd()).join("\n");
 }
 
 /** Per-cell paint; every field optional so spans only carry what
@@ -100,16 +100,43 @@ export function renderCellSegments(root: LayoutNode, options: RenderOptions = {}
   return renderGridRows(root, options).segments;
 }
 
+/** A layer (specs/layers.md): a layer root's subtree painted into a
+ * grid of its own — its cells' extent, the root's border box grown by
+ * what overflows it, at `x`, `y` of the main grid — in the order the
+ * walk opened it, `parent` the layer it opened inside. */
+export interface PaintedLayer {
+  node: LayoutNode;
+  /** The root's border box, in main-grid cells. */
+  box: Rect;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  grid: string[][];
+  paints: (CellPaint | undefined)[][];
+  parent: PaintedLayer | null;
+}
+
+/** A layer's rows of segments, with the layer they were built from. */
+export interface LayerRows {
+  layer: PaintedLayer;
+  segments: CellSegment[][];
+}
+
 /** The segments plus the cell strings they were built from — the cell ↔
- * code-unit map a row needs once a cluster spans cells or code units. */
+ * code-unit map a row needs once a cluster spans cells or code units —
+ * and the layers' likewise, each apart from the main grid. */
 export function renderGridRows(
   root: LayoutNode,
   options: RenderOptions = {},
-): { segments: CellSegment[][]; cells: string[][] } {
-  const { grid, paints } = renderGrids(root, options);
+): { segments: CellSegment[][]; cells: string[][]; layers: LayerRows[] } {
+  const { store, layers } = renderGrids(root, options);
+  const segmentsOf = (grid: string[][], paints: (CellPaint | undefined)[][]) =>
+    grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed));
   return {
-    segments: grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed)),
-    cells: grid,
+    segments: segmentsOf(store.grid, store.paints),
+    cells: store.grid,
+    layers: layers.map((layer) => ({ layer, segments: segmentsOf(layer.grid, layer.paints) })),
   };
 }
 
@@ -307,24 +334,24 @@ export function isBarePaint(paint: CellPaint): boolean {
   );
 }
 
-function renderGrids(
-  root: LayoutNode,
-  options: RenderOptions,
-): {
+/** A grid of cells and the put that paints it: a glyph at a cell, a
+ * cluster over `cells` cells, culled at the edges. The wide cluster
+ * owning each cell is kept so a later paint on any of its cells
+ * blanks the rest — a half-overwritten wide character is spaces, as
+ * in a terminal. */
+interface CellStore {
   grid: string[][];
   paints: (CellPaint | undefined)[][];
-} {
-  const width = Math.max(0, root.localRect.width);
-  const height = Math.max(0, root.localRect.height);
+  put: PutGlyph;
+}
+
+function cellStore(width: number, height: number): CellStore {
   const grid: string[][] = Array.from({ length: height }, () =>
     Array.from({ length: width }, () => " "),
   );
   const paints: (CellPaint | undefined)[][] = Array.from({ length: height }, () =>
     Array.from({ length: width }, (): CellPaint | undefined => undefined),
   );
-  // The wide cluster owning each cell, so a later paint on any of its
-  // cells blanks the rest — a half-overwritten wide character is
-  // spaces, as in a terminal.
   const owners: ({ x: number; cells: number } | undefined)[][] = Array.from(
     { length: height },
     () => Array.from({ length: width }, () => undefined),
@@ -346,7 +373,7 @@ function renderGrids(
     const existing = paints[y]![x];
     paints[y]![x] = existing ? { ...existing, ...paint } : paint;
   };
-  walk(root, 0, 0, options, (x, y, glyph, paint, cells = 1) => {
+  const put: PutGlyph = (x, y, glyph, paint, cells = 1) => {
     if (y < 0 || y >= height) return;
     if (cells === 1) {
       if (!inside(x, y)) return;
@@ -364,8 +391,146 @@ function renderGrids(
       if (whole) owners[y]![x + dx] = { x, cells };
       mergePaint(x + dx, y, paint);
     }
+  };
+  return { grid, paints, put };
+}
+
+/** What the walk carries besides its node: the layers opened so far,
+ * in order, the one it is inside, and the main grid's size — a
+ * layer's extent stays within it. */
+interface Walk {
+  options: RenderOptions;
+  layers: PaintedLayer[];
+  layer: PaintedLayer | null;
+  width: number;
+  height: number;
+}
+
+function renderGrids(
+  root: LayoutNode,
+  options: RenderOptions,
+): { store: CellStore; layers: PaintedLayer[] } {
+  const width = Math.max(0, root.localRect.width);
+  const height = Math.max(0, root.localRect.height);
+  const store = cellStore(width, height);
+  const walking: Walk = { options, layers: [], layer: null, width, height };
+  walk(root, 0, 0, walking, store.put);
+  return { store, layers: walking.layers };
+}
+
+/** The layers back onto the main grid at their layout positions, in
+ * order — every cell a layer painted (a glyph, or a background under a
+ * space) over the main cell — so the transcript sees one grid
+ * (specs/layers.md). */
+function compositeLayers(store: CellStore, layers: PaintedLayer[]): void {
+  for (const layer of layers) {
+    for (let dy = 0; dy < layer.height; dy++) {
+      const row = layer.grid[dy]!;
+      for (let dx = 0; dx < layer.width; dx++) {
+        const glyph = row[dx]!;
+        if (glyph === "") continue;
+        const paint = layer.paints[dy]![dx];
+        if (glyph === " " && paint?.backgroundColor === undefined && !paint?.backgrounds) continue;
+        let cells = 1;
+        while (row[dx + cells] === "") cells++;
+        store.put(layer.x + dx, layer.y + dy, glyph, paint, cells);
+      }
+    }
+  }
+}
+
+/** The cells the ancestors' overflow leaves visible (specs/scrolling.md):
+ * their clips intersected; null where nothing clips. */
+type Clip = { x0: number; y0: number; x1: number; y1: number };
+
+const inClip = (clip: Clip | null, x: number, y: number): boolean =>
+  clip === null || (x >= clip.x0 && x < clip.x1 && y >= clip.y0 && y < clip.y1);
+
+const intersect = (a: Clip | null, b: Clip): Clip =>
+  a === null
+    ? b
+    : {
+        x0: Math.max(a.x0, b.x0),
+        y0: Math.max(a.y0, b.y0),
+        x1: Math.min(a.x1, b.x1),
+        y1: Math.min(a.y1, b.y1),
+      };
+
+/** A layer opened at `node` (specs/layers.md): its put records every
+ * cell of the subtree — the root's own decorations included — through
+ * the ancestors' clips (deviation 1) and grows the extent from the
+ * border box's visible part, and `close` lays the cells out in a grid
+ * of the extent. */
+function openLayer(
+  walking: Walk,
+  node: LayoutNode,
+  box: Rect,
+  clip: Clip | null,
+): { put: PutGlyph; close: () => void; layer: PaintedLayer } {
+  const layer: PaintedLayer = {
+    node,
+    box,
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    grid: [],
+    paints: [],
+    parent: walking.layer,
+  };
+  walking.layers.push(layer);
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  const grow = (x: number, y: number, width: number, height: number): boolean => {
+    const ax = Math.max(0, x);
+    const bx = Math.min(walking.width, x + width);
+    const ay = Math.max(0, y);
+    const by = Math.min(walking.height, y + height);
+    if (ax >= bx || ay >= by) return false;
+    x0 = Math.min(x0, ax);
+    y0 = Math.min(y0, ay);
+    x1 = Math.max(x1, bx);
+    y1 = Math.max(y1, by);
+    return true;
+  };
+  const seen = intersect(clip, {
+    x0: box.x,
+    y0: box.y,
+    x1: box.x + box.width,
+    y1: box.y + box.height,
   });
-  return { grid, paints };
+  grow(seen.x0, seen.y0, seen.x1 - seen.x0, seen.y1 - seen.y0);
+  const puts: Parameters<PutGlyph>[] = [];
+  const put = clipPut(
+    (x, y, glyph, paint, cells = 1) => {
+      if (grow(x, y, cells, 1)) puts.push([x, y, glyph, paint, cells]);
+    },
+    (x, y) => !inClip(clip, x, y),
+  );
+  const close = (): void => {
+    if (x0 === Infinity) return;
+    const { grid, paints, put } = cellStore(x1 - x0, y1 - y0);
+    for (const [x, y, glyph, paint, cells] of puts) put(x - x0, y - y0, glyph, paint, cells);
+    Object.assign(layer, { x: x0, y: y0, width: x1 - x0, height: y1 - y0, grid, paints });
+  };
+  return { put, close, layer };
+}
+
+/** A put culled by `clipped`: a cluster cut by the clip edge is
+ * blanked, its visible cells as spaces. */
+function clipPut(put: PutGlyph, clipped: (x: number, y: number) => boolean): PutGlyph {
+  return (x, y, glyph, paint, cells = 1) => {
+    if (cells === 1) {
+      if (!clipped(x, y)) put(x, y, glyph, paint);
+      return;
+    }
+    let whole = true;
+    for (let dx = 0; dx < cells; dx++) if (clipped(x + dx, y)) whole = false;
+    if (whole) put(x, y, glyph, paint, cells);
+    else for (let dx = 0; dx < cells; dx++) if (!clipped(x + dx, y)) put(x + dx, y, " ", paint);
+  };
 }
 
 /** Non-default text styling only, so unstyled runs stay bare.
@@ -407,15 +572,22 @@ function walk(
   node: LayoutNode,
   parentAbsX: number,
   parentAbsY: number,
-  options: RenderOptions,
-  put: PutGlyph,
+  parentWalk: Walk,
+  parentPut: PutGlyph,
   alpha = 1,
-  visible: (x: number, y: number) => boolean = () => true,
+  clip: Clip | null = null,
 ): void {
   if (node.tableHidden) return;
   const absX = parentAbsX + node.localRect.x + (node.stickyShift?.x ?? 0);
   const absY = parentAbsY + node.localRect.y + (node.stickyShift?.y ?? 0);
   const style = node.style;
+  const { options } = parentWalk;
+  // A layer root's own paint and its subtree's go to a grid of the
+  // layer's own (specs/layers.md), the main grid untouched beneath.
+  const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
+  const opened = style.layer ? openLayer(parentWalk, node, box, clip) : null;
+  const put = opened ? opened.put : parentPut;
+  const walking = opened ? { ...parentWalk, layer: opened.layer } : parentWalk;
   // Effective opacity (specs/cell-model.md "Opacity"): ancestors
   // multiply (CSS nests, it doesn't inherit) and the value rides on
   // every paint this node produces — including an opacity of 0, whose
@@ -426,7 +598,6 @@ function walk(
   // Shadows (specs/box-shadow.md): the outer ones before the box's own
   // fill, behind it and over what painted before; the inset ones after
   // the fill, over its background and under its borders and text.
-  const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
   const paintShadows = (inset: boolean): void => {
     const runs: BorderRun[] = [];
     collectShadowRuns(style, box, inset, runs);
@@ -509,7 +680,7 @@ function walk(
   // rows and cells, over their backgrounds, as CSS layers collapsed
   // borders.
   const lattice = node.lattice
-    ? resolveLattice(node, node.lattice, (x, y) => visible(absX + x, absY + y))
+    ? resolveLattice(node, node.lattice, (x, y) => inClip(clip, absX + x, absY + y))
     : null;
   if (node.lattice && lattice) {
     for (const part of node.lattice.handed ?? []) delete part.latticeRuns;
@@ -538,24 +709,11 @@ function walk(
   const scrolledX = absX - (node.scroll?.x ?? 0);
   const scrolledY = absY - (node.scroll?.y ?? 0);
   let contentPut = put;
-  let contentVisible = visible;
-  const clip = clipBounds(node, absX, absY);
-  if (clip) {
-    const { x0, y0, x1, y1 } = clip;
-    const clipped = (x: number, y: number) => x < x0 || x >= x1 || y < y0 || y >= y1;
-    contentVisible = (x, y) => !clipped(x, y) && visible(x, y);
-    contentPut = (x, y, glyph, paint, cells = 1) => {
-      if (cells === 1) {
-        if (!clipped(x, y)) put(x, y, glyph, paint);
-        return;
-      }
-      // A cluster cut by the clip edge is blanked, its visible cells
-      // as spaces.
-      let whole = true;
-      for (let dx = 0; dx < cells; dx++) if (clipped(x + dx, y)) whole = false;
-      if (whole) put(x, y, glyph, paint, cells);
-      else for (let dx = 0; dx < cells; dx++) if (!clipped(x + dx, y)) put(x + dx, y, " ", paint);
-    };
+  let contentClip = clip;
+  const own = clipBounds(node, absX, absY);
+  if (own) {
+    contentClip = intersect(clip, own);
+    contentPut = clipPut(put, (x, y) => !inClip(own, x, y));
   }
 
   const hasInFlowChildren = node.children.some(
@@ -615,10 +773,10 @@ function walk(
       child,
       scrolledX,
       scrolledY,
-      options,
+      walking,
       contentPut,
       alpha * child.style.opacity,
-      contentVisible,
+      contentClip,
     );
   }
   if (lattice) {
@@ -664,6 +822,7 @@ function walk(
       }
     }
   }
+  opened?.close();
 }
 
 /** The cells a leaf's text occupies: the per-line placement — line
@@ -753,11 +912,7 @@ function forEachLeafCell(
  * clipping axis, the gutter excluded, unbounded on a visible axis;
  * null for a container clipping neither. The paint culls ink here and
  * hit-testing stops descending here. */
-export function clipBounds(
-  node: LayoutNode,
-  absX: number,
-  absY: number,
-): { x0: number; y0: number; x1: number; y1: number } | null {
+export function clipBounds(node: LayoutNode, absX: number, absY: number): Clip | null {
   const { overflow, border } = node.style;
   const clipsX = overflow.x !== "visible";
   const clipsY = overflow.y !== "visible";

@@ -1,7 +1,8 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { readyGrid, readyHost } from "./helpers.ts";
+import { dragTo, pressAt, readyGrid, readyHost, release } from "./helpers.ts";
+import type { Point } from "./helpers.ts";
 
 /**
  * Visual effects on the grid: opacity and animated (transitioned)
@@ -424,5 +425,237 @@ export const Gradients: StoryObj = {
       },
       { timeout: 10_000 },
     );
+  },
+};
+
+/**
+ * Layers (specs/layers.md): an element with a transform or a filter
+ * paints its subtree into a grid of its own, a box in the shadow
+ * viewport carrying the native transform and filter, so the browser
+ * turns, scales, and blurs the cells — a rotated badge, a scaled
+ * dialog whose button stays clickable where it shows, filters, a
+ * layer inside a scroll container, and nested layers composing.
+ */
+export const Layers: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
+        <div data-test="rotated" class="rotate-6 border px-1">rotated</div>
+        <div data-test="scaled" class="origin-top-left scale-125 border bg-sky-900 px-1 text-white">
+          scaled dialog
+          <button data-test="ok" class="mt-1 border px-1">ok</button>
+        </div>
+        <div data-test="blurred" class="border px-1 blur-[1px]">blurred</div>
+        <div data-test="grayscale" class="border px-1 text-red-500 grayscale">grayscale</div>
+        <div data-test="shifted" class="translate-x-2 translate-y-1 border px-1 shadow-md">
+          translated
+        </div>
+        <div data-test="half" class="translate-x-1/2 border px-1">half over</div>
+        <div class="relative w-40">
+          <p>The quick brown fox jumps over the lazy dog, and the glass over it frosts.</p>
+          <div data-test="frosted" class="absolute top-1 left-2 border px-1 backdrop-blur-[2px]">
+            frosted
+          </div>
+        </div>
+        <div data-test="scroller" class="h-6 w-40 overflow-y-scroll border">
+          <div>line one</div>
+          <div data-test="scrolled" class="rotate-3 border px-1">a layer in a scroll container</div>
+          <div>line five</div>
+          <div>line six</div>
+          <div>line seven</div>
+        </div>
+        <div class="w-40 rotate-2 border p-1">
+          <div class="-rotate-2 border px-1">nested layers</div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    await waitFor(
+      () => {
+        const boxes = Array.from(
+          host.shadowRoot!.getElementById("layers")!.querySelectorAll<HTMLElement>(".layer"),
+        );
+        // A box per layer root, its effects the light element's, its
+        // rect the element's where nothing overflows the border box.
+        const roots = [
+          "rotated",
+          "scaled",
+          "blurred",
+          "grayscale",
+          "shifted",
+          "half",
+          "frosted",
+        ].map((name) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!);
+        // The roots above, the scrolled one, and the nested pair.
+        expect(boxes.length).toBe(roots.length + 3);
+        // A translate percentage resolves on the element natively, on
+        // the box in px of the border box: compare both in px.
+        const translateOf = (value: string, el: HTMLElement): number[] =>
+          value === "none"
+            ? [0, 0]
+            : value.split(" ").map((part, axis) => {
+                const box = el.getBoundingClientRect();
+                const extent = axis === 0 ? box.width : box.height;
+                return part.endsWith("%") ? (parseFloat(part) / 100) * extent : parseFloat(part);
+              });
+        const sameTranslate = (a: number[], b: number[]) =>
+          Math.abs(a[0]! - b[0]!) < 0.5 && Math.abs((a[1] ?? 0) - (b[1] ?? 0)) < 0.5;
+        for (const root of roots) {
+          const own = getComputedStyle(root);
+          const box = boxes.find((box) => {
+            const cs = getComputedStyle(box);
+            return (
+              cs.transform === own.transform &&
+              sameTranslate(translateOf(cs.translate, box), translateOf(own.translate, root)) &&
+              cs.rotate === own.rotate &&
+              cs.scale === own.scale &&
+              cs.filter === own.filter
+            );
+          });
+          expect(box, root.dataset.test).toBeDefined();
+          if (root.dataset.test === "shifted") continue;
+          const a = box!.getBoundingClientRect();
+          const b = root.getBoundingClientRect();
+          for (const side of ["left", "top", "right", "bottom"] as const) {
+            expect(Math.abs(a[side] - b[side]), `${root.dataset.test} ${side}`).toBeLessThan(1.5);
+          }
+        }
+        // The backdrop filter is the layer's alone: locked off the light
+        // element, whose backdrop would take in the layer's own cells.
+        const frosted = canvasElement.querySelector<HTMLElement>('[data-test="frosted"]')!;
+        expect(getComputedStyle(frosted).backdropFilter).toBe("none");
+        expect(boxes.some((box) => getComputedStyle(box).backdropFilter === "blur(2px)")).toBe(
+          true,
+        );
+        // The nested layer's box sits inside its parent's.
+        const nested = boxes.filter((box) => box.parentElement!.classList.contains("layer"));
+        expect(nested.length).toBe(1);
+        // The layers' text lives in their grids alone.
+        expect(host.shadowRoot!.getElementById("grid")!.textContent).not.toContain("rotated");
+        // The native button is under the pointer where the layer shows
+        // it: the light element follows the same transform.
+        const ok = canvasElement.querySelector<HTMLElement>('[data-test="ok"]')!;
+        const rect = ok.getBoundingClientRect();
+        expect(
+          document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2),
+        ).toBe(ok);
+      },
+      { timeout: 10_000 },
+    );
+    // A layer inside a scroll container follows the scroll: its box
+    // moves up by the rows scrolled, its cells with it.
+    const scroller = canvasElement.querySelector<HTMLElement>('[data-test="scroller"]')!;
+    const scrolled = canvasElement.querySelector<HTMLElement>('[data-test="scrolled"]')!;
+    const boxOf = (root: HTMLElement) => {
+      const own = getComputedStyle(root);
+      return Array.from(
+        host.shadowRoot!.getElementById("layers")!.querySelectorAll<HTMLElement>(".layer"),
+      ).find((box) => getComputedStyle(box).rotate === own.rotate)!;
+    };
+    const before = boxOf(scrolled).getBoundingClientRect().top;
+    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    scroller.scrollTop = cellHeight;
+    await waitFor(
+      () => expect(boxOf(scrolled).getBoundingClientRect().top).toBeCloseTo(before - cellHeight, 0),
+      { timeout: 10_000 },
+    );
+  },
+};
+
+/**
+ * The pointer through a layer (specs/layers.md): a text-mode drag
+ * across the scaled dialog, and across the rotated badge, selects the
+ * characters under the pointer — a cell of the scaled layer's grid is
+ * half again as wide as the main grid's, and the badge's cells turn
+ * with it, so the press and the drag are mapped through the effects.
+ */
+export const LayerSelection: StoryObj = {
+  tags: ["!dev"],
+  render: () => html`
+    <mono-wind select="text">
+      <div class="flex gap-8 p-2">
+        <div data-test="scaled" class="origin-top-left scale-150 border px-1">
+          scaled dialog text
+        </div>
+        <div data-test="rotated" class="rotate-12 border px-1">a rotated badge</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    // The middle of a character as the browser shows it, through the
+    // element's own transform.
+    const middle = (el: HTMLElement, index: number): Point => {
+      const text = el.firstChild as Text;
+      const start = text.data.search(/\S/) + index;
+      const range = document.createRange();
+      range.setStart(text, start);
+      range.setEnd(text, start + 1);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    };
+    await waitFor(() => expect(host.shadowRoot!.querySelectorAll(".layer").length).toBe(2));
+    // The character under the pointer is selected whole.
+    const drag = async (name: string, from: number, to: number, selected: string) => {
+      const el = canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+      expect(pressAt(el, middle(el, from), 1)).toBe(false);
+      dragTo(el, middle(el, to));
+      await waitFor(() => expect(document.getSelection()!.toString()).toBe(selected));
+      release();
+      document.getSelection()!.removeAllRanges();
+    };
+    await drag("scaled", 2, 10, "aled dial");
+    await drag("rotated", 2, 9, "rotated ");
+  },
+};
+
+/**
+ * A transform transition on a layer root (specs/layers.md "Animation
+ * is sampled"): the engine re-copies the root's computed effects onto
+ * the layer's box every frame — the box follows the browser's own
+ * easing and lands on the target — the one layout the settle at its
+ * end.
+ */
+export const LayerTransition: StoryObj = {
+  tags: ["!dev"],
+  render: () => html`
+    <mono-wind>
+      <div class="p-2">
+        <div
+          data-test="dialog"
+          class="origin-top-left border px-1 transition-transform duration-500"
+        >
+          a dialog that scales in
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const dialog = canvasElement.querySelector<HTMLElement>('[data-test="dialog"]')!;
+    const layers = host.shadowRoot!.getElementById("layers")!;
+    let layouts = 0;
+    const observer = new MutationObserver(() => layouts++);
+    observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    dialog.classList.add("scale-125");
+    await waitFor(() => expect(layers.querySelector(".layer")).not.toBeNull(), {
+      timeout: 10_000,
+    });
+    const box = layers.querySelector<HTMLElement>(".layer")!;
+    const scales = new Set<string>();
+    const until = performance.now() + 700;
+    while (performance.now() < until) {
+      scales.add(getComputedStyle(box).scale);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    observer.disconnect();
+    expect(scales.size, "sampled intermediate scales").toBeGreaterThanOrEqual(3);
+    expect(getComputedStyle(box).scale).toBe(getComputedStyle(dialog).scale);
+    expect(getComputedStyle(dialog).scale).toBe("1.25");
+    // At most three layouts, the attribute set and removed by each: the
+    // class change's, the transition's start, and the settle at its end.
+    expect(layouts, "layouts during the transition").toBeLessThanOrEqual(6);
   },
 };

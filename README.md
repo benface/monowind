@@ -35,8 +35,11 @@ forms, and accessibility semantics stay fully intact.
 > (`overflow-auto`/`-scroll` scroll containers with native physics and engine-drawn
 > TUI scrollbars), sticky positioning (`sticky` boxes, table
 > headers and columns included), rounded corners (`rounded-*` picks a
-> theme's corner glyphs), and box shadows (`shadow-*` as shade glyphs)
-> work. The unified-render
+> theme's corner glyphs), box shadows (`shadow-*` as shade glyphs),
+> gradient backgrounds (`bg-linear-*`, `bg-radial-*`, `bg-conic-*`,
+> `bg-clip-text`), and transforms and filters (`rotate-*`, `scale-*`,
+> `translate-*`, `blur-*`, `grayscale`, `backdrop-blur-*`, … — the
+> element's cells in a layer of their own the browser transforms) work. The unified-render
 > initiative shipped: one cell-precise renderer that keeps the light
 > DOM fully interactive, with the ASCII grid selectable via
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and

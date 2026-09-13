@@ -496,6 +496,12 @@ glyph's vertical overshoot, which joins rows seamlessly at full
 opacity, would composite twice at every join below it and darken the
 line there.
 
+## Effects
+
+A transform or a filter makes its element a layer root: its subtree
+paints into a grid of its own, a box in the shadow viewport carrying
+the native transform and filter — see specs/layers.md.
+
 ## Outlines
 
 `outline` is native, an escape hatch: the browser draws it around the
@@ -515,7 +521,11 @@ longhands, and `opacity` — animate the grid: `transitionrun` on the
 host starts a per-frame relayout loop (element.ts) that re-reads
 computed styles until every tracked transition ends (a 30s safety
 valve guards lost end events), so the grid repaints with the browser's
-own interpolated values and lands exactly on the target.
+own interpolated values and lands exactly on the target. A layer
+root's `transform`, `translate`, `rotate`, `scale`, and `filter` are
+sampled too, onto its box (specs/layers.md "Animation is sampled"): a
+transition of one of them alone re-copies the computed values per
+frame, the layout untouched until the settle at its end.
 
 This works because the text-visibility lock is
 `-webkit-text-fill-color: transparent`, NOT `color: transparent` — the

@@ -19,6 +19,9 @@ const FIXTURES = [
   "test-selection--light-text",
   "test-selection--banner",
   "test-selection--host-text",
+  // A scaled layer (specs/layers.md): the text-mode drag mapped through
+  // the transform, the grid-mode one inside the layer's own grid.
+  "test-selection--layer",
 ];
 const MODES = ["text", "grid"];
 

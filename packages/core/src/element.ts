@@ -20,7 +20,8 @@ import {
 import type { BoundaryPoints } from "./selection.ts";
 import { GlyphBoxes } from "./glyph-box.ts";
 import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
-import { gridOffsetAt, paintedCell, paintGrid } from "./paint.ts";
+import { gridOffsetAt, layerAt, layerGridAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
+import type { CellHit } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render, syncStickyVars } from "./render.ts";
@@ -61,18 +62,26 @@ const SHADOW_TEMPLATE = `
   /* The text-fill reset: the host's own invisibility lock (specs/host-leaf.md)
    * inherits across the shadow boundary; currentColor stays a keyword
    * at computed time, so every run keeps its own color. */
-  #grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; -webkit-text-fill-color: currentColor; }
+  .grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; -webkit-text-fill-color: currentColor; }
+  /* A layer (specs/layers.md): a box at the extent carrying the root's
+   * transform and filter, its grid transparent where the subtree
+   * painted nothing; a nested box sits in its parent's. */
+  #layers, .layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .layer > .grid { background: transparent; }
   /* A background reaches the row's edges: the host's measured half-gap
    * between the line box and the font's content area, which an inline
    * span paints without moving the line (specs/cell-model.md). */
-  #grid span { padding-block: var(--mw-bgpad, 0px); }
+  .grid span { padding-block: var(--mw-bgpad, 0px); }
   /* A shade's lattice runs on from row to row (specs/wide-characters.md):
    * copies a period above and below the glyph, in its own line box. */
-  #grid span[data-shade] { position: relative; }
-  #grid span[data-shade]::before, #grid span[data-shade]::after { content: attr(data-shade); position: absolute; inset-inline: 0; }
-  #grid span[data-shade]::before { top: calc(-1 * var(--mw-period)); }
-  #grid span[data-shade]::after { top: var(--mw-period); }
-  :host([select="grid"]) #grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
+  .grid span[data-shade] { position: relative; }
+  .grid span[data-shade]::before, .grid span[data-shade]::after { content: attr(data-shade); position: absolute; inset-inline: 0; }
+  .grid span[data-shade]::before { top: calc(-1 * var(--mw-period)); }
+  .grid span[data-shade]::after { top: var(--mw-period); }
+  :host([select="grid"]) .grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
+  /* A grid-mode drag stays in the grid it started in, where the engine
+   * supports it (specs/layers.md, deviations 3 and 8). */
+  :host([select="grid"]) .layer > .grid { user-select: contain; -webkit-user-select: contain; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
   /* A live semantic selection (specs/semantic-selection.md) lifts the
    * lock so the element selection copies; pointer events stay off. */
@@ -81,11 +90,12 @@ const SHADOW_TEMPLATE = `
    * invert — mirror of the field choices in styles.css. Slotted text
    * takes the slot's rule in Chromium and WebKit: invisible, the engine
    * paints that selection on the grid (specs/wide-characters.md). */
-  #grid::selection, #grid *::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
+  .grid::selection, .grid *::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
   slot::selection { color: transparent; text-shadow: none; background: transparent; }
 </style>
 <div id="viewport">
-  <pre id="grid" aria-hidden="true"></pre>
+  <pre id="grid" class="grid" aria-hidden="true"></pre>
+  <div id="layers"></div>
   <slot></slot>
 </div>
 `;
@@ -120,6 +130,15 @@ interface SelectionUnit {
  * character, a double- or triple-click by word or paragraph. */
 type GestureUnit = "character" | "word" | "paragraph";
 
+/** An engine-driven grid drag: its anchor as a flat text offset of the
+ * grid it started in (a layer's, at its origin, or the main one). */
+interface GridDrag {
+  anchor: number;
+  grid: HTMLElement;
+  x: number;
+  y: number;
+}
+
 interface Gesture {
   unit: GestureUnit;
   anchor: SelectionUnit;
@@ -153,12 +172,19 @@ const DYNAMIC_RELAYOUT_EVENTS = [
 
 /** Transition properties the engine SAMPLES per animation frame (the
  * grid repaints with true mid-fade values): computed `color` stays live
- * under the text-fill lock, and nothing locks border colors or opacity.
- * Lock-owned properties (backgrounds, decoration color, geometry) are
+ * under the text-fill lock, and nothing locks border colors, opacity,
+ * or a layer's transforms and filter. Lock-owned properties
+ * (backgrounds, decoration color, geometry, backdrop-filter) are
  * snapped by the measuring/settling `transition-property` allow-list
  * instead — keep the two in sync (styles.css "Lock toggles must
  * never…"). */
-const SAMPLED_TRANSITION = /^(color|opacity|border-(top|right|bottom|left)-color|border-color)$/;
+const SAMPLED_TRANSITION =
+  /^(color|opacity|border-(top|right|bottom|left)-color|border-color|transform|translate|rotate|scale|filter)$/;
+
+/** The sampled properties a layer's box copies (specs/layers.md
+ * "Animation is sampled"): a transition of one alone re-places the
+ * boxes per frame, the layout left as it is. */
+const LAYER_TRANSITION = /^(transform|translate|rotate|scale|filter)$/;
 
 /** Safety valve for the sampling loop: a transition whose end/cancel
  * event never arrives (subtree torn down mid-fade) must not pin a rAF
@@ -279,6 +305,7 @@ export class MonoWindElement extends HTMLElementBase {
 
   #shadow: ShadowRoot;
   #grid: HTMLElement;
+  #layers: HTMLElement;
   #probe: HTMLElement;
   #resizeObserver: ResizeObserver | null = null;
   #mutationObserver: MutationObserver | null = null;
@@ -336,7 +363,7 @@ export class MonoWindElement extends HTMLElementBase {
   /** An engine-driven grid drag, anchored at a flat text offset: the
    * fallback when a plain mousedown lands on a phantom light target
    * (see INTERACTIVE), where no native selection can start. */
-  #gridDrag: { anchor: number } | null = null;
+  #gridDrag: GridDrag | null = null;
   /** A primary press that landed on the grid: the first pointermove with
    * the button down marks the host `data-mw-dragging`, which drops
    * interactive light elements' pointer events so a native drag sweeps
@@ -374,6 +401,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#shadow = this.attachShadow({ mode: "open" });
     this.#shadow.innerHTML = SHADOW_TEMPLATE;
     this.#grid = this.#shadow.getElementById("grid") as HTMLElement;
+    this.#layers = this.#shadow.getElementById("layers") as HTMLElement;
     // Cell-metrics probe (see measureCellMetrics): persistent, hidden but
     // measurable, inheriting the host's font/line-height/letter-spacing.
     // It lives in the LIGHT DOM so it is font-matched in exactly the same
@@ -903,17 +931,38 @@ export class MonoWindElement extends HTMLElementBase {
     }
   }
 
-  /** The grid cell under a client point. The origin is cached until
-   * the next layout or page scroll invalidates it. */
-  #cellAt(clientX: number, clientY: number, metrics: CellMetrics): { col: number; row: number } {
+  /** The grid cell under a client point — through a layer's transform
+   * where one shows there (specs/layers.md) — with the grid it is
+   * painted in: a layer's, with the layer's origin, or the main one.
+   * The origin is cached until the next layout or page scroll
+   * invalidates it. */
+  #cellAt(clientX: number, clientY: number, metrics: CellMetrics): CellHit {
     if (!this.#gridOrigin) {
       const rect = this.#grid.getBoundingClientRect();
       this.#gridOrigin = { left: rect.left, top: rect.top };
     }
-    return {
-      col: Math.floor((clientX - this.#gridOrigin.left) / metrics.width),
-      row: Math.floor((clientY - this.#gridOrigin.top) / metrics.height),
-    };
+    const x = clientX - this.#gridOrigin.left;
+    const y = clientY - this.#gridOrigin.top;
+    return (
+      layerAt(this.#layers, x, y) ?? {
+        col: Math.floor(x / metrics.width),
+        row: Math.floor(y / metrics.height),
+        grid: this.#grid,
+        x: 0,
+        y: 0,
+      }
+    );
+  }
+
+  /** The glyph painted at a cell: the layer painted last over it, or
+   * the main grid's. */
+  #glyphAt(col: number, row: number): string | undefined {
+    const layer = layerGridAt(this.#layers, col, row);
+    if (layer) {
+      const glyph = paintedCell(layer.grid, col - layer.x, row - layer.y);
+      if (glyph !== undefined && glyph !== " ") return glyph;
+    }
+    return paintedCell(this.#grid, col, row);
   }
 
   /** A pointerdown on a visible gutter bar begins a thumb drag —
@@ -1019,7 +1068,7 @@ export class MonoWindElement extends HTMLElementBase {
     const e = event as MouseEvent;
     if (e.button !== 0) return;
     const mode = this.getAttribute("select");
-    const onGrid = e.composedPath().includes(this.#grid);
+    const onGrid = this.#onGrid(e.composedPath());
     if (mode === "grid") {
       if (!onGrid && !this.#isPhantomTarget(e.target)) return;
     } else if (mode !== "text" || !this.#isTextTarget(e.target)) return;
@@ -1220,33 +1269,35 @@ export class MonoWindElement extends HTMLElementBase {
     );
   }
 
-  /** The grid text position under a client point, as a flat offset. */
-  #gridOffsetAt(clientX: number, clientY: number): number | null {
-    const metrics = this.#cellMetrics;
-    if (!metrics) return null;
-    const { col, row } = this.#cellAt(clientX, clientY, metrics);
-    return gridOffsetAt(this.#grid, col, row);
+  /** An event path through the main grid or a layer's. */
+  #onGrid(path: EventTarget[]): boolean {
+    return path.includes(this.#grid) || path.includes(this.#layers);
   }
 
   /** The engine's drag from a press, claimed before `blurring` loses
    * focus so the blur's own relayout (a select's runs at once) paints
    * — no native anchor to hold it for — and anchored after it, on the
-   * nodes the grid has then. */
+   * nodes the grid has then. The drag stays in the grid it started in
+   * — a layer's, or the main one (specs/layers.md). */
   #startGridDrag(e: MouseEvent, blurring: HTMLElement | null): void {
-    const anchor = this.#gridOffsetAt(e.clientX, e.clientY);
-    if (anchor !== null) {
+    const metrics = this.#cellMetrics;
+    if (metrics) {
+      const { col, row, grid, x, y } = this.#cellAt(e.clientX, e.clientY, metrics);
       e.preventDefault();
-      this.#gridDrag = { anchor };
+      this.#gridDrag = { anchor: gridOffsetAt(grid, col - x, row - y), grid, x, y };
     }
     blurring?.blur();
-    const at = anchor === null ? null : textPositionAt(this.#grid, anchor);
+    const drag = this.#gridDrag;
+    const at = drag ? textPositionAt(drag.grid, drag.anchor) : null;
     if (at) document.getSelection()?.setBaseAndExtent(...at, ...at);
   }
 
-  #extendGridDrag(drag: { anchor: number }, clientX: number, clientY: number): void {
-    const base = textPositionAt(this.#grid, drag.anchor);
-    const offset = this.#gridOffsetAt(clientX, clientY);
-    const at = offset === null ? null : textPositionAt(this.#grid, offset);
+  #extendGridDrag(drag: GridDrag, clientX: number, clientY: number): void {
+    const metrics = this.#cellMetrics;
+    if (!metrics) return;
+    const base = textPositionAt(drag.grid, drag.anchor);
+    const { col, row } = this.#cellAt(clientX, clientY, metrics);
+    const at = textPositionAt(drag.grid, gridOffsetAt(drag.grid, col - drag.x, row - drag.y));
     if (base && at) document.getSelection()?.setBaseAndExtent(...base, ...at);
   }
 
@@ -1343,7 +1394,7 @@ export class MonoWindElement extends HTMLElementBase {
         // not a hit test (a wide cluster's continuation cell is its
         // cluster's, not blank). The pressed cell itself is always hit
         // tested — a space in a text run is a character.
-        const painted = paintedCell(this.#grid, x, y);
+        const painted = this.#glyphAt(x, y);
         if (painted === undefined || (painted === " " && edge !== "self")) continue;
         const found = this.#unitUnder(layout, x, y, unit, box === grid ? null : inner!.node);
         if (!found) continue;
@@ -1500,7 +1551,7 @@ export class MonoWindElement extends HTMLElementBase {
   /** Paint the grid from `root`: the glyph boxes for this font, the
    * light-DOM selection as inverted cells, structural rebuilds held
    * while a native drag may be in flight. */
-  #paint(root: LayoutNode): boolean {
+  #paint(root: LayoutNode, placeLayers = true): boolean {
     const range = this.#elementSelection();
     const metrics = this.#cellMetrics;
     return paintGrid(root, this.#grid, {
@@ -1508,6 +1559,8 @@ export class MonoWindElement extends HTMLElementBase {
       glyphs: this.#glyphs,
       selection: range ? selectedRanges(root, range) : undefined,
       cell: metrics ? { width: metrics.width, height: metrics.height } : undefined,
+      layers: this.#layers,
+      placeLayers,
     });
   }
 
@@ -1537,7 +1590,7 @@ export class MonoWindElement extends HTMLElementBase {
     }
     this.#hoverClient = { x: e.clientX, y: e.clientY };
     this.#pressing = true;
-    this.#pressOnGrid = e.composedPath().includes(this.#grid);
+    this.#pressOnGrid = this.#onGrid(e.composedPath());
     this.#updatePointerStates(true);
   };
 
@@ -1624,7 +1677,8 @@ export class MonoWindElement extends HTMLElementBase {
     // Mirror the hovered cursor onto the grid (the real hit target) —
     // `cursor-pointer` on a click-wired element is invisible otherwise.
     const cursor = innermost ? getComputedStyle(innermost).cursor : "";
-    this.#grid.style.cursor = cursor === "auto" ? "" : cursor;
+    for (const grid of [this.#grid, this.#layers])
+      grid.style.cursor = cursor === "auto" ? "" : cursor;
     if (changed && this.isConnected) this.#scheduleLayout();
   }
 
@@ -1649,38 +1703,52 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #activeTransitions = 0;
+  #activeLayerTransitions = 0;
   #samplingLoopRunning = false;
   #lastTransitionRun = 0;
 
   #onTransitionRun = (event: Event): void => {
-    if (!SAMPLED_TRANSITION.test((event as TransitionEvent).propertyName)) return;
-    this.#activeTransitions++;
+    const property = (event as TransitionEvent).propertyName;
+    if (!SAMPLED_TRANSITION.test(property)) return;
+    if (LAYER_TRANSITION.test(property)) {
+      this.#activeLayerTransitions++;
+      // The layer the frames copy onto: opened by a layout, for an
+      // effect that arrived without one (a rule outside the host).
+      this.#scheduleLayout();
+    } else this.#activeTransitions++;
     this.#lastTransitionRun = performance.now();
     this.#startSamplingLoop();
   };
 
   #onTransitionDone = (event: Event): void => {
-    if (!SAMPLED_TRANSITION.test((event as TransitionEvent).propertyName)) return;
-    this.#activeTransitions = Math.max(0, this.#activeTransitions - 1);
+    const property = (event as TransitionEvent).propertyName;
+    if (!SAMPLED_TRANSITION.test(property)) return;
+    if (LAYER_TRANSITION.test(property)) {
+      this.#activeLayerTransitions = Math.max(0, this.#activeLayerTransitions - 1);
+    } else this.#activeTransitions = Math.max(0, this.#activeTransitions - 1);
   };
 
   #startSamplingLoop(): void {
     if (this.#samplingLoopRunning) return;
     this.#samplingLoopRunning = true;
     const tick = (): void => {
+      const sampled = this.#activeTransitions > 0 || hasSynthesizedTransitions();
       if (
         !this.isConnected ||
-        (this.#activeTransitions === 0 && !hasSynthesizedTransitions()) ||
+        (!sampled && this.#activeLayerTransitions === 0) ||
         performance.now() - this.#lastTransitionRun > SAMPLING_VALVE_MS
       ) {
         this.#samplingLoopRunning = false;
         this.#activeTransitions = 0;
+        this.#activeLayerTransitions = 0;
         // One final settle pass so the grid lands exactly on the
         // transitions' target values.
         this.#scheduleLayout();
         return;
       }
-      this.#performLayoutSafely();
+      // A layer's transform or filter alone moves only its box.
+      if (sampled) this.#performLayoutSafely();
+      else syncLayers(this.#layers);
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -1886,8 +1954,10 @@ export class MonoWindElement extends HTMLElementBase {
         this.style.setProperty("--mw-bgpad", `${Math.ceil((metrics.backgroundGap ?? 0) / 2)}px`);
         // Rows cannot grow (specs/wide-characters.md): a fallback font's
         // taller line box stays inside the measured cell.
-        this.#grid.style.lineHeight = `${metrics.height}px`;
-        this.#grid.style.letterSpacing = `${metrics.gridLetterSpacing ?? metrics.letterSpacing}px`;
+        for (const grid of [this.#grid, this.#layers]) {
+          grid.style.lineHeight = `${metrics.height}px`;
+          grid.style.letterSpacing = `${metrics.gridLetterSpacing ?? metrics.letterSpacing}px`;
+        }
       }
       this.#cellMetrics = metrics;
       const gridStyle = getComputedStyle(this.#grid);
@@ -1941,7 +2011,9 @@ export class MonoWindElement extends HTMLElementBase {
       // re-derives from the browser's internal anchor, which the
       // rebuild would destroy (Chromium collapses even across a
       // capture-and-restore).
-      this.#paintHeld = !this.#paint(virtualRoot);
+      // The layers' boxes are placed after the settle below: their
+      // roots' effects read as the light elements finally sit.
+      this.#paintHeld = !this.#paint(virtualRoot, false);
       this.#lastLayout = virtualRoot;
       // The grid box is the ink extent in engine cells: a glyph a
       // fallback font draws wider still overhangs as ink, but the box
@@ -1989,6 +2061,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.removeAttribute("measuring");
       void getComputedStyle(this).transitionProperty;
       this.removeAttribute("settling");
+      syncLayers(this.#layers);
       // Restore native container positions AFTER the unmask — the browser
       // re-clamps them when the mask lifts (Firefox lazily), so any
       // earlier write gets wiped. The grid already painted from the
