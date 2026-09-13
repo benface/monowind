@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { focusableRects } from "../src/focus.ts";
 import { layoutRoot } from "../src/layout.ts";
-import { renderPlainText } from "../src/plain-text.ts";
+import { renderGridRows, renderPlainText } from "../src/plain-text.ts";
 import { charIndexAtCell } from "../src/plain-text.ts";
 import { hitStack } from "../src/pointer.ts";
 import { buildTree } from "../src/tree.ts";
@@ -99,6 +99,18 @@ describe("sticky boxes in a scroller", () => {
     expect(second.stickyShift).toBeUndefined();
     expect(rowsAt(root, box, 5)[0]!.startsWith("H2")).toBe(true);
     expect(second.stickyShift).toEqual({ x: 0, y: 1 });
+  });
+
+  it("paints a stuck heading in its own text style over the italic it covers", () => {
+    const heading = sticky("Title", { top: 0 }, { style: { backgroundClear: true } });
+    const italic = makeNode({ text: "polite", style: { fontStyle: "italic" } });
+    const box = scroller([makeNode({ children: [heading, spacer(1), italic, spacer(3)] })]);
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 20);
+    expect(rowsAt(root, box, 2)[0]!.startsWith("Title")).toBe(true);
+    const { text, ...paint } = renderGridRows(root).segments[0]![0]!;
+    expect(text.startsWith("Title")).toBe(true);
+    expect(paint).toEqual({});
   });
 
   it("keeps a heading placed directly in the scroller for the whole scroll", () => {

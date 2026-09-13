@@ -376,12 +376,17 @@ function cellStore(width: number, height: number, covers?: Covers): CellStore {
     }
   };
   const mergePaint = (x: number, y: number, paint: CellPaint | undefined) => {
-    // Merge paints per field: a later glyph over an earlier fill
-    // keeps the fill's fields (bg-fill's backgroundColor survives
-    // when text paints its color on top). Same-field overlaps still
-    // last-wins.
+    // A put owns its cell's text fields and keeps the fill beneath: a
+    // glyph paints its color on the box's background, and a heading
+    // stuck over an italic run paints upright.
     const existing = paints[y]![x];
-    paints[y]![x] = existing ? { ...existing, ...paint } : paint;
+    paints[y]![x] = existing
+      ? {
+          backgroundColor: existing.backgroundColor,
+          gradient: existing.gradient === "fill" ? "fill" : undefined,
+          ...paint,
+        }
+      : paint;
   };
   const clear = (x: number, y: number): void => {
     if (!inside(x, y)) return;

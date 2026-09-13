@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { charIndexAtCell, renderPlainText, renderCellSegments } from "../src/plain-text.ts";
+import {
+  charIndexAtCell,
+  renderGridRows,
+  renderPlainText,
+  renderCellSegments,
+} from "../src/plain-text.ts";
 import { collectBorderRuns } from "../src/borders.ts";
 import type { BorderRun } from "../src/borders.ts";
 import { layoutRoot } from "../src/layout.ts";
@@ -760,5 +765,31 @@ describe("charIndexAtCell on a multicol leaf", () => {
     expect(charIndexAtCell(node, 0, 0, 5, 0)).toBe(8);
     expect(charIndexAtCell(node, 0, 0, 0, 1)).toBe(4);
     expect(charIndexAtCell(node, 0, 0, 3, 0)).toBeNull();
+  });
+});
+
+describe("later ink owns its cell's text paint", () => {
+  it("resets the text fields of the glyph beneath, and keeps the fill's background", () => {
+    const styled = makeNode({
+      text: "abc",
+      style: {
+        color: "red",
+        fontStyle: "italic",
+        fontWeight: "700",
+        textDecorationLine: "underline",
+        opacity: 0.5,
+      },
+    });
+    const plain = makeNode({
+      text: "xy",
+      style: { position: "absolute", insets: { top: 0, right: null, bottom: null, left: 0 } },
+    });
+    const root = makeNode({
+      style: { position: "relative", backgroundColor: "blue" },
+      children: [styled, plain],
+    });
+    layoutRoot(root, 10);
+    const [first] = renderGridRows(root).segments[0]!;
+    expect(first).toEqual({ text: "xy", backgroundColor: "blue" });
   });
 });
