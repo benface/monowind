@@ -48,14 +48,26 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 - **A layer root's subtree paints into its own `<pre>`.** The paint
   walk, reaching a layer root, opens a layer: the root's own
   decorations and every descendant's cells go to the layer's grid
-  instead of the main one, in the same paint order and with the same
-  clipping; the main grid gets nothing from the subtree, so the cells
-  the subtree occupies show what the ancestors painted beneath
-  (as CSS shows what is behind a transformed box). The layer is sized
-  to the subtree's painted extent — the root's border box grown by
-  whatever overflows it (shadows, visible overflow) — and positioned
-  in the shadow viewport at that extent's origin, in cells. Its node
-  is a box (`<div class="layer">`) holding the `<pre>`.
+  instead of the main one, in the same paint order; the main grid
+  gets nothing from the subtree, so the cells the subtree occupies
+  show what the ancestors painted beneath (as CSS shows what is
+  behind a transformed box). The layer is sized to the subtree's
+  painted extent — the root's border box grown by whatever overflows
+  it (shadows, visible overflow), within the grid — and positioned in
+  the shadow viewport at that extent's origin, in cells. Its node is
+  a box (`<div class="layer">`) holding the `<pre>`.
+- **An ancestor's clip applies after the transform, as in CSS.** A
+  layer under a clipping ancestor paints its cells unclipped and sits
+  in a clipping box (`<div class="clip">`, `overflow: clip`) at the
+  ancestors' clips intersected, so the browser clips the transformed
+  result: a card scaled on hover in a scrolling list is cut at the
+  list's edge, a drawer sliding in from an `overflow-hidden` shell's
+  edge is hidden past it. A nested layer's box carries the clips
+  between its root and the enclosing layer's root alone, in the
+  enclosing layer's own space; the clips above are the enclosing
+  layer's box's. The pointer and the glyph search stop at the clips;
+  the transcript, with no transform to clip after, culls the layer's
+  cells on their layout positions.
 - **The native transform and filter go on the layer's box.** Once a
   layout settles, and each frame of a layer transition, the box takes
   the root's computed `transform`, `translate` (a percentage resolved
@@ -72,6 +84,13 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   its layer inside the outer layer's box, so transforms compose as
   they do in CSS. `z-index` orders siblings through the same
   paint-order walk the grid already uses.
+- **Later ink covers a layer.** A put painted after a layer closed, on
+  one of the layer's cells, blanks that cell in the layer's grid (a
+  nested layer's through its parent's) and paints its own in the
+  grid it belongs to, so a modal's overlay covers a rotated sticker
+  as it covers everything else — the front paint wins a cell
+  outright, as always. A covered cell is see-through for the pointer,
+  and the transcript shows the covering ink.
 - **Animation is sampled**, like color and opacity today: `transform`,
   `translate`, `rotate`, `scale`, and `filter` join the sampled
   transition properties, so a `transition-transform` re-copies the
@@ -109,8 +128,10 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 
 ## Deviations from CSS (summary)
 
-1. A clipping ancestor culls a layer's cells before the transform, on
-   their layout positions; CSS clips the transformed result.
+1. The transcript culls a clipped layer's cells on their layout
+   positions, as it shows no transform; a grid-mode copy inside a
+   clipped layer includes its cells past the clip, as a native copy
+   includes scrolled-out content.
 2. A 3D transform draws as the browser draws it on the box, the
    pointer mapping flattened to 2D (a rotate about x or y is ignored
    there).
@@ -132,10 +153,11 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 8. No engine probed (Chromium, Firefox, WebKit) supports a contained
    `user-select`, so deviation 3 is the shipped behavior everywhere
    for now: the declaration stands for the engines that will.
-9. Layers paint above the whole main grid: a box walked after a layer
-   with a higher `z-index` (an overlay, a modal's backdrop) paints
-   beneath the layer, where CSS paints it over. `z-index` orders the
-   layers among themselves.
+9. Later ink covers a layer's cells whole, on their layout positions,
+   before the transform: a translucent overlay hides them where CSS
+   dims them (as the grid hides any covered cell), a partial cover
+   cuts on cell boundaries and turns with the layer, and a later text
+   run's blank spaces cover too.
 10. CSS `animation` keyframes of a layer's effects are not sampled
     (`animate-spin` holds the angle of the last layout), as for color:
     transitions only, per cell-model.md "Animation".
@@ -145,22 +167,28 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 - Node: the read (each effect, identities, the carried
   `backdrop-filter`); the paint split — a transformed subtree's cells
   absent from the main grid and present in its layer at the layer's
-  origin, with its extent grown by an overflowing child and cut to
-  the visible part under a clipping ancestor; nested layers; a layer
-  in and as a scroll container; the transcript unchanged, wide
-  clusters included; the boxes — placement, origin offset, node reuse
-  in place, removal, re-placement from changed effects — and the
-  pointer mapping through a scale, a rotation, nested layers, and off
-  see-through cells.
+  origin, with its extent grown by an overflowing child and kept past
+  a clipping ancestor, the clip carried through every one and a
+  nested layer's the clips inside its parent alone; nested layers; a
+  layer in and as a scroll container, one scrolled out of view left
+  empty; later ink covering a layer's cells, a nested layer's through
+  its parent's, and ink walked before it left beneath; the transcript
+  unchanged, wide clusters included; the
+  boxes — placement, the clipping box, origin offset, node reuse in
+  place, removal, re-placement from changed effects — and the pointer
+  mapping through a scale, a rotation, nested layers, and off
+  see-through, covered, and clipped cells.
 - Storybook: a dialog scaled with a transition (its layer's scale
   equals the light element's mid-way and at rest); the native button
   inside a scaled dialog under the pointer where the layer shows it;
   a text-mode drag across a scaled dialog and across a rotated badge
   selecting the characters under the pointer; `blur`, `grayscale`,
   and `backdrop-blur` filters; a percentage translate; a layer inside
-  a scroll container following the scroll; three-engine agreement of
-  the layer's box and the element's box (the story's play runs in
-  every engine).
+  a scroll container following the scroll, its box clipped to the
+  container's padding box; a sticker under a modal's
+  overlay, its covered cells blank and the pointer over the overlay
+  reaching the overlay; three-engine agreement of the layer's box and
+  the element's box (the story's play runs in every engine).
 - Visual: goldens of the resting states, and of a text-mode and a
   grid-mode drag across a scaled layer in every engine.
 

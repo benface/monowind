@@ -561,6 +561,65 @@ export const Layers: StoryObj = {
       () => expect(boxOf(scrolled).getBoundingClientRect().top).toBeCloseTo(before - cellHeight, 0),
       { timeout: 10_000 },
     );
+    // The browser clips the rotated layer to the container's padding
+    // box: its box sits in a clipping box at that rect.
+    const clip = boxOf(scrolled).parentElement!;
+    expect(clip.className).toBe("clip");
+    expect(getComputedStyle(clip).overflow).toBe("clip");
+    // The container's border is a cell on each side.
+    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const inner = scroller.getBoundingClientRect();
+    const rect = clip.getBoundingClientRect();
+    expect(Math.abs(rect.top - (inner.top + cellHeight))).toBeLessThan(1.5);
+    expect(Math.abs(rect.left - (inner.left + cellWidth))).toBeLessThan(1.5);
+    expect(Math.abs(rect.bottom - (inner.bottom - cellHeight))).toBeLessThan(1.5);
+  },
+};
+
+/**
+ * Later ink covers a layer (specs/layers.md): a modal's overlay and
+ * panel, painted after a rotated sticker, cover its cells as they
+ * cover everything else — the sticker shows only past the overlay's
+ * edge, and the pointer over the overlay reaches the overlay.
+ */
+export const LayerCover: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="relative h-12 w-64">
+        <p class="p-1">A page with a sticker, under a modal.</p>
+        <div data-test="sticker" class="absolute top-2 left-2 rotate-6 border px-1">sticker</div>
+        <div data-test="overlay" class="absolute inset-y-0 right-0 left-6 bg-black/50">
+          <div class="mx-auto mt-3 w-40 border bg-white p-1 text-black">a modal over it</div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    await waitFor(
+      () => {
+        const box = host.shadowRoot!.querySelector<HTMLElement>(".layer")!;
+        expect(box).not.toBeNull();
+        // The sticker's cells under the overlay are blank in its grid.
+        const rows = box.querySelector("pre")!.textContent!.split("\n");
+        expect(rows[1]).toMatch(/^│ st\s*$/);
+        // Over the overlay, the engine's hit-test reaches the overlay.
+        const overlay = canvasElement.querySelector<HTMLElement>('[data-test="overlay"]')!;
+        const rect = overlay.getBoundingClientRect();
+        overlay.dispatchEvent(
+          new PointerEvent("pointermove", {
+            bubbles: true,
+            composed: true,
+            clientX: rect.left + 4,
+            clientY: rect.top + rect.height / 2,
+            pointerType: "mouse",
+            isPrimary: true,
+          }),
+        );
+        expect(overlay.matches("[data-mw-hover], [data-mw-hover] *")).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
   },
 };
 

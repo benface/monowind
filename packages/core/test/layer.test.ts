@@ -178,18 +178,119 @@ describe("layer paint (specs/layers.md)", () => {
     expect(layers[1]!.rows).toEqual(["x "]);
   });
 
-  it("culls a layer's cells at an ancestor's clip, on their layout positions", () => {
-    const root = makeNode({
-      style: { width: cells(4), height: cells(1), overflow: { x: "clip", y: "clip" } },
-      children: [makeNode({ style: { layer: layered() }, text: "abcdef", intrinsicWidth: 6 })],
+  it("covers a layer's cells with the ink painted after it", () => {
+    // A rotated badge under a later overlay and a later glyph: the
+    // covered cells leave the layer, the main grid paints them.
+    const badge = makeNode({
+      style: { width: cells(4), border, layer: layered(), position: "absolute" },
+      text: "ab",
+      intrinsicWidth: 2,
     });
-    layoutRoot(root, 4);
+    const overlay = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 2 },
+        width: cells(4),
+        height: cells(2),
+        backgroundColor: "red",
+      },
+    });
+    const glyph = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 2, right: null, bottom: null, left: 0 },
+        width: cells(1),
+      },
+      text: "x",
+      intrinsicWidth: 1,
+    });
+    const root = makeNode({
+      style: { width: cells(8), height: cells(4), position: "relative" },
+      children: [badge, overlay, glyph],
+    });
+    layoutRoot(root, 8);
+    const painted = renderGridRows(root);
     const { main, layers } = rowsOf(root);
-    expect(main).toEqual(["    "]);
-    expect(layers[0]!.rows).toEqual(["abcd"]);
+    expect(layers[0]!.rows).toEqual(["┌─  ", "│a  ", " ──┘"]);
+    expect(painted.layers[0]!.segments[1]).toEqual([{ text: "│a  " }]);
+    expect(main).toEqual(["        ", "        ", "x       ", "        "]);
+    expect(painted.segments[0]).toEqual([
+      { text: "  " },
+      { text: "    ", backgroundColor: "red" },
+      { text: "  " },
+    ]);
+    expect(renderPlainText(root)).toBe(["┌─", "│a", "x──┘", ""].join("\n"));
   });
 
-  it("sizes a clipped layer root's extent to its visible cells", () => {
+  it("leaves a layer above the ink painted before it, a lower z-index included", () => {
+    const badge = makeNode({
+      style: { width: cells(4), border, layer: layered(), position: "absolute", zIndex: 1 },
+      text: "ab",
+      intrinsicWidth: 2,
+    });
+    const under = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 0 },
+        width: cells(4),
+        height: cells(3),
+        backgroundColor: "red",
+        zIndex: 0,
+      },
+    });
+    const root = makeNode({
+      style: { width: cells(8), height: cells(4), position: "relative" },
+      children: [badge, under],
+    });
+    layoutRoot(root, 8);
+    const { layers } = rowsOf(root);
+    expect(layers[0]!.rows).toEqual(["┌──┐", "│ab│", "└──┘"]);
+  });
+
+  it("covers a nested layer's cells through its parent's", () => {
+    const inner = makeNode({
+      style: { width: cells(2), layer: layered(), position: "absolute" },
+      text: "xy",
+      intrinsicWidth: 2,
+    });
+    const over = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 1 },
+        width: cells(2),
+        height: cells(1),
+        backgroundColor: "red",
+      },
+    });
+    const outer = makeNode({
+      style: { width: cells(6), layer: layered(), position: "relative", height: cells(1) },
+      children: [inner, over],
+    });
+    const lid = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 0 },
+        width: cells(1),
+        height: cells(1),
+        backgroundColor: "blue",
+      },
+    });
+    const root = makeNode({
+      style: { width: cells(8), height: cells(2), position: "relative" },
+      children: [outer, lid],
+    });
+    layoutRoot(root, 8);
+    const { layers } = rowsOf(root);
+    // The over box (inside the outer layer) covers the inner's "y"; the
+    // lid (in the main grid) covers the inner's "x" through the outer.
+    expect(layers.map((layer) => layer.rows[0])).toEqual(["      ", "  "]);
+  });
+
+  it("keeps a layer's cells past an ancestor's clip, the clip with it", () => {
+    // The browser clips the transformed result: the layer paints
+    // every cell within the grid and carries the clip for its box;
+    // the transcript, with no transform to clip after, culls on the
+    // layout positions.
     const badge = makeNode({
       style: { width: cells(6), border, layer: layered() },
       text: "abcd",
@@ -201,9 +302,83 @@ describe("layer paint (specs/layers.md)", () => {
     });
     const root = makeNode({ style: { width: cells(8) }, children: [box] });
     layoutRoot(root, 8);
-    const { layers } = rowsOf(root);
+    const painted = renderGridRows(root);
+    const { main, layers } = rowsOf(root);
+    expect(main).toEqual(["        ", "        "]);
     expect(layers[0]).toMatchObject({ x: 0, y: 0 });
-    expect(layers[0]!.rows).toEqual(["┌───", "│abc"]);
+    expect(layers[0]!.rows).toEqual(["┌────┐", "│abcd│"]);
+    expect(painted.layers[0]!.layer.clip).toEqual({ x0: 0, y0: 0, x1: 4, y1: 2 });
+    expect(renderPlainText(root)).toBe("┌───\n│abc");
+  });
+
+  it("clips a layer through every clipping ancestor", () => {
+    const badge = makeNode({
+      style: { layer: layered(), whiteSpace: "nowrap" },
+      text: "abcdef",
+      intrinsicWidth: 6,
+    });
+    const inner = makeNode({
+      style: { width: cells(5), overflow: { x: "clip", y: "visible" } },
+      children: [badge],
+    });
+    const outer = makeNode({
+      style: { width: cells(6), height: cells(1), overflow: { x: "visible", y: "clip" } },
+      children: [inner],
+    });
+    const root = makeNode({ style: { width: cells(8) }, children: [outer] });
+    layoutRoot(root, 8);
+    const painted = renderGridRows(root);
+    expect(painted.layers[0]!.layer.clip).toEqual({ x0: 0, y0: 0, x1: 5, y1: 1 });
+    expect(painted.layers[0]!.layer.grid[0]!.join("")).toBe("abcdef");
+    expect(renderPlainText(root)).toBe("abcde");
+  });
+
+  it("gives a nested layer the clips inside its parent alone", () => {
+    // The outer layer's box carries the scroller's clip; the inner
+    // layer, inside the outer's transformed box, carries only the
+    // clip between the two roots.
+    const badge = makeNode({
+      style: { layer: layered(), whiteSpace: "nowrap" },
+      text: "abcdef",
+      intrinsicWidth: 6,
+    });
+    const between = makeNode({
+      style: { width: cells(3), overflow: { x: "clip", y: "visible" } },
+      children: [badge],
+    });
+    const card = makeNode({ style: { width: cells(5), layer: layered() }, children: [between] });
+    const scroller = makeNode({
+      style: { width: cells(4), height: cells(1), overflow: { x: "clip", y: "clip" } },
+      children: [card],
+    });
+    const root = makeNode({ style: { width: cells(8), height: cells(3) }, children: [scroller] });
+    layoutRoot(root, 8);
+    const [outer, inner] = renderGridRows(root).layers.map(({ layer }) => layer);
+    expect(outer!.clip).toEqual({ x0: 0, y0: 0, x1: 4, y1: 1 });
+    expect(inner!.clip).toEqual({ x0: 0, y0: 0, x1: 3, y1: 3 });
+    expect(inner!.grid[0]!.join("")).toBe("abcdef");
+    expect(renderPlainText(root)).toBe("abc\n\n");
+  });
+
+  it("leaves a layer scrolled out of view empty", () => {
+    // Scrolled two rows up, the badge's cells land on the grid above
+    // its container's clip: nothing of it can show.
+    const lines = makeNode({ text: "one\ntwo\nthree", intrinsicWidth: 5, intrinsicHeight: 3 });
+    const badge = makeNode({ style: { layer: layered() }, text: "b", intrinsicWidth: 1 });
+    const box = makeNode({
+      style: {
+        width: cells(6),
+        height: cells(2),
+        overflow: { x: "visible", y: "scroll" },
+        margin: { ...zeroInsets(), top: 2 },
+      },
+      children: [badge, lines],
+    });
+    const root = makeNode({ style: { width: cells(6), height: cells(6) }, children: [box] });
+    layoutRoot(root, 6);
+    box.scroll = { x: 0, y: 2 };
+    const { layers } = rowsOf(root);
+    expect(layers[0]!.rows).toEqual([]);
   });
 
   it("paints a layer inside a scroll container at its scrolled cells", () => {
@@ -430,6 +605,72 @@ describe("layer nodes (paint.ts)", () => {
     expect(layerAt(layers, -10, 25)).toMatchObject({ col: 2, row: 0 });
     expect(layerAt(layers, -10, 5)).toMatchObject({ col: 0, row: 0 });
     expect(layerAt(layers, 10, 5)).toBeNull();
+  });
+
+  it("wraps a clipped layer in a box the browser clips", () => {
+    const layers = document.createElement("div");
+    const badge = makeNode({
+      style: { width: cells(6), border, layer: layered() },
+      text: "abcd",
+      intrinsicWidth: 4,
+      source: effects("rotate: 0.01deg"),
+    });
+    const box = makeNode({
+      style: {
+        width: cells(4),
+        height: cells(2),
+        overflow: { x: "clip", y: "clip" },
+        margin: { ...zeroInsets(), left: 1, top: 1 },
+      },
+      children: [badge],
+    });
+    const root = makeNode({ style: { width: cells(8), height: cells(4) }, children: [box] });
+    layoutRoot(root, 8);
+    paint(root, layers);
+    const clip = layers.firstElementChild as HTMLElement;
+    expect(clip.className).toBe("clip");
+    expect([clip.style.left, clip.style.top, clip.style.width, clip.style.height]).toEqual([
+      "10px",
+      "20px",
+      "40px",
+      "40px",
+    ]);
+    const layer = clip.firstElementChild as HTMLElement;
+    expect(layer.className).toBe("layer");
+    expect([layer.style.left, layer.style.top]).toEqual(["0px", "0px"]);
+    // The pointer reaches the layer inside the clip alone; a cell past
+    // it is the grid's, for the pointer and for the glyph search.
+    expect(layerAt(layers, 25, 30)).toMatchObject({ col: 2, row: 1 });
+    expect(layerAt(layers, 55, 30)).toBeNull();
+    expect(layerGridAt(layers, 5, 1)).toBeNull();
+    expect(layerGridAt(layers, 2, 1)).toMatchObject({ x: 1, y: 1 });
+  });
+
+  it("falls through a layer's covered cell to the ink over it", () => {
+    const layers = document.createElement("div");
+    const badge = makeNode({
+      style: { width: cells(4), border, layer: layered(), position: "absolute" },
+      text: "ab",
+      intrinsicWidth: 2,
+      source: effects(""),
+    });
+    const lid = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 1, right: null, bottom: null, left: 1 },
+        width: cells(1),
+        height: cells(1),
+        backgroundColor: "red",
+      },
+    });
+    const root = makeNode({
+      style: { width: cells(8), height: cells(4), position: "relative" },
+      children: [badge, lid],
+    });
+    layoutRoot(root, 8);
+    paint(root, layers);
+    expect(layerAt(layers, 5, 30)).toMatchObject({ col: 0, row: 1 });
+    expect(layerAt(layers, 15, 30)).toBeNull();
   });
 
   it("maps a point through a layer's transform to its cell, and off its blank cells", () => {

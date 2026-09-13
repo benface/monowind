@@ -1,7 +1,13 @@
 import type { GlyphBoxes } from "./glyph-box.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { applyCellPaint, isBarePaint, renderGridRows, samePaint } from "./plain-text.ts";
+import {
+  applyCellPaint,
+  isBarePaint,
+  layerShows,
+  renderGridRows,
+  samePaint,
+} from "./plain-text.ts";
 import type { CellSegment, LayerRows, PaintedLayer, RenderOptions } from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
 import type { LayoutNode } from "./types.ts";
@@ -90,19 +96,23 @@ export function paintGrid(
 }
 
 /** A layer's nodes (specs/layers.md): a positioned box carrying the
- * root's transform and filter, the grid of its cells inside, kept per
- * root element across paints — the grid's node identity survives like
- * the main grid's — with the box's geometry in px of its parent's
- * space and the inverse of its transform, for the pointer. */
+ * root's transform and filter, the grid of its cells inside, and — for
+ * a layer under a clipping ancestor — a clipping box around it, kept
+ * per root element across paints — the grid's node identity survives
+ * like the main grid's — with the box's geometry in px of its parent's
+ * space, the clip's likewise, and the inverse of its transform, for
+ * the pointer. */
 interface LayerNodes {
   box: HTMLElement;
   grid: HTMLElement;
+  clipNode: HTMLElement | null;
   layer: PaintedLayer;
   parent: LayerNodes | null;
   left: number;
   top: number;
   width: number;
   height: number;
+  clip: { left: number; top: number; width: number; height: number } | null;
   inverse: DOMMatrix | null;
   /** The last placement written, to skip an unchanged one. */
   placed: string;
@@ -138,7 +148,8 @@ export interface CellHit {
  * in px from the grid's origin, taken through the layers' transforms
  * — the one painted last first — to the cell of the layer's grid it
  * lands on; null over none — a layer's blank cell past its root's
- * border box (a shadow's, an overflowing child's) is see-through. */
+ * border box (a shadow's, an overflowing child's), a cell covered by
+ * later ink, and a cell past the layer's clip are see-through. */
 export function layerAt(container: HTMLElement, x: number, y: number): CellHit | null {
   const set = layerSets.get(container);
   if (!set) return null;
@@ -150,6 +161,7 @@ export function layerAt(container: HTMLElement, x: number, y: number): CellHit |
     const { layer } = nodes;
     const col = Math.floor(local.x / set.cell.width);
     const row = Math.floor(local.y / set.cell.height);
+    if (layer.holes.has(row * layer.width + col)) continue;
     const { box } = layer;
     const inBox =
       col >= box.x - layer.x &&
@@ -177,7 +189,8 @@ export function layerGridAt(
       col >= layer.x &&
       col < layer.x + layer.width &&
       row >= layer.y &&
-      row < layer.y + layer.height
+      row < layer.y + layer.height &&
+      layerShows(layer, col, row)
     )
       return { grid, x: layer.x, y: layer.y };
   }
@@ -185,10 +198,19 @@ export function layerGridAt(
 }
 
 /** A point of the grid's space in a layer box's own, through its
- * ancestors' transforms then its own. */
+ * ancestors' transforms then its own; null past the layer's clip. */
 function localPoint(nodes: LayerNodes, x: number, y: number): { x: number; y: number } | null {
   const outer = nodes.parent ? localPoint(nodes.parent, x, y) : { x, y };
   if (!outer || !nodes.inverse) return null;
+  const { clip } = nodes;
+  if (
+    clip &&
+    (outer.x < clip.left ||
+      outer.x >= clip.left + clip.width ||
+      outer.y < clip.top ||
+      outer.y >= clip.top + clip.height)
+  )
+    return null;
   const point = nodes.inverse.transformPoint({ x: outer.x - nodes.left, y: outer.y - nodes.top });
   return { x: point.x, y: point.y };
 }
@@ -216,12 +238,14 @@ function paintLayers(container: HTMLElement, layers: LayerRows[], options: Paint
       nodes = {
         box,
         grid,
+        clipNode: null,
         layer,
         parent: null,
         left: 0,
         top: 0,
         width: 0,
         height: 0,
+        clip: null,
         inverse: null,
         placed: "",
       };
@@ -230,21 +254,32 @@ function paintLayers(container: HTMLElement, layers: LayerRows[], options: Paint
     nodes.layer = layer;
     nodes.parent = layer.parent ? set.nodes.get(layer.parent.node.source)! : null;
     set.order.push(nodes);
-    // In paint order: after the previous sibling layer's box, else
-    // first — past a parent box's own grid.
+    // A clipping box around a clipped layer, the box moved in or out
+    // as the clip comes and goes.
+    if (layer.clip && !nodes.clipNode) {
+      nodes.clipNode = document.createElement("div");
+      nodes.clipNode.className = "clip";
+      nodes.clipNode.appendChild(nodes.box);
+    } else if (!layer.clip && nodes.clipNode) {
+      nodes.clipNode.replaceWith(nodes.box);
+      nodes.clipNode = null;
+    }
+    const outer = nodes.clipNode ?? nodes.box;
+    // In paint order: after the previous sibling layer's, else first
+    // — past a parent box's own grid.
     const parent = nodes.parent?.box ?? container;
     const previous = last.get(parent);
     const first = nodes.parent ? nodes.parent.grid.nextSibling : parent.firstChild;
     const anchor = previous ? previous.nextSibling : first;
-    if (nodes.box !== anchor) parent.insertBefore(nodes.box, anchor);
-    last.set(parent, nodes.box);
+    if (outer !== anchor) parent.insertBefore(outer, anchor);
+    last.set(parent, outer);
     if (options.placeLayers !== false) placeLayer(nodes, set.cell);
     if (!paintRows(nodes.grid, segments, layer.grid, options)) held = true;
   }
   const painted = new Set(set.order);
   for (const [source, nodes] of set.nodes) {
     if (painted.has(nodes)) continue;
-    nodes.box.remove();
+    (nodes.clipNode ?? nodes.box).remove();
     set.nodes.delete(source);
   }
   return !held;
@@ -255,7 +290,8 @@ function paintLayers(container: HTMLElement, layers: LayerRows[], options: Paint
  * moved by the extent's offset from the border box, so the box turns
  * about the point the light element does, a translate percentage
  * resolved against the border box — the backdrop filter from the
- * read, and their inverse. */
+ * read, and their inverse; the clipping box at the layer's clip, the
+ * box inside it. */
 function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   const { layer } = nodes;
   const cs = getComputedStyle(layer.node.source);
@@ -275,16 +311,24 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   const scale = cs.scale || "none";
   const filter = cs.filter || "none";
   const { backdropFilter } = layer.node.style.layer!;
-  const at = layer.parent ? { x: layer.x - layer.parent.x, y: layer.y - layer.parent.y } : layer;
-  nodes.left = at.x * cell.width;
-  nodes.top = at.y * cell.height;
+  const origin = layer.parent ?? { x: 0, y: 0 };
+  nodes.left = (layer.x - origin.x) * cell.width;
+  nodes.top = (layer.y - origin.y) * cell.height;
   nodes.width = layer.width * cell.width;
   nodes.height = layer.height * cell.height;
+  const { clip } = layer;
+  nodes.clip = clip && {
+    left: (clip.x0 - origin.x) * cell.width,
+    top: (clip.y0 - origin.y) * cell.height,
+    width: (clip.x1 - clip.x0) * cell.width,
+    height: (clip.y1 - clip.y0) * cell.height,
+  };
   const placed = [
     nodes.left,
     nodes.top,
     nodes.width,
     nodes.height,
+    nodes.clip && [nodes.clip.left, nodes.clip.top, nodes.clip.width, nodes.clip.height],
     originX,
     originY,
     tx,
@@ -298,8 +342,15 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   if (nodes.placed === placed) return;
   nodes.placed = placed;
   const style = nodes.box.style;
-  style.left = `${nodes.left}px`;
-  style.top = `${nodes.top}px`;
+  if (nodes.clip && nodes.clipNode) {
+    const clipStyle = nodes.clipNode.style;
+    clipStyle.left = `${nodes.clip.left}px`;
+    clipStyle.top = `${nodes.clip.top}px`;
+    clipStyle.width = `${nodes.clip.width}px`;
+    clipStyle.height = `${nodes.clip.height}px`;
+  }
+  style.left = `${nodes.left - (nodes.clip?.left ?? 0)}px`;
+  style.top = `${nodes.top - (nodes.clip?.top ?? 0)}px`;
   style.width = `${nodes.width}px`;
   style.height = `${nodes.height}px`;
   style.transformOrigin = `${originX}px ${originY}px`;

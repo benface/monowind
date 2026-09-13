@@ -65,8 +65,10 @@ const SHADOW_TEMPLATE = `
   .grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; -webkit-text-fill-color: currentColor; }
   /* A layer (specs/layers.md): a box at the extent carrying the root's
    * transform and filter, its grid transparent where the subtree
-   * painted nothing; a nested box sits in its parent's. */
-  #layers, .layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+   * painted nothing; a nested box sits in its parent's, a clipped one
+   * in a clipping box at its ancestors' clip. */
+  #layers, .layer, .clip { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .clip { overflow: clip; }
   .layer > .grid { background: transparent; }
   /* A background reaches the row's edges: the host's measured half-gap
    * between the line box and the font's content area, which an inline

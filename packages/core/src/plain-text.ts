@@ -114,6 +114,14 @@ export interface PaintedLayer {
   height: number;
   grid: string[][];
   paints: (CellPaint | undefined)[][];
+  /** The cells the ink painted after the layer covers, as `row × width
+   * + col`: blank in the grid, see-through for the pointer. */
+  holes: Set<number>;
+  /** The clips between the layer's root and the enclosing layer's (the
+   * grid's edge at the top), intersected, in main-grid cells, for the
+   * box the browser clips the transformed layer to; null unclipped.
+   * The clips above are the enclosing layer's. */
+  clip: Clip | null;
   parent: PaintedLayer | null;
 }
 
@@ -338,14 +346,16 @@ export function isBarePaint(paint: CellPaint): boolean {
  * cluster over `cells` cells, culled at the edges. The wide cluster
  * owning each cell is kept so a later paint on any of its cells
  * blanks the rest — a half-overwritten wide character is spaces, as
- * in a terminal. */
+ * in a terminal. `clear` blanks a cell outright, its paint with it.
+ * A put covers the closed layers' cells it lands on (`covers`). */
 interface CellStore {
   grid: string[][];
   paints: (CellPaint | undefined)[][];
   put: PutGlyph;
+  clear: (x: number, y: number) => void;
 }
 
-function cellStore(width: number, height: number): CellStore {
+function cellStore(width: number, height: number, covers?: Covers): CellStore {
   const grid: string[][] = Array.from({ length: height }, () =>
     Array.from({ length: width }, () => " "),
   );
@@ -373,8 +383,15 @@ function cellStore(width: number, height: number): CellStore {
     const existing = paints[y]![x];
     paints[y]![x] = existing ? { ...existing, ...paint } : paint;
   };
+  const clear = (x: number, y: number): void => {
+    if (!inside(x, y)) return;
+    release(x, y);
+    grid[y]![x] = " ";
+    paints[y]![x] = undefined;
+  };
   const put: PutGlyph = (x, y, glyph, paint, cells = 1) => {
     if (y < 0 || y >= height) return;
+    if (covers) coverCells(covers, x, y, cells);
     if (cells === 1) {
       if (!inside(x, y)) return;
       release(x, y);
@@ -392,16 +409,47 @@ function cellStore(width: number, height: number): CellStore {
       mergePaint(x + dx, y, paint);
     }
   };
-  return { grid, paints, put };
+  return { grid, paints, put, clear };
+}
+
+/** A closed layer's extent, for the ink painted after it in the same
+ * grid (specs/layers.md): a put on one of its cells covers the
+ * layer's cell there, as a later box covers what it overlaps. */
+interface Cover {
+  x0: number;
+  x1: number;
+  cover: (x: number, y: number) => void;
+}
+
+/** The covers of a grid, by row, so a put checks the few on its own. */
+type Covers = Map<number, Cover[]>;
+
+function addCover(covers: Covers, extent: Clip, cover: Cover["cover"]): void {
+  for (let y = extent.y0; y < extent.y1; y++) {
+    let row = covers.get(y);
+    if (!row) covers.set(y, (row = []));
+    row.push({ x0: extent.x0, x1: extent.x1, cover });
+  }
+}
+
+function coverCells(covers: Covers, x: number, y: number, cells: number): void {
+  const row = covers.get(y);
+  if (!row) return;
+  for (const { x0, x1, cover } of row) {
+    if (x >= x1 || x + cells <= x0) continue;
+    for (let dx = Math.max(x, x0); dx < Math.min(x + cells, x1); dx++) cover(dx, y);
+  }
 }
 
 /** What the walk carries besides its node: the layers opened so far,
- * in order, the one it is inside, and the main grid's size — a
- * layer's extent stays within it. */
+ * in order, the one it is inside, the layers closed in the grid it
+ * paints into, and the main grid's size — a layer's extent stays
+ * within it. */
 interface Walk {
   options: RenderOptions;
   layers: PaintedLayer[];
   layer: PaintedLayer | null;
+  covers: Covers;
   width: number;
   height: number;
 }
@@ -412,8 +460,9 @@ function renderGrids(
 ): { store: CellStore; layers: PaintedLayer[] } {
   const width = Math.max(0, root.localRect.width);
   const height = Math.max(0, root.localRect.height);
-  const store = cellStore(width, height);
-  const walking: Walk = { options, layers: [], layer: null, width, height };
+  const covers: Covers = new Map();
+  const store = cellStore(width, height, covers);
+  const walking: Walk = { options, layers: [], layer: null, covers, width, height };
   walk(root, 0, 0, walking, store.put);
   return { store, layers: walking.layers };
 }
@@ -428,7 +477,7 @@ function compositeLayers(store: CellStore, layers: PaintedLayer[]): void {
       const row = layer.grid[dy]!;
       for (let dx = 0; dx < layer.width; dx++) {
         const glyph = row[dx]!;
-        if (glyph === "") continue;
+        if (glyph === "" || !layerShows(layer, layer.x + dx, layer.y + dy)) continue;
         const paint = layer.paints[dy]![dx];
         if (glyph === " " && paint?.backgroundColor === undefined && !paint?.backgrounds) continue;
         let cells = 1;
@@ -441,10 +490,19 @@ function compositeLayers(store: CellStore, layers: PaintedLayer[]): void {
 
 /** The cells the ancestors' overflow leaves visible (specs/scrolling.md):
  * their clips intersected; null where nothing clips. */
-type Clip = { x0: number; y0: number; x1: number; y1: number };
+export type Clip = { x0: number; y0: number; x1: number; y1: number };
 
-const inClip = (clip: Clip | null, x: number, y: number): boolean =>
+export const inClip = (clip: Clip | null, x: number, y: number): boolean =>
   clip === null || (x >= clip.x0 && x < clip.x1 && y >= clip.y0 && y < clip.y1);
+
+/** Whether a main-grid cell of a layer lies inside its clip and every
+ * enclosing layer's. */
+export function layerShows(layer: PaintedLayer, x: number, y: number): boolean {
+  for (let at: PaintedLayer | null = layer; at; at = at.parent) {
+    if (!inClip(at.clip, x, y)) return false;
+  }
+  return true;
+}
 
 const intersect = (a: Clip | null, b: Clip): Clip =>
   a === null
@@ -457,16 +515,18 @@ const intersect = (a: Clip | null, b: Clip): Clip =>
       };
 
 /** A layer opened at `node` (specs/layers.md): its put records every
- * cell of the subtree — the root's own decorations included — through
- * the ancestors' clips (deviation 1) and grows the extent from the
- * border box's visible part, and `close` lays the cells out in a grid
- * of the extent. */
+ * cell of the subtree within the grid — the root's own decorations
+ * included, the ancestors' clips left to the layer's box — and grows
+ * the extent from the border box, and `close` lays the cells out in a
+ * grid of the extent and hands the layer to the enclosing grid's
+ * covers, so the ink painted after it covers its cells — a nested
+ * layer's through its parent's. */
 function openLayer(
   walking: Walk,
   node: LayoutNode,
   box: Rect,
   clip: Clip | null,
-): { put: PutGlyph; close: () => void; layer: PaintedLayer } {
+): { put: PutGlyph; close: () => void; layer: PaintedLayer; covers: Covers } {
   const layer: PaintedLayer = {
     node,
     box,
@@ -476,9 +536,12 @@ function openLayer(
     height: 0,
     grid: [],
     paints: [],
+    holes: new Set(),
+    clip: clip && intersect(clip, { x0: 0, y0: 0, x1: walking.width, y1: walking.height }),
     parent: walking.layer,
   };
   walking.layers.push(layer);
+  const covers: Covers = new Map();
   let x0 = Infinity;
   let y0 = Infinity;
   let x1 = -Infinity;
@@ -495,27 +558,29 @@ function openLayer(
     y1 = Math.max(y1, by);
     return true;
   };
-  const seen = intersect(clip, {
-    x0: box.x,
-    y0: box.y,
-    x1: box.x + box.width,
-    y1: box.y + box.height,
-  });
-  grow(seen.x0, seen.y0, seen.x1 - seen.x0, seen.y1 - seen.y0);
+  grow(box.x, box.y, box.width, box.height);
   const puts: Parameters<PutGlyph>[] = [];
-  const put = clipPut(
-    (x, y, glyph, paint, cells = 1) => {
-      if (grow(x, y, cells, 1)) puts.push([x, y, glyph, paint, cells]);
-    },
-    (x, y) => !inClip(clip, x, y),
-  );
+  const put: PutGlyph = (x, y, glyph, paint, cells = 1) => {
+    coverCells(covers, x, y, cells);
+    if (grow(x, y, cells, 1)) puts.push([x, y, glyph, paint, cells]);
+  };
   const close = (): void => {
     if (x0 === Infinity) return;
-    const { grid, paints, put } = cellStore(x1 - x0, y1 - y0);
+    // Wholly past its clip (scrolled out of view), a layer shows
+    // nothing: its cells stay unlaid.
+    const { clip: shown } = layer;
+    if (shown && (x1 <= shown.x0 || x0 >= shown.x1 || y1 <= shown.y0 || y0 >= shown.y1)) return;
+    const width = x1 - x0;
+    const { grid, paints, put, clear } = cellStore(width, y1 - y0);
     for (const [x, y, glyph, paint, cells] of puts) put(x - x0, y - y0, glyph, paint, cells);
-    Object.assign(layer, { x: x0, y: y0, width: x1 - x0, height: y1 - y0, grid, paints });
+    Object.assign(layer, { x: x0, y: y0, width, height: y1 - y0, grid, paints });
+    addCover(walking.covers, { x0, y0, x1, y1 }, (x, y) => {
+      clear(x - x0, y - y0);
+      layer.holes.add((y - y0) * width + (x - x0));
+      coverCells(covers, x, y, 1);
+    });
   };
-  return { put, close, layer };
+  return { put, close, layer, covers };
 }
 
 /** A put culled by `clipped`: a cluster cut by the clip edge is
@@ -575,7 +640,7 @@ function walk(
   parentWalk: Walk,
   parentPut: PutGlyph,
   alpha = 1,
-  clip: Clip | null = null,
+  parentClip: Clip | null = null,
 ): void {
   if (node.tableHidden) return;
   const absX = parentAbsX + node.localRect.x + (node.stickyShift?.x ?? 0);
@@ -583,11 +648,16 @@ function walk(
   const style = node.style;
   const { options } = parentWalk;
   // A layer root's own paint and its subtree's go to a grid of the
-  // layer's own (specs/layers.md), the main grid untouched beneath.
+  // layer's own (specs/layers.md), the main grid untouched beneath;
+  // the ancestors' clips go to the layer's box, so the subtree starts
+  // unclipped.
   const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
-  const opened = style.layer ? openLayer(parentWalk, node, box, clip) : null;
+  const opened = style.layer ? openLayer(parentWalk, node, box, parentClip) : null;
   const put = opened ? opened.put : parentPut;
-  const walking = opened ? { ...parentWalk, layer: opened.layer } : parentWalk;
+  const clip = opened ? null : parentClip;
+  const walking = opened
+    ? { ...parentWalk, layer: opened.layer, covers: opened.covers }
+    : parentWalk;
   // Effective opacity (specs/cell-model.md "Opacity"): ancestors
   // multiply (CSS nests, it doesn't inherit) and the value rides on
   // every paint this node produces — including an opacity of 0, whose
