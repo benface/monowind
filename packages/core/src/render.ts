@@ -196,6 +196,20 @@ export function syncStickyVars(boxes: StickyBox[]): void {
   }
 }
 
+/** The row of a box's native baseline within it: its last line's, or
+ * its last run's last line's; undefined for a box that draws no line
+ * of its own, whose baseline is its bottom edge. */
+function nativeBaselineRow(node: LayoutNode): number | undefined {
+  if (node.text.length > 0) return node.baselineRow;
+  for (let i = node.children.length - 1; i >= 0; i--) {
+    const child = node.children[i]!;
+    if (child.anonymous && child.baselineRow !== undefined) {
+      return child.localRect.y + child.baselineRow;
+    }
+  }
+  return undefined;
+}
+
 function positionElement(node: LayoutNode): void {
   const el = node.source as HTMLElement;
   // A top-layer element's box is the viewport's (specs/top-layer.md):
@@ -243,8 +257,20 @@ function positionElement(node: LayoutNode): void {
     clearVar(el, "--mw-ml");
   }
   // Bottom-aligned atomic boxes keep their browser alignment (grid-exact,
-  // probed); everything else is pinned top by the companion rule.
-  setFlag(el, "data-mw-vbottom", Boolean(node.inlineBox) && node.style.verticalAlign === "end");
+  // probed); a middle-aligned one takes a whole-row baseline length
+  // (specs/cell-model.md "Typography"): rows from its own baseline —
+  // its last line's, or its bottom edge where it draws no line — to its
+  // line's text row; everything else is pinned top by the companion rule.
+  const { verticalAlign } = node.style;
+  setFlag(el, "data-mw-vbottom", Boolean(node.inlineBox) && verticalAlign === "end");
+  const middle =
+    Boolean(node.inlineBox) && verticalAlign === "center" && node.inlineTextRow !== undefined;
+  setFlag(el, "data-mw-vmiddle", middle);
+  const baseline = middle ? nativeBaselineRow(node) : undefined;
+  if (middle) setVar(el, "--mw-va", String(node.inlineTextRow! - (baseline ?? rect.height)));
+  else clearVar(el, "--mw-va");
+  if (middle && baseline === undefined) setVar(el, "--mw-vb", "1");
+  else clearVar(el, "--mw-vb");
   // Grid typography (specs/cell-model.md): extra cells per character, rows
   // per wrapped line, and the half-leading cancellation shift.
   setVar(el, "--mw-ls", String(tracking));

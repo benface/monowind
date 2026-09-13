@@ -46,6 +46,10 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
   // natural advance (specs/cell-model.md "Typography").
   const measured = rect.width / 100;
   const width = Math.ceil(measured * 64 - 1e-6) / 64;
+  // The probe's mark — an empty inline-block the host appends last —
+  // sits on the baseline.
+  const mark = probe.lastElementChild;
+  const baseline = mark ? mark.getBoundingClientRect().top - rect.top : undefined;
   return {
     width,
     height: rect.height,
@@ -53,6 +57,7 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
     gridLetterSpacing: letterSpacing + (width - measured),
     inkOverhang,
     backgroundGap,
+    ...(baseline === undefined ? {} : { baseline }),
   };
 }
 

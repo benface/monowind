@@ -292,15 +292,18 @@ describe("atomic inline box vertical-align", () => {
     expect(renderPlainText(node)).toBe(["", "", "lo   fi"].join("\n"));
   });
 
-  it("keeps text on the first row for top (and off-grid values); middle warns once", () => {
+  it("keeps text on the first row for top and the off-grid baseline, the middle row for middle", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      for (const align of ["top", "middle", "baseline"]) {
+      for (const align of ["top", "baseline"]) {
         const node = buildTree(el(`<div>lo ${box(align)} fi</div>`), 16)!;
         layoutRoot(node, 20);
         expect(renderPlainText(node), align).toBe(["lo   fi", "", ""].join("\n"));
       }
-      expect(warn).toHaveBeenCalledOnce();
+      const node = buildTree(el(`<div>lo ${box("middle")} fi</div>`), 16)!;
+      layoutRoot(node, 20);
+      expect(renderPlainText(node)).toBe(["", "lo   fi", ""].join("\n"));
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }

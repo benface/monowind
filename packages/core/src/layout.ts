@@ -452,6 +452,9 @@ function layoutTextLeaf(
       if (geometry.bands) node.lineBands = geometry.bands;
     }
     contentHeight = geometry.totalRows;
+    // The last line's row, the baseline the box aligns by natively.
+    const lastText = geometry.textY.at(-1);
+    if (lastText !== undefined) node.baselineRow = style.border.top + padding.top + lastText;
     const bands = node.lineBands;
     node.textExtent = {
       width: geometry.spans.reduce(
@@ -709,10 +712,12 @@ export function leafLineSpans(
  * row tall unless an atomic inline box on the line is taller — the line
  * grows to the tallest box (per CSS line-box growth). `vertical-align:
  * bottom` on a box drops the line's TEXT to the box's last row
- * (grid-exact in every engine, probed); the largest such box wins.
- * top/middle/baseline behave as top (cell-model deviation — middle and
- * baseline are off-grid). Requires the leaf's inline boxes to be laid
- * out already (their rect heights are read here).
+ * (grid-exact in every engine, probed); a middle-aligned box puts it on
+ * the box's middle row, the lower of two for an even height; the
+ * largest offset wins. top/baseline behave as top (cell-model
+ * deviation — baseline is off-grid). Each box records its line's text
+ * row for its native placement. Requires the leaf's inline boxes to be
+ * laid out already (their rect heights are read here).
  */
 export function leafLineMetrics(
   node: LayoutNode,
@@ -725,22 +730,22 @@ export function leafLineMetrics(
   for (const span of spans) {
     let height = 1;
     let textOffset = 0;
+    const lineBoxes: LayoutNode[] = [];
     for (let i = span.start; i < span.end; i++) {
       if (node.text[i] !== OBJECT_REPLACEMENT) continue;
-      const box = boxes[boxIndex]!;
-      height = Math.max(height, box.localRect.height);
-      if (box.style.verticalAlign === "end")
-        textOffset = Math.max(textOffset, box.localRect.height - 1);
-      else if (box.style.verticalAlign === "center")
-        warnOnce(
-          box.source,
-          "vertical-align: middle on an inline box can't land on whole rows and " +
-            "behaves as top. Use align-top or align-bottom.",
-        );
-      boxIndex++;
+      const box = boxes[boxIndex++]!;
+      lineBoxes.push(box);
+      const rows = box.localRect.height;
+      height = Math.max(height, rows);
+      if (box.style.verticalAlign === "end") textOffset = Math.max(textOffset, rows - 1);
+      else if (box.style.verticalAlign === "center") {
+        textOffset = Math.max(textOffset, Math.floor((rows - 1) / 2));
+      }
     }
+    const offset = Math.min(textOffset, height - 1);
+    for (const box of lineBoxes) box.inlineTextRow = offset;
     heights.push(height);
-    textOffsets.push(Math.min(textOffset, height - 1));
+    textOffsets.push(offset);
   }
   return { heights, textOffsets };
 }

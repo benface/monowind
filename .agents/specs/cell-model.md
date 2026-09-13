@@ -255,9 +255,14 @@ engine off, and the outer host lays it out as plain content.
   probed) and the engine drops the line's text to the box's last row
   (the largest bottom-aligned box on the line wins; mixing top- and
   bottom-aligned boxes on one line follows the engine's single text row);
-  `top` is the default pin, and `middle`/`baseline` behave as `top`
-  (both off-grid: fractional centering, descender-grown line boxes);
-  an authored `middle` warns once, like other silent deviations.
+  `top` is the default pin. `middle` puts the line's text on the box's
+  middle row — the lower of the two for an even height — and places the
+  box natively by a whole-row baseline length the engine writes: the
+  rows from the box's own baseline (its last line's, or its bottom edge
+  where it draws no line of its own, in which case the row's measured
+  baseline is added) to that row, so the browser's text lands on the
+  same row in every engine (probed). `baseline` behaves as `top`
+  (off-grid: descender-grown line boxes).
 
 ### Tracking: trailing gaps
 

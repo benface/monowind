@@ -109,7 +109,9 @@ export const InlineElements: StoryObj = {
         <a href="https://benface.com" target="_blank" class="text-blue-400 underline">links</a> ride
         along in the text run. Atomic boxes too: an inline-block
         <span class="inline-block border border-fuchsia-400 px-1" data-test="block">boxed</span>
-        pinned to its line's top, and a bottom-aligned inline table with
+        pinned to its line's top, a middle-aligned
+        <button class="border px-1 align-middle" data-test="middle">button</button>, as well as a
+        bottom-aligned inline table with
         <table class="inline-table align-bottom" data-test="inline-table">
           <tbody>
             <tr>
@@ -134,6 +136,12 @@ export const InlineElements: StoryObj = {
     // the plain box stays top-pinned, the align-bottom one drops.
     expect(block.hasAttribute("data-mw-vbottom")).toBe(false);
     expect(inlineTable.hasAttribute("data-mw-vbottom")).toBe(true);
+    // align-middle is a whole-row baseline length the engine writes, the
+    // browser's text on the button's middle row (checked above against
+    // the engine's rows).
+    const middle = canvasElement.querySelector<HTMLElement>('[data-test="middle"]')!;
+    expect(middle.hasAttribute("data-mw-vmiddle")).toBe(true);
+    expect(middle.style.getPropertyValue("--mw-va")).toBe("0");
   },
 };
 

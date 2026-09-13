@@ -804,6 +804,13 @@ export interface LayoutNode {
    * a paint-time input like `scroll`, added by every walk where it adds
    * the box's own position; absent = none. */
   stickyShift?: { x: number; y: number };
+  /** A text leaf's last line's row from its border-box top: the
+   * baseline its box aligns by natively, for a middle-aligned inline
+   * box's placement (specs/cell-model.md "Typography"). */
+  baselineRow?: number;
+  /** An inline box's line's text row, from the box's top, as the line
+   * metrics settled it (specs/cell-model.md "Typography"). */
+  inlineTextRow?: number;
   /** A fixed box's origin in the host's cells (specs/positioning.md),
    * written by the positioning pass: the walks paint and hit it from
    * here, outside its ancestors' scroll and clips. */
@@ -896,6 +903,10 @@ export interface CellMetrics {
    * strip an inline span's background leaves bare at each row's edge.
    * The grid's spans pad by half of it (the host's `--mw-bgpad`). */
   backgroundGap?: number;
+  /** The text baseline's offset within a row, in px: a middle-aligned
+   * inline box with a bottom-edge baseline is lowered from it (the
+   * host's `--mw-base`). */
+  baseline?: number;
 }
 
 export function defaultCellStyle(): CellStyle {

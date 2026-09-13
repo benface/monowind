@@ -620,10 +620,20 @@ mono-wind:not([measuring]) [data-mw-inline-box] {
 
 /* Authored `vertical-align: bottom` on an atomic inline box: grid-exact
  * in every engine (probed), so it passes through; the engine drops the
- * line's text to the box's last row to match. middle/baseline are
- * off-grid and behave as top (cell-model deviation). */
+ * line's text to the box's last row to match. baseline is off-grid and
+ * behaves as top (cell-model deviation). */
 mono-wind:not([measuring]) [data-mw-inline-box][data-mw-vbottom] {
   vertical-align: bottom !important;
+}
+/* Authored `vertical-align: middle`: a whole-row baseline length the
+ * engine writes (specs/cell-model.md "Typography") — rows from the
+ * box's own baseline to its line's text row, plus the row's baseline
+ * for a box whose baseline is its bottom edge — so the line's text
+ * lands on the box's middle row in every engine (probed). */
+mono-wind:not([measuring]) [data-mw-inline-box][data-mw-vmiddle] {
+  vertical-align: calc(
+    var(--mw-va, 0) * var(--mw-ch, 1px) + var(--mw-vb, 0) * var(--mw-base, 0px)
+  ) !important;
 }
 
 /* Multicol TEXT LEAF (specs/multicol.md "Browser agreement"): native

@@ -427,6 +427,11 @@ export class MonoWindElement extends HTMLElementBase {
       "white-space:pre!important;overflow-wrap:normal!important;" +
       "padding:0!important;margin:0!important;border:0!important;";
     this.#probe.textContent = "M".repeat(100);
+    // An empty inline-block at the probe's baseline marks it for the
+    // metrics (specs/cell-model.md "Typography").
+    const mark = document.createElement("span");
+    mark.style.cssText = "display:inline-block;width:0;height:0;padding:0;margin:0;border:0";
+    this.#probe.appendChild(mark);
   }
 
   /** The baseline of the box the grid would paint for `glyph` at that
@@ -2099,6 +2104,7 @@ export class MonoWindElement extends HTMLElementBase {
         // A whole pixel: Chromium snaps an inline box's fractional padding
         // and drags its text a pixel with it.
         this.style.setProperty("--mw-bgpad", `${Math.ceil((metrics.backgroundGap ?? 0) / 2)}px`);
+        this.style.setProperty("--mw-base", `${metrics.baseline ?? 0}px`);
         // Rows cannot grow (specs/wide-characters.md): a fallback font's
         // taller line box stays inside the measured cell.
         for (const grid of [this.#grid, this.#layers]) {
