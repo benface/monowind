@@ -5,9 +5,10 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 /**
  * Border glyph sets (specs/theming.md): the vocabulary border STYLES
  * render through — `borders-ascii` draws `border-double` as `+=+`,
- * `borders-single` downgrades it to light lines. Selected via the
- * inherited `--mw-border-glyphs` custom property (the `borders-*`
- * utilities set it); resolved on the decoration's owner.
+ * `borders-single` downgrades it to light lines and draws `border-2`
+ * as two rings. Selected via the inherited `--mw-border-glyphs` custom
+ * property (the `borders-*` utilities set it); resolved on the
+ * decoration's owner.
  */
 const meta: Meta = {
   title: "Features / Theming",
@@ -34,6 +35,16 @@ export const BorderGlyphSets: StoryObj = {
           </tr>
           <tr>
             <td class="border px-1">c</td>
+            <td class="border px-1">d</td>
+          </tr>
+        </table>
+        <table class="w-full border-collapse text-center borders-single">
+          <tr>
+            <td class="border-2 px-1">a</td>
+            <td class="border-2 px-1">b</td>
+          </tr>
+          <tr>
+            <td class="border-2 px-1">c</td>
             <td class="border px-1">d</td>
           </tr>
         </table>
@@ -64,6 +75,11 @@ export const BorderGlyphSets: StoryObj = {
         // outer corners, default interior junctions.
         expect(art).toContain("╭─");
         expect(art).toContain("┼");
+        // single has no heavy: border-2 is two rings, whose junction
+        // blocks connect (specs/table.md) and end at the 1px cell's edge.
+        expect(art).toContain("┌┬─");
+        expect(art).toContain("┼┼");
+        expect(art).toContain("┴┘");
         // blocks: uniform CP437 blocks; dotted maps to light shade.
         expect(art).toContain("█");
         expect(art).toContain("░");

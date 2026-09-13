@@ -212,6 +212,19 @@ border style; mixed-style junctions fall back to the light set, the
 existing corner convention. Line segments bordering a hole (missing
 cell) exist only if the other side has a cell or is the table edge.
 
+A junction block wider than a cell — where a line carries a band
+thicker than one cell (`theming.md`) — is ink, not one junction
+repeated: a segment reaches into the block as a stroke, only as far
+as its own thickness along its own line, through the block where it
+continues on the far side and otherwise to the far edge of the lines
+it meets (one cell at least); a stroke's cells join along it and past
+the block's edge, and strokes overlap where they meet, so their shared
+cells join them. Two two-cell lines cross as `┼┼` over `┼┼`; a
+two-cell line passing a block nothing crosses stays two parallel
+lines; a one-cell line meeting a two-cell block ends at its own edge.
+A stroke's reach follows its neighbours as laid out, whichever part
+they stick with (`sticky.md`).
+
 ## Borders — separate
 
 `border-separate`: every cell draws its own full border ring through the

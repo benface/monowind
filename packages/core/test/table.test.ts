@@ -122,9 +122,109 @@ describe("collapsed borders", () => {
         <tr><td style="border: 2px solid">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
     );
-    // The 2px cell's edges are two cells thick, its neighbor's one.
-    expect(art.split("\n")).toHaveLength(5);
-    expect(art).toContain("││aa││bb│");
+    // The 2px cell's edges are two cells thick, its neighbor's one; the
+    // junction blocks are ink (specs/table.md): the one-cell lines end
+    // at their own edge, the two-cell lines connect through.
+    expect(art).toBe(["┌┬──┬┬──┐", "├┼──┼┤  │", "││aa││bb│", "├┼──┼┼──┘", "└┴──┴┘"].join("\n"));
+  });
+
+  it("crosses two-cell lattice lines as connected junction blocks", () => {
+    const b2 = "border: 2px solid";
+    const art = plainText(
+      `<table style="border-collapse: collapse; --mw-border-glyphs: single">
+        <tr><td style="${b2}">aa</td><td style="${b2}">bb</td></tr>
+        <tr><td style="${b2}">cc</td><td style="${b2}">dd</td></tr>
+      </table>`,
+    );
+    expect(art).toBe(
+      [
+        "┌┬──┬┬──┬┐",
+        "├┼──┼┼──┼┤",
+        "││aa││bb││",
+        "├┼──┼┼──┼┤",
+        "├┼──┼┼──┼┤",
+        "││cc││dd││",
+        "├┼──┼┼──┼┤",
+        "└┴──┴┴──┴┘",
+      ].join("\n"),
+    );
+    const mixed = plainText(
+      `<table style="border-collapse: collapse; --mw-border-glyphs: single">
+        <tr><td style="${b2}">aa</td><td style="${CELL_BORDER}">bb</td></tr>
+        <tr><td style="${CELL_BORDER}">cc</td><td style="${CELL_BORDER}">dd</td></tr>
+      </table>`,
+    );
+    expect(mixed).toBe(
+      [
+        "┌┬──┬┬──┐",
+        "├┼──┼┤  │",
+        "││aa││bb│",
+        "├┼──┼┼──┤",
+        "├┴──┼┘  │",
+        "│ cc│ dd│",
+        "└───┴───┘",
+      ].join("\n"),
+    );
+  });
+
+  it("ends a stroke at its block: a lone border stays beside its own cell", () => {
+    // No line across, so the junction blocks are zero wide or tall.
+    expect(
+      plainText(
+        `<table style="border-collapse: collapse">
+          <tr><td>aa</td><td>bb</td></tr>
+          <tr><td>cc</td><td style="border-top: 1px solid">dd</td></tr>
+        </table>`,
+      ),
+    ).toBe(["aabb", "  ──", "ccdd"].join("\n"));
+    expect(
+      plainText(
+        `<table style="border-collapse: collapse">
+          <tr><td>aa</td><td style="border-left: 1px solid">bb</td></tr>
+          <tr><td>cc</td><td>dd</td></tr>
+        </table>`,
+      ),
+    ).toBe(["aa│bb", "cc dd"].join("\n"));
+  });
+
+  it("keeps a two-cell line parallel through a block nothing crosses (spans)", () => {
+    const b2 = "border: 2px solid";
+    const colspan = plainText(
+      `<table style="border-collapse: collapse; --mw-border-glyphs: single">
+        <tr><td colspan="2" style="${b2}">wide</td></tr>
+        <tr><td style="${b2}">aa</td><td style="${b2}">bb</td></tr>
+      </table>`,
+    );
+    expect(colspan).toBe(
+      [
+        "┌┬──────┬┐",
+        "├┼──────┼┤",
+        "││wide  ││",
+        "├┼──┬┬──┼┤",
+        "├┼──┼┼──┼┤",
+        "││aa││bb││",
+        "├┼──┼┼──┼┤",
+        "└┴──┴┴──┴┘",
+      ].join("\n"),
+    );
+    const rowspan = plainText(
+      `<table style="border-collapse: collapse; --mw-border-glyphs: single">
+        <tr><td rowspan="2" style="${b2}">tall</td><td style="${b2}">bb</td></tr>
+        <tr><td style="${b2}">dd</td></tr>
+      </table>`,
+    );
+    expect(rowspan).toBe(
+      [
+        "┌┬────┬┬──┬┐",
+        "├┼────┼┼──┼┤",
+        "││    ││bb││",
+        "││tall├┼──┼┤",
+        "││    ├┼──┼┤",
+        "││    ││dd││",
+        "├┼────┼┼──┼┤",
+        "└┴────┴┴──┴┘",
+      ].join("\n"),
+    );
   });
 });
 

@@ -51,6 +51,19 @@ interface Placement {
   rank: number;
 }
 
+/** Whether a segment's thickness covers a junction block's column or
+ * row. */
+const reaches = (segment: LatticeSegment | null | undefined, along: number): boolean =>
+  segment != null && along < segment.width;
+
+/** How far a stroke ending in a junction block reaches: to the far
+ * edge of the lines it meets across, one cell at least
+ * (specs/table.md). */
+const depth = (
+  a: LatticeSegment | null | undefined,
+  b: LatticeSegment | null | undefined,
+): number => Math.max(1, a?.width ?? 0, b?.width ?? 0);
+
 /** The lattice's line coordinates: line `i` starts where column `i`'s
  * left line does (past the last column for `i = C`), line `j` likewise
  * for rows. */
@@ -225,85 +238,82 @@ export function resolveLattice(
     return out;
   };
 
-  // Vertical segments: the row's cells, plus a down arm into the junction
-  // block above and an up arm into the one below.
+  // Vertical segments: the row's cells, two collinear arms each, then a
+  // stroke into the junction block at each end (specs/table.md): as far
+  // as the segment's own thickness along its line — through the block
+  // where the segment beyond continues, else to the far edge of the
+  // horizontals it meets, one cell at least — from the block's edge
+  // beside the segment inward, each cell's arm toward the segment and,
+  // while the stroke goes on, onward. Strokes overlap where they meet,
+  // so the map joins them; at one cell a stroke is the segment's arm.
   for (let i = 0; i <= C; i++) {
     for (let r = 0; r < R; r++) {
       const seg = vSegments[i]![r];
       if (!seg) continue;
-      const segmentId = nextId++;
+      const id = nextId++;
+      const above = vSegments[i]![r - 1];
+      const below = vSegments[i]![r + 1];
+      const hAbove = hSegments[r]!;
+      const hBelow = hSegments[r + 1]!;
+      const H = hLines[r]!;
+      const H2 = hLines[r + 1]!;
       for (const placement of placements([cells[r]![i - 1], cells[r]![i]])) {
         const { shift } = placement;
         for (let t = 0; t < seg.width; t++) {
           const x = lineX(i) + t + shift.x;
           for (let y = rowY[r]!; y < rowY[r]! + rowHeights[r]!; y++) {
-            add(x, y + shift.y, UP | DOWN, seg, segmentId, "v", placement);
+            add(x, y + shift.y, UP | DOWN, seg, id, "v", placement);
           }
-        }
-        for (let t = 0; t < vLines[i]!; t++) {
-          for (let u = 0; u < hLines[r]!; u++) {
-            add(
-              lineX(i) + t + shift.x,
-              lineY(r) + u + shift.y,
-              DOWN,
-              seg,
-              segmentId,
-              null,
-              placement,
-            );
+          // Up into the block above: through it, else to the top edge
+          // of its horizontals, which sit at the top of the line.
+          const up = reaches(above, t) || hAbove[i - 1] || hAbove[i] ? H : Math.min(H, 1);
+          const yUp = lineY(r) + H - 1 + shift.y;
+          for (let k = 0; k < up; k++) {
+            add(x, yUp - k, DOWN | (k + 1 < up ? UP : 0), seg, id, null, placement);
           }
-          for (let u = 0; u < hLines[r + 1]!; u++) {
-            add(
-              lineX(i) + t + shift.x,
-              lineY(r + 1) + u + shift.y,
-              UP,
-              seg,
-              segmentId,
-              null,
-              placement,
-            );
+          // Down into the block below: through it, else as deep as its
+          // horizontals.
+          const down = reaches(below, t) ? H2 : Math.min(H2, depth(hBelow[i - 1], hBelow[i]));
+          const yDown = lineY(r + 1) + shift.y;
+          for (let k = 0; k < down; k++) {
+            add(x, yDown + k, UP | (k + 1 < down ? DOWN : 0), seg, id, null, placement);
           }
         }
       }
     }
   }
-  // Horizontal segments: the column's cells, plus a right arm into the
-  // junction block at its start and a left arm into the one at its end.
+  // Horizontal segments: the column's cells, likewise.
   for (let j = 0; j <= R; j++) {
     for (let c = 0; c < C; c++) {
       const seg = hSegments[j]![c];
       if (!seg) continue;
-      const segmentId = nextId++;
+      const id = nextId++;
+      const before = hSegments[j]![c - 1];
+      const after = hSegments[j]![c + 1];
+      const vBefore = vSegments[c]!;
+      const vAfter = vSegments[c + 1]!;
+      const W = vLines[c]!;
+      const W2 = vLines[c + 1]!;
       for (const placement of placements([cells[j - 1]?.[c], cells[j]?.[c]])) {
         const { shift } = placement;
-        for (let t = 0; t < seg.width; t++) {
-          const y = lineY(j) + t + shift.y;
+        for (let u = 0; u < seg.width; u++) {
+          const y = lineY(j) + u + shift.y;
           for (let x = colX[c]!; x < colX[c]! + widths[c]!; x++) {
-            add(x + shift.x, y, LEFT | RIGHT, seg, segmentId, "h", placement);
+            add(x + shift.x, y, LEFT | RIGHT, seg, id, "h", placement);
           }
-        }
-        for (let u = 0; u < hLines[j]!; u++) {
-          for (let t = 0; t < vLines[c]!; t++) {
-            add(
-              lineX(c) + t + shift.x,
-              lineY(j) + u + shift.y,
-              RIGHT,
-              seg,
-              segmentId,
-              null,
-              placement,
-            );
+          // Left into the block at its start: through it, else to the
+          // left edge of its verticals, which sit at the left of the line.
+          const left = reaches(before, u) || vBefore[j - 1] || vBefore[j] ? W : Math.min(W, 1);
+          const xLeft = lineX(c) + W - 1 + shift.x;
+          for (let k = 0; k < left; k++) {
+            add(xLeft - k, y, RIGHT | (k + 1 < left ? LEFT : 0), seg, id, null, placement);
           }
-          for (let t = 0; t < vLines[c + 1]!; t++) {
-            add(
-              lineX(c + 1) + t + shift.x,
-              lineY(j) + u + shift.y,
-              LEFT,
-              seg,
-              segmentId,
-              null,
-              placement,
-            );
+          // Right into the block at its end: through it, else as far as
+          // its verticals.
+          const right = reaches(after, u) ? W2 : Math.min(W2, depth(vAfter[j - 1], vAfter[j]));
+          const xRight = lineX(c + 1) + shift.x;
+          for (let k = 0; k < right; k++) {
+            add(xRight + k, y, LEFT | (k + 1 < right ? RIGHT : 0), seg, id, null, placement);
           }
         }
       }
