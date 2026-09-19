@@ -4,16 +4,19 @@ import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
 import type { GapSegment, GapStrip, RuleSegment } from "./borders.ts";
 import {
   clampSize,
+  edges,
   intrinsicOuterWidth,
   isOutOfFlow,
   layoutNode,
   minContentOuterWidth,
   resolveGap,
+  resolveLength,
   resolveLimit,
   resolveMargin,
   resolveSizeAgainst,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
+import { scrollGutter } from "./types.ts";
 import type { CellStyle, Insets, LayoutNode, NullableInsets } from "./types.ts";
 
 interface FlexLine {
@@ -106,7 +109,7 @@ export function layoutFlexRow(
       base: flexBaseOuterWidth(child, innerWidth, cache),
       grow: child.style.flexGrow,
       shrink: child.style.flexShrink,
-      min: flexItemMinWidth(child, innerWidth, cache),
+      min: Math.max(flexItemMinWidth(child, innerWidth, cache), edgesOf(child, "x", innerWidth)),
       max: resolveLimit(child.style.maxWidth, innerWidth),
       margin,
     };
@@ -437,7 +440,10 @@ export function layoutFlexColumn(
       base,
       grow: child.style.flexGrow,
       shrink: child.style.flexShrink,
-      min: autoMin ?? resolveLimit(child.style.minHeight, limitBasis) ?? 0,
+      min: Math.max(
+        autoMin ?? resolveLimit(child.style.minHeight, limitBasis) ?? 0,
+        edgesOf(child, "y", availableChildWidth),
+      ),
       max: resolveLimit(child.style.maxHeight, limitBasis),
       margin,
     };
@@ -858,6 +864,22 @@ export function effectiveJustify(style: CellStyle): CellStyle["justifyContent"] 
   if (justify === "start") return "end";
   if (justify === "end") return "start";
   return justify;
+}
+
+/** A flex item's edges on an axis, the floor of its main size, so the
+ * main axis hands it no less and the placement agrees with the floored
+ * rects: the padding as the item's own layout resolves it — against
+ * the width it is laid out at, a scrollbar's gutter added. */
+function edgesOf(child: LayoutNode, axis: "x" | "y", availableWidth: number): number {
+  const { border, padding } = child.style;
+  const gutter = scrollGutter(child.style);
+  const resolved: Insets = {
+    top: resolveLength(padding.top, availableWidth),
+    right: resolveLength(padding.right, availableWidth) + gutter.right,
+    bottom: resolveLength(padding.bottom, availableWidth) + gutter.bottom,
+    left: resolveLength(padding.left, availableWidth),
+  };
+  return edges(border, resolved, axis);
 }
 
 /**

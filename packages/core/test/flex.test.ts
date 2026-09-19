@@ -4,6 +4,67 @@ import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
 
+describe("a flex item is at least its edges", () => {
+  it("places the next item past a bordered item shrunk to its edges", () => {
+    const item = () =>
+      makeNode({
+        text: "abcdefgh",
+        style: {
+          flexShrink: 1,
+          overflow: { x: "clip", y: "visible" },
+          border: { top: 1, right: 1, bottom: 1, left: 1 },
+          padding: { top: 0, right: 1, bottom: 0, left: 1 },
+        },
+      });
+    const [first, second] = [item(), item()];
+    const root = makeNode({ style: { display: "flex" }, children: [first, second] });
+    layoutRoot(root, 6);
+    expect(first.localRect.width).toBe(4);
+    expect(second.localRect).toMatchObject({ x: 4, width: 4 });
+  });
+
+  it("counts a scrollbar's gutter among the edges", () => {
+    // A vertical scroller's gutter is a column of padding on the right,
+    // so the next item starts past it.
+    const item = () =>
+      makeNode({
+        text: "abcdefgh",
+        style: {
+          flexShrink: 1,
+          minWidth: 0,
+          overflow: { x: "clip", y: "scroll" },
+          border: { top: 1, right: 1, bottom: 1, left: 1 },
+          padding: { top: 0, right: 1, bottom: 0, left: 1 },
+        },
+      });
+    const [first, second] = [item(), item()];
+    const root = makeNode({ style: { display: "flex" }, children: [first, second] });
+    layoutRoot(root, 8);
+    expect(first.localRect.width).toBe(5);
+    expect(second.localRect).toMatchObject({ x: 5, width: 5 });
+  });
+
+  it("stacks a column's next item past a bordered item shrunk to its edges", () => {
+    const item = () =>
+      makeNode({
+        text: "a b c",
+        style: {
+          flexShrink: 1,
+          overflow: { x: "visible", y: "clip" },
+          border: { top: 1, right: 0, bottom: 1, left: 0 },
+        },
+      });
+    const [first, second] = [item(), item()];
+    const root = makeNode({
+      style: { display: "flex", flexDirection: "column", height: { kind: "cells", value: 3 } },
+      children: [first, second],
+    });
+    layoutRoot(root, 5);
+    expect(first.localRect.height).toBe(2);
+    expect(second.localRect).toMatchObject({ y: 2, height: 2 });
+  });
+});
+
 describe("distributeInteger", () => {
   it("returns zeros when total is 0 or negative", () => {
     expect(distributeInteger([1, 1, 1], 0)).toEqual([0, 0, 0]);

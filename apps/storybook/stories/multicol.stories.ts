@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { multicolLines } from "monowind";
-import { expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
+import { cellSize, expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Multicol",
@@ -69,70 +69,67 @@ async function expectBrowserColumnsToMatchEngine(
   // A late font load swaps the cell metrics and triggers an async
   // relayout; the whole comparison retries until both sides settle.
   await document.fonts.ready;
-  await waitFor(
-    () => {
-      const el = canvasElement.querySelector<HTMLElement>(`[data-test="${testId}"]`)!;
-      const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-      const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-      const count = cellsOf(el, "--mw-colc");
-      const gap = cellsOf(el, "--mw-colg");
-      expect(count, "used column count").toBeGreaterThan(1);
-      // Leaf columns are equal whole-cell tracks (the remainder is folded
-      // into the engine-owned right padding).
-      const columnWidth = (contentCellsOf(el) - (count - 1) * gap) / count;
-      expect(Number.isInteger(columnWidth), "equal whole-cell columns").toBe(true);
-      const rowsPerLine = cellsOf(el, "--mw-lh") || 1;
-      const contentRows =
-        cellsOf(el, "--mw-h") -
-        cellsOf(el, "--mw-bt") -
-        cellsOf(el, "--mw-bb") -
-        cellsOf(el, "--mw-pt") -
-        cellsOf(el, "--mw-pb");
-      expect(contentRows).toBeGreaterThan(0);
+  await waitFor(() => {
+    const el = canvasElement.querySelector<HTMLElement>(`[data-test="${testId}"]`)!;
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
+    const count = cellsOf(el, "--mw-colc");
+    const gap = cellsOf(el, "--mw-colg");
+    expect(count, "used column count").toBeGreaterThan(1);
+    // Leaf columns are equal whole-cell tracks (the remainder is folded
+    // into the engine-owned right padding).
+    const columnWidth = (contentCellsOf(el) - (count - 1) * gap) / count;
+    expect(Number.isInteger(columnWidth), "equal whole-cell columns").toBe(true);
+    const rowsPerLine = cellsOf(el, "--mw-lh") || 1;
+    const contentRows =
+      cellsOf(el, "--mw-h") -
+      cellsOf(el, "--mw-bt") -
+      cellsOf(el, "--mw-bb") -
+      cellsOf(el, "--mw-pt") -
+      cellsOf(el, "--mw-pb");
+    expect(contentRows).toBeGreaterThan(0);
 
-      const text = el.textContent!.replace(/[ \t\r\n\f]+/g, " ").trim();
-      // The engine's own wrap-and-fill code predicts the fragmentation
-      // from the rendered element's used values — sequential fill into
-      // the final content height reproduces any fill mode's layout.
-      const expected = multicolLines(text, {
-        columnWidth,
-        columnCount: count,
-        tracking: cellsOf(el, "--mw-ls") || 0,
-        lineGap: rowsPerLine - 1,
-        restrictingHeight: contentRows,
-      }).map((line) => ({
-        column: line.column,
-        line: line.top / rowsPerLine,
-        chars: line.text.replaceAll(" ", ""),
-      }));
+    const text = el.textContent!.replace(/[ \t\r\n\f]+/g, " ").trim();
+    // The engine's own wrap-and-fill code predicts the fragmentation
+    // from the rendered element's used values — sequential fill into
+    // the final content height reproduces any fill mode's layout.
+    const expected = multicolLines(text, {
+      columnWidth,
+      columnCount: count,
+      tracking: cellsOf(el, "--mw-ls") || 0,
+      lineGap: rowsPerLine - 1,
+      restrictingHeight: contentRows,
+    }).map((line) => ({
+      column: line.column,
+      line: line.top / rowsPerLine,
+      chars: line.text.replaceAll(" ", ""),
+    }));
 
-      const box = el.getBoundingClientRect();
-      const contentLeft = box.left + (cellsOf(el, "--mw-bl") + cellsOf(el, "--mw-pl")) * cellWidth;
-      const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
-      const buckets = new Map<string, string>();
-      eachCharRect(el, (rect, char) => {
-        const column = Math.floor(
-          (rect.left + rect.width / 2 - contentLeft) / ((columnWidth + gap) * cellWidth),
-        );
-        // The glyph's ink centers in its (rowsPerLine)-row line box;
-        // rounding the centre back through the line-box height recovers
-        // the index.
-        const line = Math.round(
-          (rect.top + rect.height / 2 - contentTop) / (rowsPerLine * cellHeight) - 0.5,
-        );
-        const key = `${column}:${line}`;
-        buckets.set(key, (buckets.get(key) ?? "") + char);
-      });
-      const browserLines = [...buckets.entries()]
-        .map(([key, chars]) => {
-          const [column, line] = key.split(":").map(Number) as [number, number];
-          return { column, line, chars };
-        })
-        .sort((a, b) => a.column - b.column || a.line - b.line);
-      expect(browserLines, `"${text.slice(0, 30)}…" column fragmentation`).toEqual(expected);
-    },
-    { timeout: 10_000 },
-  );
+    const box = el.getBoundingClientRect();
+    const contentLeft = box.left + (cellsOf(el, "--mw-bl") + cellsOf(el, "--mw-pl")) * cellWidth;
+    const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
+    const buckets = new Map<string, string>();
+    eachCharRect(el, (rect, char) => {
+      const column = Math.floor(
+        (rect.left + rect.width / 2 - contentLeft) / ((columnWidth + gap) * cellWidth),
+      );
+      // The glyph's ink centers in its (rowsPerLine)-row line box;
+      // rounding the centre back through the line-box height recovers
+      // the index.
+      const line = Math.round(
+        (rect.top + rect.height / 2 - contentTop) / (rowsPerLine * cellHeight) - 0.5,
+      );
+      const key = `${column}:${line}`;
+      buckets.set(key, (buckets.get(key) ?? "") + char);
+    });
+    const browserLines = [...buckets.entries()]
+      .map(([key, chars]) => {
+        const [column, line] = key.split(":").map(Number) as [number, number];
+        return { column, line, chars };
+      })
+      .sort((a, b) => a.column - b.column || a.line - b.line);
+    expect(browserLines, `"${text.slice(0, 30)}…" column fragmentation`).toEqual(expected);
+  });
 }
 
 const PROSE =
@@ -196,88 +193,83 @@ export const Paragraphs: StoryObj = {
     // native in-flow fragmentation lands on the engine's rows.
     const host = await readyHost(canvasElement);
     await document.fonts.ready;
-    await waitFor(
-      () => {
-        const el = canvasElement.querySelector<HTMLElement>('[data-test="flow"]')!;
-        const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-        const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-        const gap = cellsOf(el, "--mw-colg");
-        const columnWidth = (contentCellsOf(el) - gap) / 2;
-        const box = el.getBoundingClientRect();
-        const contentLeft =
-          box.left + (cellsOf(el, "--mw-bl") + cellsOf(el, "--mw-pl")) * cellWidth;
-        const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
-        const cellsOfParagraph = (p: Element) => {
-          const out: { column: number; row: number; char: string }[] = [];
-          eachCharRect(p, (rect, char) => {
-            out.push({
-              column: Math.floor(
-                (rect.left + rect.width / 2 - contentLeft) / ((columnWidth + gap) * cellWidth),
-              ),
-              row: Math.round((rect.top + rect.height / 2 - contentTop) / cellHeight - 0.5),
-              char,
-            });
+    await waitFor(() => {
+      const el = canvasElement.querySelector<HTMLElement>('[data-test="flow"]')!;
+      const cellWidth = cellSize(host).width;
+      const cellHeight = cellSize(host).height;
+      const gap = cellsOf(el, "--mw-colg");
+      const columnWidth = (contentCellsOf(el) - gap) / 2;
+      const box = el.getBoundingClientRect();
+      const contentLeft = box.left + (cellsOf(el, "--mw-bl") + cellsOf(el, "--mw-pl")) * cellWidth;
+      const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
+      const cellsOfParagraph = (p: Element) => {
+        const out: { column: number; row: number; char: string }[] = [];
+        eachCharRect(p, (rect, char) => {
+          out.push({
+            column: Math.floor(
+              (rect.left + rect.width / 2 - contentLeft) / ((columnWidth + gap) * cellWidth),
+            ),
+            row: Math.round((rect.top + rect.height / 2 - contentTop) / cellHeight - 0.5),
+            char,
           });
-          return out;
-        };
-        const [firstEl, secondEl] = Array.from(el.querySelectorAll("p"));
-        // The first paragraph's native lines must sit on EXACTLY the
-        // engine's fragmentation (its lines fill first, so the shared
-        // predictor reproduces them from the paragraph's own text) —
-        // per-character, so a mislaid native layout can't pass by
-        // landing in coarsely-right columns.
-        const contentRows =
-          cellsOf(el, "--mw-h") -
-          cellsOf(el, "--mw-bt") -
-          cellsOf(el, "--mw-bb") -
-          cellsOf(el, "--mw-pt") -
-          cellsOf(el, "--mw-pb");
-        const firstText = firstEl!.textContent!.replace(/[ \t\r\n\f]+/g, " ").trim();
-        const expected = multicolLines(firstText, {
-          columnWidth,
-          columnCount: 2,
-          restrictingHeight: contentRows,
-        }).map((line) => ({
-          column: line.column,
-          row: line.top,
-          chars: line.text.replaceAll(" ", ""),
-        }));
-        const buckets = new Map<string, string>();
-        for (const cell of cellsOfParagraph(firstEl!)) {
-          const key = `${cell.column}:${cell.row}`;
-          buckets.set(key, (buckets.get(key) ?? "") + cell.char);
-        }
-        const browserLines = [...buckets.entries()]
-          .map(([key, chars]) => {
-            const [column, row] = key.split(":").map(Number) as [number, number];
-            return { column, row, chars };
-          })
-          .sort((a, b) => a.column - b.column || a.row - b.row);
-        expect(browserLines, "first paragraph fragmentation").toEqual(expected);
-        expect(
-          new Set(browserLines.map((line) => line.column)).size,
-          "first paragraph splits",
-        ).toBe(2);
-        // The second continues in the same column, its mt-1 margin row
-        // below the first paragraph's last line.
-        const firstEnd = browserLines[browserLines.length - 1]!;
-        const secondStart = cellsOfParagraph(secondEl!).reduce((a, b) =>
-          b.column < a.column || (b.column === a.column && b.row < a.row) ? b : a,
-        );
-        expect(secondStart.column, "second paragraph column").toBe(firstEnd.column);
-        expect(secondStart.row, "margin row between paragraphs").toBe(firstEnd.row + 2);
-        // In the second example, the avoid paragraph would split without
-        // `break-inside-avoid`; with it, it moves whole to the second
-        // column (probe 9).
-        const avoidContainer = canvasElement.querySelector<HTMLElement>('[data-test="avoid"]')!;
-        const avoidEl = avoidContainer.querySelector(".break-inside-avoid")!;
-        expect(
-          charColumns(avoidContainer, avoidEl, cellWidth).size,
-          "break-inside-avoid keeps the paragraph whole",
-        ).toBe(1);
-      },
-      { timeout: 10_000 },
-    );
+        });
+        return out;
+      };
+      const [firstEl, secondEl] = Array.from(el.querySelectorAll("p"));
+      // The first paragraph's native lines must sit on EXACTLY the
+      // engine's fragmentation (its lines fill first, so the shared
+      // predictor reproduces them from the paragraph's own text) —
+      // per-character, so a mislaid native layout can't pass by
+      // landing in coarsely-right columns.
+      const contentRows =
+        cellsOf(el, "--mw-h") -
+        cellsOf(el, "--mw-bt") -
+        cellsOf(el, "--mw-bb") -
+        cellsOf(el, "--mw-pt") -
+        cellsOf(el, "--mw-pb");
+      const firstText = firstEl!.textContent!.replace(/[ \t\r\n\f]+/g, " ").trim();
+      const expected = multicolLines(firstText, {
+        columnWidth,
+        columnCount: 2,
+        restrictingHeight: contentRows,
+      }).map((line) => ({
+        column: line.column,
+        row: line.top,
+        chars: line.text.replaceAll(" ", ""),
+      }));
+      const buckets = new Map<string, string>();
+      for (const cell of cellsOfParagraph(firstEl!)) {
+        const key = `${cell.column}:${cell.row}`;
+        buckets.set(key, (buckets.get(key) ?? "") + cell.char);
+      }
+      const browserLines = [...buckets.entries()]
+        .map(([key, chars]) => {
+          const [column, row] = key.split(":").map(Number) as [number, number];
+          return { column, row, chars };
+        })
+        .sort((a, b) => a.column - b.column || a.row - b.row);
+      expect(browserLines, "first paragraph fragmentation").toEqual(expected);
+      expect(new Set(browserLines.map((line) => line.column)).size, "first paragraph splits").toBe(
+        2,
+      );
+      // The second continues in the same column, its mt-1 margin row
+      // below the first paragraph's last line.
+      const firstEnd = browserLines[browserLines.length - 1]!;
+      const secondStart = cellsOfParagraph(secondEl!).reduce((a, b) =>
+        b.column < a.column || (b.column === a.column && b.row < a.row) ? b : a,
+      );
+      expect(secondStart.column, "second paragraph column").toBe(firstEnd.column);
+      expect(secondStart.row, "margin row between paragraphs").toBe(firstEnd.row + 2);
+      // In the second example, the avoid paragraph would split without
+      // `break-inside-avoid`; with it, it moves whole to the second
+      // column (probe 9).
+      const avoidContainer = canvasElement.querySelector<HTMLElement>('[data-test="avoid"]')!;
+      const avoidEl = avoidContainer.querySelector(".break-inside-avoid")!;
+      expect(
+        charColumns(avoidContainer, avoidEl, cellWidth).size,
+        "break-inside-avoid keeps the paragraph whole",
+      ).toBe(1);
+    });
   },
 };
 
@@ -430,52 +422,47 @@ export const Spanner: StoryObj = {
     // falls back to atomic distribution.
     const host = await readyHost(canvasElement);
     await document.fonts.ready;
-    await waitFor(
-      () => {
-        const el = canvasElement.querySelector<HTMLElement>('[data-test="span"]')!;
-        const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-        const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-        const paragraphs = Array.from(el.querySelectorAll("p"));
-        const first = paragraphs[0]!;
-        const last = paragraphs.at(-1)!;
-        if (el.hasAttribute("data-mw-multicol")) {
-          // The long opening paragraph splits across its segment's
-          // columns (the short margined one need not).
-          expect(charColumns(el, first, cellWidth).size, "first paragraph splits").toBe(2);
-        }
-        // The spanner sits at full width between the two segments.
-        const spanner = el.querySelector("h2")!.getBoundingClientRect();
-        expect(spanner.top).toBeGreaterThan(first.getBoundingClientRect().top);
-        expect(spanner.bottom).toBeLessThan(last.getBoundingClientRect().bottom);
-        expect(Math.round(spanner.width / cellWidth), "spanner full width").toBe(
-          contentCellsOf(el),
-        );
-        if (el.hasAttribute("data-mw-multicol")) {
-          // …and so does the closing paragraph below it.
-          expect(charColumns(el, last, cellWidth).size, "last paragraph splits").toBe(2);
-        }
-        // The margin-as-padding translation must never leave native text
-        // between cells: every character lands on a whole engine row,
-        // whichever path laid it out.
-        const box = el.getBoundingClientRect();
-        const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
-        eachCharRect(el, (rect, char) => {
-          const row = (rect.top + rect.height / 2 - contentTop) / cellHeight - 0.5;
-          expect(Math.abs(row - Math.round(row)), `"${char}" on a whole row`).toBeLessThan(0.2);
-        });
-        // With every paragraph in ONE segment (spanner only at the
-        // edge), the flow path holds in EVERY engine — WebKit's
-        // ink-fractional segment heights can't corrupt an origin that
-        // has no balanced segment above it.
-        const lead = canvasElement.querySelector<HTMLElement>('[data-test="span-lead"]')!;
-        expect(lead.hasAttribute("data-mw-multicol"), "leading-spanner container flows").toBe(true);
-        expect(
-          charColumns(lead, lead.querySelector("p")!, cellWidth).size,
-          "single paragraph splits below a leading spanner",
-        ).toBe(2);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const el = canvasElement.querySelector<HTMLElement>('[data-test="span"]')!;
+      const cellWidth = cellSize(host).width;
+      const cellHeight = cellSize(host).height;
+      const paragraphs = Array.from(el.querySelectorAll("p"));
+      const first = paragraphs[0]!;
+      const last = paragraphs.at(-1)!;
+      if (el.hasAttribute("data-mw-multicol")) {
+        // The long opening paragraph splits across its segment's
+        // columns (the short margined one need not).
+        expect(charColumns(el, first, cellWidth).size, "first paragraph splits").toBe(2);
+      }
+      // The spanner sits at full width between the two segments.
+      const spanner = el.querySelector("h2")!.getBoundingClientRect();
+      expect(spanner.top).toBeGreaterThan(first.getBoundingClientRect().top);
+      expect(spanner.bottom).toBeLessThan(last.getBoundingClientRect().bottom);
+      expect(Math.round(spanner.width / cellWidth), "spanner full width").toBe(contentCellsOf(el));
+      if (el.hasAttribute("data-mw-multicol")) {
+        // …and so does the closing paragraph below it.
+        expect(charColumns(el, last, cellWidth).size, "last paragraph splits").toBe(2);
+      }
+      // The margin-as-padding translation must never leave native text
+      // between cells: every character lands on a whole engine row,
+      // whichever path laid it out.
+      const box = el.getBoundingClientRect();
+      const contentTop = box.top + (cellsOf(el, "--mw-bt") + cellsOf(el, "--mw-pt")) * cellHeight;
+      eachCharRect(el, (rect, char) => {
+        const row = (rect.top + rect.height / 2 - contentTop) / cellHeight - 0.5;
+        expect(Math.abs(row - Math.round(row)), `"${char}" on a whole row`).toBeLessThan(0.2);
+      });
+      // With every paragraph in ONE segment (spanner only at the
+      // edge), the flow path holds in EVERY engine — WebKit's
+      // ink-fractional segment heights can't corrupt an origin that
+      // has no balanced segment above it.
+      const lead = canvasElement.querySelector<HTMLElement>('[data-test="span-lead"]')!;
+      expect(lead.hasAttribute("data-mw-multicol"), "leading-spanner container flows").toBe(true);
+      expect(
+        charColumns(lead, lead.querySelector("p")!, cellWidth).size,
+        "single paragraph splits below a leading spanner",
+      ).toBe(2);
+    });
   },
 };
 
@@ -499,28 +486,25 @@ export const SpannerMarginFallback: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     await document.fonts.ready;
-    await waitFor(
-      () => {
-        const el = canvasElement.querySelector<HTMLElement>('[data-test="margins"]')!;
-        const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-        const paragraphs = Array.from(el.querySelectorAll("p"));
-        if (el.hasAttribute("data-mw-multicol")) {
-          expect(charColumns(el, paragraphs[0]!, cellWidth).size, "margined prose splits").toBe(2);
-        } else {
-          // Atomic: whole paragraphs, each about one column wide
-          // (gap-5 across 2 tracks; a split one would span the full
-          // content width), give or take a quantized cell.
-          const columnWidth = (contentCellsOf(el) - 5) / 2;
-          for (const p of paragraphs) {
-            expect(
-              p.getBoundingClientRect().width / cellWidth,
-              "paragraph stays in one column",
-            ).toBeLessThanOrEqual(columnWidth + 1);
-          }
+    await waitFor(() => {
+      const el = canvasElement.querySelector<HTMLElement>('[data-test="margins"]')!;
+      const cellWidth = cellSize(host).width;
+      const paragraphs = Array.from(el.querySelectorAll("p"));
+      if (el.hasAttribute("data-mw-multicol")) {
+        expect(charColumns(el, paragraphs[0]!, cellWidth).size, "margined prose splits").toBe(2);
+      } else {
+        // Atomic: whole paragraphs, each about one column wide
+        // (gap-5 across 2 tracks; a split one would span the full
+        // content width), give or take a quantized cell.
+        const columnWidth = (contentCellsOf(el) - 5) / 2;
+        for (const p of paragraphs) {
+          expect(
+            p.getBoundingClientRect().width / cellWidth,
+            "paragraph stays in one column",
+          ).toBeLessThanOrEqual(columnWidth + 1);
         }
-      },
-      { timeout: 10_000 },
-    );
+      }
+    });
   },
 };
 
@@ -563,25 +547,22 @@ export const FixedHeight: StoryObj = {
     // them four and three.
     const host = await readyHost(canvasElement);
     await document.fonts.ready;
-    await waitFor(
-      () => {
-        const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-        const overfill = canvasElement.querySelector<HTMLElement>('[data-test="overfill"]')!;
-        expect([...charColumns(overfill, overfill, cellWidth)].sort(), "overflow columns").toEqual([
-          0, 1, 2, 3,
-        ]);
-        const underfill = canvasElement.querySelector<HTMLElement>('[data-test="underfill"]')!;
-        const children = Array.from(underfill.querySelectorAll("div"));
-        expect(
-          [...charColumns(underfill, children[4]!, cellWidth)],
-          "fifth child still in the first column",
-        ).toEqual([0]);
-        expect(
-          [...charColumns(underfill, children[5]!, cellWidth)],
-          "the sixth child starts the second column",
-        ).toEqual([1]);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const cellWidth = cellSize(host).width;
+      const overfill = canvasElement.querySelector<HTMLElement>('[data-test="overfill"]')!;
+      expect([...charColumns(overfill, overfill, cellWidth)].sort(), "overflow columns").toEqual([
+        0, 1, 2, 3,
+      ]);
+      const underfill = canvasElement.querySelector<HTMLElement>('[data-test="underfill"]')!;
+      const children = Array.from(underfill.querySelectorAll("div"));
+      expect(
+        [...charColumns(underfill, children[4]!, cellWidth)],
+        "fifth child still in the first column",
+      ).toEqual([0]);
+      expect(
+        [...charColumns(underfill, children[5]!, cellWidth)],
+        "the sixth child starts the second column",
+      ).toEqual([1]);
+    });
   },
 };

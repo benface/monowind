@@ -7,7 +7,7 @@
 @import "../../../assets/fonts/dejavu-sans-mono.css";
 
 /* Tie `dark:` to the toolbar's background toggle, not the OS preference —
- * see the decorator in preview.ts (adds `.dark` to <html>). This overrides
+ * see `applyTheme` in preview.ts (adds `.dark` to <html>). This overrides
  * Tailwind v4's default `prefers-color-scheme` variant. */
 @custom-variant dark (&:where(.dark, .dark *));
 

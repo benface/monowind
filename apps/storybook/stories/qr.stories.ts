@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { glyphSetFor, registerBorderGlyphs } from "monowind";
-import { expectGridOnItsCells, readyHost } from "./helpers.ts";
+import { cellSize, expectGridOnItsCells, readyHost, testHooks } from "./helpers.ts";
 
 /**
  * `<mono-qr>` (@monowind/qr-code, specs/qr-code.md): a QR code packed
@@ -10,7 +10,7 @@ import { expectGridOnItsCells, readyHost } from "./helpers.ts";
  * keeps the value (a11y); the grid shows the code.
  */
 const meta: Meta = {
-  title: "Components / mono-qr",
+  title: "Packages / qr-code",
 };
 export default meta;
 
@@ -18,15 +18,9 @@ const VALUE = "https://play.monowind.benface.com";
 
 /** The rows of a code in cells: its box's height over the cell. */
 const rowsOf = (host: HTMLElement, el: Element): number =>
-  Math.round(
-    el.getBoundingClientRect().height /
-      parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch")),
-  );
+  Math.round(el.getBoundingClientRect().height / cellSize(host).height);
 const colsOf = (host: HTMLElement, el: Element): number =>
-  Math.round(
-    el.getBoundingClientRect().width /
-      parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw")),
-  );
+  Math.round(el.getBoundingClientRect().width / cellSize(host).width);
 
 export const Default: StoryObj = {
   render: () => html`
@@ -90,7 +84,7 @@ export const Options: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     // A version-1 code is 21 modules.
     expect([colsOf(host, by("defaults")), rowsOf(host, by("defaults"))]).toEqual([21, 11]);
     expect([colsOf(host, by("scale")), rowsOf(host, by("scale"))]).toEqual([42, 21]);

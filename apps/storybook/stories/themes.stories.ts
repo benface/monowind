@@ -1,5 +1,6 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
+import { readyHosts } from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
@@ -35,14 +36,8 @@ export const Gallery: StoryObj = {
     <div class="grid grid-cols-1 gap-2 md:grid-cols-2">${THEMES.map(card)}</div>
   `,
   play: async ({ canvasElement }) => {
-    const hosts = Array.from(canvasElement.querySelectorAll<HTMLElement>("mono-wind"));
+    const hosts = await readyHosts(canvasElement);
     expect(hosts).toHaveLength(7);
-    await waitFor(
-      () => {
-        for (const host of hosts) expect(host).toHaveAttribute("data-mw-ready");
-      },
-      { timeout: 10_000 },
-    );
     const grid = (theme: string) =>
       canvasElement
         .querySelector<HTMLElement>(`[data-test="theme-${theme}"]`)!
@@ -60,25 +55,22 @@ export const Gallery: StoryObj = {
       return color;
     };
 
-    await waitFor(
-      () => {
-        // Palette quantization is scoped per host: dos snaps red-500 to
-        // VGA bright red; the phosphor theme maps it to a green step.
-        expect(token("dos", "--color-red-500")).toBe("rgb(255, 85, 85)");
-        expect(token("green-phosphor", "--color-red-500")).toBe("rgb(0, 168, 60)");
-        // Era borders: c64 rounds corners, amber (single) downgrades
-        // the double border, teletype draws 7-bit.
-        expect(grid("c64").textContent).toContain("╭");
-        expect(grid("dos").textContent).toContain("╔");
-        expect(grid("amber").textContent).not.toContain("╔");
-        expect(grid("teletype").textContent).toContain("+-");
-        expect(grid("bbs").textContent).toContain("██");
-        // The DOS themes wear the period bitmap font.
-        expect(
-          getComputedStyle(canvasElement.querySelector('[data-test="theme-dos"]')!).fontFamily,
-        ).toContain("Web IBM VGA 8x16");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      // Palette quantization is scoped per host: dos snaps red-500 to
+      // VGA bright red; the phosphor theme maps it to a green step.
+      expect(token("dos", "--color-red-500")).toBe("rgb(255, 85, 85)");
+      expect(token("green-phosphor", "--color-red-500")).toBe("rgb(0, 168, 60)");
+      // Era borders: c64 rounds corners, amber (single) downgrades
+      // the double border, teletype draws 7-bit.
+      expect(grid("c64").textContent).toContain("╭");
+      expect(grid("dos").textContent).toContain("╔");
+      expect(grid("amber").textContent).not.toContain("╔");
+      expect(grid("teletype").textContent).toContain("+-");
+      expect(grid("bbs").textContent).toContain("██");
+      // The DOS themes wear the period bitmap font.
+      expect(
+        getComputedStyle(canvasElement.querySelector('[data-test="theme-dos"]')!).fontFamily,
+      ).toContain("Web IBM VGA 8x16");
+    });
   },
 };

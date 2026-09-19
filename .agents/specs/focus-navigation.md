@@ -51,6 +51,11 @@ arrow-key focus as an opt-in on top of Tab.
   cells: Down from the last visible row of a list reaches the next item
   one row below, and the move scrolls it into view — a terminal list.
   A candidate past the list's end loses to it on distance.
+- **A handled arrow stays handled.** An element whose own handler
+  cancels the key (`preventDefault`, the way a menu, a listbox, or a
+  tab list built on ARIA moves its highlight) keeps it: the host's
+  navigation runs after the target's handlers and yields to a
+  cancelled event.
 - **Controls keep the arrows they use.** Inside an `<input>` of a
   textual type (text, search, url, tel, email, password, or no type),
   Left and Right stay the caret's; Up and Down navigate. All four
@@ -134,7 +139,8 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
   textarea keeps all four; a select closed navigates; a modifier stays
   native; Down from the list's last visible button reaches the next one
   and `scrollTop` grows); the default host ignores arrows, and both
-  hosts keep Tab. Runs in all three engines.
+  hosts keep Tab; a widget that handles an arrow (`HandledArrows`)
+  keeps it. Runs in all three engines.
 - Storybook toolbar: a "Focus" global beside "Select" writes `focus`
   onto every story's hosts, so any story with controls demonstrates
   arrow-key navigation.

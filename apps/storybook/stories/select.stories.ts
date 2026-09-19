@@ -1,5 +1,6 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
+import { readyHost, readyHosts } from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import type { MonoWindElement } from "monowind";
 
@@ -24,9 +25,9 @@ export const SelectProp: StoryObj = {
     <mono-wind select="text" class="mt-1" data-test="text">${CONTENT}</mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    await readyHosts(canvasElement);
     const defaultHost = canvasElement.querySelector<MonoWindElement>('[data-test="default"]')!;
     const textHost = canvasElement.querySelector<MonoWindElement>('[data-test="text"]')!;
-    await waitFor(() => expect(textHost).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
     // The default reflects onto the attribute (the single place it
     // lives), so an attribute-less host reads back select="grid".
     expect(defaultHost.getAttribute("select")).toBe("grid");
@@ -77,8 +78,7 @@ export const SelectionSurvivesRepaints: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const line = canvasElement.querySelector<HTMLElement>('[data-test="line"]')!;
     const textNodeWith = (needle: string): Text => {
@@ -95,9 +95,7 @@ export const SelectionSurvivesRepaints: StoryObj = {
 
     // A one-shot repaint (color change, no transition).
     line.classList.add("text-rose-400");
-    await waitFor(() => expect(textNodeWith("bravo").parentElement!.style.color).not.toBe(""), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(textNodeWith("bravo").parentElement!.style.color).not.toBe(""));
     expect(selection.toString(), "survives a restyle repaint").toBe("bravo charlie");
 
     // A fade: repaints every frame for ~300ms, selection intact
@@ -106,10 +104,8 @@ export const SelectionSurvivesRepaints: StoryObj = {
     line.classList.replace("text-rose-400", "text-cyan-400");
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(selection.toString(), "survives mid-fade").toBe("bravo charlie");
-    await waitFor(
-      () =>
-        expect(textNodeWith("bravo").parentElement!.style.color).toBe(getComputedStyle(line).color),
-      { timeout: 10_000 },
+    await waitFor(() =>
+      expect(textNodeWith("bravo").parentElement!.style.color).toBe(getComputedStyle(line).color),
     );
     expect(selection.toString(), "survives the whole fade").toBe("bravo charlie");
   },

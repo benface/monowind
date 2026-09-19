@@ -9,7 +9,8 @@ truth.
 
 - **Core stands alone.** Everything themable ships with working
   defaults in `monowind` itself — default glyph set, `--mw-fg`/
-  `--mw-bg` (system colors), and the ANSI-16 `--mw-ansi-*` defaults.
+  `--mw-bg` (the host's own colors; system colors on a bare page),
+  and the ANSI-16 `--mw-ansi-*` defaults.
   Themes (from `@monowind/themes` or anyone) only OVERRIDE; zero
   `@monowind/*` packages is always a fully functional engine.
 - **A theme is one CSS file, CLASS-SCOPED.** A theme's rules target
@@ -20,9 +21,19 @@ truth.
   tokens, `font-family`/`font-size`/`line-height`/`letter-spacing`
   (cell metrics are measured, any monospace works), and a glyph-set
   NAME. Themes need JS only to register a CUSTOM glyph set.
-- **Token contract**: `--mw-fg`, `--mw-bg`, and the sixteen
+- **Token contract**: `--mw-fg` and `--mw-bg`, which the engine
+  derives from the host before each measure (a host coloring itself
+  through `--mw-fg` is circular and keeps the seed) — its computed
+  `color`,
+  and its `background-color` or the nearest ancestor's where its own
+  is transparent, `canvas` past the root — and writes into the
+  shadow's `:host` rule, so the text and background a host wears
+  through `text-*`/`bg-*` or a theme's rule are what the engine
+  inverts focus with and what `bg-(--mw-bg)` paints; an explicit
+  token on the host outranks the derived one (an outer rule beats
+  `:host`) and one on a descendant scopes its subtree. And the sixteen
   `--mw-ansi-{black,red,green,yellow,blue,magenta,cyan,white}` +
-  `--mw-ansi-bright-*` properties. Inherited, overridable at any
+  `--mw-ansi-bright-*` properties, inherited, overridable at any
   scope. Consumers of the contract (the engine's focus-invert,
   ascii-art SGR colors, effects) reference tokens, never literals.
 - **Border glyph SETS are orthogonal to border STYLES.** Authors keep
@@ -99,10 +110,10 @@ tr?, bl?, br? }` in cells: a corner draws the registration nearest
   specs/scrolling.md — and the `shadow` ramp, shades from a box's
   shadow core outward (default `█ ▓ ▒ ░`; `ascii` `# + : .`) —
   specs/box-shadow.md.
-- ANSI defaults live in core's companion (`mono-wind` base block);
-  `@monowind/ascii` no longer ships duplicates.
+- ANSI defaults live in core's companion alone (`mono-wind` base
+  block).
 - Authoring sugar shipped: `borders-default/rounded/ascii/single/blocks/cp437`
-  utilities in core's rules.css set the custom property; arbitrary
+  utilities in core's utilities.css set the custom property; arbitrary
   properties work for registered custom sets.
 - Palette remapping needed nothing from core: `@monowind/themes`
   generates scoped `--color-*` overrides (nearest-in-OKLAB; lightness
@@ -113,3 +124,10 @@ tr?, bl?, br? }` in cells: a corner draws the registration nearest
 Public surface: every change is ADDITIVE (new tokens with defaults,
 new optional set entries, new built-in sets). Anything else is a
 breaking change requiring deliberate sign-off and a migration note.
+
+Migration notes:
+
+- 0.3.0: `--mw-fg`/`--mw-bg` derive from the host's colors; a theme
+  sets `color` and `background-color` and drops the two tokens (one
+  still declaring them keeps its values, an outer rule outranking
+  `:host`).

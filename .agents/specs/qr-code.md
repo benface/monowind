@@ -189,7 +189,7 @@ tall — is square, and a cell row holds two module rows.
   clipped to their cell). An `aspect="1"` story covers the one-module-per-cell
   packing no bundled font reaches, and a `CustomGlyphs` story the
   two-cell fallback of an authored full-only set.
-- Storybook: `Components / mono-qr` for the sweep; `Test / QR` for the
+- Storybook: `Packages / qr-code` for the sweep; `Test / QR` for the
   attribute changes, selection and copy of the transcript, the value
   text kept for assistive technology, and the `Fonts` fixture the
   decode spec screenshots.

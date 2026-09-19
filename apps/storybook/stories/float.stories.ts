@@ -51,23 +51,20 @@ export const DropCap: StoryObj = {
     const capRows = height(cap) + cells(cap, "--mw-mb");
     let capRow = 0;
     let textCol = 0;
-    await waitFor(
-      () => {
-        const { rows, boxOf, expectNativeOnGrid } = measure();
-        const origin = boxOf(first);
-        capRow = origin.row;
-        textCol = origin.col + width(cap) + cells(cap, "--mw-mr");
-        expect(boxOf(cap)).toEqual(origin);
-        expect(rows[capRow]!.slice(origin.col, textCol).trim()).not.toBe("");
-        expect(rows[capRow]!.indexOf("raccoon")).toBe(textCol);
-        const lines = expectNativeOnGrid(first);
-        expect(lines[0]!.row).toBe(capRow);
-        for (const { row, col } of lines) {
-          expect(col).toBe(row < capRow + capRows ? textCol : origin.col);
-        }
-      },
-      { timeout: 5_000 },
-    );
+    await waitFor(() => {
+      const { rows, boxOf, expectNativeOnGrid } = measure();
+      const origin = boxOf(first);
+      capRow = origin.row;
+      textCol = origin.col + width(cap) + cells(cap, "--mw-mr");
+      expect(boxOf(cap)).toEqual(origin);
+      expect(rows[capRow]!.slice(origin.col, textCol).trim()).not.toBe("");
+      expect(rows[capRow]!.indexOf("raccoon")).toBe(textCol);
+      const lines = expectNativeOnGrid(first);
+      expect(lines[0]!.row).toBe(capRow);
+      for (const { row, col } of lines) {
+        expect(col).toBe(row < capRow + capRows ? textCol : origin.col);
+      }
+    });
     const { cellOf, cellAt } = measure();
     host.setAttribute("select", "text");
     expect(pressAt(first, cellAt(textCol, capRow), 1)).toBe(false);
@@ -222,38 +219,35 @@ export const PullQuote: StoryObj = {
     expect(stamp1).toHaveAttribute("data-mw-float", "right");
     expect(prose).toHaveAttribute("data-mw-flow", "text");
     expect(under).toHaveAttribute("data-mw-flow", "text");
-    await waitFor(
-      () => {
-        const { rows, boxOf, expectNativeOnGrid } = measure();
-        const { row: top, col: origin } = boxOf(quote);
-        const bandCol = origin + width(quote) + 1;
-        const quoteBottom = top + height(quote);
-        const stampCol = boxOf(stamp1).col;
-        const stampBottom = boxOf(stamp1).row + height(stamp1);
-        expect(boxOf(prose).col).toBe(origin);
-        expect(stampCol + width(stamp1)).toBe(boxOf(aside).col + width(aside) - 4);
-        const lines = expectNativeOnGrid(prose);
-        expect(lines[0]!.row).toBe(top + 1);
-        expect(lines.some(({ row }) => row >= stampBottom)).toBe(true);
-        for (const { row, col, max } of lines) {
-          expect(row).toBeLessThan(quoteBottom);
-          expect(col).toBe(bandCol);
-          if (row < stampBottom) expect(max).toBeLessThan(stampCol - 1);
-        }
-        expect(boxOf(under)).toEqual({ row: boxOf(prose).row + height(prose) + 1, col: origin });
-        expect(boxOf(under).row).toBeLessThan(quoteBottom);
-        expect(expectNativeOnGrid(under)[0]!.row).toBe(quoteBottom);
-        expect(rows[quoteBottom]!.indexOf("a box")).toBe(origin + 1);
-        const stampRow = boxOf(under).row + height(under) + 1;
-        expect(boxOf(stamp2)).toEqual({ row: stampRow, col: stampCol });
-        // The aside contains its floats: its bottom padding and border
-        // come no sooner than the last stamp.
-        expect(boxOf(aside).row + height(aside)).toBeGreaterThanOrEqual(
-          stampRow + height(stamp2) + 2,
-        );
-      },
-      { timeout: 5_000 },
-    );
+    await waitFor(() => {
+      const { rows, boxOf, expectNativeOnGrid } = measure();
+      const { row: top, col: origin } = boxOf(quote);
+      const bandCol = origin + width(quote) + 1;
+      const quoteBottom = top + height(quote);
+      const stampCol = boxOf(stamp1).col;
+      const stampBottom = boxOf(stamp1).row + height(stamp1);
+      expect(boxOf(prose).col).toBe(origin);
+      expect(stampCol + width(stamp1)).toBe(boxOf(aside).col + width(aside) - 4);
+      const lines = expectNativeOnGrid(prose);
+      expect(lines[0]!.row).toBe(top + 1);
+      expect(lines.some(({ row }) => row >= stampBottom)).toBe(true);
+      for (const { row, col, max } of lines) {
+        expect(row).toBeLessThan(quoteBottom);
+        expect(col).toBe(bandCol);
+        if (row < stampBottom) expect(max).toBeLessThan(stampCol - 1);
+      }
+      expect(boxOf(under)).toEqual({ row: boxOf(prose).row + height(prose) + 1, col: origin });
+      expect(boxOf(under).row).toBeLessThan(quoteBottom);
+      expect(expectNativeOnGrid(under)[0]!.row).toBe(quoteBottom);
+      expect(rows[quoteBottom]!.indexOf("a box")).toBe(origin + 1);
+      const stampRow = boxOf(under).row + height(under) + 1;
+      expect(boxOf(stamp2)).toEqual({ row: stampRow, col: stampCol });
+      // The aside contains its floats: its bottom padding and border
+      // come no sooner than the last stamp.
+      expect(boxOf(aside).row + height(aside)).toBeGreaterThanOrEqual(
+        stampRow + height(stamp2) + 2,
+      );
+    });
   },
 };
 
@@ -302,54 +296,51 @@ export const MultipleFloats: StoryObj = {
     const tile = tiles[0]!;
     expect(tile).toHaveAttribute("data-mw-float", "left");
     expect(prose).toHaveAttribute("data-mw-flow", "text");
-    await waitFor(
-      () => {
-        const { rows, boxOf, expectNativeOnGrid } = measure();
-        const origin = boxOf(prose);
-        // A float's native margin is its authored one, in cells.
-        expect(cells(tile, "--mw-mr")).toBe(1);
-        const stride = width(tile) + 1;
-        const rowHeight = height(tile);
-        const end = boxOf(box).col + width(box) - 4;
-        const perRow = Math.floor((end - origin.col) / stride);
-        expect(perRow).toBe(4);
-        // Each tile on its row and column, natively and on the grid (its
-        // border's corner on that cell).
-        tiles.forEach((el, i) => {
-          const at = {
-            row: origin.row + Math.floor(i / perRow) * rowHeight,
-            col: origin.col + (i % perRow) * stride,
-          };
-          expect(boxOf(el)).toEqual(at);
-          expect(rows[at.row]![at.col]).toBe("┌");
-        });
-        // The prose: the first row of tiles leaves no cell, so its lines
-        // start beside the second row, past the two tiles there, and
-        // run the full width below them.
-        const secondRow = origin.row + rowHeight;
-        const lines = expectNativeOnGrid(prose);
-        expect(lines[0]!.row).toBe(secondRow);
-        expect(lines.some(({ row }) => row >= secondRow + rowHeight)).toBe(true);
-        for (const { row, col } of lines) {
-          expect(col).toBe(row < secondRow + rowHeight ? origin.col + 2 * stride : origin.col);
-        }
-        // The right tiles start at the paragraph's bottom and fill their
-        // rows from the right edge, each later one to the left.
-        const proseBottom = boxOf(prose).row + height(prose);
-        rightTiles.forEach((el, i) => {
-          const at = {
-            row: proseBottom + Math.floor(i / perRow) * rowHeight,
-            col: end - (i % perRow) * stride - width(el),
-          };
-          expect(boxOf(el)).toEqual(at);
-          expect(rows[at.row]![at.col]).toBe("┌");
-        });
-        // The box contains its floats: its bottom padding and border
-        // follow the last row of tiles.
-        expect(boxOf(box).row + height(box)).toBe(proseBottom + 2 * rowHeight + 2);
-      },
-      { timeout: 5_000 },
-    );
+    await waitFor(() => {
+      const { rows, boxOf, expectNativeOnGrid } = measure();
+      const origin = boxOf(prose);
+      // A float's native margin is its authored one, in cells.
+      expect(cells(tile, "--mw-mr")).toBe(1);
+      const stride = width(tile) + 1;
+      const rowHeight = height(tile);
+      const end = boxOf(box).col + width(box) - 4;
+      const perRow = Math.floor((end - origin.col) / stride);
+      expect(perRow).toBe(4);
+      // Each tile on its row and column, natively and on the grid (its
+      // border's corner on that cell).
+      tiles.forEach((el, i) => {
+        const at = {
+          row: origin.row + Math.floor(i / perRow) * rowHeight,
+          col: origin.col + (i % perRow) * stride,
+        };
+        expect(boxOf(el)).toEqual(at);
+        expect(rows[at.row]![at.col]).toBe("┌");
+      });
+      // The prose: the first row of tiles leaves no cell, so its lines
+      // start beside the second row, past the two tiles there, and
+      // run the full width below them.
+      const secondRow = origin.row + rowHeight;
+      const lines = expectNativeOnGrid(prose);
+      expect(lines[0]!.row).toBe(secondRow);
+      expect(lines.some(({ row }) => row >= secondRow + rowHeight)).toBe(true);
+      for (const { row, col } of lines) {
+        expect(col).toBe(row < secondRow + rowHeight ? origin.col + 2 * stride : origin.col);
+      }
+      // The right tiles start at the paragraph's bottom and fill their
+      // rows from the right edge, each later one to the left.
+      const proseBottom = boxOf(prose).row + height(prose);
+      rightTiles.forEach((el, i) => {
+        const at = {
+          row: proseBottom + Math.floor(i / perRow) * rowHeight,
+          col: end - (i % perRow) * stride - width(el),
+        };
+        expect(boxOf(el)).toEqual(at);
+        expect(rows[at.row]![at.col]).toBe("┌");
+      });
+      // The box contains its floats: its bottom padding and border
+      // follow the last row of tiles.
+      expect(boxOf(box).row + height(box)).toBe(proseBottom + 2 * rowHeight + 2);
+    });
   },
 };
 
@@ -411,47 +402,44 @@ export const Clear: StoryObj = {
   play: async ({ canvasElement }) => {
     const { by, width, height, measure } = await readyGrid(canvasElement);
     const box = by("box");
-    await waitFor(
-      () => {
-        const { boxOf, expectNativeOnGrid } = measure();
-        const end = boxOf(box).col + width(box) - 4;
-        for (const { clear } of CLEARS) {
-          const [left, right, line, cleared] = [
-            by(`${clear}-left`),
-            by(`${clear}-right`),
-            by(`${clear}-line`),
-            by(`${clear}-cleared`),
-          ];
-          // The section's floats at its top, one at each edge; the
-          // uncleared line between them.
-          const { row: top, col: origin } = boxOf(line);
-          expect(boxOf(left)).toEqual({ row: top, col: origin });
-          expect(boxOf(right)).toEqual({ row: top, col: end - width(right) });
-          const afterLeft = origin + width(left) + 1;
-          const beforeRight = boxOf(right).col - 1;
-          const [only] = expectNativeOnGrid(line);
-          expect(only).toMatchObject({ row: top, col: afterLeft });
-          expect(only!.max).toBeLessThan(beforeRight);
-          // The cleared paragraph's top is the named floats' bottom, past
-          // the line; its lines wrap beside the float it did not name.
-          const leftBottom = top + height(left);
-          const rightBottom = top + height(right);
-          const bottoms = {
-            left: leftBottom,
-            right: rightBottom,
-            both: Math.max(leftBottom, rightBottom),
-          };
-          expect(boxOf(cleared)).toEqual({ row: bottoms[clear], col: origin });
-          expect(boxOf(cleared).row).toBeGreaterThan(top + height(line));
-          const lines = expectNativeOnGrid(cleared);
-          if (clear !== "both") expect(lines.length).toBeGreaterThan(1);
-          for (const { row, col, max } of lines) {
-            expect(col).toBe(row < leftBottom ? afterLeft : origin);
-            if (row < rightBottom) expect(max).toBeLessThan(beforeRight);
-          }
+    await waitFor(() => {
+      const { boxOf, expectNativeOnGrid } = measure();
+      const end = boxOf(box).col + width(box) - 4;
+      for (const { clear } of CLEARS) {
+        const [left, right, line, cleared] = [
+          by(`${clear}-left`),
+          by(`${clear}-right`),
+          by(`${clear}-line`),
+          by(`${clear}-cleared`),
+        ];
+        // The section's floats at its top, one at each edge; the
+        // uncleared line between them.
+        const { row: top, col: origin } = boxOf(line);
+        expect(boxOf(left)).toEqual({ row: top, col: origin });
+        expect(boxOf(right)).toEqual({ row: top, col: end - width(right) });
+        const afterLeft = origin + width(left) + 1;
+        const beforeRight = boxOf(right).col - 1;
+        const [only] = expectNativeOnGrid(line);
+        expect(only).toMatchObject({ row: top, col: afterLeft });
+        expect(only!.max).toBeLessThan(beforeRight);
+        // The cleared paragraph's top is the named floats' bottom, past
+        // the line; its lines wrap beside the float it did not name.
+        const leftBottom = top + height(left);
+        const rightBottom = top + height(right);
+        const bottoms = {
+          left: leftBottom,
+          right: rightBottom,
+          both: Math.max(leftBottom, rightBottom),
+        };
+        expect(boxOf(cleared)).toEqual({ row: bottoms[clear], col: origin });
+        expect(boxOf(cleared).row).toBeGreaterThan(top + height(line));
+        const lines = expectNativeOnGrid(cleared);
+        if (clear !== "both") expect(lines.length).toBeGreaterThan(1);
+        for (const { row, col, max } of lines) {
+          expect(col).toBe(row < leftBottom ? afterLeft : origin);
+          if (row < rightBottom) expect(max).toBeLessThan(beforeRight);
         }
-      },
-      { timeout: 5_000 },
-    );
+      }
+    });
   },
 };

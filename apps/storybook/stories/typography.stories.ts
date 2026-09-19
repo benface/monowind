@@ -1,12 +1,15 @@
 import { html } from "lit";
-import { expect, waitFor } from "storybook/test";
+import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
+  cellSize,
   expectBrowserLineBreaksToMatchEngine,
   expectBrowserRowsToMatchEngine,
   expectGridOnItsCells,
   isFirefox,
+  paintedSpan,
   readyHost,
+  testHooks,
 } from "./helpers.ts";
 
 const meta: Meta = {
@@ -175,8 +178,8 @@ export const InlineDisplay: StoryObj = {
     // wrap model computed it (the engine writes its cells to --mw-x/y but
     // no CSS consumes them for inline boxes — the browser flows it).
     const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     const box = host.querySelector<HTMLElement>("[data-mw-inline-box]")!;
     const leaf = box.parentElement!;
     const engineX = Number(box.style.getPropertyValue("--mw-x")) * cellWidth;
@@ -303,7 +306,7 @@ export const SubpixelHeadroom: StoryObj = {
     // once desynced the whole sweep), loose enough for engines that round
     // advances slightly (Linux Firefox measures 8.4333px, 0.0046 away).
     const advanceTolerance = 0.01;
-    const cellWidthNow = () => parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellWidthNow = () => cellSize(host).width;
     const fontDeadline = performance.now() + 10_000;
     let pump = false;
     while (
@@ -404,8 +407,7 @@ export const WideCharacters: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     expectGridOnItsCells(host);
   },
 };
@@ -435,15 +437,14 @@ export const TilingGlyphs: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     await document.fonts.ready;
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const cellHeight = cellSize(host).height;
     const grid = host.shadowRoot!.getElementById("grid")!;
     const gridRect = grid.getBoundingClientRect();
     // The cell is a whole number of layout units, so a row of boxes ends
     // where a row of text does.
-    expect((parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw")) * 64) % 1).toBe(0);
+    expect((cellSize(host).width * 64) % 1).toBe(0);
     // Every tiling glyph is a box a row tall on its row, judged in bulk:
     // the Interactions addon instruments every `expect`, and hundreds
     // freeze the panel.
@@ -519,11 +520,11 @@ export const AnonymousRuns: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const rows = grid.textContent!.split("\n");
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     const gridRect = grid.getBoundingClientRect();
     // Where a native line rect lands, in cells (its middle: a leaded
     // line box is two rows).
@@ -601,9 +602,7 @@ export const AnonymousRuns: StoryObj = {
       expect(cellOf(by(`link${suffix}`).getBoundingClientRect())).toEqual(shown("a link", top));
     }
     // A run paints in its container's color.
-    const run = Array.from(grid.querySelectorAll("span")).find((span) =>
-      span.textContent!.includes("Text before"),
-    )!;
+    const run = paintedSpan(host, "Text before")!;
     expect(getComputedStyle(run).color).toBe(getComputedStyle(by("mixed")).color);
     // Under leading, each wrapped line sits a gap row down — the runs'
     // and the block's, natively too (the run after the link wraps in

@@ -1,8 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import type { MonoWindElement } from "monowind";
-import { pressAt, release } from "./helpers.ts";
+import { cellSize, pressAt, readyHost, release } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Interactive",
@@ -71,8 +70,7 @@ export const Input: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     // Browser paints each input's value on top; the grid leaves their
     // leaves empty. Labels are normal elements and render their text
     // into the grid — check `.value` instead of the grid text.
@@ -143,8 +141,7 @@ And double-spaced!?</textarea>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     // Grid leaves each textarea empty — the browser paints the value
     // on top; sibling labels still render into the grid.
     const grid = host.toPlainText();
@@ -240,8 +237,7 @@ export const Select: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     // Grid leaves each select empty — the browser paints the option
     // label; sibling labels and the legend still render into the grid.
     const grid = host.toPlainText();
@@ -317,7 +313,7 @@ export const Select: StoryObj = {
     dropdown.focus();
     await waitFor(() => expect(gridBackgroundAt(dropdown)).not.toBe(""));
     const box = dropdown.getBoundingClientRect();
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellWidth = cellSize(host).width;
     pressAt(gridEl, { x: box.right + 2 * cellWidth, y: box.top + box.height / 2 }, 1);
     expect(gridBackgroundAt(dropdown)).toBe("");
     // The caret's node, seen through the shadow (the document's anchor
@@ -354,8 +350,7 @@ export const Link: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const link = host.querySelector<HTMLAnchorElement>("#custom-link")!;
     link.focus();
     expect(document.activeElement).toBe(link);
@@ -401,17 +396,16 @@ export const Button: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<MonoWindElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const btn = host.querySelector<HTMLButtonElement>("#btn")!;
     btn.focus();
     expect(document.activeElement).toBe(btn);
     // Click triggers the handler; the text change fires the host's
     // MutationObserver → relayout → grid repaints with the new label.
     btn.click();
-    await waitFor(() => expect(host.toPlainText()).toContain("clicked (1)"), { timeout: 5_000 });
+    await waitFor(() => expect(host.toPlainText()).toContain("clicked (1)"));
     btn.click();
-    await waitFor(() => expect(host.toPlainText()).toContain("clicked (2)"), { timeout: 5_000 });
+    await waitFor(() => expect(host.toPlainText()).toContain("clicked (2)"));
     // Full-width + text-center: the label sits centered on the grid.
     const full = host.querySelector<HTMLButtonElement>("#btn-full")!;
     const label = full.textContent!.trim();

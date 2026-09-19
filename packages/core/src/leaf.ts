@@ -52,10 +52,6 @@ export interface LeafRegistration {
    * also run under happy-dom/Node — `renderPlainText` traverses the
    * same tree. */
   render: (el: Element) => LeafContent;
-  /** Attributes whose changes re-render this leaf (merged into the
-   * host's mutation-observer filter; `class`/`style` and character
-   * data are always observed). */
-  observedAttributes?: string[];
   /** The node whose contents a semantic gesture ON the leaf selects
    * (specs/semantic-selection.md) — a shadow transcript that sits
    * under the art, say. Absent: the leaf's light contents. */
@@ -95,16 +91,6 @@ export function invalidateLeaves(): void {
 
 export function leafRendererFor(tagName: string): LeafRegistration | undefined {
   return leaves.get(tagName.toLowerCase());
-}
-
-/** The union of every registration's observed attributes — the host
- * extends its MutationObserver filter with these. */
-export function leafObservedAttributes(): string[] {
-  const all = new Set<string>();
-  for (const leaf of leaves.values()) {
-    for (const attribute of leaf.observedAttributes ?? []) all.add(attribute.toLowerCase());
-  }
-  return [...all];
 }
 
 /** Host subscription to registry changes (registration or

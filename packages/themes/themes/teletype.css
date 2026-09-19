@@ -10,8 +10,6 @@
     line-height: 1;
     background-color: #f5f1e6;
     color: #20201c;
-    --mw-fg: #20201c;
-    --mw-bg: #f5f1e6;
     --mw-border-glyphs: ascii;
     /* ANSI ladder inverted for paper: SGR art assumes light-on-dark,
      * so the bright end maps to the darkest ink. */

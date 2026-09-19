@@ -16,6 +16,7 @@
     "@monowind/ascii": "workspace:^",
     "@monowind/qr-code": "workspace:^",
     "@monowind/themes": "workspace:^",
+    "@monowind/ui": "workspace:^",
     "@playwright/test": "^1.63.0",
     "@storybook/addon-a11y": "^10.6.0",
     "@storybook/addon-docs": "^10.6.0",
@@ -24,8 +25,8 @@
     "@storybook/web-components-vite": "^10.6.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/pngjs": "^6.0.5",
-    "@vitest/browser-playwright": "^4.1.11",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/browser-playwright": "^5.0.1",
+    "@vitest/coverage-v8": "5.0.1",
     "lit": "^3.3.3",
     "playwright": "^1.63.0",
     "pngjs": "^7.0.0",
@@ -34,6 +35,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.1"
   }
 }

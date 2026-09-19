@@ -1,6 +1,6 @@
 {
   "name": "monowind",
-  "version": "0.2.14",
+  "version": "0.3.0",
   "description": "Text-based user interfaces (TUI) on the web, from ordinary HTML and Tailwind utility classes",
   "keywords": [
     "ascii",
@@ -56,11 +56,12 @@
   },
   "devDependencies": {
     "@tailwindcss/browser": "^4.3.3",
-    "@vitest/coverage-v8": "4.1.11",
-    "happy-dom": "^20.14.3",
+    "@types/node": "^26.6.1",
+    "@vitest/coverage-v8": "5.0.1",
+    "happy-dom": "^20.14.5",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.1"
   }
 }

@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, pressAt, release } from "./helpers.ts";
+import { copyText, pressAt, readyHost, release } from "./helpers.ts";
 
 /**
  * The host's own content states: emptied out, it is zero rows with an
@@ -25,8 +25,7 @@ export const Content: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const slot = host.shadowRoot!.querySelector("slot")!;
     const by = (name: string) => host.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
@@ -46,7 +45,7 @@ export const Content: StoryObj = {
     host.replaceChildren();
     await waitFor(() => expect(gridHeight()).toBe(0));
     expect(grid.textContent).toBe("");
-    expect(host.getBoundingClientRect().height).toBe(chrome);
+    await waitFor(() => expect(host.getBoundingClientRect().height).toBe(chrome));
 
     // The host's own inline content is the root leaf.
     host.innerHTML = 'foo <b data-test="bold" class="text-red-400">bar</b> baz';
@@ -133,9 +132,11 @@ export const Content: StoryObj = {
     );
     const contentTop = cell(0, 0).y - cellHeight / 2;
     const rowOf = (rect: DOMRect) => Math.round((rect.top - contentTop) / cellHeight);
-    expect(rowOf(slot.getBoundingClientRect())).toBe(0);
-    expect(rowOf(by("first").getBoundingClientRect())).toBe(2);
-    expect(rowOf(by("inner").getBoundingClientRect())).toBe(6);
+    await waitFor(() => {
+      expect(rowOf(slot.getBoundingClientRect())).toBe(0);
+      expect(rowOf(by("first").getBoundingClientRect())).toBe(2);
+      expect(rowOf(by("inner").getBoundingClientRect())).toBe(6);
+    });
     // The host's runs take the root leaf's style: the host's line-height
     // is the cell, so a run's lines are contiguous rows.
     host.style.lineHeight = "2";
@@ -159,7 +160,7 @@ export const Nested: StoryObj = {
   render: () => html`<mono-wind data-test="outer"><p>Outer text.</p></mono-wind>`,
   play: async ({ canvasElement }) => {
     const outer = canvasElement.querySelector<HTMLElement>('[data-test="outer"]')!;
-    await waitFor(() => expect(outer).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    await waitFor(() => expect(outer).toHaveAttribute("data-mw-ready"));
     const warnings: string[] = [];
     const warn = console.warn;
     console.warn = (...args: unknown[]) => warnings.push(String(args[0]));
@@ -167,10 +168,8 @@ export const Nested: StoryObj = {
       const inner = document.createElement("mono-wind");
       inner.innerHTML = "<p>Inner text.</p>";
       outer.appendChild(inner);
-      await waitFor(
-        () =>
-          expect(outer.shadowRoot!.getElementById("grid")!.textContent).toContain("Inner text."),
-        { timeout: 10_000 },
+      await waitFor(() =>
+        expect(outer.shadowRoot!.getElementById("grid")!.textContent).toContain("Inner text."),
       );
       expect(warnings.some((w) => w.includes("inside another <mono-wind> is unsupported"))).toBe(
         true,
@@ -189,7 +188,7 @@ export const Animated: StoryObj = {
   render: () => html`<mono-wind data-test="host" class="animate-pulse"><p>Loading…</p></mono-wind>`,
   play: async ({ canvasElement }) => {
     const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
     let layouts = 0;
     const observer = new MutationObserver(() => layouts++);
     observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });

@@ -65,6 +65,29 @@ describe("margin collapsing in block flow", () => {
   });
 });
 
+describe("a border box is at least its edges", () => {
+  it("keeps the border rows and columns of a box sized below them", () => {
+    const rule = makeNode({
+      style: {
+        height: { kind: "cells", value: 0 },
+        border: { top: 1, right: 0, bottom: 0, left: 0 },
+      },
+    });
+    const post = makeNode({
+      style: {
+        width: { kind: "cells", value: 0 },
+        maxHeight: 0,
+        border: { top: 0, right: 0, bottom: 0, left: 1 },
+        padding: { top: 0, right: 0, bottom: 1, left: 0 },
+      },
+    });
+    const root = makeNode({ children: [rule, post] });
+    layoutRoot(root, 20);
+    expect(rule.localRect).toMatchObject({ width: 20, height: 1 });
+    expect(post.localRect).toMatchObject({ y: 1, width: 1, height: 1 });
+  });
+});
+
 describe("min-width / max-width / min-height / max-height clamping", () => {
   it("clamps a fill-mode container down to max-width", () => {
     const container = makeNode({

@@ -87,7 +87,11 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
   the host out again, so the box follows.
 - **Margins are the gap.** A margin on the anchored box moves it off
   the anchor's edge in cells, as it does in CSS, so `mt-1` under a
-  button is the one-row gap a menu wants.
+  button is the one-row gap a menu wants, and a flip mirrors the
+  margins with the area as CSS does — `flip-block` swaps top and
+  bottom, `flip-inline` left and right, `flip-start` the two axes — so
+  a gap or a shift set on the anchor's side follows the box, and the
+  fit a fallback tests is the margin box's.
 
 ## Deviations from CSS (summary)
 
@@ -97,7 +101,10 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
    fallbacks stays visible.
 3. The anchor is the nearest preceding element by name in the host;
    CSS's acceptability rules (containing-block and stacking checks)
-   are not applied.
+   are not applied, so an ancestor anchors its descendant, which the
+   browsers refuse (probed 2026-09-18: Chromium leaves such a box at
+   its static position, its `position-area` read as authored, so no
+   native fallback reaches the read there either).
 4. Logical keywords map as for a horizontal, left-to-right host.
 5. `@position-try` rules are not read; only the flip keywords apply.
 6. A sticky anchor is anchored at its laid-out box; its shift for the
@@ -111,8 +118,9 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
   to a narrow area and one that may not wrap overflowing it; a flip
   at the host's bottom edge and at its right edge, a `flip-start`;
   alignment keywords; an anchor inside a scroller followed through a
-  scroll; a margin gap.
-- Storybook (`anchor.stories.ts`): a menu under its button in every
+  scroll; a margin gap, mirrored through a flip; a negative margin's
+  shift along the anchor.
+- Storybook (`positioning.stories.ts`): a menu under its button in every
   engine, the light element's box at the grid's cells; the flip near
   the host's edge; a tooltip above a word; a submenu beside its item;
   a menu following its button through a list's scroll, flipping as
@@ -140,4 +148,11 @@ read: the Typed OM reports it as `auto`, so it behaves as `auto`
   any positioned box, and the area taken as `data-mw-area`.
 - styles.css: `position-area: none` locked on laid-out elements
   outside `[measuring]`, so an engine that positions by it natively
-  (Firefox) leaves the placement to the engine.
+  leaves the placement to the engine; `anchor-scope: all` on every
+  element under `[measuring]`, so no named anchor resolves natively
+  while the engine reads and the browser applies no fallback of its
+  own — Chromium otherwise reports the fallback it chose from pixel
+  geometry as the computed `position-area`. The implicit anchor of a
+  popover is out of `anchor-scope`'s reach, and needs none: Chromium
+  reports an implicitly anchored popover's `position-area` as authored
+  whatever its native placement (probed 2026-09-19).

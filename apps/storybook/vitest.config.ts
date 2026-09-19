@@ -10,6 +10,10 @@ export default defineConfig({
   ],
   test: {
     name: "storybook",
+    // Bind the browser-test server to IPv4 loopback: where `localhost`
+    // resolves to `::1` first, Firefox's in-page orchestrator can't reach
+    // the IPv6-bound server and its session never connects.
+    api: { host: "127.0.0.1" },
     // Runs in the browser page; silences known console noise (see file).
     setupFiles: [path.join(import.meta.dirname, ".storybook/vitest.setup.ts")],
     // Generous: three browsers share a loaded CI runner's CPU, and slow

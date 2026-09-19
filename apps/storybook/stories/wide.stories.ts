@@ -2,7 +2,16 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { clusterAdvances, wrapLines } from "monowind";
-import { copyText, dragTo, expectGridOnItsCells, pressAt, release } from "./helpers.ts";
+import {
+  cellSize,
+  copyText,
+  dragTo,
+  expectGridOnItsCells,
+  pressAt,
+  readyHost,
+  release,
+  testHooks,
+} from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -29,14 +38,13 @@ export const Wide: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     // The boxes are measured in the loaded font.
     await document.fonts.ready;
     const grid = host.shadowRoot!.getElementById("grid")!;
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const by = testHooks(canvasElement);
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     const cell = (name: string, col: number, row: number): Point => {
       const rect = by(name).getBoundingClientRect();
       return { x: rect.left + (col + 0.5) * cellWidth, y: rect.top + (row + 0.5) * cellHeight };

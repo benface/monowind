@@ -199,6 +199,69 @@ describe("the area", () => {
     );
     expect(place(box).rect).toMatchObject({ y: 5 });
   });
+
+  it("shifts the box along its anchor by a negative margin", () => {
+    // Beside the anchor, top edges together, a row up: a submenu's first
+    // item level with the item that opened it, past the submenu's border.
+    const box = anchored(
+      "x",
+      { x: "end", y: "span-end" },
+      { style: { margin: { top: -1, right: 0, bottom: 0, left: 0 } } },
+    );
+    expect(place(box).rect).toMatchObject({ x: 10, y: 2 });
+  });
+
+  it("mirrors the margins through a flip, so the gap follows the box", () => {
+    // Two rows below the anchor in a 6-row host: two rows under a row
+    // of margin overflow below and flip above, the margin its gap there
+    // — the box ends at row 2, a row above the anchor.
+    const box = anchored(
+      "x",
+      { x: "span-all", y: "end" },
+      {
+        style: {
+          height: { kind: "cells", value: 2 },
+          margin: { top: 1, right: 0, bottom: 0, left: 0 },
+        },
+      },
+      [{ flipBlock: true, flipInline: false, flipStart: false }],
+    );
+    const anchor = makeNode({
+      text: "ANCH",
+      style: {
+        anchorNames: ["--a"],
+        position: "absolute",
+        insets: { top: 3, right: null, bottom: null, left: 6 },
+      },
+    });
+    const root = makeNode({ style: { minHeight: 6 }, children: [spacer(1), anchor, box] });
+    layoutRoot(root, 20);
+    expect(box.localRect).toMatchObject({ y: 0, height: 2 });
+    expect(box.anchorArea).toEqual({ x: "span-all", y: "start" });
+  });
+
+  it("fits a box with its gap where the rows are exactly enough", () => {
+    // The anchor's bottom at row 4 of 6: a row of gap and a row of box
+    // fit below, so the first placement stands.
+    const box = anchored(
+      "x",
+      { x: "span-all", y: "end" },
+      { style: { margin: { top: 1, right: 0, bottom: 0, left: 0 } } },
+      [{ flipBlock: true, flipInline: false, flipStart: false }],
+    );
+    const anchor = makeNode({
+      text: "ANCH",
+      style: {
+        anchorNames: ["--a"],
+        position: "absolute",
+        insets: { top: 3, right: null, bottom: null, left: 6 },
+      },
+    });
+    const root = makeNode({ style: { minHeight: 6 }, children: [spacer(1), anchor, box] });
+    layoutRoot(root, 20);
+    expect(box.localRect.y).toBe(5);
+    expect(box.anchorArea).toEqual({ x: "span-all", y: "end" });
+  });
 });
 
 describe("the fallbacks", () => {

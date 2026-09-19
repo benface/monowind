@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { readyHost } from "./helpers.ts";
+import { cellSize, readyHost } from "./helpers.ts";
 
 /**
  * Responsive variants (`sm:`, `md:`, …) work out of the box: the browser
@@ -65,22 +65,19 @@ export const HostWidth: StoryObj = {
     // The fonts first: the cell width they set is the unit measured.
     const host = await readyHost(canvasElement);
     const sidebar = canvasElement.querySelector<HTMLElement>('[data-test="sidebar"]')!;
-    const cellWidth = () => parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellWidth = () => cellSize(host).width;
     const cells = () => host.getBoundingClientRect().width / cellWidth();
     const wholeCells = (n: number) => Math.abs(n - Math.round(n)) < 0.01;
-    await waitFor(() => expect(wholeCells(cells())).toBe(true), { timeout: 10_000 });
+    await waitFor(() => expect(wholeCells(cells())).toBe(true));
     const before = Math.round(cells());
     // A sibling shrinking grows the host's slot: observed, re-measured,
     // still whole cells.
     sidebar.style.width = "4rem";
-    await waitFor(
-      () => {
-        expect(Math.round(cells())).toBeGreaterThan(before);
-        expect(wholeCells(cells())).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(Math.round(cells())).toBeGreaterThan(before);
+      expect(wholeCells(cells())).toBe(true);
+    });
     sidebar.style.width = "";
-    await waitFor(() => expect(Math.round(cells())).toBe(before), { timeout: 10_000 });
+    await waitFor(() => expect(Math.round(cells())).toBe(before));
   },
 };

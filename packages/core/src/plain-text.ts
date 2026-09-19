@@ -5,7 +5,7 @@ import { compositeColors, parseColor, serializeColor } from "./color.ts";
 import type { Rgba } from "./color.ts";
 import { DEFAULT_CELL, gradientCells } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { leafLineGeometry } from "./layout.ts";
+import { leafLineGeometry, lineStart } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
@@ -939,37 +939,16 @@ function forEachLeafCell(
     node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
   const multicol = node.multicolGeometry;
   const { spans, textY } = multicol ?? leafLineGeometry(node, contentWidth);
-  // Alignment and truncation act within one column of a multicol leaf,
-  // against the tracked wrap width — the browser's own alignment
-  // includes the trailing letter-spacing gap, so the engine ends lines
-  // at `width − tracking` to sit under it.
-  const alignWidth = multicol ? Math.max(1, multicol.columnWidth - style.tracking) : contentWidth;
   for (let i = 0; i < spans.length; i++) {
     const span = spans[i]!;
     const row = contentY + textY[i]!;
-    // A line beside a float aligns within its band (specs/float.md),
-    // from the band's edge.
-    const band = node.lineBands?.[i];
-    const lineAlignWidth = band ? band.width : alignWidth;
-    // First-line indent reduces the usable width and shifts the origin
-    // (per CSS, `<br>` doesn't re-indent, so only spans[0] is charged).
-    const indent = i === 0 ? style.textIndent : 0;
+    // The truncation acts within the line's width past its indent.
+    const line = lineStart(node, i, span, contentWidth);
     const truncated =
       style.whiteSpace !== "normal" && style.overflow.x === "clip"
-        ? truncateSpan(node.text, span, lineAlignWidth - indent, node.advances, style)
+        ? truncateSpan(node.text, span, line.width - line.indent, node.advances, style)
         : { end: span.end, ellipsis: false };
-    // `text-align: end` offsets each line to the content box's right
-    // edge; `center` to floor((W − line) / 2). Whole cells; a line at
-    // or over the width stays at start, matching truncation.
-    const lineWidth = lineAdvance(node.text, span.start, span.end, node.advances, style.tracking);
-    const leftover = Math.max(0, lineAlignWidth - indent - lineWidth);
-    const alignOffset =
-      style.textAlign === "end"
-        ? leftover
-        : style.textAlign === "center"
-          ? Math.floor(leftover / 2)
-          : 0;
-    let x = contentX + (multicol?.lineX[i] ?? 0) + (band?.x ?? 0) + alignOffset + indent;
+    let x = contentX + line.x;
     const advances = node.advances;
     for (let k = span.start; k < truncated.end;) {
       const advance = advanceOf(k, k + 1, advances);

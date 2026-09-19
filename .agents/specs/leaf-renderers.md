@@ -19,7 +19,7 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   escapes in ANSI-art fonts carry backgrounds and bold, so the first
   consumer already needs more than foreground color.)
 - Registration takes a single OPTIONS OBJECT
-  (`registerLeaf({ tag, render, observedAttributes, … })`) — every
+  (`registerLeafRenderer({ tag, render, selectionTarget, … })`) — every
   future capability is an added optional field, never a new overload
   or positional parameter.
 - Renderers are SYNCHRONOUS — layout runs sync per frame. Asynchrony
@@ -50,20 +50,19 @@ Status: **implemented in core** (leaf.ts, tree.ts, element.ts;
   run in the Node/happy-dom path: `renderPlainText`/`toPlainText`
   traverse the same tree, so leaf content stays golden-testable and
   SSR-safe. No layout internals are exposed.
-- Leaves DECLARE their observed attributes at registration; the
-  host's MutationObserver filter extends from the registry.
-  `characterData` mutations are already observed.
+- The host follows every attribute of a leaf (specs/cell-model.md
+  "Observation"), so a change to any of them re-renders it with no
+  declaration.
 - Registration idiom, shared by every monowind registry (leaf
-  renderers, ascii fonts, future border glyph sets): name → asset,
+  renderers, ascii fonts, border glyph sets): name → asset,
   normalized names, last-wins with a warning, and post-hoc
   registration relayouts connected hosts.
-- Scope discipline: this API covers leaf CONTENT only. Paint-level
-  extension (e.g. themes' border-glyph customization) is a separate
-  future hook.
+- Scope discipline: this API covers leaf CONTENT only; paint-level
+  extension is the theming contract's (theming.md).
 
 ## Resolved design (as implemented)
 
-- `registerLeafRenderer({ tag, render, observedAttributes, selectionTarget })`;
+- `registerLeafRenderer({ tag, render, selectionTarget })`;
   `selectionTarget(el)` names the node whose contents a semantic
   gesture on the leaf selects (specs/semantic-selection.md) —
   `<mono-ascii>` returns its shadow transcript;
@@ -108,3 +107,9 @@ This surface is public: every change is ADDITIVE (new optional
 fields, new optional parameters). Anything else is a breaking change
 requiring a major version — below 1.0, it still requires deliberate
 sign-off and a migration note, never a drive-by.
+
+Migration notes:
+
+- 0.3.0: `observedAttributes` is gone from the registration — the host
+  follows every attribute of a leaf (cell-model.md "Observation"), so
+  a registration passing it is a type error; drop the field.

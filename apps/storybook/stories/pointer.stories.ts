@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { paintedSpan, pressAt, readyHost, release, testHooks } from "./helpers.ts";
 
 /**
  * Synthesized pointer states (specs/cell-model.md "Pointer states"):
@@ -39,8 +40,7 @@ export const SynthesizedPointerStates: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const tile = canvasElement.querySelector<HTMLElement>('[data-test="tile"]')!;
     const press = canvasElement.querySelector<HTMLElement>('[data-test="press"]')!;
@@ -55,32 +55,25 @@ export const SynthesizedPointerStates: StoryObj = {
     // Engine-driven: a pointermove over the tile's cells marks the
     // chain, mirrors the cursor, and repaints the grid.
     host.dispatchEvent(new PointerEvent("pointermove", { ...at(tile), bubbles: true }));
-    await waitFor(
-      () => {
-        expect(tile).toHaveAttribute("data-mw-hover");
-        expect(getComputedStyle(tile).color).toBe(rose);
-        // group-hover: on the inline child composes from the ancestor's
-        // attribute (inline elements carry no attribute themselves).
-        const span = tile.querySelector("span")!;
-        expect(span).not.toHaveAttribute("data-mw-hover");
-        expect(getComputedStyle(span).textDecorationLine).toContain("underline");
-        expect(grid.style.cursor).toBe("pointer");
-        const painted = Array.from(grid.querySelectorAll("span")).find((s) =>
-          s.textContent!.includes("alpha"),
-        )!;
-        expect(painted.style.textDecorationLine).toContain("underline");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(tile).toHaveAttribute("data-mw-hover");
+      expect(getComputedStyle(tile).color).toBe(rose);
+      // group-hover: on the inline child composes from the ancestor's
+      // attribute (inline elements carry no attribute themselves).
+      const span = tile.querySelector("span")!;
+      expect(span).not.toHaveAttribute("data-mw-hover");
+      expect(getComputedStyle(span).textDecorationLine).toContain("underline");
+      expect(grid.style.cursor).toBe("pointer");
+      const painted = paintedSpan(host, "alpha")!;
+      expect(painted.style.textDecorationLine).toContain("underline");
+    });
 
     // An inert tile is absent for interaction: its parent hovers, it
     // never does, and the mirrored cursor is the parent's grid-mode
     // text cursor, not the tile's pointer.
     const inert = canvasElement.querySelector<HTMLElement>('[data-test="inert"]')!;
     host.dispatchEvent(new PointerEvent("pointermove", { ...at(inert), bubbles: true }));
-    await waitFor(() => expect(inert.parentElement).toHaveAttribute("data-mw-hover"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(inert.parentElement).toHaveAttribute("data-mw-hover"));
     expect(inert).not.toHaveAttribute("data-mw-hover");
     expect(grid.style.cursor).toBe("text");
 
@@ -91,22 +84,79 @@ export const SynthesizedPointerStates: StoryObj = {
     host.dispatchEvent(
       new PointerEvent("pointerdown", { ...at(press), bubbles: true, isPrimary: true, button: 0 }),
     );
-    await waitFor(() => expect(press).toHaveAttribute("data-mw-active"), { timeout: 10_000 });
+    await waitFor(() => expect(press).toHaveAttribute("data-mw-active"));
     expect(getComputedStyle(press).color).not.toBe(getComputedStyle(tile).color);
     host.dispatchEvent(new PointerEvent("pointermove", { ...at(tile), bubbles: true }));
-    await waitFor(() => expect(press).not.toHaveAttribute("data-mw-active"), { timeout: 10_000 });
+    await waitFor(() => expect(press).not.toHaveAttribute("data-mw-active"));
     host.dispatchEvent(new PointerEvent("pointermove", { ...at(press), bubbles: true }));
-    await waitFor(() => expect(press).toHaveAttribute("data-mw-active"), { timeout: 10_000 });
+    await waitFor(() => expect(press).toHaveAttribute("data-mw-active"));
     host.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, isPrimary: true }));
-    await waitFor(() => expect(press).not.toHaveAttribute("data-mw-active"), { timeout: 10_000 });
+    await waitFor(() => expect(press).not.toHaveAttribute("data-mw-active"));
 
     // Leaving the host clears hover; select="text" gates the synthesis
     // off entirely (native states own that mode).
     host.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
-    await waitFor(() => expect(tile).not.toHaveAttribute("data-mw-hover"), { timeout: 10_000 });
+    await waitFor(() => expect(tile).not.toHaveAttribute("data-mw-hover"));
     host.setAttribute("select", "text");
     host.dispatchEvent(new PointerEvent("pointermove", { ...at(tile), bubbles: true }));
     expect(tile).not.toHaveAttribute("data-mw-hover");
     host.setAttribute("select", "grid");
+  },
+};
+
+/** In grid mode the ARIA widgets take pointer events like buttons
+ * (specs/cell-model.md "Pointer states"): a menu item is hit under the
+ * pointer, a plain box is the grid's. */
+export const Widgets: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex max-w-max flex-col gap-1">
+        <div role="menu" tabindex="0" class="border px-1">
+          <div role="menuitem" data-test="item">item</div>
+          <div role="menuitemcheckbox" aria-checked="false" data-test="check">check</div>
+        </div>
+        <div role="tab" data-test="tab" class="px-1">tab</div>
+        <div data-test="plain" class="px-1">plain</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const under = (name: string) => {
+      const { clientX, clientY } = at(by(name));
+      return document.elementFromPoint(clientX, clientY);
+    };
+    for (const name of ["item", "check", "tab"]) {
+      expect(getComputedStyle(by(name)).pointerEvents).toBe("auto");
+      expect(under(name)).toBe(by(name));
+    }
+    expect(getComputedStyle(by("plain")).pointerEvents).toBe("none");
+    expect(under("plain")).toBe(host);
+  },
+};
+
+/** A press the engine takes in text mode still moves the focus as the
+ * click would (specs/cell-model.md "Pointer states"): off a focused
+ * control, onto the pressed element's nearest `tabindex` of -1. */
+export const PressFocus: StoryObj = {
+  render: () => html`
+    <mono-wind select="text">
+      <button data-test="button" class="border px-1">focused</button>
+      <div data-test="region" tabindex="-1" class="mt-1 border px-1">
+        <p data-test="text">A region a click focuses.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    by("button").focus();
+    expect(document.activeElement).toBe(by("button"));
+    const rect = by("text").getBoundingClientRect();
+    // The engine takes the press (a cancelled mousedown) and focuses for it.
+    expect(pressAt(by("text"), { x: rect.left + 4, y: rect.top + rect.height / 2 }, 1)).toBe(false);
+    release();
+    expect(document.activeElement).toBe(by("region"));
   },
 };

@@ -1,5 +1,6 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
+import { paintedSpan, readyHost } from "./helpers.ts";
 import { registerLeafRenderer } from "monowind";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
@@ -20,7 +21,6 @@ if (!customElements.get("test-leaf")) {
   customElements.define("test-leaf", class extends HTMLElement {});
   registerLeafRenderer({
     tag: "test-leaf",
-    observedAttributes: ["glyph"],
     render: (el) => {
       const glyph = el.getAttribute("glyph") ?? "*";
       return {
@@ -40,29 +40,23 @@ export const LeafRenderer: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const leaf = canvasElement.querySelector<HTMLElement>("test-leaf")!;
-    await waitFor(
-      () => {
-        // The renderer's art is on the grid; the semantic text is NOT.
-        expect(grid.textContent).toContain("****");
-        expect(grid.textContent).toContain("*  *");
-        expect(grid.textContent).not.toContain("semantic");
-        // Paint runs land as span styling.
-        const painted = Array.from(grid.querySelectorAll("span")).find((s) =>
-          s.textContent!.includes("****"),
-        )!;
-        expect(painted.style.color).toBe("rgb(255, 0, 0)");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      // The renderer's art is on the grid; the semantic text is NOT.
+      expect(grid.textContent).toContain("****");
+      expect(grid.textContent).toContain("*  *");
+      expect(grid.textContent).not.toContain("semantic");
+      // Paint runs land as span styling.
+      const painted = paintedSpan(host, "****")!;
+      expect(painted.style.color).toBe("rgb(255, 0, 0)");
+    });
     // The light DOM keeps the semantic content (a11y, select="text").
     expect(leaf.textContent).toBe("semantic fallback text");
-    // A declared observed attribute re-renders the leaf — proves the
-    // registry extends the host's mutation filter.
+    // Any attribute of a leaf re-renders it (specs/cell-model.md
+    // "Observation").
     leaf.setAttribute("glyph", "#");
-    await waitFor(() => expect(grid.textContent).toContain("####"), { timeout: 10_000 });
+    await waitFor(() => expect(grid.textContent).toContain("####"));
   },
 };

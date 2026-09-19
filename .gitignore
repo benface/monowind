@@ -17,6 +17,8 @@ packages/*/LICENSE
 /apps/**/ascii-cdn.js.map
 /apps/**/qr-cdn.js
 /apps/**/qr-cdn.js.map
+/apps/**/ui-cdn.js
+/apps/**/ui-cdn.js.map
 /apps/play/fonts/
 /apps/play/themes/
 /apps/**/sort.js

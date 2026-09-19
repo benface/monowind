@@ -43,8 +43,7 @@ export const Overflow: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const box = (name: string) =>
       canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
@@ -68,21 +67,18 @@ export const Overflow: StoryObj = {
     // take a rounding pixel.
     const overflows = (name: string): boolean =>
       box(name).scrollHeight - box(name).clientHeight > 1;
-    await waitFor(
-      () => {
-        // clip: never a bar. scroll: always a bar — full-length thumb
-        // (no track glyphs) when content fits.
-        expect(barsIn("clip")).toBe("");
-        expect(barsIn("scroll")).not.toBe("");
-        expect(barsIn("scroll-fits")).not.toContain("░");
-        expect(barsIn("scroll-fits")).toContain("█");
-        // auto: identical to scroll when overflowing, nothing when not.
-        if (overflows("auto")) expect(barsIn("auto")).toBe(barsIn("scroll"));
-        else expect(barsIn("auto")).toBe("");
-        expect(barsIn("fits")).toBe("");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      // clip: never a bar. scroll: always a bar — full-length thumb
+      // (no track glyphs) when content fits.
+      expect(barsIn("clip")).toBe("");
+      expect(barsIn("scroll")).not.toBe("");
+      expect(barsIn("scroll-fits")).not.toContain("░");
+      expect(barsIn("scroll-fits")).toContain("█");
+      // auto: identical to scroll when overflowing, nothing when not.
+      if (overflows("auto")) expect(barsIn("auto")).toBe(barsIn("scroll"));
+      else expect(barsIn("auto")).toBe("");
+      expect(barsIn("fits")).toBe("");
+    });
   },
 };
 
@@ -111,8 +107,7 @@ export const Overscroll: StoryObj = {
     <div class="h-screen"></div>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     // Routed wheels are a grid-mode feature (text mode scrolls natively
     // and ignores synthetic ticks) — the visual sweep pins text mode.
     if (host.getAttribute("select") !== "grid") return;
@@ -150,12 +145,12 @@ export const Overscroll: StoryObj = {
     // host can scroll that way: at the page top, an upward tick moves
     // the box.
     const auto = box("auto");
-    await waitFor(() => expect(auto.scrollTop).toBeGreaterThan(0), { timeout: 10_000 });
+    await waitFor(() => expect(auto.scrollTop).toBeGreaterThan(0));
     const scrolled = auto.scrollTop;
     await wheel("auto", 40, false);
     expect(auto.scrollTop).toBe(scrolled);
     await wheel("auto", -40, false);
-    await waitFor(() => expect(auto.scrollTop).toBeLessThan(scrolled), { timeout: 10_000 });
+    await waitFor(() => expect(auto.scrollTop).toBeLessThan(scrolled));
     auto.scrollTop = 0;
   },
 };
@@ -226,8 +221,7 @@ export const Styled: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const box = (name: string) =>
       canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
@@ -238,25 +232,22 @@ export const Styled: StoryObj = {
       Array.from(grid.querySelectorAll("span")).some(
         (span) => span.textContent!.includes(glyph) && span.style.color === color,
       );
-    await waitFor(
-      () => {
-        const art = grid.textContent!;
-        // scrollbar-none still scrolls (its width is checked below).
-        expect(box("none")).toHaveAttribute("data-mw-scroll");
-        // ascii glyph set: 7-bit track and thumb.
-        expect(art).toContain("|");
-        expect(art).toContain("#");
-        // Horizontal reserved track under the x-scroll box.
-        expect(art.split("\n").some((row) => row.includes("░"))).toBe(true);
-        // Default ink is the container's own color, thumb and track alike.
-        const inherited = getComputedStyle(box("inherited")).color;
-        expect(painted("█", inherited)).toBe(true);
-        expect(painted("░", inherited)).toBe(true);
-        // scrollbar-color paints the thumb in the resolved color.
-        expect(painted("█", thumbColor(box("colored")))).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const art = grid.textContent!;
+      // scrollbar-none still scrolls (its width is checked below).
+      expect(box("none")).toHaveAttribute("data-mw-scroll");
+      // ascii glyph set: 7-bit track and thumb.
+      expect(art).toContain("|");
+      expect(art).toContain("#");
+      // Horizontal reserved track under the x-scroll box.
+      expect(art.split("\n").some((row) => row.includes("░"))).toBe(true);
+      // Default ink is the container's own color, thumb and track alike.
+      const inherited = getComputedStyle(box("inherited")).color;
+      expect(painted("█", inherited)).toBe(true);
+      expect(painted("░", inherited)).toBe(true);
+      // scrollbar-color paints the thumb in the resolved color.
+      expect(painted("█", thumbColor(box("colored")))).toBe(true);
+    });
     // thin means the default 1-cell gutter; none reserves no gutter,
     // so its content box is one cell wider (the gutter rides the
     // engine-written padding). Headless Firefox computes
@@ -268,23 +259,19 @@ export const Styled: StoryObj = {
       );
     }
     // scrollbar-2: a two-cell gutter — the thumb doubles up.
-    await waitFor(
-      () => expect(grid.textContent!.split("\n").some((row) => row.includes("██"))).toBe(true),
-      { timeout: 10_000 },
+    await waitFor(() =>
+      expect(grid.textContent!.split("\n").some((row) => row.includes("██"))).toBe(true),
     );
     // scrollbar-inset-y-1 frees the gutter's end cells for the author's
     // arrow buttons: ↑ above the track, ↓ below it, in the bar column.
-    await waitFor(
-      () => {
-        const rows = grid.textContent!.split("\n");
-        const up = rows.findIndex((row) => row.includes("↑"));
-        const down = rows.findIndex((row) => row.includes("↓"));
-        expect(up).toBeGreaterThan(-1);
-        expect(down).toBe(up + 3);
-        expect(rows[up + 1]![rows[up]!.indexOf("↑")]).toBe("█");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const rows = grid.textContent!.split("\n");
+      const up = rows.findIndex((row) => row.includes("↑"));
+      const down = rows.findIndex((row) => row.includes("↓"));
+      expect(up).toBeGreaterThan(-1);
+      expect(down).toBe(up + 3);
+      expect(rows[up + 1]![rows[up]!.indexOf("↑")]).toBe("█");
+    });
     // An overlay-style bar: transparent ink until hovered. Hover is the
     // engine's synthesized state in grid mode (the visual sweep pins
     // text mode, where native :hover would need a real pointer).
@@ -299,14 +286,11 @@ export const Styled: StoryObj = {
         clientY: rect.top + rect.height / 2,
       }),
     );
-    await waitFor(
-      () => {
-        expect(overlay).toHaveAttribute("data-mw-hover");
-        expect(thumbColor(overlay)).not.toBe("rgba(0, 0, 0, 0)");
-        expect(painted("█", thumbColor(overlay))).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(overlay).toHaveAttribute("data-mw-hover");
+      expect(thumbColor(overlay)).not.toBe("rgba(0, 0, 0, 0)");
+      expect(painted("█", thumbColor(overlay))).toBe(true);
+    });
     host.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
   },
 };
@@ -337,41 +321,34 @@ export const BothAxes: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const auto = canvasElement.querySelector<HTMLElement>('[data-test="auto"]')!;
     // Invariant-based: the lines overflow sideways only below a certain
     // viewport width (the story is responsive).
     const overflowsX = () => auto.scrollWidth - auto.clientWidth > 1;
-    await waitFor(
-      () => {
-        const rows = grid.textContent!.split("\n");
-        // `scroll` always reserves both bars: a bottom bar row ends with
-        // the blank corner cell before the border; the right bar runs
-        // down the rows above it.
-        expect(rows.some((row) => /[░█]+ │/.test(row))).toBe(true);
-        expect(rows.filter((row) => /[░█]│/.test(row)).length).toBeGreaterThan(2);
-        // The line tails are culled only when they actually overflow.
-        if (overflowsX()) expect(grid.textContent).not.toContain("right edge");
-        else expect(grid.textContent).toContain("right edge");
-        expect(grid.textContent).not.toContain("line 12");
-        // scrollbar-y-2 doubles the vertical bar only: a two-cell thumb
-        // beside a one-cell-tall bottom bar.
-        expect(rows.some((row) => /██│/.test(row))).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const rows = grid.textContent!.split("\n");
+      // `scroll` always reserves both bars: a bottom bar row ends with
+      // the blank corner cell before the border; the right bar runs
+      // down the rows above it.
+      expect(rows.some((row) => /[░█]+ │/.test(row))).toBe(true);
+      expect(rows.filter((row) => /[░█]│/.test(row)).length).toBeGreaterThan(2);
+      // The line tails are culled only when they actually overflow.
+      if (overflowsX()) expect(grid.textContent).not.toContain("right edge");
+      else expect(grid.textContent).toContain("right edge");
+      expect(grid.textContent).not.toContain("line 12");
+      // scrollbar-y-2 doubles the vertical bar only: a two-cell thumb
+      // beside a one-cell-tall bottom bar.
+      expect(rows.some((row) => /██│/.test(row))).toBe(true);
+    });
     // Both offsets mirror: scrolled to the far corner, the auto box
     // shows its last line (and, when it overflows sideways, the tail).
     auto.scrollTo(1000, 1000);
-    await waitFor(
-      () => {
-        expect(grid.textContent).toContain("line 12");
-        if (overflowsX()) expect(grid.textContent).toContain("right edge");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(grid.textContent).toContain("line 12");
+      if (overflowsX()) expect(grid.textContent).toContain("right edge");
+    });
     auto.scrollTo(0, 0);
   },
 };
@@ -389,28 +366,21 @@ export const Nested: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const inner = canvasElement.querySelector<HTMLElement>('[data-test="inner"]')!;
-    await waitFor(
-      () => {
-        expect(inner).toHaveAttribute("data-mw-scroll");
-        expect(grid.textContent).toContain("inner line 01");
-        // The outer box clips: late outer lines stay outside the grid.
-        expect(grid.textContent).not.toContain("outer line 12");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(inner).toHaveAttribute("data-mw-scroll");
+      expect(grid.textContent).toContain("inner line 01");
+      // The outer box clips: late outer lines stay outside the grid.
+      expect(grid.textContent).not.toContain("outer line 12");
+    });
     // Scrolling the inner box leaves the outer content in place.
     inner.scrollTop = 1000;
-    await waitFor(
-      () => {
-        expect(grid.textContent).not.toContain("inner line 01");
-        expect(grid.textContent).toContain("above the inner box");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(grid.textContent).not.toContain("inner line 01");
+      expect(grid.textContent).toContain("above the inner box");
+    });
     inner.scrollTop = 0;
   },
 };
@@ -429,8 +399,7 @@ export const TouchPan: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     await new Promise((resolve) => setTimeout(resolve, 100));
     let relayouts = 0;
     const observer = new MutationObserver((records) => {
@@ -458,7 +427,7 @@ export const TouchPan: StoryObj = {
     expect(canvasElement.querySelector("[data-mw-active], [data-mw-hover]")).toBeNull();
     // A lifted finger is the release: its relayout runs.
     touch("pointerup");
-    await waitFor(() => expect(relayouts).toBeGreaterThan(0), { timeout: 10_000 });
+    await waitFor(() => expect(relayouts).toBeGreaterThan(0));
     observer.disconnect();
   },
 };
@@ -503,7 +472,7 @@ export const Keyboard: StoryObj = {
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(relayouts).toBe(0);
     press("Enter");
-    await waitFor(() => expect(relayouts).toBeGreaterThan(0), { timeout: 10_000 });
+    await waitFor(() => expect(relayouts).toBeGreaterThan(0));
     observer.disconnect();
   },
 };
@@ -521,58 +490,45 @@ export const ScrollMirroring: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const box = canvasElement.querySelector<HTMLElement>('[data-test="box"]')!;
-    await waitFor(() => expect(grid.textContent).toContain("line 01"), { timeout: 10_000 });
+    await waitFor(() => expect(grid.textContent).toContain("line 01"));
     // Native programmatic scrolling mirrors onto the grid.
     const cellHeight = box.getBoundingClientRect().height / 6;
     box.scrollTop = cellHeight * 4;
-    await waitFor(
-      () => {
-        const art = grid.textContent!;
-        expect(art).not.toContain("line 01");
-        expect(art).toContain("line 05");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const art = grid.textContent!;
+      expect(art).not.toContain("line 01");
+      expect(art).toContain("line 05");
+    });
     box.scrollTop = 0;
-    await waitFor(() => expect(grid.textContent).toContain("line 01"), { timeout: 10_000 });
+    await waitFor(() => expect(grid.textContent).toContain("line 01"));
     // A position between cells (a keyboard step) paints the nearest
     // cell and settles on that same cell — never a different one,
     // which would jump a row. Clear of the half: browsers snap
     // scrollTop to whole pixels, and with a fractional cell height an
     // exact half lands on either side (ties are unit-tested).
     box.scrollTop = cellHeight * 3.7;
-    await waitFor(
-      () => {
-        expect(grid.textContent).toContain("line 05");
-        expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(grid.textContent).toContain("line 05");
+      expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
+    });
     box.scrollTop = cellHeight * 1.3;
-    await waitFor(
-      () => {
-        expect(grid.textContent).toContain("line 02");
-        expect(Math.abs(box.scrollTop - cellHeight)).toBeLessThan(1);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(grid.textContent).toContain("line 02");
+      expect(Math.abs(box.scrollTop - cellHeight)).toBeLessThan(1);
+    });
     // A settle armed by a scroll's end can fire after a newer scroll
     // but before its event and paint: it settles that scroll on its
     // own cell. The newer scroll is queued on the settle's own delay
     // (the engine's 100 ms quiesce), so the settle runs right after it.
     setTimeout(() => (box.scrollTop = cellHeight * 4), 100);
     box.dispatchEvent(new Event("scrollend"));
-    await waitFor(
-      () => {
-        expect(grid.textContent).toContain("line 05");
-        expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      expect(grid.textContent).toContain("line 05");
+      expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
+    });
     box.scrollTop = 0;
   },
 };

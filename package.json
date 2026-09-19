@@ -6,11 +6,11 @@
   "license": "MIT",
   "scripts": {
     "dev": "pnpm --filter @monowind/storybook dev",
-    "check": "node scripts/check-workspace-deps.mjs && oxlint && oxfmt --check && pnpm -r typecheck && pnpm -r test",
-    "check:fix": "node scripts/check-workspace-deps.mjs && oxlint --fix && oxfmt && pnpm -r typecheck && pnpm -r test",
+    "check": "node scripts/check-workspace-deps.mjs && oxlint && oxfmt --check && pnpm -r typecheck",
+    "check:fix": "node scripts/check-workspace-deps.mjs && oxlint --fix && oxfmt && pnpm -r typecheck",
     "check-updates": "ncu -iu --deep",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "test": "pnpm -r --workspace-concurrency=1 test",
     "test:visual": "node scripts/test-visual.mjs",
     "test:visual:update": "node scripts/test-visual.mjs --update-snapshots",
     "build": "pnpm -r build",
@@ -20,8 +20,8 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.5.1",
     "npm-check-updates": "^23.1.0",
-    "oxfmt": "^0.67.0",
-    "oxlint": "^1.82.0",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
     "playwright": "^1.63.0"
   },
   "lint-staged": {
@@ -33,5 +33,5 @@
       "oxfmt"
     ]
   },
-  "packageManager": "pnpm@12.4.1+sha512.2e81e399d73fe8390dab25e06aa788ab7a5908248d2f5a370f82b481147a6a7a367bf8048f9a6fdb6460f21a66f0542dedb8b94ca2c8723596741920b1656d4c"
+  "packageManager": "pnpm@12.4.2+sha512.08adc6613180275c7c9edada39dcf08c9c61ad4e7eaf330a4f3461f102b0f907423454d117f98e72d47fef0616070644d7bffc973a6a57f5090a6d7c368b07c9"
 }

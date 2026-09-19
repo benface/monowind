@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  invalidateLeaves,
-  leafObservedAttributes,
-  onLeafRegistryChange,
-  registerLeafRenderer,
-} from "../src/leaf.ts";
+import { invalidateLeaves, onLeafRegistryChange, registerLeafRenderer } from "../src/leaf.ts";
 import { buildTree } from "../src/tree.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderCellSegments, renderPlainText } from "../src/plain-text.ts";
@@ -114,13 +109,11 @@ describe("leaf renderers", () => {
     warn.mockRestore();
   });
 
-  it("unions observed attributes and notifies on registration and invalidation", () => {
+  it("notifies subscribers on registration and invalidation", () => {
     registerLeafRenderer({
-      tag: "test-attrs",
+      tag: "test-notify",
       render: () => ({ lines: [] }),
-      observedAttributes: ["font", "Effect"],
     });
-    expect(leafObservedAttributes()).toEqual(expect.arrayContaining(["font", "effect"]));
     const listener = vi.fn();
     const unsubscribe = onLeafRegistryChange(listener);
     invalidateLeaves();

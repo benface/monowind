@@ -15,6 +15,7 @@ for (const file of ["cdn.js", "cdn.js.map", "sort.js", "sort.js.map"]) {
 for (const [dir, prefix] of [
   ["ascii", "ascii-"],
   ["qr-code", "qr-"],
+  ["ui", "ui-"],
 ]) {
   for (const file of ["cdn.js", "cdn.js.map"]) {
     copyFileSync(

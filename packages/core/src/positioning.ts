@@ -13,7 +13,15 @@ import {
 import type { IntrinsicCache } from "./layout.ts";
 import { alignCrossOffset, effectiveAlign, effectiveJustify, mainAxisOffsets } from "./flex.ts";
 import { inlineElementRects } from "./plain-text.ts";
-import type { AreaSide, CellLength, CellStyle, LayoutNode, PositionArea, Rect } from "./types.ts";
+import type {
+  AreaSide,
+  CellLength,
+  CellStyle,
+  LayoutNode,
+  NullableInsets,
+  PositionArea,
+  Rect,
+} from "./types.ts";
 
 /**
  * Positioning pass (specs/positioning.md): after flow layout, place
@@ -362,17 +370,20 @@ function placeAnchored(
   cache: IntrinsicCache,
 ): void {
   const style = child.style;
-  const tries = [
-    first,
+  const tries: { area: PositionArea; tactic?: Tactic }[] = [
+    { area: first },
     ...style.positionTryFallbacks.map((fallback) =>
-      "flipBlock" in fallback ? flipArea(first, fallback) : fallback,
+      "flipBlock" in fallback
+        ? { area: flipArea(first, fallback), tactic: fallback }
+        : { area: fallback },
     ),
   ];
-  const place = (area: PositionArea): boolean => {
+  const place = ({ area, tactic }: (typeof tries)[number]): boolean => {
     const [x0, width0] = areaSpan(area.x, cb.x, cb.width, anchor.x, anchor.width);
     const [y0, height0] = areaSpan(area.y, cb.y, cb.height, anchor.y, anchor.height);
     const region: Rect = { x: x0, y: y0, width: width0, height: height0 };
-    const margin = resolveMargin(style.margin, region.width);
+    const authored = resolveMargin(style.margin, region.width);
+    const margin = tactic ? flipMargins(authored, tactic) : authored;
     const across = (margin.left ?? 0) + (margin.right ?? 0);
     const down = (margin.top ?? 0) + (margin.bottom ?? 0);
     layoutNode(child, region.width, region.height, 0, 0, "shrink", cache, {
@@ -405,8 +416,27 @@ function placeAnchored(
     child.anchorArea = area;
     return width + across <= region.width && height + down <= region.height;
   };
-  for (const area of tries) if (place(area)) return;
-  place(first);
+  for (const attempt of tries) if (place(attempt)) return;
+  place(tries[0]!);
+}
+
+/** A fallback's flips: the block axis mirrored, the inline one, the
+ * two swapped. */
+interface Tactic {
+  flipBlock: boolean;
+  flipInline: boolean;
+  flipStart: boolean;
+}
+
+/** The margins under a fallback's tactics, mirrored with the area as
+ * CSS mirrors them, so a gap or a shift set on the anchor's side
+ * follows the box. */
+function flipMargins(margin: NullableInsets, tactic: Tactic): NullableInsets {
+  let { top, right, bottom, left } = margin;
+  if (tactic.flipBlock) [top, bottom] = [bottom, top];
+  if (tactic.flipInline) [left, right] = [right, left];
+  if (tactic.flipStart) [top, right, bottom, left] = [left, bottom, right, top];
+  return { top, right, bottom, left };
 }
 
 /** One axis of an area, as its start and size: the span the side
@@ -478,10 +508,7 @@ const MIRRORED: Record<AreaSide, AreaSide> = {
 
 /** An area under a fallback's tactics: the block axis mirrored, the
  * inline one, the two swapped. */
-function flipArea(
-  area: PositionArea,
-  tactic: { flipBlock: boolean; flipInline: boolean; flipStart: boolean },
-): PositionArea {
+function flipArea(area: PositionArea, tactic: Tactic): PositionArea {
   let { x, y } = area;
   if (tactic.flipBlock) y = MIRRORED[y];
   if (tactic.flipInline) x = MIRRORED[x];

@@ -1,0 +1,63 @@
+{
+  "name": "@monowind/ui-svelte",
+  "version": "0.3.0",
+  "description": "@monowind/ui for Svelte 5: a menu, a dialog, a popover, a tooltip on the monowind grid, as runes",
+  "keywords": [
+    "accessibility",
+    "components",
+    "monowind",
+    "svelte",
+    "tui",
+    "zag-js"
+  ],
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/ui-svelte"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "svelte": "./src/index.svelte.ts",
+  "exports": {
+    ".": {
+      "typecheck": "./dist/index.svelte.d.ts",
+      "svelte": "./src/index.svelte.ts",
+      "default": "./src/index.svelte.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.svelte.d.ts",
+        "svelte": "./src/index.svelte.ts",
+        "default": "./src/index.svelte.ts"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@monowind/ui": "workspace:^",
+    "@zag-js/core": "^1.44.0",
+    "@zag-js/svelte": "^1.44.0"
+  },
+  "devDependencies": {
+    "svelte": "^5.57.0",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "svelte": ">=5.20.0"
+  }
+}

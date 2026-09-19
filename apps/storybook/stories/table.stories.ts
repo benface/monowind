@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { expectBrowserRowsToMatchEngine } from "./helpers.ts";
+import { cellSize, expectBrowserRowsToMatchEngine } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Table",
@@ -360,9 +360,7 @@ export const FixedLayout: StoryObj = {
     expect(Math.max(...fullCols) - Math.min(...fullCols)).toBeLessThanOrEqual(1);
     const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
     expect(cellsOf(full, "--mw-w")).toBeGreaterThanOrEqual(
-      Math.floor(
-        host.clientWidth / parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw")),
-      ) - 1,
+      Math.floor(host.clientWidth / cellSize(host).width) - 1,
     );
     const table = canvasElement.querySelector<HTMLElement>('[data-test="table"]')!;
     const [long, short] = Array.from(table.querySelectorAll<HTMLElement>("td"));

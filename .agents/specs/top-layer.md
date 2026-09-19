@@ -46,9 +46,7 @@ from neither popovers nor dialogs; every engine dispatches it for
 both): an `open` records the element at the end of the host's
 **top-layer stack**, and either state schedules a layout. Elements
 found open at a layout without a record — those open before the host
-connected, or a dialog in an engine that dispatches no `toggle` for
-dialogs, whose `open` attribute schedules the layout on its own —
-join the stack in tree order.
+connected — join the stack in tree order.
 
 ## Locked decisions
 
@@ -113,6 +111,12 @@ join the stack in tree order.
   nested popovers, inertness under a modal dialog: the light elements
   do these natively, and the host samples the outcome as it samples
   any state.
+- **A top-layer element is a surface of the host's.** The UA gives a
+  popover and a dialog the canvas's colors (`Canvas`, `CanvasText`);
+  the companion gives them the host's instead, `--mw-bg` and `--mw-fg`
+  (theming.md), in its base layer, so a floating part is an opaque box
+  in the host's colors unless the author says otherwise — `bg-clear`
+  to see what is behind the host through it, any utility to restyle.
 
 ## Deviations from CSS (summary)
 
@@ -180,7 +184,8 @@ join the stack in tree order.
   and dialogs; the native `::backdrop` locked transparent outside
   `[measuring]`; a `[data-mw-top]` element placed `fixed` in the
   viewport from the grid's client origin, since the top layer resolves
-  against the viewport, not the host.
+  against the viewport, not the host; the host's surface on
+  `[popover]` and `dialog`, in the base layer.
 - positioning.ts: a fixed box's `hostRect`; plain-text.ts `walk` and
   pointer.ts `hitStack`: a fixed box from the host's origin outside
   its ancestors' clips, the stack after the tree; paint.ts: the

@@ -2,13 +2,16 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
+  cellSize,
   dragTo,
   expectOnItsCells,
   gridOf,
+  paintedSpan,
   pressAt,
   readyHost,
   release,
   rowsOf,
+  testHooks,
 } from "./helpers.ts";
 import type { Point } from "./helpers.ts";
 
@@ -23,11 +26,6 @@ const meta: Meta = {
   title: "Features / Top Layer",
 };
 export default meta;
-
-const spanFor = (host: HTMLElement, text: string): HTMLElement | undefined =>
-  Array.from(gridOf(host).querySelectorAll("span")).find((span) =>
-    span.textContent!.includes(text),
-  );
 
 /**
  * A popover opened from inside a scrolling list: it paints whole,
@@ -44,12 +42,7 @@ export const Popover: StoryObj = {
           <button data-test="open" popovertarget="top-layer-menu" class="border px-1">
             open the menu
           </button>
-          <div
-            id="top-layer-menu"
-            data-test="menu"
-            popover
-            class="border bg-(--mw-bg) px-1 text-(--mw-fg)"
-          >
+          <div id="top-layer-menu" data-test="menu" popover class="border bg-clear px-1">
             <p>Menu item one</p>
             <p>Menu item two</p>
             <p>Menu item three</p>
@@ -67,11 +60,9 @@ export const Popover: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     by("open").click();
-    await waitFor(() => expect(gridOf(host).textContent).toContain("Menu item three"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).toContain("Menu item three"));
     const rows = rowsOf(host);
     const first = rows.findIndex((row) => row.includes("Menu item one"));
     // Whole, across the list's bottom edge, over what lies beneath.
@@ -80,16 +71,12 @@ export const Popover: StoryObj = {
     const edge = rows.findIndex((row) => row.startsWith(" └"));
     expect(first).toBeLessThan(edge);
     expect(first + 3).toBeGreaterThan(edge);
-    expectOnItsCells(host, by("menu"));
+    await expectOnItsCells(host, by("menu"));
     by("open").click();
-    await waitFor(() => expect(gridOf(host).textContent).not.toContain("Menu item"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).not.toContain("Menu item"));
     // Left open, for the golden and the eye.
     by("open").click();
-    await waitFor(() => expect(gridOf(host).textContent).toContain("Menu item three"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).toContain("Menu item three"));
   },
 };
 
@@ -118,10 +105,7 @@ export const Dialog: StoryObj = {
         <p>More of the page, in the plain text color.</p>
         <p>And a third line, to make the host taller than the dialog.</p>
         <p>And a fourth.</p>
-        <dialog
-          data-test="dialog"
-          class="border bg-(--mw-bg) p-1 text-(--mw-fg) backdrop:bg-black/50"
-        >
+        <dialog data-test="dialog" class="border p-1 backdrop:bg-black/50">
           <p>A modal dialog, centered.</p>
           <form method="dialog">
             <button data-test="close" class="border px-1" autofocus>close</button>
@@ -132,13 +116,11 @@ export const Dialog: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     const dialog = by("dialog") as HTMLDialogElement;
     // The dialog's cells live in a box of their own, in the layers.
     dialog.showModal();
-    await waitFor(() => expect(host.shadowRoot!.textContent).toContain("A modal dialog"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(host.shadowRoot!.textContent).toContain("A modal dialog"));
     // Centered: its cells sit inside the host on both axes.
     const rows = rowsOf(host);
     const x = parseFloat(dialog.style.getPropertyValue("--mw-x"));
@@ -147,7 +129,7 @@ export const Dialog: StoryObj = {
     const height = parseFloat(dialog.style.getPropertyValue("--mw-h"));
     expect(Math.abs(x - Math.floor((rows[0]!.length - width) / 2))).toBeLessThanOrEqual(1);
     expect(Math.abs(y - Math.floor((rows.length - height) / 2))).toBeLessThanOrEqual(1);
-    expectOnItsCells(host, dialog);
+    await expectOnItsCells(host, dialog);
     // The dialog's cells are in a box of their own above a backdrop
     // box over the whole grid; the page's cells are untouched.
     const layers = host.shadowRoot!.getElementById("layers")!;
@@ -161,7 +143,7 @@ export const Dialog: StoryObj = {
     const box = backdropBox.getBoundingClientRect();
     expect(Math.abs(box.width - grid.width)).toBeLessThan(1);
     expect(Math.abs(box.height - grid.height)).toBeLessThan(1);
-    expect(spanFor(host, "The page")?.style.backgroundColor ?? "").toBe("");
+    expect(paintedSpan(host, "The page")?.style.backgroundColor ?? "").toBe("");
     // Focus went inside; the page is blocked, so grid mode falls back
     // to the dialog's own light DOM: its button hit-tests natively and
     // its text selects.
@@ -192,9 +174,7 @@ export const Dialog: StoryObj = {
     // The page's button opens it again; left open, for the golden and
     // the eye.
     by("button").click();
-    await waitFor(() => expect(host.shadowRoot!.textContent).toContain("A modal dialog"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(host.shadowRoot!.textContent).toContain("A modal dialog"));
   },
 };
 
@@ -222,15 +202,11 @@ export const Nested: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     by("open").click();
-    await waitFor(() => expect(gridOf(host).textContent).toContain("First popover"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).toContain("First popover"));
     by("more").click();
-    await waitFor(() => expect(gridOf(host).textContent).toContain("Second popover"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).toContain("Second popover"));
     // Both centered on the same row, the second covers the first.
     expect(gridOf(host).textContent).not.toContain("First popover");
     expect(by("first").matches(":popover-open")).toBe(true);
@@ -262,7 +238,7 @@ export const Transitions: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const pop = canvasElement.querySelector<HTMLElement>('[data-test="pop"]')!;
-    const opacity = () => spanFor(host, "Fading")?.style.opacity;
+    const opacity = () => paintedSpan(host, "Fading")?.style.opacity;
     pop.showPopover();
     const seen = new Set<string | undefined>();
     const until = performance.now() + 700;
@@ -274,16 +250,14 @@ export const Transitions: StoryObj = {
     expect(
       [...seen].filter((value) => value !== undefined && value !== "").length,
     ).toBeGreaterThanOrEqual(2);
-    await waitFor(() => expect(opacity()).toBe(""), { timeout: 10_000 });
+    await waitFor(() => expect(opacity()).toBe(""));
     pop.hidePopover();
     if (navigator.userAgent.includes("Chrome/")) {
       await new Promise((resolve) => setTimeout(resolve, 150));
       expect(gridOf(host).textContent).toContain("Fading popover");
       expect(parseFloat(opacity()!)).toBeLessThan(1);
     }
-    await waitFor(() => expect(gridOf(host).textContent).not.toContain("Fading popover"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).not.toContain("Fading popover"));
   },
 };
 
@@ -304,14 +278,14 @@ export const Fixed: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     const rowOf = (text: string) => rowsOf(host).findIndex((row) => row.includes(text));
     await waitFor(() => expect(rowOf("fixed box")).toBeGreaterThanOrEqual(0));
     const row = rowOf("fixed box");
     const top = by("fixed").getBoundingClientRect().top;
     expect(rowOf("Row 1 of")).toBeGreaterThanOrEqual(0);
-    by("list").scrollTop = 3 * parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
-    await waitFor(() => expect(rowOf("Row 1 of")).toBe(-1), { timeout: 10_000 });
+    by("list").scrollTop = 3 * cellSize(host).height;
+    await waitFor(() => expect(rowOf("Row 1 of")).toBe(-1));
     expect(rowOf("fixed box")).toBe(row);
     await waitFor(() =>
       expect(Math.abs(by("fixed").getBoundingClientRect().top - top)).toBeLessThan(1),
@@ -337,9 +311,7 @@ export const Selection: StoryObj = {
     const host = await readyHost(canvasElement);
     const pop = canvasElement.querySelector<HTMLElement>('[data-test="pop"]')!;
     pop.showPopover();
-    await waitFor(() => expect(gridOf(host).textContent).toContain("selectable"), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(gridOf(host).textContent).toContain("selectable"));
     const middle = (index: number): Point => {
       const text = pop.firstChild as Text;
       const start = text.data.search(/\S/) + index;

@@ -34,8 +34,9 @@ const url = server.resolvedUrls.local[0];
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
+page.setDefaultTimeout(10_000);
 await page.goto(url);
-await page.waitForSelector("mono-wind[data-mw-ready]", { timeout: 10_000 });
+await page.waitForSelector("mono-wind[data-mw-ready]");
 
 const result = await page.evaluate(() => {
   const container = document.querySelector("mono-wind > div");

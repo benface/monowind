@@ -10,7 +10,7 @@ import { readyHost } from "./helpers.ts";
  * the semantic string (a11y, select="text"); the grid shows the art.
  */
 const meta: Meta = {
-  title: "Components / mono-ascii",
+  title: "Packages / ascii",
 };
 export default meta;
 
@@ -34,20 +34,17 @@ export const Banner: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
-    await waitFor(
-      () => {
-        // The art is on the grid (standard's underscore top edge, and
-        // the semantic strings are NOT there as plain text runs).
-        expect(grid.textContent).toContain("_ __ ___   ___  _ __   ___"); // "mono" in standard
-        expect(grid.textContent).not.toContain("monowind");
-        // Rainbow effect paints theme-token stripes.
-        const striped = Array.from(grid.querySelectorAll("span")).find((s) =>
-          s.style.color.includes("--mw-ansi-"),
-        );
-        expect(striped).toBeDefined();
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      // The art is on the grid (standard's underscore top edge, and
+      // the semantic strings are NOT there as plain text runs).
+      expect(grid.textContent).toContain("_ __ ___   ___  _ __   ___"); // "mono" in standard
+      expect(grid.textContent).not.toContain("monowind");
+      // Rainbow effect paints theme-token stripes.
+      const striped = Array.from(grid.querySelectorAll("span")).find((s) =>
+        s.style.color.includes("--mw-ansi-"),
+      );
+      expect(striped).toBeDefined();
+    });
     // Semantic text intact in the light DOM.
     const banner = canvasElement.querySelector("mono-ascii")!;
     expect(banner.textContent).toBe("monowind");
@@ -82,25 +79,21 @@ export const Behavior: StoryObj = {
     const dynamic = canvasElement.querySelector<HTMLElement>('[data-test="dynamic"]')!;
 
     // Unknown font: content never disappears — plain text renders.
-    await waitFor(() => expect(grid.textContent).toContain("fallback text"), { timeout: 10_000 });
+    await waitFor(() => expect(grid.textContent).toContain("fallback text"));
 
     // Text mutation re-renders (characterData observation).
     dynamic.textContent = "xyz";
-    await waitFor(() => expect(grid.textContent).not.toContain("abc"), { timeout: 10_000 });
+    await waitFor(() => expect(grid.textContent).not.toContain("abc"));
 
     // Font ATTRIBUTE change re-renders (declared observed attribute) —
     // standard is taller than small, so the row count grows.
     const rowsBefore = grid.textContent!.split("\n").length;
     dynamic.setAttribute("font", "standard");
-    await waitFor(() => expect(grid.textContent!.split("\n").length).toBeGreaterThan(rowsBefore), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(grid.textContent!.split("\n").length).toBeGreaterThan(rowsBefore));
 
     // Font PROPERTY wins over the attribute.
     const small = asciiFont("small")!;
     (dynamic as HTMLElement & { font: typeof small }).font = small;
-    await waitFor(() => expect(grid.textContent!.split("\n").length).toBe(rowsBefore), {
-      timeout: 10_000,
-    });
+    await waitFor(() => expect(grid.textContent!.split("\n").length).toBe(rowsBefore));
   },
 };

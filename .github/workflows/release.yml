@@ -38,9 +38,10 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
-      # Deliberately repeats CI's check: a tag can point at a commit
-      # without green CI, and a publish is irreversible.
+      # Deliberately repeats CI's check and tests: a tag can point at a
+      # commit without green CI, and a publish is irreversible.
       - run: pnpm check
+      - run: pnpm test
       # -r publishes in dependency order, so `workspace:^` resolves.
       - run: pnpm -r publish --access public --no-git-checks
 

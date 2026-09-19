@@ -1,7 +1,16 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { dragTo, pressAt, readyGrid, readyHost, release } from "./helpers.ts";
+import {
+  cellSize,
+  dragTo,
+  paintedSpan,
+  pressAt,
+  readyGrid,
+  readyHost,
+  release,
+  testHooks,
+} from "./helpers.ts";
 import type { Point } from "./helpers.ts";
 
 /**
@@ -16,11 +25,6 @@ const meta: Meta = {
   title: "Features / Effects",
 };
 export default meta;
-
-const gridSpanFor = (host: HTMLElement, text: string): HTMLElement | undefined =>
-  Array.from(host.shadowRoot!.getElementById("grid")!.querySelectorAll("span")).find((span) =>
-    span.textContent!.includes(text),
-  );
 
 export const Opacity: StoryObj = {
   render: () => html`
@@ -42,28 +46,25 @@ export const Opacity: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    await waitFor(
-      () => {
-        // Every paint of a translucent element carries the effective
-        // alpha; the span composites against the page.
-        expect(gridSpanFor(host, "opacity-75")!.style.opacity).toBe("0.75");
-        expect(gridSpanFor(host, "opacity-50")!.style.opacity).toBe("0.5");
-        // Ancestors multiply (CSS opacity nests, it doesn't inherit).
-        expect(gridSpanFor(host, "nested opacity-50")!.style.opacity).toBe("0.25");
-        // opacity-0 still paints its glyphs — invisible, but present
-        // and selectable in select="grid" mode (unlike `invisible`).
-        expect(gridSpanFor(host, "opacity-0")!.style.opacity).toBe("0");
-        expect(host.shadowRoot!.getElementById("grid")!.textContent).toContain("opacity-0");
-        // A translucent border glyph is boxed to its cell, so its
-        // overshoot never composites twice where rows join.
-        const line = Array.from(host.shadowRoot!.querySelectorAll("#grid span")).find(
-          (span) => span.textContent === "│" && (span as HTMLElement).style.opacity === "0.75",
-        ) as HTMLElement | undefined;
-        expect(line?.style.display).toBe("inline-block");
-        expect(line?.style.overflow).toBe("hidden");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      // Every paint of a translucent element carries the effective
+      // alpha; the span composites against the page.
+      expect(paintedSpan(host, "opacity-75")!.style.opacity).toBe("0.75");
+      expect(paintedSpan(host, "opacity-50")!.style.opacity).toBe("0.5");
+      // Ancestors multiply (CSS opacity nests, it doesn't inherit).
+      expect(paintedSpan(host, "nested opacity-50")!.style.opacity).toBe("0.25");
+      // opacity-0 still paints its glyphs — invisible, but present
+      // and selectable in select="grid" mode (unlike `invisible`).
+      expect(paintedSpan(host, "opacity-0")!.style.opacity).toBe("0");
+      expect(host.shadowRoot!.getElementById("grid")!.textContent).toContain("opacity-0");
+      // A translucent border glyph is boxed to its cell, so its
+      // overshoot never composites twice where rows join.
+      const line = Array.from(host.shadowRoot!.querySelectorAll("#grid span")).find(
+        (span) => span.textContent === "│" && (span as HTMLElement).style.opacity === "0.75",
+      ) as HTMLElement | undefined;
+      expect(line?.style.display).toBe("inline-block");
+      expect(line?.style.overflow).toBe("hidden");
+    });
   },
 };
 
@@ -96,7 +97,7 @@ export const Outline: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     expect(getComputedStyle(by("solid")).outlineStyle).toBe("solid");
     expect(getComputedStyle(by("solid")).outlineWidth).toBe("2px");
     expect(getComputedStyle(by("offset")).outlineOffset).toBe("4px");
@@ -276,50 +277,47 @@ export const Gradients: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    await waitFor(
-      () => {
-        const spans = Array.from(host.shadowRoot!.getElementById("grid")!.querySelectorAll("span"));
-        // A color per cell, a row of them one span's hard stops: far
-        // more distinct colors than boxes.
-        const colors = spans.flatMap(
-          (span) => span.style.backgroundImage.match(/rgb\([^)]*\)/g) ?? [],
-        );
-        expect(new Set(colors).size).toBeGreaterThan(200);
-        // The transparent stop over bg-red-500 starts beside red-500 at
-        // the left edge, its text over the same colors.
-        const over = spans.find((span) => span.textContent!.startsWith("bg-red-500"))!;
-        const [r, g, b] = over.style.backgroundImage
-          .match(/rgb\((\d+),? (\d+),? (\d+)/)!
-          .slice(1)
-          .map(Number);
-        expect(Math.abs(r! - 251) + Math.abs(g! - 44) + Math.abs(b! - 54)).toBeLessThan(12);
-        // The longer hue arc from cyan to blue runs the long way round:
-        // its middle is nowhere near the oklch row's.
-        const middle = (name: string) => {
-          const span = spans.find((span) => span.textContent!.startsWith(name))!;
-          const stops = span.style.backgroundImage.match(/rgb\([^)]*\)/g)!;
-          return stops[Math.floor(stops.length / 2)]!;
-        };
-        expect(middle("bg-linear-to-r/longer")).not.toBe(middle("bg-linear-to-r/oklch"));
-        // Clipped to text, the row is one span whose hard stops show
-        // through its glyphs.
-        const clipped = spans.find((span) => span.textContent!.startsWith("bg-clip-text"))!;
-        expect(clipped.style.backgroundClip).toBe("text");
-        expect(clipped.style.color).toBe("transparent");
-        expect(clipped.style.backgroundImage.match(/rgb\(/g)!.length).toBeGreaterThan(40);
-        // Over a filled parent the glyphs keep a span each, the
-        // parent's color under every one.
-        const onSky = spans.filter(
-          (span) =>
-            span.textContent!.length === 1 &&
-            span.style.color.startsWith("rgb(") &&
-            span.style.backgroundColor !== "" &&
-            span.style.backgroundClip === "",
-        );
-        expect(onSky.length).toBeGreaterThan(40);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const spans = Array.from(host.shadowRoot!.getElementById("grid")!.querySelectorAll("span"));
+      // A color per cell, a row of them one span's hard stops: far
+      // more distinct colors than boxes.
+      const colors = spans.flatMap(
+        (span) => span.style.backgroundImage.match(/rgb\([^)]*\)/g) ?? [],
+      );
+      expect(new Set(colors).size).toBeGreaterThan(200);
+      // The transparent stop over bg-red-500 starts beside red-500 at
+      // the left edge, its text over the same colors.
+      const over = spans.find((span) => span.textContent!.startsWith("bg-red-500"))!;
+      const [r, g, b] = over.style.backgroundImage
+        .match(/rgb\((\d+),? (\d+),? (\d+)/)!
+        .slice(1)
+        .map(Number);
+      expect(Math.abs(r! - 251) + Math.abs(g! - 44) + Math.abs(b! - 54)).toBeLessThan(12);
+      // The longer hue arc from cyan to blue runs the long way round:
+      // its middle is nowhere near the oklch row's.
+      const middle = (name: string) => {
+        const span = spans.find((span) => span.textContent!.startsWith(name))!;
+        const stops = span.style.backgroundImage.match(/rgb\([^)]*\)/g)!;
+        return stops[Math.floor(stops.length / 2)]!;
+      };
+      expect(middle("bg-linear-to-r/longer")).not.toBe(middle("bg-linear-to-r/oklch"));
+      // Clipped to text, the row is one span whose hard stops show
+      // through its glyphs.
+      const clipped = spans.find((span) => span.textContent!.startsWith("bg-clip-text"))!;
+      expect(clipped.style.backgroundClip).toBe("text");
+      expect(clipped.style.color).toBe("transparent");
+      expect(clipped.style.backgroundImage.match(/rgb\(/g)!.length).toBeGreaterThan(40);
+      // Over a filled parent the glyphs keep a span each, the
+      // parent's color under every one.
+      const onSky = spans.filter(
+        (span) =>
+          span.textContent!.length === 1 &&
+          span.style.color.startsWith("rgb(") &&
+          span.style.backgroundColor !== "" &&
+          span.style.backgroundClip === "",
+      );
+      expect(onSky.length).toBeGreaterThan(40);
+    });
   },
 };
 
@@ -367,78 +365,67 @@ export const Layers: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    await waitFor(
-      () => {
-        const boxes = Array.from(
-          host.shadowRoot!.getElementById("layers")!.querySelectorAll<HTMLElement>(".layer"),
-        );
-        // A box per layer root, its effects the light element's, its
-        // rect the element's where nothing overflows the border box.
-        const roots = [
-          "rotated",
-          "scaled",
-          "blurred",
-          "grayscale",
-          "shifted",
-          "half",
-          "frosted",
-        ].map((name) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!);
-        // The roots above, the scrolled one, and the nested pair.
-        expect(boxes.length).toBe(roots.length + 3);
-        // A translate percentage resolves on the element natively, on
-        // the box in px of the border box: compare both in px.
-        const translateOf = (value: string, el: HTMLElement): number[] =>
-          value === "none"
-            ? [0, 0]
-            : value.split(" ").map((part, axis) => {
-                const box = el.getBoundingClientRect();
-                const extent = axis === 0 ? box.width : box.height;
-                return part.endsWith("%") ? (parseFloat(part) / 100) * extent : parseFloat(part);
-              });
-        const sameTranslate = (a: number[], b: number[]) =>
-          Math.abs(a[0]! - b[0]!) < 0.5 && Math.abs((a[1] ?? 0) - (b[1] ?? 0)) < 0.5;
-        for (const root of roots) {
-          const own = getComputedStyle(root);
-          const box = boxes.find((box) => {
-            const cs = getComputedStyle(box);
-            return (
-              cs.transform === own.transform &&
-              sameTranslate(translateOf(cs.translate, box), translateOf(own.translate, root)) &&
-              cs.rotate === own.rotate &&
-              cs.scale === own.scale &&
-              cs.filter === own.filter
-            );
-          });
-          expect(box, root.dataset.test).toBeDefined();
-          if (root.dataset.test === "shifted") continue;
-          const a = box!.getBoundingClientRect();
-          const b = root.getBoundingClientRect();
-          for (const side of ["left", "top", "right", "bottom"] as const) {
-            expect(Math.abs(a[side] - b[side]), `${root.dataset.test} ${side}`).toBeLessThan(1.5);
-          }
+    await waitFor(() => {
+      const boxes = Array.from(
+        host.shadowRoot!.getElementById("layers")!.querySelectorAll<HTMLElement>(".layer"),
+      );
+      // A box per layer root, its effects the light element's, its
+      // rect the element's where nothing overflows the border box.
+      const roots = ["rotated", "scaled", "blurred", "grayscale", "shifted", "half", "frosted"].map(
+        (name) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!,
+      );
+      // The roots above, the scrolled one, and the nested pair.
+      expect(boxes.length).toBe(roots.length + 3);
+      // A translate percentage resolves on the element natively, on
+      // the box in px of the border box: compare both in px.
+      const translateOf = (value: string, el: HTMLElement): number[] =>
+        value === "none"
+          ? [0, 0]
+          : value.split(" ").map((part, axis) => {
+              const box = el.getBoundingClientRect();
+              const extent = axis === 0 ? box.width : box.height;
+              return part.endsWith("%") ? (parseFloat(part) / 100) * extent : parseFloat(part);
+            });
+      const sameTranslate = (a: number[], b: number[]) =>
+        Math.abs(a[0]! - b[0]!) < 0.5 && Math.abs((a[1] ?? 0) - (b[1] ?? 0)) < 0.5;
+      for (const root of roots) {
+        const own = getComputedStyle(root);
+        const box = boxes.find((box) => {
+          const cs = getComputedStyle(box);
+          return (
+            cs.transform === own.transform &&
+            sameTranslate(translateOf(cs.translate, box), translateOf(own.translate, root)) &&
+            cs.rotate === own.rotate &&
+            cs.scale === own.scale &&
+            cs.filter === own.filter
+          );
+        });
+        expect(box, root.dataset.test).toBeDefined();
+        if (root.dataset.test === "shifted") continue;
+        const a = box!.getBoundingClientRect();
+        const b = root.getBoundingClientRect();
+        for (const side of ["left", "top", "right", "bottom"] as const) {
+          expect(Math.abs(a[side] - b[side]), `${root.dataset.test} ${side}`).toBeLessThan(1.5);
         }
-        // The backdrop filter is the layer's alone: locked off the light
-        // element, whose backdrop would take in the layer's own cells.
-        const frosted = canvasElement.querySelector<HTMLElement>('[data-test="frosted"]')!;
-        expect(getComputedStyle(frosted).backdropFilter).toBe("none");
-        expect(boxes.some((box) => getComputedStyle(box).backdropFilter === "blur(2px)")).toBe(
-          true,
-        );
-        // The nested layer's box sits inside its parent's.
-        const nested = boxes.filter((box) => box.parentElement!.classList.contains("layer"));
-        expect(nested.length).toBe(1);
-        // The layers' text lives in their grids alone.
-        expect(host.shadowRoot!.getElementById("grid")!.textContent).not.toContain("rotated");
-        // The native button is under the pointer where the layer shows
-        // it: the light element follows the same transform.
-        const ok = canvasElement.querySelector<HTMLElement>('[data-test="ok"]')!;
-        const rect = ok.getBoundingClientRect();
-        expect(
-          document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2),
-        ).toBe(ok);
-      },
-      { timeout: 10_000 },
-    );
+      }
+      // The backdrop filter is the layer's alone: locked off the light
+      // element, whose backdrop would take in the layer's own cells.
+      const frosted = canvasElement.querySelector<HTMLElement>('[data-test="frosted"]')!;
+      expect(getComputedStyle(frosted).backdropFilter).toBe("none");
+      expect(boxes.some((box) => getComputedStyle(box).backdropFilter === "blur(2px)")).toBe(true);
+      // The nested layer's box sits inside its parent's.
+      const nested = boxes.filter((box) => box.parentElement!.classList.contains("layer"));
+      expect(nested.length).toBe(1);
+      // The layers' text lives in their grids alone.
+      expect(host.shadowRoot!.getElementById("grid")!.textContent).not.toContain("rotated");
+      // The native button is under the pointer where the layer shows
+      // it: the light element follows the same transform.
+      const ok = canvasElement.querySelector<HTMLElement>('[data-test="ok"]')!;
+      const rect = ok.getBoundingClientRect();
+      expect(
+        document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2),
+      ).toBe(ok);
+    });
     // A layer inside a scroll container follows the scroll: its box
     // moves up by the rows scrolled, its cells with it.
     const scroller = canvasElement.querySelector<HTMLElement>('[data-test="scroller"]')!;
@@ -450,11 +437,10 @@ export const Layers: StoryObj = {
       ).find((box) => getComputedStyle(box).rotate === own.rotate)!;
     };
     const before = boxOf(scrolled).getBoundingClientRect().top;
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const cellHeight = cellSize(host).height;
     scroller.scrollTop = cellHeight;
-    await waitFor(
-      () => expect(boxOf(scrolled).getBoundingClientRect().top).toBeCloseTo(before - cellHeight, 0),
-      { timeout: 10_000 },
+    await waitFor(() =>
+      expect(boxOf(scrolled).getBoundingClientRect().top).toBeCloseTo(before - cellHeight, 0),
     );
     // The browser clips the rotated layer to the container's padding
     // box: its box sits in a clipping box at that rect.
@@ -462,7 +448,7 @@ export const Layers: StoryObj = {
     expect(clip.className).toBe("clip");
     expect(getComputedStyle(clip).overflow).toBe("clip");
     // The container's border is a cell on each side.
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellWidth = cellSize(host).width;
     const inner = scroller.getBoundingClientRect();
     const rect = clip.getBoundingClientRect();
     expect(Math.abs(rect.top - (inner.top + cellHeight))).toBeLessThan(1.5);
@@ -492,30 +478,27 @@ export const LayerCover: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    await waitFor(
-      () => {
-        const box = host.shadowRoot!.querySelector<HTMLElement>(".layer")!;
-        expect(box).not.toBeNull();
-        // The sticker's cells under the overlay are blank in its grid.
-        const rows = box.querySelector("pre")!.textContent!.split("\n");
-        expect(rows[1]).toMatch(/^│ st\s*$/);
-        // Over the overlay, the engine's hit-test reaches the overlay.
-        const overlay = canvasElement.querySelector<HTMLElement>('[data-test="overlay"]')!;
-        const rect = overlay.getBoundingClientRect();
-        overlay.dispatchEvent(
-          new PointerEvent("pointermove", {
-            bubbles: true,
-            composed: true,
-            clientX: rect.left + 4,
-            clientY: rect.top + rect.height / 2,
-            pointerType: "mouse",
-            isPrimary: true,
-          }),
-        );
-        expect(overlay.matches("[data-mw-hover], [data-mw-hover] *")).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      const box = host.shadowRoot!.querySelector<HTMLElement>(".layer")!;
+      expect(box).not.toBeNull();
+      // The sticker's cells under the overlay are blank in its grid.
+      const rows = box.querySelector("pre")!.textContent!.split("\n");
+      expect(rows[1]).toMatch(/^│ st\s*$/);
+      // Over the overlay, the engine's hit-test reaches the overlay.
+      const overlay = canvasElement.querySelector<HTMLElement>('[data-test="overlay"]')!;
+      const rect = overlay.getBoundingClientRect();
+      overlay.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          composed: true,
+          clientX: rect.left + 4,
+          clientY: rect.top + rect.height / 2,
+          pointerType: "mouse",
+          isPrimary: true,
+        }),
+      );
+      expect(overlay.matches("[data-mw-hover], [data-mw-hover] *")).toBe(true);
+    });
   },
 };
 
@@ -603,9 +586,8 @@ export const LayerTransition: StoryObj = {
       if (box) scales.add(getComputedStyle(box).scale);
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
-    await waitFor(
-      () => expect(getComputedStyle(layers.querySelector(".layer")!).scale).toBe("1.25"),
-      { timeout: 10_000 },
+    await waitFor(() =>
+      expect(getComputedStyle(layers.querySelector(".layer")!).scale).toBe("1.25"),
     );
     observer.disconnect();
     expect(scales.has("1"), "the box at the identity").toBe(true);
@@ -647,19 +629,16 @@ export const Transitions: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
-    await waitFor(
-      () => {
-        for (const label of [
-          "half a second",
-          "stays put",
-          "synthesizes",
-          "mostly away",
-          "a slow ease-in",
-        ])
-          expect(grid.textContent).toContain(label);
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      for (const label of [
+        "half a second",
+        "stays put",
+        "synthesizes",
+        "mostly away",
+        "a slow ease-in",
+      ])
+        expect(grid.textContent).toContain(label);
+    });
   },
 };
 
@@ -689,7 +668,7 @@ export const TransitionSampling: StoryObj = {
     const host = await readyHost(canvasElement);
     const fader = canvasElement.querySelector<HTMLElement>('[data-test="fader"]')!;
     const snapper = canvasElement.querySelector<HTMLElement>('[data-test="snapper"]')!;
-    await waitFor(() => expect(gridSpanFor(host, "Toggle")).toBeDefined(), { timeout: 10_000 });
+    await waitFor(() => expect(paintedSpan(host, "Toggle")).toBeDefined());
     const colors = new Set<string>();
     const backgrounds = new Set<string>();
     const opacities = new Set<string>();
@@ -698,12 +677,12 @@ export const TransitionSampling: StoryObj = {
     snapper.classList.add("opacity-25");
     const until = performance.now() + 900;
     while (performance.now() < until) {
-      const span = gridSpanFor(host, "Toggle");
+      const span = paintedSpan(host, "Toggle");
       if (span) {
         colors.add(span.style.color);
         backgrounds.add(span.style.backgroundColor);
       }
-      const snapped = gridSpanFor(host, "My opacity");
+      const snapped = paintedSpan(host, "My opacity");
       if (snapped) opacities.add(snapped.style.opacity);
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
@@ -715,9 +694,8 @@ export const TransitionSampling: StoryObj = {
     // not in transition-colors, so it snaps — full (no opacity string)
     // straight to the target, nothing interpolated.
     expect(Array.from(opacities).sort(), "opacity snaps").toEqual(["", "0.25"]);
-    await waitFor(
-      () => expect(gridSpanFor(host, "Toggle")!.style.color).toBe(getComputedStyle(fader).color),
-      { timeout: 10_000 },
+    await waitFor(() =>
+      expect(paintedSpan(host, "Toggle")!.style.color).toBe(getComputedStyle(fader).color),
     );
   },
 };
@@ -785,7 +763,7 @@ export const Animations: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     // A layer's box by the text its grid holds.
     const boxOf = (name: string) =>
       Array.from(host.shadowRoot!.querySelectorAll<HTMLElement>(".layer")).find((box) =>
@@ -807,7 +785,7 @@ export const Animations: StoryObj = {
       frames++;
       const spin = boxOf("spin");
       if (spin) turns.add(getComputedStyle(spin).transform);
-      fades.add(gridSpanFor(host, "pulse")?.style.opacity ?? "");
+      fades.add(paintedSpan(host, "pulse")?.style.opacity ?? "");
       const ping = boxOf("ping");
       if (ping) pings.add(getComputedStyle(ping).transform);
       const bounce = boxOf("bounce");
@@ -826,25 +804,22 @@ export const Animations: StoryObj = {
     // full opacity. The leave keyframe holds its end (`forwards`): the
     // settle layout reads the filled values, the box scaled, the cells
     // at a quarter.
-    await waitFor(
-      () => {
-        for (const name of ["enter", "leave"]) {
-          const running = by(name)
-            .getAnimations()
-            .some((a) => a.playState === "running");
-          expect(running, `${name} running`).toBe(false);
-        }
-        expect(boxOf("enter")).toBeUndefined();
-        expect(gridSpanFor(host, "enter")?.style.opacity ?? "").toBe("");
-        const leave = boxOf("leave")!;
-        expect(getComputedStyle(leave).transform).toBe(getComputedStyle(by("leave")).transform);
-        const cells = Array.from(leave.querySelectorAll("span")).find((span) =>
-          span.textContent!.includes("leave"),
-        );
-        expect(cells?.style.opacity).toBe("0.25");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(() => {
+      for (const name of ["enter", "leave"]) {
+        const running = by(name)
+          .getAnimations()
+          .some((a) => a.playState === "running");
+        expect(running, `${name} running`).toBe(false);
+      }
+      expect(boxOf("enter")).toBeUndefined();
+      expect(paintedSpan(host, "enter")?.style.opacity ?? "").toBe("");
+      const leave = boxOf("leave")!;
+      expect(getComputedStyle(leave).transform).toBe(getComputedStyle(by("leave")).transform);
+      const cells = Array.from(leave.querySelectorAll("span")).find((span) =>
+        span.textContent!.includes("leave"),
+      );
+      expect(cells?.style.opacity).toBe("0.25");
+    });
     // The spinner keeps its box through the identity at each turn.
     expect(boxOf("spin")).toBeDefined();
   },
@@ -891,7 +866,7 @@ export const AnimationPaths: StoryObj = {
       Array.from(host.shadowRoot!.querySelectorAll<HTMLElement>(".layer")).find((box) =>
         box.querySelector("pre")!.textContent!.includes(text),
       );
-    await waitFor(() => expect(boxOf("spin")).toBeDefined(), { timeout: 10_000 });
+    await waitFor(() => expect(boxOf("spin")).toBeDefined());
     // The animations' first layouts have run; from here, frames repaint
     // and place the box with no layout between them.
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -903,7 +878,7 @@ export const AnimationPaths: StoryObj = {
       const turns = new Set<string>();
       const until = performance.now() + ms;
       while (performance.now() < until) {
-        fades.add(gridSpanFor(host, "pulse")?.style.opacity ?? "");
+        fades.add(paintedSpan(host, "pulse")?.style.opacity ?? "");
         turns.add(getComputedStyle(boxOf("spin")!).transform);
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
@@ -923,17 +898,15 @@ export const AnimationPaths: StoryObj = {
     expect(paused.turns.size, "paused spin frames").toBe(1);
     expect(paused.fades.size, "pulse frames beside a paused spin").toBeGreaterThanOrEqual(3);
     spin.style.animationPlayState = "";
-    await waitFor(async () => expect((await sample(200)).turns.size).toBeGreaterThanOrEqual(3), {
-      timeout: 10_000,
-    });
+    await waitFor(async () => expect((await sample(200)).turns.size).toBeGreaterThanOrEqual(3));
     // A one-shot background keyframe beside an infinite fade: the
     // frames read it through the relayout, and its end lands the
     // authored background while the fade's repaints go on.
     const mixed = canvasElement.querySelector<HTMLElement>('[data-test="mixed"]')!;
-    const background = () => gridSpanFor(host, "mixed")?.style.backgroundColor;
+    const background = () => paintedSpan(host, "mixed")?.style.backgroundColor;
     mixed.style.animation = "story-flash 300ms linear, story-fade 1s linear infinite";
     await waitFor(() => expect(background()).not.toBe("rgb(0, 128, 0)"));
-    await waitFor(() => expect(background()).toBe("rgb(0, 128, 0)"), { timeout: 10_000 });
+    await waitFor(() => expect(background()).toBe("rgb(0, 128, 0)"));
     expect(mixed.getAnimations().some((a) => a.playState === "running")).toBe(true);
   },
 };

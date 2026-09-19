@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 /**
  * Visual regression tests — ALWAYS run inside the official Playwright Docker
- * image (see scripts/test-visual.sh) so screenshots are byte-identical
+ * image (see scripts/test-visual.mjs) so screenshots are byte-identical
  * across machines and CI. Baselines are therefore Linux-only; the snapshot
  * path template deliberately omits the platform suffix.
  */

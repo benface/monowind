@@ -35,6 +35,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm check
+      - run: pnpm test
 
   visual:
     name: Visual regression

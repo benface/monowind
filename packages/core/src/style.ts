@@ -1,7 +1,7 @@
 import { trackBackground } from "./animate.ts";
 import { animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
-import { isLegacyColor, parseColor } from "./color.ts";
+import { colorAlpha, isLegacyColor, parseColor } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
@@ -589,20 +589,12 @@ function applyBorderCollapse(style: CellStyle, cs: CSSStyleDeclaration): void {
   if (style.display === "table") style.padding = zeroInsets();
 }
 
-/** True for a computed `background-color` that shouldn't trigger the
- * bg-occludes-decorations fill. Real browsers resolve transparent to
- * `rgba(0, 0, 0, 0)`; the empty-string and `currentcolor` branches
- * cover happy-dom (test env), which leaves some computed values
+/** A computed color that paints nothing: one of alpha zero in any
+ * form, or the empty string and `currentcolor` happy-dom leaves
  * unresolved. */
 export function isTransparentColor(value: string): boolean {
-  if (!value) return true;
   const normalized = value.trim().toLowerCase();
-  return (
-    normalized === "" ||
-    normalized === "transparent" ||
-    normalized === "rgba(0, 0, 0, 0)" ||
-    normalized === "currentcolor"
-  );
+  return normalized === "" || normalized === "currentcolor" || colorAlpha(normalized) === 0;
 }
 
 /** Background-color read, routed through the synthesized-transition

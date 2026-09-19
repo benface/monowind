@@ -1,6 +1,6 @@
 # monowind — core architecture
 
-Status: living document — Milestones 1–6 implemented (last updated 2026-08-30)
+Status: living document — Milestones 1–6 implemented (last updated 2026-09-19)
 
 ## What monowind is
 
@@ -120,7 +120,16 @@ dialog resolves against the viewport, so the engine places its light
 element `fixed` from the grid's client origin, paints its cells last
 in a stack the `toggle` events order, and draws its `::backdrop` as a
 box beneath them in the shadow viewport, the native one locked
-transparent like any light-DOM background.
+transparent like any light-DOM background. Anchor positioning
+(specs/anchor-positioning.md) places an out-of-flow box against its
+anchor in cells, the engine trying the flips itself; the browser's own
+anchored placement stays locked off the light elements, and every
+anchor name is scoped to its subtree while the engine reads, so no
+native fallback leaks into the values read. `@monowind/ui`
+(specs/ui.md) builds on both: Zag.js machines run the components'
+behavior and accessibility in the light DOM, and the engine places
+and layers their floating parts — a headless, framework-agnostic
+layer that imports nothing from the engine.
 
 The plan file `../plans/2026-08-30-unified-render-initiative.md`
 documents how this arrived; the code and specs (`../specs/cell-model.md`)
@@ -128,9 +137,13 @@ are the current source of truth.
 
 ### D4. Framework-agnostic via a Web Component
 
-One custom element hosts the grid: measures cell metrics, observes the light DOM,
-schedules layout, paints decoration. Frameworks just render children into it — no
-per-framework renderer needed (optional JSX type declarations only).
+One custom element hosts the grid: measures cell metrics, observes the light DOM
+(its tree, character data, and the attributes that render — `class`, `style`,
+HTML's states and presentation, the ARIA states Tailwind styles, every `data-*`,
+and all of a leaf's, per specs/cell-model.md "Observation" — with the engine's
+own writes drained or filtered by name), schedules layout, paints decoration.
+Frameworks just render children into it — no per-framework renderer needed
+(optional JSX type declarations only).
 
 Note: custom element names **require a hyphen**, so `<monowind>` is invalid.
 Decision (2026-08-25): the tag is **`<mono-wind>`**. The component family has
@@ -152,7 +165,7 @@ components (`<mono-textarea>`, `<mono-scroll>`), consider migrating the host to
 
 All three share one core. Concretely, the planned packages:
 
-- **`monowind`** (`packages/core`) — the only package until the MVP is done:
+- **`monowind`** (`packages/core`) — the engine:
   the `<mono-wind>` element, style reader, layout engine, decoration renderer,
   companion stylesheet. Zero runtime dependencies. (The monorepo root
   package.json is named `monowind-monorepo` so the workspace never has two
@@ -175,10 +188,19 @@ All three share one core. Concretely, the planned packages:
   color through `--mw-ansi-*` theme tokens, and its own CDN bundle
   (`dist/cdn.js`, loaded next to core's — external `monowind` mapped to
   the shared global so the registries stay singular).
+- **`@monowind/qr-code`** (`packages/qr-code`) — `<mono-qr>`, a QR code
+  as cells on the leaf-renderer API (specs/qr-code.md), with its own
+  CDN bundle like ascii's.
 - **`@monowind/themes`** (`packages/themes`) — class-scoped themes modeled
   on real systems (DOS/VGA, C64, phosphor terminals, teletype): quantized
   Tailwind palettes, period fonts (int10h pack, CC BY-SA), ANSI tokens,
   and border glyph sets via the core theming contract (specs/theming.md).
+- **`@monowind/ui`** (`packages/ui`) — accessible components (menu,
+  dialog, popover, tooltip) as Zag.js machines placed and layered by the
+  engine (specs/ui.md), one entry per component, a vanilla mount, and a
+  CDN bundle; **`@monowind/ui-react`**, **`@monowind/ui-vue`**,
+  **`@monowind/ui-svelte`** fold each framework's Zag adapter in, one
+  function per component.
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_
@@ -192,18 +214,19 @@ All three share one core. Concretely, the planned packages:
 - **`apps/`** — `storybook` (the showcase + dev environment; every story is
   also a browser test and a visual-regression fixture), `example-html` (CDN
   mode), `example-tailwind` (native mode, custom `@theme`), `example-vite`
-  (standalone mode via `@monowind/vite`), `example-react` (React 19 owning
-  the light DOM — its smoke test proves state → re-render → relayout),
-  `play` (in-browser playground, → play.monowind.benface.com — live HTML
+  (standalone mode via `@monowind/vite`), `example-react`, `example-vue`,
+  `example-svelte`, `example-solid` (each framework owning the light DOM —
+  the smoke tests prove state → re-render → relayout, and the menu and
+  dialog through the framework's `@monowind/ui-*` package where one
+  exists), `play` (in-browser playground, → play.monowind.benface.com — live HTML
   editing through an iframe-isolated preview, shareable compressed-hash
   URLs plus `/s/<id>` short links from a Netlify function backed by
   Blobs — `pnpm --filter @monowind/play dev:netlify` runs them locally —
   Tidy formatting via `dist/sort.js`), with a docs/landing site
   (`website`, → monowind.benface.com) to come.
-- Per-framework packages: only if/when interactive components
-  (`<mono-textarea>`, `<mono-scroll>`, …) happen. The component layer itself
-  has started: `@monowind/ascii` ships `<mono-ascii>` on the leaf-renderer
-  API.
+- Per-framework packages exist for the components alone (`@monowind/ui-*`
+  over `@monowind/ui`); the elements (`<mono-ascii>`, `<mono-qr>`) need
+  none.
 
 **Workspace vs. publish resolution.** Each publishable package exposes its own
 source via `exports` (`"default": "./src/index.ts"`) so workspace consumers
@@ -241,6 +264,13 @@ Two patterns recur in `styles.css` and are easy to misread:
   attribute, so during the read pass elements show their AUTHORED values.
   Ungated rules are only those that must hold during measurement too (the
   font lock, which defines the cell metrics).
+- **Locks in `@layer theme`.** Every `!important` rule of the engine's sits
+  in Tailwind's first layer: among important declarations the earliest
+  layer wins, so a lock beats a utility's `!` modifier and any unlayered
+  author `!important`, and only an important inline style or a running
+  transition beats it. The grid-mode pointer-events rules stay unlayered,
+  so `pointer-events-auto!` remains the hit-target escape hatch
+  (specs/cell-model.md); cascade.test.ts holds the split.
 - **Invalid-at-computed-value as "inherit".** The letter-spacing rule
   multiplies `var(--mw-ls)` with no fallback on purpose: an element without
   `--mw-ls` makes the declaration invalid at computed-value time, which for
@@ -291,7 +321,10 @@ dominant.
   `:hover`/`:active` on non-interactive elements are SYNTHESIZED from
   cell hit-testing instead (`data-mw-hover`/`data-mw-active` +
   redefined Tailwind variants — specs/cell-model.md "Pointer
-  states"), since the light DOM is never the hit target there.
+  states"), since the light DOM is never the hit target there. Above
+  the host, a `class` or `style` change on an ancestor and a color
+  scheme change schedule a layout (a theme class on the page reaches
+  the cells through the cascade) — cell-model.md "Observation".
 - **Transforms**: `translate-y-1` etc. would shift content off-grid (browser
   applies raw px). Likely answer: rescale the standalone `translate` property to
   cells the way insets are handled; neutralize matrix `transform`s. Needs

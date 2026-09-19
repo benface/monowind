@@ -11,12 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@solidjs/web": "2.0.0-rc.7",
-    "solid-js": "2.0.0-rc.7"
+    "@solidjs/web": "2.0.0-rc.9",
+    "solid-js": "2.0.0-rc.9"
   },
   "devDependencies": {
     "@monowind/vite": "workspace:*",
-    "@solidjs/vite-plugin": "3.0.0-next.42",
+    "@solidjs/vite-plugin": "3.0.0-next.44",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"

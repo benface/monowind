@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, dragTo, pressAt, release } from "./helpers.ts";
+import { cellSize, copyText, dragTo, pressAt, readyHost, readyHosts, release } from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -26,12 +26,11 @@ export const Gestures: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const code = canvasElement.querySelector<HTMLElement>("[data-test='code']")!;
     const grid = host.shadowRoot!.getElementById("grid")!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     const transcript = code.shadowRoot!.getElementById("mirror")!;
     const mirror = () => transcript.textContent!;
     const lines = () => mirror().split("\n");
@@ -92,8 +91,6 @@ export const Fonts: StoryObj = {
     </div>
   `,
   play: async ({ canvasElement }) => {
-    for (const host of Array.from(canvasElement.querySelectorAll<HTMLElement>("mono-wind"))) {
-      await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-    }
+    await readyHosts(canvasElement);
   },
 };

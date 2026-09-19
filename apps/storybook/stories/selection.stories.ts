@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, dragTo, pressAt, readyHost, release } from "./helpers.ts";
+import { cellSize, copyText, dragTo, pressAt, readyHost, release, testHooks } from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -98,14 +98,13 @@ export const Semantic: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    const by = testHooks(canvasElement);
     const text = (name: string) => by(name).innerText.trim();
     const art = by("banner").shadowRoot!.getElementById("mirror")!.textContent!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     // Client coordinates of a cell inside an element's box.
     const cell = (name: string, col: number, row: number) => {
       const rect = by(name).getBoundingClientRect();
@@ -286,7 +285,7 @@ export const Semantic: StoryObj = {
     expect(host).toHaveAttribute(lifted);
     release();
     document.getSelection()!.removeAllRanges();
-    await waitFor(() => expect(host).not.toHaveAttribute(lifted), { timeout: 10_000 });
+    await waitFor(() => expect(host).not.toHaveAttribute(lifted));
     // A grid selection copies through the browser: text/plain unset.
     document.getSelection()!.selectAllChildren(grid);
     expect(copied()).toBe("");
@@ -336,8 +335,7 @@ export const Copy: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = canvasElement.querySelector<HTMLElement>("mono-wind")!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    const host = await readyHost(canvasElement);
     const textOf = (name: string) =>
       canvasElement.querySelector(`[data-test="${name}"]`)!.firstChild as Text;
     const copyOf = (from: string, to: string) => {
@@ -417,9 +415,9 @@ export const Autoscroll: StoryObj = {
   render: () => autoscrollFixture,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const by = testHooks(canvasElement);
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     const selection = () => document.getSelection()!.toString();
     const focusOwner = () => {
       const node = document.getSelection()!.focusNode;
@@ -487,7 +485,7 @@ export const Autoscroll: StoryObj = {
     dragTo(by("w1"), { x: wide.getBoundingClientRect().right + cellWidth / 2, y: start.y });
     await waitFor(() => expect(wide.scrollLeft).toBeGreaterThan(0));
     // Thirty-one cells at a cell per tick.
-    await waitFor(() => expect(selection()).toMatch(/tail\.$/), { timeout: 5000 });
+    await waitFor(() => expect(selection()).toMatch(/tail\.$/));
     clear();
     wide.scrollLeft = 0;
     await pause();
@@ -499,7 +497,7 @@ export const Autoscroll: StoryObj = {
     const right = host.getBoundingClientRect().right - cellWidth / 2;
     dragTo(by("top"), { x: right, y: window.innerHeight + cellHeight });
     await waitFor(() => expect(window.scrollY).toBeGreaterThan(0));
-    await waitFor(() => expect(selection()).toContain("Bottom paragraph"), { timeout: 5000 });
+    await waitFor(() => expect(selection()).toContain("Bottom paragraph"));
     release();
     await pause();
     const scrolled = window.scrollY;
@@ -547,9 +545,9 @@ export const NearestUnit: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
-    const cellHeight = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    const by = testHooks(canvasElement);
+    const cellWidth = cellSize(host).width;
+    const cellHeight = cellSize(host).height;
     const selection = () => document.getSelection()!.toString();
     const top = by("top").getBoundingClientRect();
     expect(

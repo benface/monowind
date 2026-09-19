@@ -1,3 +1,19 @@
+import { configure } from "storybook/test";
+import { beforeEach } from "vitest";
+import { page } from "vitest/browser";
+
+/** A wait that needs the engine's next layout can outlast testing
+ * library's one-second default on a starved browser (three engines run
+ * at once); the test timeout still bounds a wait that never resolves. */
+configure({ asyncUtilTimeout: 10_000 });
+
+/** Vitest 5's browser default is a mobile viewport (414×896); every
+ * play that measures rendered width or wraps text needs a desktop
+ * width. */
+beforeEach(async () => {
+  await page.viewport(1200, 900);
+});
+
 /** Silence lit's dev-mode banner: the test server serves the dev build
  * by design, and the line would otherwise repeat for every story file. */
 const NOISE = [/Lit is in dev mode/];

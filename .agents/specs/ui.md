@@ -1,6 +1,8 @@
 # Spec: `@monowind/ui` — accessible components on the grid
 
-Status: **proposed** (2026-09-13). The engine features it needs are
+Status: **implemented** (2026-09-13, the framework packages and
+examples 2026-09-18; `packages/ui`, one entry per component, plan
+`2026-09-13-ui.md`). The engine features it needs are
 `top-layer.md` and `anchor-positioning.md`; motion is `animations.md`.
 
 ## Motivation
@@ -22,18 +24,39 @@ the engine places and layers the parts, Zag runs them.
   `@monowind/ui/dialog`, `@monowind/ui/popover`, `@monowind/ui/tooltip`
   first; `select`, `combobox`, `tabs` and the rest follow the same
   shape. Versioned in lockstep with `monowind`.
-- **A core that touches no DOM**: per component, a function that
-  takes Zag's connected API and returns the same API with monowind's
-  part props — the trigger's `anchor-name`, the positioner's
-  `position-anchor`, `position-area`, and `popover="manual"` — so any
-  Zag adapter spreads them in its own idiom: `@zag-js/react`'s `useMachine` and JSX spreads, Vue's,
+- **A core that touches no DOM**: per component, `props(p)`, the
+  machine's props with Zag's own positioning off, Zag's `machine`
+  re-exported, `connect(service, normalizeProps, p)` — Zag's connect
+  with the grid's props, so the framework path needs this package's
+  entry alone — and `api(zagApi, normalizeProps, p)` for an API
+  connected elsewhere, Zag's connected API with monowind's part props
+  — the trigger's `anchor-name`, the positioner's `position-anchor`,
+  `position-area`, `position-try-fallbacks`, and `popover="manual"`,
+  the content's `hidden` dropped — written in the adapter's own shape
+  through its `normalizeProps`, so any Zag adapter spreads them in
+  its idiom: `@zag-js/react`'s `useMachine` and JSX spreads, Vue's,
   Solid's, Svelte's, and Ark UI's components. One effect beside it,
   `syncTopLayer(positioner, open)`, shows the positioner's popover as
-  the machine opens and hides it once the closed state's transitions
-  and animations under it have finished; a framework runs it after
-  commit, as it runs any DOM effect. The package depends on Zag
+  the machine opens, blurs a focused element inside it as the machine
+  closes (a parent menu placing the focus next asks where it is), and
+  hides it once the closed state's finite running animations under it
+  have finished; a framework runs it after commit, as it runs any DOM
+  effect. The package depends on Zag
   alone: it speaks the CSS and the attributes the engine reads, and
   imports nothing from `monowind`.
+- **A package per framework over the core**: `@monowind/ui-react`,
+  `@monowind/ui-vue`, and `@monowind/ui-svelte` (Solid's once
+  `@zag-js/solid` runs on Solid 2; Preact's on demand) fold the
+  adapter's `useMachine` and `normalizeProps` — the framework-specific
+  half of Zag, which the core cannot carry without depending on the
+  framework — into one function per component in the framework's
+  idiom: React's `useMenu(props)` returns the grid's API with the
+  positioner's ref in its props; Vue's returns the API as a computed
+  and the positioner as a template ref; Svelte's `createMenu(props)`
+  returns the API as a getter and the positioner as an action; Vue's
+  takes a ref or a getter of the props as well and Svelte's a getter,
+  so controlled props flow as Zag's do; the top layer follows the
+  machine inside each. The core stays the path for any other framework.
 - **Headless.** A component is behavior, not looks: the library owns
   the functionality, the keyboard and pointer usability, and the
   accessibility of every part, and ships no classes and no
@@ -44,8 +67,16 @@ the engine places and layers the parts, Zag runs them.
 - **A vanilla path for markup without a framework**: `menu(root,
 props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   found by `data-part` under the root, items and groups by their
-  `data-value`, attributes and handlers re-applied on every state
-  change; it returns the API and a `destroy`.
+  `data-value`, attributes and handlers applied a microtask after the
+  mount — once the sends a mount makes (a submenu's link to its
+  parent) have landed — and re-applied on every state change, a
+  submenu's included. A submenu is a menu of its own on the parent's
+  behavior props — `onSelect`, `closeOnSelect`, `loopFocus`,
+  `typeahead`, `composite`, `navigate`, `dir`, `getRootNode` — since
+  Zag calls a menu's `onSelect` for its own items; its open state,
+  highlight, and ids are its own. It returns the API and a `destroy`
+  that stops the machine and takes its handlers off the parts, after
+  which a mount on the same markup wires it again.
 - **States are attributes**: `data-state`, `data-highlighted`,
   `data-disabled`, `data-placement`, as Zag sets them, so an author
   styles them with Tailwind's data variants
@@ -60,17 +91,21 @@ props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   `position-area` mapped from Zag's placement (`bottom-start` is
   `bottom span-right`, `bottom-end` `bottom span-left`, `right-start`
   `right span-bottom`, and so on), and `position-try-fallbacks:
-flip-block, flip-inline, flip-block flip-inline`; the gutter is a
-  margin in cells. Zag's positioning runs with `applyStyles: false`
-  and `flip: false`, its pixel result unused and its `data-placement`
+flip-block, flip-inline, flip-block flip-inline`; the gutter
+  (`offset.mainAxis` over it, as Zag reads them) and the shift along
+  the anchor (`offset.crossAxis`) are margins in cells on the anchor's
+  side and the aligned edge's, which the engine mirrors with a flip
+  (anchor-positioning.md). Zag's positioning runs with `applyStyles`, `flip`,
+  and `listeners` off, its pixel result unused and its `data-placement`
   the placement asked for; the engine's flip shows as `data-mw-area`
   (anchor-positioning.md).
 - **Floating parts live in the top layer.** The positioner carries
   `popover="manual"`; `syncTopLayer` shows it as the machine opens
   and hides it once the exit completes, so it paints last and unclipped
-  (top-layer.md) and escapes any scroller it was opened from. Zag
-  keeps its own dismissal, focus, and inertness (`manual` gives the
-  popover none of the UA's).
+  (top-layer.md) and escapes any scroller it was opened from; the
+  `hidden` Zag puts on the closed content is dropped, a closed
+  popover being the UA's to hide. Zag keeps its own dismissal, focus,
+  and inertness (`manual` gives the popover none of the UA's).
 - **A dialog's backdrop is the `::backdrop`.** The dialog's positioner
   is the top-layer element and styles its backdrop with Tailwind's
   `backdrop:` variant; the engine tints the page under it
@@ -91,44 +126,190 @@ flip-block, flip-inline, flip-block flip-inline`; the gutter is a
   presence, which waits on `animation-name`, serves a framework that
   unmounts closed parts.
 - **Accessibility is Zag's, verified on the grid.** Roles, ARIA
-  states, keyboard maps, typeahead, roving tabindex, nested menus,
+  states, keyboard maps, typeahead, managed focus, nested menus,
   and focus management come from the machines unchanged; the stories
   assert them through the light DOM, where assistive technology reads
   them.
-- **The examples style through the theme's tokens.** The stories and
-  the docs show each component styled, and their classes are the
-  theme contract's (theming.md) — `bg-(--mw-bg)`, `text-(--mw-fg)`,
-  the `--mw-ansi-*` colors for emphasis, borders in `currentColor` —
-  so a component styled that way wears whatever theme its host does,
-  shipped or custom, and draws its borders in the host's glyph set.
+- **The examples wear the host's colors.** A floating part is a
+  surface in the host's `--mw-fg`/`--mw-bg` by the engine's own rule
+  (top-layer.md), so the stories and the docs style each component
+  with no color of its own — `bg-clear` on a menu's, popover's, or
+  tooltip's content to show what lies behind the host, a dialog's
+  content left opaque — palette colors for emphasis, which a theme
+  quantizes, and borders in `currentColor`, so a component wears
+  whatever theme its host does, shipped or custom, and draws its
+  borders in the host's glyph set.
 - **State flows as Zag's does.** Every component takes Zag's
   controlled and uncontrolled props unchanged — `open` and
   `defaultOpen` with `onOpenChange`, `highlightedValue`, `ids` for
   composition, an `id` per instance (`useId()` in React) that also
   names the anchor — and adds no state of its own: the monowind props
-  derive from the API's `open` and `placement`.
+  derive from the placement asked for and the API's `open`. The
+  framework packages follow a changed prop as Zag's adapters do; the
+  vanilla mount reads its props once.
+
+## Component layer (proposed 2026-09-19; plan `2026-09-19-ui-components.md`)
+
+The functions above are the floor: the author writes every part's
+markup and spreads its props. Two layers above them give the parts
+names and props, one for markup and one per framework, both built on
+the functions; the functions change only where the elements need them
+to, and additively.
+
+- **Elements for markup**: `<mono-menu>`, `<mono-submenu>`,
+  `<mono-dialog>`, `<mono-popover>`, `<mono-tooltip>`, from
+  `@monowind/ui/elements`, registered by `defineMonoUi()` as core's
+  are by `defineMonoWind()` — the entry registers nothing on import,
+  so the package's `sideEffects: false` holds; the CDN bundle calls it.
+  An element is the vanilla mount's root and nothing more: no shadow
+  root, its parts the `data-part` descendants the mount finds, all of
+  them light DOM the engine lays out; inline, as a custom element is,
+  its trigger its only in-flow content, the positioner out of flow in
+  the top layer, so a `<mono-tooltip>` sits inside a paragraph's
+  sentence. It exposes its `api` and `destroy()`.
+- **The mount follows the markup.** The element mounts when its parts
+  are there: at connection when they are (`innerHTML`, `append`, a
+  framework's render, an upgrade after parsing), else — a document
+  still parsing, the parser having connected the element before its
+  children — at `DOMContentLoaded`; a `MutationObserver` on its
+  subtree mounts again, a microtask after, when parts come or go; a
+  disconnection destroys the mount (hiding the popover), a
+  reconnection mounts again. As the README asks of any vanilla
+  positioner, `popover="manual"` in the markup keeps a page parsed
+  before the script from showing the content in flow.
+- **Attributes are the props, by type.** Each element lists its props
+  with their types; each is the kebab-cased attribute (`close-on-select`,
+  `loop-focus`, `open-delay`), the positioning flattened (`placement`,
+  `gutter`, `offset-cross-axis`, `offset-main-axis`, in cells), and
+  the dialog's `role` prop `content-role`, the element's own `role`
+  being its own. A boolean is true by presence and false as `"false"`
+  (React 19 removes an attribute it sets to `false`; `"false"` comes
+  from string templating alone, and reads as it means); a number
+  parses, a string stays a string (so a `highlighted-value` matches
+  its item's `data-value` as written). Props without an attribute form
+  — `ids`, `getRootNode`, `navigate`, `initialFocusEl`,
+  `finalFocusEl`, `translations` — are properties on the element. `id`
+  is the element's own, generated when it has none, and bound at the
+  mount: a change to it mounts again. An attribute changed after the
+  mount reaches the running machine (Zag's `updateProps`, through a
+  `Mounted.updateProps` the vanilla mount gains) and the grid's props
+  alike, the mount reading its props per render rather than once; a
+  menu hands the behavior props it shares down to its submenus.
+- **`open` is the state, reflected.** The machine stays uncontrolled:
+  the attribute at the mount is the initial state, a later change
+  opens or closes through `api.setOpen`, and the element writes the
+  attribute from `onOpenChange` only when its presence differs from
+  the state, so neither direction loops.
+- **Events are the callbacks.** Every callback prop dispatches a
+  bubbling `CustomEvent` on the element, named by the callback without
+  its `on`, lower-cased as one run — `onOpenChange` is `openchange`,
+  `onHighlightChange` `highlightchange`, and `onSelect` `itemselect`,
+  since the native `select` event bubbles from inputs — its `detail`
+  the callback's argument; where the argument carries a
+  `preventDefault` (`onEscapeKeyDown`), cancelling the event calls it.
+  One run, since React 19 attaches an `onitemselect` function prop on
+  a custom element as a listener by that name; Vue's emits on the
+  components below spell the same events Vue's way (`open-change`),
+  both intended.
+- **A submenu is an element of its own, mounted by its parent.**
+  `<mono-submenu value="…">` sits where the `submenu` root sits today,
+  after its trigger item, with its own placement attributes; the
+  parent's mount finds it as it finds a `data-part="submenu"` root,
+  reads its attributes for the submenu's positioning, links it, and
+  reflects its `open`; its events surface on the parent element.
+- **Framework components over the functions**: each of
+  `@monowind/ui-react`, `-vue`, `-svelte` exports from its one entry,
+  beside its functions and tree-shaken like them (`sideEffects:
+false`), one namespace per component with Ark UI's anatomy —
+  `Menu.Root`, `Menu.Trigger`, `Menu.Positioner`, `Menu.Content`,
+  `Menu.Item`, `Menu.ItemGroup`, `Menu.ItemGroupLabel`,
+  `Menu.Separator`, `Menu.TriggerItem`; `Dialog.Root`, `.Trigger`,
+  `.Positioner`, `.Content`, `.Title`, `.Description`,
+  `.CloseTrigger`; `Popover` the same; `Tooltip.Root`, `.Trigger`,
+  `.Positioner`, `.Content` — Ark's other parts (arrows, indicators,
+  a backdrop, checkbox and radio items) left for a later need. `Root`
+  takes the machine's props, `id` optional and generated (`useId`,
+  Vue's `useId`, Svelte's `$props.id()`), renders nothing of its own,
+  and hands the API down through context; `RootProvider` takes an
+  author's own API from the functions instead. Every other part
+  renders one element (a `button` for a trigger, an `h2` for a title,
+  an `hr` for a separator, a `div` else) with the API's props for it
+  merged (Zag's `mergeProps`) under the author's own — `class`,
+  handlers, anything — and its children, or with `asChild` renders its
+  one child element with those props merged onto it; `Positioner`
+  owns the top layer as the function does. A `Menu.Root` inside
+  another's content is a submenu, linked to its parent through
+  context, its `TriggerItem` the parent's item. Callbacks are props in
+  React and Svelte and emits in Vue (`@select`), each framework's
+  idiom. The Svelte parts are `.svelte` files shipped as source under
+  the package's `svelte` condition, as its `.svelte.ts` module is; the
+  peers (Vue 3.5, Svelte 5.20) already carry the id generators.
+- **Nothing else moves.** The functions stay public and are what the
+  components call; the elements work as markup in any framework (Solid
+  included, until `@zag-js/solid` runs on Solid 2) and are the whole
+  answer for a markup-first stack — htmx, Turbo, Alpine, a server's
+  views — which swaps them in and out and listens to their events
+  (`hx-trigger="itemselect from:closest mono-menu"`); the playground's
+  sample and its `data-component` mounting give way to the elements.
 
 ## Testing
 
 - Node: the placement mapping to `position-area`; the vanilla path's
   parts found and wired; the show and hide of the positioner around
-  the exit's transitions; a React smoke test of the core through
-  `@zag-js/react` and `react-dom`, proving the framework path.
+  the exit's transitions; the React hooks and Vue composables rendered
+  through their frameworks (`hooks.test.tsx`, `composables.test.ts`).
 - Storybook, per component, in every engine: open and close by
   pointer and keyboard; the floating part's cells directly under (or
-  beside, above) the trigger and the light element's box on them; a
-  flip at the host's edge; the part above a later sibling and outside
-  the scroller it was opened from; Escape, outside click, and focus
-  restore; roving focus, typeahead, and a submenu for the menu; the
-  focus trap and the tinted page for the dialog; the enter and exit
-  animations sampled to their ends.
+  beside, above) the trigger and the light element's box on them, over
+  the page's later text; Escape and focus restore (an outside press
+  dismisses through Zag's document listener on a deferred animation
+  frame, which WebKit suspends in a backgrounded window, so the
+  stories leave it unasserted); the highlight moved by the arrows,
+  typeahead, and a submenu for the menu; the focus trap
+  and the tinted page for the dialog; an exit transition on
+  `data-state` holding the positioner in the top layer to its end; a
+  grid drag over the popover's text selecting it. The
+  flip at the host's edge and the escape from a scroller are the
+  engine's, tested in the positioning stories, one of them on a box the
+  browser would have flipped itself.
 - Visual: a golden of each component open.
+- Proposed with the component layer: node tests of an element's
+  attributes read as props, a change reaching the machine, `open`
+  reflected both ways, an event per callback, a submenu's own
+  attributes; the React and Vue components rendered in node, the
+  Svelte ones through the Svelte example; a story per element.
 
 ## Touch points on implementation
 
-- `packages/ui`: the package, `@zag-js/vanilla` and the machines as
-  dependencies at their latest versions, `@zag-js/react` with `react`
-  and `react-dom` for the smoke test, one entry per component.
-- storybook: a `Components` section, one story file per component.
-- playground: the sample gains a menu and a dialog.
-- README: the components paragraph.
+- The engine, first: ARIA widget roles among the elements that take
+  pointer events in grid mode (cell-model.md), a handled arrow key
+  left to its widget under `focus="arrows"` (focus-navigation.md), and
+  anchor names scoped to their subtree while the engine reads
+  (anchor-positioning.md), so a menu's items highlight under the
+  pointer, its arrows move the highlight, and the browser's own
+  fallback never reaches the values read.
+- `packages/ui-react`, `packages/ui-vue`, `packages/ui-svelte`: one
+  entry each, a function per component over `@monowind/ui` and the
+  adapter; the React and Vue ones tested in node through their
+  renderers, the Svelte one through the Svelte example's smoke test
+  (its runes compile in the consumer's Svelte plugin; the package
+  ships `.svelte.ts` source, as Svelte libraries do).
+- `packages/ui`: `anchor.ts` (the placement table, the anchor name,
+  the props and their merge, `anchoredApi`), `top-layer.ts`
+  (`syncTopLayer`, its own `./top-layer` subpath for the framework
+  packages), `vanilla.ts` (the parts, the mount), and `menu.ts`,
+  `dialog.ts`, `popover.ts`, `tooltip.ts` (each `props`, `api`, the
+  mount); `@zag-js/vanilla` and the machines as dependencies;
+  `dist/cdn.js` for classic scripts, `monowind.ui`.
+- storybook: `ui.stories.ts` under `Packages / ui`, beside
+  the other packages' elements, a story per component, the vanilla
+  path wired from each story's render.
+- examples: the React, Vue, and Svelte ones carry a menu and a dialog
+  through their packages; the playground's sample carries a menu and a
+  dialog, mounted on roots marked `data-component`.
+- README: the components section; the package's own README.
+- Proposed: `packages/ui/src/elements/` (a base element over the
+  vanilla mount: attribute parsing, `open` reflection, events, the
+  lifecycle; one subclass per component; `defineMonoUi`), the
+  `./elements` subpath and the CDN bundle; `components/` in each
+  framework package, exported beside the functions.

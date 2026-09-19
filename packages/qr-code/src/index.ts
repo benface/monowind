@@ -157,7 +157,6 @@ export function defineMonoQr(): void {
   customElements.define("mono-qr", MonoQrElement);
   registerLeafRenderer({
     tag: "mono-qr",
-    observedAttributes: ["level", "aspect", "scale"],
     render: renderQrLeaf,
     selectionTarget: (el) => el.shadowRoot?.getElementById("mirror") ?? null,
   });

@@ -144,7 +144,6 @@ export function defineMonoAscii(): void {
   customElements.define("mono-ascii", MonoAsciiElement);
   registerLeafRenderer({
     tag: "mono-ascii",
-    observedAttributes: ["font", "effect", "trim"],
     render: renderLeaf,
     selectionTarget: (el) => el.shadowRoot?.getElementById("mirror") ?? null,
   });

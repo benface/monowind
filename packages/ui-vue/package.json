@@ -1,0 +1,65 @@
+{
+  "name": "@monowind/ui-vue",
+  "version": "0.3.0",
+  "description": "@monowind/ui as Vue composables: a menu, a dialog, a popover, a tooltip on the monowind grid",
+  "keywords": [
+    "accessibility",
+    "components",
+    "monowind",
+    "tui",
+    "vue",
+    "zag-js"
+  ],
+  "license": "MIT",
+  "author": "Benoît Rouleau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benface/monowind.git",
+    "directory": "packages/ui-vue"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "typecheck": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@monowind/ui": "workspace:^",
+    "@zag-js/vue": "^1.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "@zag-js/core": "^1.44.0",
+    "happy-dom": "^20.14.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1",
+    "vue": "^3.5.43"
+  },
+  "peerDependencies": {
+    "vue": ">=3.5.0"
+  }
+}

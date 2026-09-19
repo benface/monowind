@@ -1,4 +1,4 @@
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { addons } from "storybook/preview-api";
 import { GLOBALS_UPDATED, STORY_RENDERED, UPDATE_GLOBALS } from "storybook/internal/core-events";
 import type { Preview } from "@storybook/web-components-vite";
@@ -15,7 +15,8 @@ defineMonoWind();
 // @monowind/themes themes, each worn as a class around every story
 // (the decorator below) with its own canvas and text — a theme's colors
 // are its own, so light/dark has no say over it. Kept in step with the
-// theme files' `--mw-bg`/`--mw-fg`.
+// theme files' colors; an unthemed host's tokens derive from the canvas
+// and text behind it (specs/theming.md).
 const THEMES = {
   light: { canvas: "var(--color-bg-light)", text: "var(--color-fg-light)", dark: false },
   dark: { canvas: "var(--color-bg-dark)", text: "var(--color-fg-dark)", dark: true },
@@ -37,16 +38,15 @@ const systemTheme = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matc
   : "light";
 
 // Theming beyond the addon's canvas paint: the canvas color (`--sb-canvas`,
-// read by styles.css), the text color, `color-scheme`, and the `.dark`
-// class that drives the `dark:` variant. The theme class itself comes
+// read by styles.css), the body's text color (which an unthemed host's
+// `--mw-fg` derives from), `color-scheme`, and the `.dark` class that
+// drives the `dark:` variant. The theme class itself comes
 // from the decorator, so a story's hosts connect themed and never lay
 // out in the default font first.
 const backgroundOf = (value: unknown): Background =>
   typeof value === "string" && value in THEMES ? (value as Background) : "light";
-let background: Background = systemTheme;
 function applyTheme(value: unknown): void {
-  background = backgroundOf(value);
-  const theme = THEMES[background];
+  const theme = THEMES[backgroundOf(value)];
   document.documentElement.style.setProperty("--sb-canvas", theme.canvas);
   document.body.style.color = theme.text;
   document.body.style.colorScheme = theme.dark ? "dark" : "light";
@@ -73,11 +73,6 @@ function applyModes(): void {
     // default, so the other value must be written, not implied by absence.
     host.setAttribute("select", modes.select);
     host.setAttribute("focus", modes.focus);
-    // Engine-painted glyph colors are baked at layout time, and a
-    // light/dark flip happens outside the hosts' subtrees — nudge each
-    // host so its observer triggers a fresh layout (see the
-    // dynamic-style question in the architecture doc).
-    host.style.setProperty("--sb-theme", background);
   }
 }
 // GLOBALS_UPDATED also covers values restored from the URL/session at
@@ -113,7 +108,9 @@ const preview: Preview = {
   decorators: [
     (story, context) => {
       const name = backgroundOf((context.globals.backgrounds as { value?: unknown })?.value);
-      return html`<div class=${isTheme(name) ? `theme-${name}` : ""}>${story()}</div>`;
+      // One template either way: a theme toggle swaps the class and keeps
+      // the story's DOM (and what a play left in it).
+      return html`<div class=${isTheme(name) ? `theme-${name}` : nothing}>${story()}</div>`;
     },
   ],
   globalTypes: {
@@ -143,6 +140,9 @@ const preview: Preview = {
     },
   },
   parameters: {
+    // The sidebar's groups in this order (the index lists them as their
+    // files come, `ascii` first).
+    options: { storySort: { order: ["Features", "Packages", "Test"] } },
     // Read-only story source (our lit templates are the plain markup) in
     // an addon panel beside the canvas. Controls/Actions panels are
     // hidden: no story uses args.

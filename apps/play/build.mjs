@@ -17,6 +17,8 @@ for (const file of [
   "ascii-cdn.js.map",
   "qr-cdn.js",
   "qr-cdn.js.map",
+  "ui-cdn.js",
+  "ui-cdn.js.map",
 ]) {
   copyFileSync(new URL(`./${file}`, import.meta.url), new URL(`./dist/${file}`, import.meta.url));
 }

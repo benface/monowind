@@ -11,14 +11,12 @@ import { chromium } from "playwright";
 const url = new URL("./index.html", import.meta.url).href;
 const browser = await chromium.launch();
 const page = await browser.newPage();
+page.setDefaultTimeout(10_000);
 await page.goto(url);
 // The preview lives in an iframe now — wait for its mono-wind to be
 // upgraded and ready before probing its shadow grid.
-await page.waitForFunction(
-  () =>
-    document.getElementById("preview")?.contentDocument?.querySelector("mono-wind[data-mw-ready]"),
-  null,
-  { timeout: 10_000 },
+await page.waitForFunction(() =>
+  document.getElementById("preview")?.contentDocument?.querySelector("mono-wind[data-mw-ready]"),
 );
 
 const sampleRendered = await page.evaluate(() => {
@@ -28,6 +26,62 @@ const sampleRendered = await page.evaluate(() => {
     ?.shadowRoot?.getElementById("grid");
   return (grid?.textContent ?? "").includes("┌") && (grid?.textContent ?? "").includes("│");
 });
+
+// The sample's share menu, mounted through the ui CDN bundle on the
+// marked root: its button opens it under itself, in the top layer.
+const preview = page.frameLocator("#preview");
+await preview.locator('[data-component="menu"] [data-part="trigger"]').click();
+await preview
+  .locator('[data-component="menu"] [data-part="positioner"]:popover-open[data-mw-area]')
+  .waitFor();
+const uiMounted = await page.evaluate(() => {
+  const doc = document.getElementById("preview")?.contentDocument;
+  const trigger = doc?.querySelector('[data-component="menu"] [data-part="trigger"]');
+  const positioner = doc?.querySelector('[data-component="menu"] [data-part="positioner"]');
+  if (!trigger || !positioner) return false;
+  // On the side the engine took: under its button, or above it where the
+  // sample's bottom edge leaves no room; left edges aligned either way.
+  const t = trigger.getBoundingClientRect();
+  const p = positioner.getBoundingClientRect();
+  const above = positioner.getAttribute("data-mw-area")?.includes("top");
+  const beside = above ? Math.abs(p.bottom - t.top) < 1 : Math.abs(p.top - t.bottom) < 1;
+  return beside && Math.abs(p.left - t.left) < 1;
+});
+await page.keyboard.press("Escape");
+
+// The sample's star dialog, mounted the same way: once the grid has
+// painted its [ ok ] button, right-aligned, a click on those cells
+// closes it.
+await preview.locator('[data-component="dialog"] [data-part="trigger"]').click();
+const okPainted = await page
+  .waitForFunction(() => {
+    const frame = document.getElementById("preview");
+    const host = frame?.contentDocument?.querySelector("mono-wind");
+    const span = Array.from(host?.shadowRoot?.querySelectorAll("span") ?? []).find((el) =>
+      el.textContent?.includes("[ ok ]"),
+    );
+    if (!frame || !span) return null;
+    const outer = frame.getBoundingClientRect();
+    const rect = span.getBoundingClientRect();
+    return {
+      x: outer.left + rect.left + rect.width / 2,
+      y: outer.top + rect.top + rect.height / 2,
+    };
+  })
+  .then(
+    (handle) => handle.jsonValue(),
+    () => null,
+  );
+if (okPainted) await page.mouse.click(okPainted.x, okPainted.y);
+const dialogClosedFromItsCells =
+  okPainted !== null &&
+  (await preview
+    .locator('[data-component="dialog"] [data-part="content"][data-state="closed"]')
+    .waitFor({ state: "attached" })
+    .then(
+      () => true,
+      () => false,
+    ));
 
 // The sample's <mono-ascii> masthead renders as art through the ascii
 // CDN bundle: the semantic string stays in the light DOM only.
@@ -144,13 +198,10 @@ const selectQueryPersisted = await page.evaluate(() =>
 // Fresh load with the query set: the toggle comes up checked and the
 // preview attribute follows before first paint.
 await page.goto(`${url}?select=text`);
-await page.waitForFunction(
-  () =>
-    document
-      .getElementById("preview")
-      ?.contentDocument?.querySelector('mono-wind[select="text"][data-mw-ready]'),
-  null,
-  { timeout: 10_000 },
+await page.waitForFunction(() =>
+  document
+    .getElementById("preview")
+    ?.contentDocument?.querySelector('mono-wind[select="text"][data-mw-ready]'),
 );
 const selectRestored = await page.evaluate(() => document.getElementById("select-text").checked);
 // The focus-mode toggle rides the same query (`?focus=arrows`).
@@ -166,13 +217,10 @@ const focusQueryPersisted = await page.evaluate(() =>
   new URLSearchParams(location.search).get("focus"),
 );
 await page.goto(`${url}?focus=arrows`);
-await page.waitForFunction(
-  () =>
-    document
-      .getElementById("preview")
-      ?.contentDocument?.querySelector('mono-wind[focus="arrows"][data-mw-ready]'),
-  null,
-  { timeout: 10_000 },
+await page.waitForFunction(() =>
+  document
+    .getElementById("preview")
+    ?.contentDocument?.querySelector('mono-wind[focus="arrows"][data-mw-ready]'),
 );
 const focusRestored = await page.evaluate(() => document.getElementById("focus-arrows").checked);
 // The options button lives in the header on desktop and reparents to
@@ -292,28 +340,22 @@ const server = spawn(
 process.on("exit", () => server.kill());
 await new Promise((resolve) => setTimeout(resolve, 800));
 const served = await browser.newPage();
+served.setDefaultTimeout(10_000);
 await served.goto("http://localhost:5183/index.html");
-await served.waitForFunction(
-  () =>
-    document.getElementById("preview")?.contentDocument?.querySelector("mono-wind[data-mw-ready]"),
-  null,
-  { timeout: 10_000 },
+await served.waitForFunction(() =>
+  document.getElementById("preview")?.contentDocument?.querySelector("mono-wind[data-mw-ready]"),
 );
 await served.fill("#source", '<mono-ascii font="slant">lazy</mono-ascii>');
 let fontLazyLoaded = true;
 await served
-  .waitForFunction(
-    () => {
-      const grid = document
-        .getElementById("preview")
-        ?.contentDocument?.querySelector("mono-wind")
-        ?.shadowRoot?.getElementById("grid");
-      const text = grid?.textContent ?? "";
-      return text.includes("_") && !text.includes("lazy");
-    },
-    null,
-    { timeout: 10_000 },
-  )
+  .waitForFunction(() => {
+    const grid = document
+      .getElementById("preview")
+      ?.contentDocument?.querySelector("mono-wind")
+      ?.shadowRoot?.getElementById("grid");
+    const text = grid?.textContent ?? "";
+    return text.includes("_") && !text.includes("lazy");
+  })
   .catch(() => {
     fontLazyLoaded = false;
   });
@@ -325,6 +367,8 @@ const result = {
   sampleRendered,
   asciiRendered,
   qrRendered,
+  uiMounted,
+  dialogClosedFromItsCells,
   fontLazyLoaded,
   themed,
   themeQueryPersisted,
@@ -354,6 +398,8 @@ if (
   !sampleRendered ||
   !asciiRendered ||
   !qrRendered ||
+  !uiMounted ||
+  !dialogClosedFromItsCells ||
   !fontLazyLoaded ||
   !themed ||
   !themeQueryPersisted ||

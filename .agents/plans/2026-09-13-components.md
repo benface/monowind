@@ -1,6 +1,6 @@
 # Components implementation plan (0.3.0)
 
-Status: **proposed** (2026-09-13). Specs: `top-layer.md`,
+Status: **implemented** (2026-09-19). Specs: `top-layer.md`,
 `anchor-positioning.md`, `ui.md` — normative; this plan sequences
 them. The release is 0.3.0, a minor bump by decision, every package
 in lockstep.
@@ -31,7 +31,7 @@ transitions inside a host, in the three engines:
   positioner's styles to the consumer; the presence machine waits for
   `animationend` of the part's `animation-name`.
 
-## Phases (each ends green: `pnpm check` + the visual sweep)
+## Phases (each ends green: `pnpm check`, `pnpm test`, the visual sweep)
 
 ### 1. Top layer — implemented 2026-09-13
 
@@ -41,17 +41,17 @@ Spec `top-layer.md`, plan `2026-09-13-top-layer.md`.
 
 Spec `anchor-positioning.md`, plan `2026-09-13-anchor-positioning.md`.
 
-### 3. `@monowind/ui`
+### 3. `@monowind/ui` — implemented 2026-09-13
 
-Spec `ui.md`; its plan follows phase 2. `packages/ui` takes the build
+Spec `ui.md`, plan `2026-09-13-ui.md`. `packages/ui` takes the build
 and publish setup of the other packages (a new package needs a manual
 first publish); `menu`, `dialog`, `popover`, `tooltip` first, the
 React smoke test before the components grow.
 
-### 4. Docs and release
+### 4. Docs and release — docs implemented 2026-09-19
 
 - README components paragraph; the playground sample with a menu and
   a dialog; `cell-model.md` pointers to the two engine specs;
-  `core-architecture.md` on the top layer.
+  `.agents/architecture/core-architecture.md` on the top layer.
 - Versions to 0.3.0 in the final substantive commit; release notes
   covering v0.2.14..HEAD.

@@ -1,5 +1,6 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
+import { readyHost, readyHosts, testHooks } from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
@@ -68,11 +69,8 @@ export const Arrows: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const hosts = canvasElement.querySelectorAll<HTMLElement>("mono-wind");
-    for (const host of hosts) {
-      await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
-    }
-    const by = (name: string) => canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    await readyHosts(canvasElement);
+    const by = testHooks(canvasElement);
     const active = () => document.activeElement?.getAttribute("data-test") ?? null;
     // A keydown on the focused element; true when the engine left it native.
     const press = (key: string, init: KeyboardEventInit = {}): boolean =>
@@ -130,5 +128,47 @@ export const Arrows: StoryObj = {
     by("b1").focus();
     expect(press("Tab")).toBe(true);
     (document.activeElement as HTMLElement | null)?.blur();
+  },
+};
+
+/** A widget whose handler cancels an arrow keeps it (specs/focus-navigation.md):
+ * a listbox moving its own highlight, a button below it left alone. */
+export const HandledArrows: StoryObj = {
+  render: () => html`
+    <mono-wind focus="arrows">
+      <div class="flex w-40 flex-col gap-1">
+        <div data-test="listbox" role="listbox" tabindex="0" class="border px-1">
+          <div role="option" data-test="o1" aria-selected="true">one</div>
+          <div role="option" data-test="o2">two</div>
+        </div>
+        <button data-test="below">below</button>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const listbox = by("listbox");
+    let handled = 0;
+    listbox.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowDown") return;
+      handled += 1;
+      if (handled === 1) event.preventDefault();
+    });
+    const press = () =>
+      listbox.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    listbox.focus();
+    // Cancelled by the widget: focus stays; left alone: the host navigates.
+    press();
+    expect(document.activeElement).toBe(listbox);
+    press();
+    expect(document.activeElement).toBe(by("below"));
   },
 };

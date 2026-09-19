@@ -205,9 +205,13 @@ export function layoutNode(
     left: resolveLength(style.padding.left, availableWidth),
   };
   node.resolvedPadding = padding;
-  const outerWidth =
+  // A border box is at least its edges (specs/cell-model.md "Box
+  // model"): a zero-height box with a top border is its border row.
+  const outerWidth = Math.max(
     forced?.width ??
-    clampSize(resolveWidth(style, availableWidth, widthMode, node, cache), minWidth, maxWidth);
+      clampSize(resolveWidth(style, availableWidth, widthMode, node, cache), minWidth, maxWidth),
+    edges(style.border, padding, "x"),
+  );
   const outerHeightExplicit = resolveHeight(style, availableHeight);
   // A `forcedHeight` (set by a parent flex-column when grow/shrink assigned a
   // main-axis size) overrides both explicit `height` and `min-height` — the
@@ -330,7 +334,10 @@ export function layoutNode(
   const unclampedHeight = forcedHeight ?? outerHeightExplicit ?? naturalHeight;
   node.unclampedHeight = unclampedHeight;
   node.naturalContentHeight = naturalHeight;
-  const finalHeight = clampSize(unclampedHeight, minHeight, maxHeight);
+  const finalHeight = Math.max(
+    clampSize(unclampedHeight, minHeight, maxHeight),
+    edges(style.border, padding, "y"),
+  );
 
   // Multicol browser agreement (leaf and paragraph-flow container,
   // specs/multicol.md): fold the FINAL box's vertical slack into the
@@ -434,7 +441,6 @@ function layoutTextLeaf(
       totalRows: number;
       bands?: LineBand[] | undefined;
     };
-    let lineX: number[] | undefined;
     if (style.display === "multicol") {
       // Direct-text multicol leaf (specs/multicol.md): fragment the
       // wrapped lines into columns, the fill restricted by a definite
@@ -453,7 +459,6 @@ function layoutTextLeaf(
       );
       node.multicolGeometry = multicol;
       geometry = multicol;
-      lineX = multicol.lineX;
     } else {
       geometry = leafLineGeometry(node, innerWidth, intrusions);
       if (geometry.bands) node.lineBands = geometry.bands;
@@ -484,12 +489,13 @@ function layoutTextLeaf(
     // Symmetry of the wrap is preserved: the padded content box is
     // exactly the widest line, and greedy wrap breaks identically there
     // (every line fits, and every overflow still overflows).
-    alignLeafText(node, geometry, innerWidth, innerHeight, padding);
-    // Place each box at its marker's wrapped (line, column) — the
-    // browser's own line layout puts the in-flow box in the same spot
-    // because both models reserve exactly the same cells for it, and a
-    // taller box grows its LINE (per CSS; the box is vertical-align:
-    // top, so its top sits on the line's first row like the text).
+    const alignedWidth = alignLeafText(node, geometry, innerWidth, innerHeight, padding);
+    // Place each box at its marker's wrapped (line, column), past the
+    // line's indent and alignment as its text is — the browser's own
+    // line layout puts the in-flow box in the same spot because both
+    // models reserve exactly the same cells for it, and a taller box
+    // grows its LINE (per CSS; the box is vertical-align: top, so its
+    // top sits on the line's first row like the text).
     if (boxes.length > 0) {
       const lineOfChar = (charIndex: number) =>
         geometry.spans.findIndex((span) => charIndex >= span.start && charIndex < span.end);
@@ -502,8 +508,7 @@ function layoutTextLeaf(
           x:
             style.border.left +
             padding.left +
-            (lineX?.[line] ?? 0) +
-            (bands?.[line]?.x ?? 0) +
+            lineStart(node, line, span, alignedWidth).x +
             advanceOf(span.start, charIndex, node.advances),
           y: style.border.top + padding.top + geometry.lineY[line]!,
         };
@@ -561,7 +566,8 @@ export function clampSize(value: number, min: number, max: number | undefined): 
  * The padded content box becomes exactly the widest line, which preserves
  * the wrap: every line still fits, and greedy breaks are unchanged.
  * Mutates `padding` (=== node.resolvedPadding), which the renderers and
- * this leaf's box/slot placement below all read.
+ * this leaf's box/slot placement below all read; returns the width the
+ * text aligns in, the padded content box's.
  */
 function alignLeafText(
   node: LayoutNode,
@@ -569,11 +575,12 @@ function alignLeafText(
   innerWidth: number,
   innerHeight: number,
   padding: Insets,
-): void {
+): number {
   const style = node.style;
-  if (style.display !== "flex" && style.display !== "grid") return;
-  if (geometry.spans.length === 0) return;
+  if (style.display !== "flex" && style.display !== "grid") return innerWidth;
+  if (geometry.spans.length === 0) return innerWidth;
   const isColumn = style.display === "flex" && style.flexDirection === "column";
+  let alignedWidth = innerWidth;
 
   const itemWidth = geometry.spans.reduce(
     (max, span) =>
@@ -591,6 +598,7 @@ function alignLeafText(
     if (tx > 0) {
       padding.left += tx;
       padding.right += leftoverX - tx;
+      alignedWidth = itemWidth;
     }
   }
 
@@ -609,6 +617,7 @@ function alignLeafText(
       }
     }
   }
+  return alignedWidth;
 }
 
 /** A single-column text leaf's wrapped lines with their vertical
@@ -650,6 +659,44 @@ export function leafLineGeometry(
     y += heights[s]! + (s < spans.length - 1 ? node.style.lineGap : 0);
   }
   return { spans, lineY, textY, totalRows: y, bands };
+}
+
+/** Where a leaf's line starts in its content box, for the paint and the
+ * inline-box placement alike (specs/cell-model.md "Text alignment"):
+ * the width it aligns in (its band's beside floats; its column's less
+ * the trailing letter-spacing gap in multicol, which the browser's own
+ * alignment includes; else the content's), its indent (the first line's
+ * alone: a `<br>` re-indents nothing, per CSS), and its `x` — the
+ * column's and the band's edge, the indent, and the `text-align`
+ * offset, whole cells. */
+export function lineStart(
+  node: LayoutNode,
+  index: number,
+  span: LineSpan,
+  contentWidth: number,
+): { width: number; indent: number; x: number } {
+  const style = node.style;
+  const band = node.lineBands?.[index];
+  const multicol = node.multicolGeometry;
+  const width = band
+    ? band.width
+    : multicol
+      ? Math.max(1, multicol.columnWidth - style.tracking)
+      : contentWidth;
+  const indent = index === 0 ? style.textIndent : 0;
+  const lineWidth = lineAdvance(node.text, span.start, span.end, node.advances, style.tracking);
+  const leftover = Math.max(0, width - indent - lineWidth);
+  const offset =
+    style.textAlign === "end"
+      ? leftover
+      : style.textAlign === "center"
+        ? Math.floor(leftover / 2)
+        : 0;
+  return {
+    width,
+    indent,
+    x: (multicol?.lineX[index] ?? 0) + (band?.x ?? 0) + indent + offset,
+  };
 }
 
 type LineOpener = (index: number, closed: readonly LineSpan[]) => number;
@@ -764,6 +811,14 @@ export function resolveGap(style: CellStyle, axis: "x" | "y", basis: number | un
   const gap = resolveLength(axis === "x" ? style.gapX : style.gapY, basis);
   const rule = axis === "x" ? style.ruleX : style.ruleY;
   return Math.max(gap, rule?.width ?? 0);
+}
+
+/** A box's border and padding on an axis, which its size never goes
+ * below (specs/cell-model.md "Box model"). */
+export function edges(border: Insets, padding: Insets, axis: "x" | "y"): number {
+  return axis === "x"
+    ? border.left + border.right + padding.left + padding.right
+    : border.top + border.bottom + padding.top + padding.bottom;
 }
 
 /** Resolve a spacing length to cells against its containing-block basis.

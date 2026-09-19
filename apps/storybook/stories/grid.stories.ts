@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import type { MonoWindElement } from "monowind";
-import { expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
+import { cellSize, expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Grid",
@@ -158,7 +158,7 @@ export const AutoFillResize: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const frame = canvasElement.querySelector<HTMLElement>("#fill-frame")!;
-    const cellWidth = parseFloat(getComputedStyle(host).getPropertyValue("--mw-cw"));
+    const cellWidth = cellSize(host).width;
     const items = Array.from(
       canvasElement.querySelectorAll<HTMLElement>('[data-test="fill"] > div'),
     );
@@ -169,9 +169,9 @@ export const AutoFillResize: StoryObj = {
     // (→ 2 rows). The count resolving at LAYOUT time against the cell
     // grid is what this asserts — a static read could never adapt.
     frame.style.width = `${Math.floor(68 * cellWidth)}px`;
-    await waitFor(() => expect(rowCount()).toBe(3), { timeout: 10_000 });
+    await waitFor(() => expect(rowCount()).toBe(3));
     frame.style.width = `${Math.floor(100 * cellWidth)}px`;
-    await waitFor(() => expect(rowCount()).toBe(2), { timeout: 10_000 });
+    await waitFor(() => expect(rowCount()).toBe(2));
     await expectBrowserRowsToMatchEngine(canvasElement);
   },
 };

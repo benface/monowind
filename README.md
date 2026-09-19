@@ -51,8 +51,9 @@ forms, and accessibility semantics stay fully intact.
 > `<mono-wind select="text">` for a semantic text mirror. Opacity and
 > CSS transitions animate the grid (backgrounds synthesized by the
 > engine), hover/active states work on any element without breaking
-> grid selection, `<mono-ascii>` renders FIGlet banner text, and
-> `<mono-qr>` scannable QR codes — see the sections below. Design docs
+> grid selection, `<mono-ascii>` renders FIGlet banner text,
+> `<mono-qr>` scannable QR codes, and `@monowind/ui` accessible
+> components on the grid — see the sections below. Design docs
 > live in [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
@@ -117,6 +118,32 @@ restyle its modules.
 See [packages/qr-code/README.md](packages/qr-code/README.md) for the
 attributes.
 
+## Components
+
+`@monowind/ui` adds accessible components — a menu, a dialog, a
+popover, a tooltip — as [Zag.js](https://zagjs.com) state machines
+wired to the grid: Zag runs the roles, the keyboard, typeahead, focus,
+and dismissal; the engine places each floating part against its
+trigger in cells, in the top layer above everything, flipped where
+the host leaves no room. Headless, so a component styled through the
+theme's tokens wears whatever theme its host does. Mount one on
+markup marked with `data-part`, take `@monowind/ui-react`'s hooks,
+`@monowind/ui-vue`'s composables, or `@monowind/ui-svelte`'s functions, or
+use Zag's adapter for another framework with the package's `props()`
+and `connect()`.
+
+```ts
+import { menu } from "@monowind/ui/menu";
+
+menu(document.getElementById("file-menu")!, { id: "file" });
+```
+
+See [packages/ui/README.md](packages/ui/README.md) for the parts,
+states, placement, and the framework path, and
+[packages/ui-react](packages/ui-react/README.md),
+[packages/ui-vue](packages/ui-vue/README.md), and
+[packages/ui-svelte](packages/ui-svelte/README.md) for theirs.
+
 ## Themes
 
 `@monowind/themes` ships class-scoped themes modeled on real systems —
@@ -134,7 +161,7 @@ build a theme — it's one CSS file against the core theming contract.
 This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):
 
 - `apps/` — applications (Storybook, example apps, docs site, …)
-- `packages/` — the library packages (core engine, build integrations)
+- `packages/` — the library packages (core engine, build integrations, elements, components)
 - `.agents/` — working documents for AI agents (specs, plans, architecture)
 
 ## Showcase & docs
@@ -153,13 +180,14 @@ pnpm install
 # Storybook (the main showcase / dev environment), port 6006
 pnpm dev
 
-# lint + format check + typecheck + tests
+# lint + format check + typecheck
 pnpm check
 
 # same, but auto-fixes lint/format issues
 pnpm check:fix
 
-# tests only (unit + golden + story tests + example smoke tests)
+# tests (unit + golden + story tests + example smoke tests), one package
+# at a time: two app tests rebuild the packages they load
 pnpm test
 
 # visual regression tests (screenshots via Docker, one per story)
@@ -186,4 +214,6 @@ pnpm --filter @monowind/example-tailwind dev   # your own Tailwind v4 build
 pnpm --filter @monowind/example-vite dev       # standalone: @monowind/vite, zero Tailwind setup
 pnpm --filter @monowind/example-react dev      # React 19 + @monowind/vite
 pnpm --filter @monowind/example-solid dev      # Solid 2.0 (RC) + @monowind/vite
+pnpm --filter @monowind/example-svelte dev     # Svelte 5 + @monowind/vite
+pnpm --filter @monowind/example-vue dev        # Vue 3 + @monowind/vite
 ```

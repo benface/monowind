@@ -81,7 +81,7 @@ export const OwnText: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
-    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"), { timeout: 10_000 });
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
     // A late font swap would move the native lines under the measurement.
     await document.fonts.ready;
     expect(host).toHaveAttribute("data-mw-leaf");

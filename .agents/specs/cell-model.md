@@ -103,7 +103,9 @@ specs: deterministic, document order.)
 ## Box model
 
 - All boxes are **border-box**: `width`/`height` include border cells and
-  padding cells, matching Tailwind's global default.
+  padding cells, matching Tailwind's global default, and a box is at
+  least its edges — a zero-height box with a top border is its border
+  row, so an `<hr>` under Tailwind's preflight is a line.
 - A border consumes the cells its weight band says — one, by default,
   whatever the width; the width selects the band (heavy from 2px in
   the default set):
@@ -124,8 +126,8 @@ specs: deterministic, document order.)
 - A `background-color` fills the border box in the grid, wiping what
   ancestors painted there; a gradient `background-image` fills it a
   color per cell (`gradients.md`).
-- **Margins are supported** (`m-*`, `mx-*`, `-m-*`…). `space-x/y-*` is
-  deliberately **not** supported — use `gap-*` (which is supported).
+- **Margins are supported** (`m-*`, `mx-*`, `-m-*`…); the spacing
+  between siblings is `gap-*`.
 - Margin collapsing: **adjacent-sibling collapsing only** (the visible gap is
   `max` of the touching margins), in block flow only — margins never collapse
   in flex/grid, per CSS. **Deviation:** no parent–child or empty-box
@@ -145,7 +147,9 @@ fixed → host-anchored absolute painted outside its ancestors' clips,
 sticky per `sticky.md`, insets on the spacing scale, CSS containing
 blocks and static positions, inline relative rescaling). Popovers and
 modal dialogs paint last, in a stack above everything, a backdrop a
-box the browser draws beneath them (`top-layer.md`).
+box the browser draws beneath them (`top-layer.md`); an out-of-flow
+box with a `position-area` is placed against its anchor in cells,
+flipped where it overflows (`anchor-positioning.md`).
 
 ## Overflow
 
@@ -468,6 +472,11 @@ to whole cells (normalized LTR: `right`/`end` → end). Per line, with
   never shows.
 - A line at or over the content width stays at start, matching
   truncation. `renderPlainText` mirrors the same offsets.
+- A line's atomic inline boxes — inline-blocks, buttons, inputs — move
+  with its text: the alignment offset and the first-line indent place
+  the box's cells as they place the characters' (layout.ts
+  `lineStart`, shared with the paint), so the grid and the native box
+  agree on where the box is.
 
 `text-align: justify` redistributes inter-word spacing fractionally and
 stays **forced back to `start`** by the companion stylesheet (via the
@@ -520,7 +529,9 @@ cells and never painted on the grid. Nothing locks it: the companion's
 focus invert sets `outline: none` at a specificity a
 `focus-visible:outline-*` utility outranks, so an author's focus ring
 draws together with the invert, and a static `outline-*` draws as
-authored. Verified in three engines (`keyboard.spec.ts`: the focused
+authored. The invert itself skips an ARIA composite's container
+("Pointer states"), a menu's or a listbox's, whose focus indication is
+its highlighted item (styled through its own state attribute). Verified in three engines (`keyboard.spec.ts`: the focused
 control's ring).
 
 ## Animation
@@ -621,17 +632,61 @@ rebuilds; restore assumes a forwards selection where the engine
 doesn't expose `Selection.direction`. Multi-click gestures on the grid
 are specified in `semantic-selection.md`.
 
+## Observation
+
+The host lays out again on any change to its light DOM's tree or
+text, and on a change to an attribute that can change what the grid
+shows: `class` and `style`; `id`, a popover's implicit anchor
+(anchor-positioning.md) and a `#id` style's hook, `role`, which the
+interactives and the focus invert read, and an invoker's
+`popovertarget` or `commandfor`; HTML's rendering attributes — the
+states and the presentation the UA styles and Tailwind's variants
+read, from `hidden` and `open` to the form controls' `disabled`,
+`value`, and validity bounds and the table spans; the ARIA states an
+`aria-*` variant styles (`aria-expanded`, `aria-selected`, …); every
+`data-*`, which a `data-*:` variant styles; and on a leaf
+(leaf-renderers.md) any attribute, which its renderer reads — the list
+is observed.ts. An attribute outside it — a `name`, a relation such as
+`aria-controls`, a value read by assistive technology alone such as
+`aria-valuenow` — changes no rendering and schedules no layout, so a
+control updating one on a timer schedules no layout; a style hung on one
+through an arbitrary variant paints on the next layout something else
+brings. The engine's
+own writes never count: those made in a layout are drained before
+observation resumes, its `data-mw-*` marks are filtered by name, and
+the grid's origin for the top layer lives in the shadow; on the host
+itself only `class` and `style` count, `select` relaying out through
+the attribute callback and `focus` needing no layout. Above the host,
+a `class` or `style` change on any ancestor (past a shadow root, its
+host) and a change of the color scheme schedule a layout as well,
+since the cascade brings them into what the cells show — a theme
+class on the page, the derived tokens' colors (theming.md).
+
 ## Pointer states
 
 Under `select="grid"`, non-interactive light-DOM elements are
 `pointer-events: none` (drag-selection lands on the grid), so
-`:hover`/`:active` can never match on them. The engine synthesizes
+`:hover`/`:active` can never match on them. Interactive means the
+natively interactive — links, buttons, form controls, labels,
+summaries, editable regions, anything with a `tabindex` (a `-1` marks
+a focus target, a dialog's or a popover's content, whose text stays the
+grid's to select) unless it is an ARIA
+composite's container (`role` `grid`, `listbox`, `menu`, `menubar`,
+`radiogroup`, `tablist`, `tree`, `treegrid`), whose items are the
+widgets and whose own cells stay the grid's — and the ARIA widgets an
+accessible component is
+built from: `role="button"`, menu items, options, tabs, tree items,
+checkboxes, radios, switches, sliders, links, and comboboxes. A grid
+press over a focus target, or with a control inside the host focused,
+is the engine's, and moves the focus as the click would have: onto the
+nearest `tabindex` above the cell's element, else off the focused
+control. The engine synthesizes
 both (pointer.ts + element.ts): pointer events stay on the grid, the
 pointer's cell is hit-tested against the layout tree, and the covered
 element plus its ancestors — the same chain native `:hover` marks —
 carry `data-mw-hover` (`data-mw-active` between press and release,
 kept native-faithful: only while the pointer stays over the pressed
-element). rules.css redefines the Tailwind `hover:`/`active:` variants
+element). variants.css redefines the Tailwind `hover:`/`active:` variants
 to match either the pseudo-class or the attribute, preserving
 Tailwind's own `(hover: hover)` media gate; `group-*` and `peer-*`
 compose from the redefined variants automatically. The hovered

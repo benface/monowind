@@ -20,9 +20,12 @@ below:
   tree before the positioning pass, an anchor's rect is moved by the
   scrollers the box escapes, and a scroll of such a scroller
   schedules a layout (`anchorScrollers` on the root).
-- The stories live in `anchor.stories.ts` (Features / Anchor
-  Positioning): `Placement` and `Fallbacks` (the flips live, through
-  a scroll and the pane's width), goldens, and `InScroller`, hidden.
+- The stories live in `positioning.stories.ts` (Features /
+  Positioning, with the sticky ones): `Anchored` and `AnchorFallbacks`
+  (the flips live, through a scroll and the pane's width), goldens,
+  `AnchorInScroller`, hidden, and `AnchorFallbackIsTheEngines`, hidden
+  and goldenless, a box the browser would flip kept where the cells
+  fit it.
 - `anchor-name` lists every name; `anchor-center` in `justify-self`
   or `align-self` centers on the anchor from any side.
 
