@@ -156,13 +156,22 @@ export function expectOnItsCells(host: HTMLElement, el: HTMLElement): Promise<vo
   });
 }
 
-/** The story's hosts once laid out and the fonts loaded. */
+/** The story's hosts once laid out, the fonts loaded, and the cell
+ * settled: the engine relays out two frames after the fonts land, and a
+ * cell read before that is the fallback font's. */
 export async function readyHosts(canvasElement: HTMLElement): Promise<MonoWindElement[]> {
   const hosts = Array.from(canvasElement.querySelectorAll<MonoWindElement>("mono-wind"));
   await waitFor(() => {
     for (const host of hosts) expect(host).toHaveAttribute("data-mw-ready");
   });
   await document.fonts.ready;
+  const cells = () =>
+    hosts.map((host) => `${cellSize(host).width}x${cellSize(host).height}`).join();
+  let was: string;
+  do {
+    was = cells();
+    await new Promise((settle) => requestAnimationFrame(() => requestAnimationFrame(settle)));
+  } while (was !== cells());
   return hosts;
 }
 

@@ -421,7 +421,11 @@ export const Anchored: StoryObj = {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const box = (name: string) => by(name).getBoundingClientRect();
-    const cellWidth = cellSize(host).width;
+    // Both menus open before anything is asserted: the sweep photographs
+    // the state the play reached, so a failed edge must not take a box
+    // out of the picture.
+    by("open").click();
+    by("open-low").click();
     // The tooltip's box sits on the row above the word, centered on it.
     await waitFor(() => expect(by("tooltip").getAttribute("data-mw-area")).toBe("span-all top"));
     await expectTouching(
@@ -430,9 +434,8 @@ export const Anchored: StoryObj = {
     );
     expect(box("tooltip").left).toBeLessThan(box("word").left);
     expect(box("tooltip").right).toBeGreaterThan(box("word").right);
-    // The menu opens under its button, left edges together, as its
+    // The menu sits under its button, left edges together, as its
     // invoker's anchor; its submenu beside the item, top edges together.
-    by("open").click();
     await waitFor(() => expect(by("menu").getAttribute("data-mw-area")).toBe("span-right bottom"));
     await expectTouching(
       () => box("menu").left,
@@ -450,12 +453,12 @@ export const Anchored: StoryObj = {
       () => box("submenu").top,
       () => box("paste").top,
     );
+    // The cell is read per try, a late font load resizing it.
     await expectTouching(
-      () => box("submenu").left - 2 * cellWidth,
+      () => box("submenu").left - 2 * cellSize(host).width,
       () => box("paste").right,
     );
-    // No room below the low button: the menu flips above it.
-    by("open-low").click();
+    // No room below the low button: that menu flipped above it.
     await waitFor(() => expect(by("low").getAttribute("data-mw-area")).toBe("span-right top"));
     await expectTouching(
       () => box("low").bottom,

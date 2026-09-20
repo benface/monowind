@@ -151,7 +151,9 @@ describe("GlyphBoxes", () => {
     });
     const boxes = new GlyphBoxes();
     boxes.configure(font, cell);
-    expect(boxes.box("█", 1)).toBeNull();
+    // The block's own ink is 19 in a 16px row — past it, so its rows
+    // would overlap: 19 ÷ 19, pinned by 1 × (30 − 13 + 3) − 3.
+    expect(boxes.box("█", 1)).toEqual({ scale: 1, past: true, lineHeight: 17 });
     // 19 ÷ 12; 1.583 × (18 − 13 + 3) − 3.
     const fit = { scale: 1.583, lineHeight: 9.67 };
     expect(boxes.box("│", 1)).toEqual(fit);
@@ -160,19 +162,41 @@ describe("GlyphBoxes", () => {
     expect(calls).toEqual(["█", "│"]);
   });
 
-  it("leaves a block that spans the row alone, and clips one drawn double-width", () => {
+  it("boxes a block drawn past the row, leaving one drawn at its height", () => {
+    // Unboxed, its rows overlap and paint each other's antialiased
+    // edges: a darker band at every row's edge (SF Mono draws `│`
+    // 17.84 tall in a 16px row, JetBrains Mono's `█` 19 in 18).
     stubCanvas({ "█": { width: 8, ascent: 15, descent: 4 } });
     const tall = new GlyphBoxes();
     tall.configure(font, cell);
-    expect(tall.box("█", 1)).toBeNull();
-    expect(tall.box("▄", 1)).toBeNull();
-    expect(tall.box("▒", 1)).toBeNull();
+    const fit = { scale: 1, past: true, lineHeight: 17 };
+    expect(tall.box("█", 1)).toEqual(fit);
+    expect(tall.box("▄", 1)).toEqual(fit);
+    // A shade tiles with the blocks, so it is boxed whenever they are,
+    // at its own fit: 19 ÷ 12; 1.583 × (20 − 13 + 3) − 3.
+    expect(tall.box("▒", 1)).toEqual({ scale: 1.583, lineHeight: 12.83 });
     vi.restoreAllMocks();
-    // A CJK fallback: the block is two cells wide and as tall as the row.
+    // Drawn at the row's height, within a twentieth of a pixel, and at
+    // its cell's width: the font's own glyph tiles, and is left alone.
+    stubCanvas({ "█": { width: 8, ascent: 12, descent: 4 } });
+    const exact = new GlyphBoxes();
+    exact.configure(font, cell);
+    expect(exact.box("█", 1)).toBeNull();
+    expect(exact.box("▄", 1)).toBeNull();
+    vi.restoreAllMocks();
+    // A CJK fallback: the block is two cells wide and as tall as the row,
+    // clipped to its cell so it stays off the next one.
     stubCanvas({ "█": { width: 16, ascent: 12, descent: 4 } });
     const wide = new GlyphBoxes();
     wide.configure(font, cell);
     expect(wide.box("█", 1)).toEqual({ scale: 1.188, lineHeight: 13.63 });
+    vi.restoreAllMocks();
+    // Past the row AND off its cell width takes no `past`: the width
+    // fit is needed in any layer, resampled or not.
+    stubCanvas({ "█": { width: 16, ascent: 15, descent: 4 } });
+    const both = new GlyphBoxes();
+    both.configure(font, cell);
+    expect(both.box("█", 1)).toEqual({ scale: 1, lineHeight: 17 });
   });
 
   it("forgets its measurements when the font or the cell changes, and on invalidate", () => {

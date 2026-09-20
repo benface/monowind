@@ -167,7 +167,10 @@ describe("top layer paint", () => {
     expect(rowsOf(root, 20, stack)[0]).toBe("SECOND");
     // A layer root inside the stack paints into a layer of its own,
     // above the main grid.
-    const badge = makeNode({ text: "badge", style: { layer: { backdropFilter: "none" } } });
+    const badge = makeNode({
+      text: "badge",
+      style: { layer: { backdropFilter: "none", resampled: false } },
+    });
     const dialog = top("", 0, 0, { children: [badge] });
     const page = makeNode({ children: [makeNode({ text: "page" }), dialog] });
     const { cells, layers } = painted(page);
@@ -179,7 +182,7 @@ describe("top layer paint", () => {
   it("covers a layer beneath, and ignores a layer root above", () => {
     const sticker = makeNode({
       text: "sticker",
-      style: { layer: { backdropFilter: "none" } },
+      style: { layer: { backdropFilter: "none", resampled: false } },
     });
     const modal = top("MODAL", 0, 0);
     const root = makeNode({ children: [sticker, modal] });
@@ -190,7 +193,7 @@ describe("top layer paint", () => {
     // main grid, untransformed.
     const pop = top("POP", 0, 1);
     const turned = makeNode({
-      style: { layer: { backdropFilter: "none" } },
+      style: { layer: { backdropFilter: "none", resampled: false } },
       children: [makeNode({ text: "turned" }), pop],
     });
     const page = makeNode({ style: { minHeight: 2 }, children: [turned] });
@@ -222,7 +225,9 @@ describe("the backdrop box", () => {
   };
 
   it("draws the backdrop over the grid, beneath the element's own box, and removes it with the backdrop", () => {
-    const dialog = top("D", 0, 0, { style: { backdrop, layer: { backdropFilter: "none" } } });
+    const dialog = top("D", 0, 0, {
+      style: { backdrop, layer: { backdropFilter: "none", resampled: false } },
+    });
     const root = makeNode({
       style: { minHeight: 3 },
       children: [makeNode({ text: "page" }), dialog],

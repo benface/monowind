@@ -341,7 +341,7 @@ export function readCellStyle(
     applyTopLayerGeometry(style, classAttr, inlineStyle);
     // A backdrop's element paints in a box of its own, above the
     // backdrop box (specs/top-layer.md): a layer root.
-    if (style.backdrop) style.layer ??= { backdropFilter: "none" };
+    if (style.backdrop) style.layer ??= { backdropFilter: "none", resampled: false };
   }
   return style;
 }
@@ -1464,7 +1464,24 @@ function readLayer(el: Element, cs: CSSStyleDeclaration): Layer | null {
     backdropFilter !== "none" ||
     TRANSFORMS.some((p) => effect(p) !== "none") ||
     animatesEffect(el, cs);
-  return layered ? { backdropFilter } : null;
+  return layered ? { backdropFilter, resampled: resamples(effect) } : null;
+}
+
+/** Whether the effects draw the layer's cells at another size or angle
+ * (types.ts `resampled`). A translation and a filter carry them as they
+ * are; `matrix(a, b, c, d, tx, ty)` does too at the identity in `a..d`,
+ * and anything else resamples. */
+function resamples(effect: (property: string) => string): boolean {
+  if (effect("scale") !== "none" || effect("rotate") !== "none") return true;
+  const transform = effect("transform");
+  if (transform === "none") return false;
+  if (transform.startsWith("matrix3d(")) return true;
+  const matrix = /^matrix\(([^)]*)\)$/.exec(transform);
+  // Left as authored where the environment serializes no matrix: only
+  // translations carry the cells.
+  if (!matrix) return transform.replaceAll(/translate(?:[XYZ]|3d)?\([^)]*\)/g, "").trim() !== "";
+  const [a, b, c, d] = matrix[1]!.split(",").map(Number);
+  return !(a === 1 && b === 0 && c === 0 && d === 1);
 }
 
 /** The paint-only properties a frame of an animation resamples onto a

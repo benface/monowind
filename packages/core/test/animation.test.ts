@@ -110,7 +110,7 @@ describe("the read", () => {
       "animation-name: spin; transform: matrix(1, 0, 0, 1, 0, 0)",
     );
     expect(animatesEffect(el, getComputedStyle(el))).toBe(true);
-    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none" });
+    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none", resampled: false });
   });
 
   it("keeps an element whose effect is in transition a layer root, from the identity", () => {
@@ -126,7 +126,7 @@ describe("the read", () => {
       ] as unknown as Animation[]
     );
     expect(animatesEffect(el, getComputedStyle(el))).toBe(true);
-    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none" });
+    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none", resampled: false });
     el.getAnimations = () => [
       { transitionProperty: "color", playState: "running" } as unknown as Animation,
     ];

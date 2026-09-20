@@ -25,6 +25,10 @@ export interface GlyphBox {
    * highlight covers — reaches past the box above and below, in px
    * (set with `period`). */
   reach?: { above: number; below: number };
+  /** Whether the fit exists only because the font draws the glyph PAST
+   * the row: it covers the row already, and the box is there to clip
+   * the overshoot off the rows below (set for that case alone). */
+  past?: boolean;
 }
 
 /** The ranges meant to abut, each with the glyph that spans its full
@@ -89,8 +93,8 @@ export class GlyphBoxes {
 
   /** The box for a cluster painted with `paint`, or null when the font
    * draws it at `cells` cells within 0.01 cell (a block: at its width
-   * and at least the row's height). Nothing is cached while fonts are
-   * still loading. */
+   * and the row's height). Nothing is cached while fonts are still
+   * loading. */
   box(cluster: string, cells: number, paint?: CellPaint): GlyphBox | null {
     const weight = paint?.fontWeight ?? this.#font.weight;
     const style = paint?.fontStyle ?? this.#font.style;
@@ -141,8 +145,8 @@ export class GlyphBoxes {
   shift(box: GlyphBox, row: number): number {
     const unit = (box.period ?? 0) * this.#dpr;
     if (!unit) return 0;
-    const past = row * this.#cell.height * this.#dpr;
-    const down = (unit - (past % unit)) % unit;
+    const traveled = row * this.#cell.height * this.#dpr;
+    const down = (unit - (traveled % unit)) % unit;
     const up = unit - down;
     const reach = box.reach;
     const goesUp = reach && down > reach.above * this.#dpr && up <= reach.below * this.#dpr;
@@ -150,7 +154,7 @@ export class GlyphBoxes {
   }
 
   /** One fit per tiling range of a font: null when the reference glyph
-   * spans the row at its cell width, else the scale that puts it a
+   * is the row's height at its cell width, else the scale that puts it a
    * pixel and a half past the row on each side (the box clips it; no
    * pixel snapping can open a seam) — a `patterned` glyph's raised to
    * whole device pixels of lattice — and the line-height that pins its
@@ -168,10 +172,14 @@ export class GlyphBoxes {
     const { width: cellWidth, height: cellHeight, letterSpacing } = this.#cell;
     const metrics = context.measureText(reference);
     const inkHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    // Either way off the row: short of it gaps between rows, past it
+    // overlaps them, and two antialiased edges over each other darken a
+    // band at every row's edge. The box clips the glyph to its row.
     const short = inkHeight < cellHeight - 0.05;
     const offWidth = Math.abs(metrics.width + letterSpacing - cellWidth) > 0.01 * cellWidth;
+    const past = inkHeight > cellHeight + 0.05 && !offWidth;
     fit = null;
-    if ((short || offWidth) && inkHeight > 0) {
+    if ((short || offWidth || past) && inkHeight > 0) {
       let scale = (cellHeight + 3) / inkHeight;
       let lattice: number | undefined;
       const period = patterned ? this.#period(reference, font) : null;
@@ -186,6 +194,7 @@ export class GlyphBoxes {
       const ascent = metrics.fontBoundingBoxAscent;
       const descent = metrics.fontBoundingBoxDescent;
       fit = { scale: Math.round(scale * 1000) / 1000 };
+      if (past) fit.past = true;
       if (lattice) fit.period = lattice;
       if (Number.isFinite(ascent + descent)) {
         let lineHeight = scale * (2 * metrics.actualBoundingBoxAscent - ascent + descent) - 3;

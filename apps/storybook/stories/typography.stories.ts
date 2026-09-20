@@ -6,9 +6,11 @@ import {
   expectBrowserLineBreaksToMatchEngine,
   expectBrowserRowsToMatchEngine,
   expectGridOnItsCells,
+  gridOf,
   isFirefox,
   paintedSpan,
   readyHost,
+  readyHosts,
   testHooks,
 } from "./helpers.ts";
 
@@ -412,35 +414,47 @@ export const WideCharacters: StoryObj = {
   },
 };
 
-/** Tiling glyphs fit their row in any font (specs/wide-characters.md):
- * a `leading-6` root makes the row taller than the font's `█` and `│`,
- * so every block and box-drawing glyph is boxed, scaled past the row,
- * and pinned to it — borders, the scrollbar's thumb, and a QR code's
- * half blocks included, the shades (the track) at the scale that lands
- * their lattice on whole device pixels and phased so it runs on from
- * row to row; a `bg-*` reaches the row's edges too. */
+/** Tiling glyphs fit their row in any font and any leading
+ * (specs/wide-characters.md): a `leading-6` root makes the row taller
+ * than the font's `█` and `│`, and at the font's own leading its `│`
+ * is drawn past the row — either way every block and box-drawing
+ * glyph is boxed and pinned to the row, so neither a gap nor an
+ * overlap shows where two rows meet. Borders, the scrollbar's
+ * thumb, and a QR code's half blocks are included, the shades (the
+ * track) at the scale that lands their lattice on whole device pixels
+ * and phased so it runs on from row to row; a `bg-*` reaches the row's
+ * edges too. */
 export const TilingGlyphs: StoryObj = {
   render: () => html`
-    <mono-wind class="leading-6">
-      <div class="flex items-start gap-2">
-        <div data-test="blocks" class="w-12">█████ ▀▀▀▀▀ ▄▄▄▄▄ ░░░░░ ▒▒▒▒▒ ▓▓▓▓▓ ▌▌▐▐ ▖▗▘▝</div>
-        <div class="h-5 w-20 overflow-y-auto border border-neutral-500 px-1">
-          A scroll container's bar is block glyphs too: the track and the thumb tile the gutter
-          without a gap between rows, however tall the row.
+    <div class="flex flex-col gap-2">
+      <mono-wind data-test="tall-rows" class="leading-6">
+        <div class="flex items-start gap-2">
+          <div data-test="blocks" class="w-12">█████ ▀▀▀▀▀ ▄▄▄▄▄ ░░░░░ ▒▒▒▒▒ ▓▓▓▓▓ ▌▌▐▐ ▖▗▘▝</div>
+          <div class="h-5 w-20 overflow-y-auto border border-neutral-500 px-1">
+            A scroll container's bar is block glyphs too: the track and the thumb tile the gutter
+            without a gap between rows, however tall the row.
+          </div>
+          <div class="border border-double border-cyan-400 px-1">
+            <div data-test="filled" class="bg-neutral-700 px-1">a filled row</div>
+            <div class="mt-1">and a double border</div>
+          </div>
+          <mono-qr data-test="code">12345</mono-qr>
         </div>
-        <div class="border border-double border-cyan-400 px-1">
-          <div data-test="filled" class="bg-neutral-700 px-1">a filled row</div>
-          <div class="mt-1">and a double border</div>
+      </mono-wind>
+      <mono-wind data-test="own-rows">
+        <div class="border border-neutral-500 px-1">
+          At the font's own leading a glyph drawn past the row is boxed too, so a border's stem
+          meets the next row's on one edge.
         </div>
-        <mono-qr data-test="code">12345</mono-qr>
-      </div>
-    </mono-wind>
+      </mono-wind>
+    </div>
   `,
   play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
-    await document.fonts.ready;
+    await readyHosts(canvasElement);
+    const by = testHooks(canvasElement);
+    const host = by("tall-rows");
     const cellHeight = cellSize(host).height;
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const gridRect = grid.getBoundingClientRect();
     // The cell is a whole number of layout units, so a row of boxes ends
     // where a row of text does.
@@ -448,21 +462,36 @@ export const TilingGlyphs: StoryObj = {
     // Every tiling glyph is a box a row tall on its row, judged in bulk:
     // the Interactions addon instruments every `expect`, and hundreds
     // freeze the panel.
-    const spans = Array.from(grid.querySelectorAll("span"));
-    const boxes = spans.filter((span) => /^[\u2500-\u259F]$/.test(span.textContent ?? ""));
+    const tiling = (from: HTMLElement) =>
+      Array.from(gridOf(from).querySelectorAll("span")).filter((span) =>
+        /^[\u2500-\u259F]$/.test(span.textContent ?? ""),
+      );
+    const labels = (boxes: HTMLElement[]) =>
+      boxes.map((box) => `${box.textContent} [${box.getAttribute("style")}]`);
+    // Boxed a row tall and pinned to its row, whichever way the font
+    // draws the glyph off it.
+    const unpinned = (from: HTMLElement) => {
+      const row = cellSize(from).height;
+      const top = gridOf(from).getBoundingClientRect().top;
+      return labels(
+        tiling(from).filter((box) => {
+          const rect = box.getBoundingClientRect();
+          const rowOffset = ((rect.top - top) / row) % 1;
+          return (
+            box.style.display !== "inline-block" ||
+            !box.style.lineHeight.endsWith("px") ||
+            Math.abs(rect.height - row) > 0.5 ||
+            Math.min(rowOffset, 1 - rowOffset) > 0.05
+          );
+        }),
+      );
+    };
+    const boxes = tiling(host);
     expect(boxes.length).toBeGreaterThan(60);
     expect(boxes.some((box) => /^[\u2500-\u257F]$/.test(box.textContent!))).toBe(true);
-    const unfit = boxes.filter((box) => {
-      const rect = box.getBoundingClientRect();
-      const rowOffset = ((rect.top - gridRect.top) / cellHeight) % 1;
-      return (
-        !(parseFloat(box.style.fontSize) > 100) ||
-        !box.style.lineHeight.endsWith("px") ||
-        Math.abs(rect.height - cellHeight) > 0.5 ||
-        Math.min(rowOffset, 1 - rowOffset) > 0.05
-      );
-    });
-    expect(unfit.map((box) => `${box.textContent} [${box.getAttribute("style")}]`)).toEqual([]);
+    expect(unpinned(host)).toEqual([]);
+    // Scaled past the row, the row being taller than the glyph here.
+    expect(labels(boxes.filter((box) => !(parseFloat(box.style.fontSize) > 100)))).toEqual([]);
     // A shade scales past the blocks, to whole device pixels of lattice,
     // and its box carries the lattice's phase from row to row.
     const block = parseFloat(boxes.find((box) => box.textContent === "█")!.style.fontSize);
@@ -481,11 +510,23 @@ export const TilingGlyphs: StoryObj = {
     const rows = grid.textContent!.split("\n").length;
     expect(gridRect.height).toBeCloseTo(rows * cellHeight, 0);
     // A painted span pads by the host's measured half-gap.
-    const filled = spans.find((span) => span.textContent!.includes("a filled row"))!;
+    const filled = paintedSpan(host, "a filled row")!;
     expect(parseFloat(getComputedStyle(filled).paddingTop)).toBeCloseTo(
       parseFloat(host.style.getPropertyValue("--mw-bgpad")),
       3,
     );
+    // At the font's own leading the glyph runs past the row instead:
+    // the box clips each row to its own slice.
+    const own = by("own-rows");
+    const ownStyle = getComputedStyle(gridOf(own));
+    const measure = document.createElement("canvas").getContext("2d")!;
+    measure.font = `${ownStyle.fontStyle} ${ownStyle.fontWeight} ${ownStyle.fontSize} ${ownStyle.fontFamily}`;
+    const stem = measure.measureText("│");
+    expect(stem.actualBoundingBoxAscent + stem.actualBoundingBoxDescent).toBeGreaterThan(
+      cellSize(own).height,
+    );
+    expect(tiling(own).length).toBeGreaterThan(20);
+    expect(unpinned(own)).toEqual([]);
   },
 };
 

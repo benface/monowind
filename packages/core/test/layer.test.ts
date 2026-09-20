@@ -26,29 +26,61 @@ describe("layer read", () => {
   });
 
   it("opens on any one of the effects, carrying the backdrop filter", () => {
-    for (const effect of [
-      "transform: rotate(3deg)",
-      "translate: 2px 4px",
-      "rotate: 5deg",
-      "scale: 1.5",
-      "filter: blur(2px)",
-    ]) {
-      expect(read(effect), effect).toEqual({ backdropFilter: "none" });
+    for (const [effect, resampled] of [
+      ["transform: rotate(3deg)", true],
+      ["translate: 2px 4px", false],
+      ["rotate: 5deg", true],
+      ["scale: 1.5", true],
+      ["filter: blur(2px)", false],
+    ] as const) {
+      expect(read(effect), effect).toEqual({ backdropFilter: "none", resampled });
     }
-    expect(read("backdrop-filter: blur(2px)")).toEqual({ backdropFilter: "blur(2px)" });
+    expect(read("backdrop-filter: blur(2px)")).toEqual({
+      backdropFilter: "blur(2px)",
+      resampled: false,
+    });
   });
 
   it("takes an identity as none", () => {
     expect(read("transform: matrix(1, 0, 0, 1, 0, 0)")).toBeNull();
     expect(read("transform: matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)")).toBeNull();
     expect(read("scale: 1; rotate: 0deg; translate: 0px 0px")).toBeNull();
-    expect(read("transform: matrix(1, 0, 0, 1, 2, 0)")).toEqual({ backdropFilter: "none" });
-    expect(read("scale: 1 1.5")).toEqual({ backdropFilter: "none" });
+    expect(read("transform: matrix(1, 0, 0, 1, 2, 0)")).toEqual({
+      backdropFilter: "none",
+      resampled: false,
+    });
+    expect(read("scale: 1 1.5")).toEqual({ backdropFilter: "none", resampled: true });
+  });
+
+  it("marks the effects that draw the cells at another size or angle", () => {
+    // What the tiling fit's pin cannot follow (specs/wide-characters.md).
+    for (const effect of [
+      "scale: 1.5",
+      "scale: 1 1.5",
+      "rotate: 5deg",
+      "transform: rotate(3deg)",
+      // As a browser serializes them: a scale, a skew, and 3D.
+      "transform: matrix(1.5, 0, 0, 1.5, 0, 0)",
+      "transform: matrix(1, 0, 0.05, 1, 0, 0)",
+      "transform: matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 10, 1)",
+    ]) {
+      expect(read(effect)?.resampled, effect).toBe(true);
+    }
+    // Carried whole, or drawn over: the cells stay on their grid.
+    for (const effect of [
+      "translate: 2px 4px",
+      "transform: translate(10px, 5px)",
+      "transform: matrix(1, 0, 0, 1, 2, 0)",
+      "filter: blur(2px)",
+      "backdrop-filter: blur(2px)",
+    ]) {
+      expect(read(effect)?.resampled, effect).toBe(false);
+    }
   });
 });
 
 /** A layer root's read, for a node under test. */
-const layered = (): Layer => ({ backdropFilter: "none" });
+const layered = (resampled = false): Layer => ({ backdropFilter: "none", resampled });
 
 /** An element with the effects a layer root's node copies. */
 const effects = (style: string): Element => {
@@ -135,6 +167,34 @@ describe("layer paint (specs/layers.md)", () => {
     expect(painted.layers[0]!.segments[0]).toEqual([{ text: "ab  " }]);
     expect(painted.layers[1]!.segments[0]).toEqual([{ text: "cd  " }]);
     expect(renderPlainText(root)).toBe("ab\ncd");
+  });
+
+  it("tells the paint which cells a resampled layer draws", () => {
+    // A tiling box's clip edge seams every row of a layer drawn at
+    // another size or angle — its own, or an enclosing layer's — so the
+    // paint declines the box there (specs/wide-characters.md).
+    const stem = (layer: Layer | null) =>
+      makeNode({ style: { width: cells(2), layer }, text: "\u2502", intrinsicWidth: 1 });
+    const root = makeNode({
+      style: { width: cells(8) },
+      children: [
+        stem(null),
+        stem(layered(true)),
+        makeNode({ style: { width: cells(2), layer: layered(true) }, children: [stem(layered())] }),
+        stem(layered()),
+      ],
+    });
+    layoutRoot(root, 8);
+    const resampled: boolean[] = [];
+    renderGridRows(root, {
+      boxed: (_cluster, _cells, _paint, drawnResampled) => {
+        resampled.push(drawnResampled);
+        return true;
+      },
+    });
+    // The grid's own cells, a resampling layer's, a layer inside one —
+    // its box is a child of theirs — and a layer that only stacks.
+    expect(resampled).toEqual([false, true, true, false]);
   });
 
   it("grows the extent by what overflows the border box", () => {
@@ -432,7 +492,7 @@ describe("layer nodes (paint.ts)", () => {
           style: {
             width: cells(4),
             border,
-            layer: { backdropFilter: "blur(1px)" },
+            layer: { backdropFilter: "blur(1px)", resampled: false },
             margin: { ...zeroInsets(), left: 2 },
           },
           text: "ab",

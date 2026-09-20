@@ -86,7 +86,15 @@ export interface CellSegment extends CellPaint {
  * clusters its font draws off their cell count (`boxed`), and which
  * leaves hold the light-DOM selection, as character ranges. */
 export interface RenderOptions {
-  boxed?: (cluster: string, cells: number, paint: CellPaint | undefined) => boolean;
+  /** Whether the caller boxes a cluster, told whether the cells are a
+   * resampled layer's (types.ts `resampled`), where a box's clip edge
+   * seams every row (specs/wide-characters.md). */
+  boxed?: (
+    cluster: string,
+    cells: number,
+    paint: CellPaint | undefined,
+    resampled: boolean,
+  ) => boolean;
   selection?: Map<LayoutNode, { start: number; end: number }>;
   /** The cell in px, for paint that measures — a gradient's geometry
    * (specs/gradients.md); a 1:2 cell without. */
@@ -139,13 +147,26 @@ export function renderGridRows(
   options: RenderOptions = {},
 ): { segments: CellSegment[][]; cells: string[][]; layers: LayerRows[] } {
   const { store, layers } = renderGrids(root, options);
-  const segmentsOf = (grid: string[][], paints: (CellPaint | undefined)[][]) =>
-    grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed));
+  const segmentsOf = (grid: string[][], paints: (CellPaint | undefined)[][], resampled: boolean) =>
+    grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed, resampled));
   return {
-    segments: segmentsOf(store.grid, store.paints),
+    segments: segmentsOf(store.grid, store.paints, false),
     cells: store.grid,
-    layers: layers.map((layer) => ({ layer, segments: segmentsOf(layer.grid, layer.paints) })),
+    layers: layers.map((layer) => ({
+      layer,
+      segments: segmentsOf(layer.grid, layer.paints, layerResampled(layer)),
+    })),
   };
+}
+
+/** Whether a layer's cells are drawn resampled: by its own effects, or
+ * by an enclosing layer's, whose box holds its own
+ * (specs/wide-characters.md). */
+function layerResampled(layer: PaintedLayer): boolean {
+  for (let at: PaintedLayer | null = layer; at; at = at.parent) {
+    if (at.node.style.layer?.resampled) return true;
+  }
+  return false;
 }
 
 /** One rendered row → its same-paint runs. Painted spaces stay in
@@ -156,7 +177,8 @@ export function renderGridRows(
 function rowSegments(
   row: string[],
   paints: (CellPaint | undefined)[],
-  boxed?: RenderOptions["boxed"],
+  boxed: RenderOptions["boxed"],
+  resampled: boolean,
 ): CellSegment[] {
   const segments: CellSegment[] = [];
   let lastCells = 0;
@@ -166,7 +188,11 @@ function rowSegments(
     const paint = paints[x];
     let cells = 1;
     while (row[x + cells] === "") cells++;
-    if (boxed && (cell.length > 1 || cell.charCodeAt(0) >= 0x80) && boxed(cell, cells, paint)) {
+    if (
+      boxed &&
+      (cell.length > 1 || cell.charCodeAt(0) >= 0x80) &&
+      boxed(cell, cells, paint, resampled)
+    ) {
       segments.push({ text: cell, cells, box: true, ...paint });
       lastCells = 0;
       continue;

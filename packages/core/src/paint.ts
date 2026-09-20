@@ -84,9 +84,13 @@ export function paintGrid(
   // spans, and its vertical overshoot — what joins rows at full opacity
   // — would composite twice at the join (specs/cell-model.md "Opacity").
   if (glyphs) {
-    render.boxed = (cluster, cells, paint) =>
-      glyphs.box(cluster, cells, paint) !== null ||
-      (paint?.opacity !== undefined && isLineGlyph(cluster));
+    render.boxed = (cluster, cells, paint, resampled) => {
+      // In a resampled layer a box's clip edge is antialiased at every
+      // row, a seam the overshooting glyph covers unboxed.
+      const box = glyphs.box(cluster, cells, paint);
+      if (box !== null && (!box.past || !resampled)) return true;
+      return paint?.opacity !== undefined && isLineGlyph(cluster);
+    };
   }
   if (options.selection) render.selection = options.selection;
   if (options.cell) render.cell = options.cell;

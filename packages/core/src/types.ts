@@ -171,6 +171,11 @@ export type BackgroundClip = "border-box" | "padding-box" | "content-box" | "tex
  * box is placed. */
 export interface Layer {
   backdropFilter: string;
+  /** Whether the layer's effects RESAMPLE its cells — scaled, rotated,
+   * skewed — as against carrying them whole: a tiling box's clip edge is
+   * then antialiased at every row, a seam the glyph unboxed covers
+   * (specs/wide-characters.md). */
+  resampled: boolean;
 }
 /** A `background-image` layer the grid paints as a color per cell. */
 export type Gradient =

@@ -118,6 +118,39 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     expect(gridOffsetAt(target, 4, 0)).toBe(3);
   });
 
+  it("declines a past-the-row box in a resampled layer, and keeps every other", () => {
+    // In such a layer a box's clip edge seams every row, which the
+    // glyph's own overshoot covers unboxed; a short fit has no such
+    // cover and keeps its box (specs/wide-characters.md).
+    const glyphs = {
+      box: (cluster: string) =>
+        cluster === "\u2502"
+          ? { scale: 1, past: true, lineHeight: 17 }
+          : cluster === "\u2500"
+            ? { scale: 1.2, lineHeight: 9 }
+            : null,
+      shift: () => 0,
+    };
+    const cells = (value: number) => ({ kind: "cells" as const, value });
+    const stem = (resampled: boolean, text = "\u2502") =>
+      makeNode({
+        style: { width: cells(2), layer: { backdropFilter: "none", resampled } },
+        text,
+        intrinsicWidth: 1,
+        source: document.createElement("div"),
+      });
+    const root = makeNode({
+      style: { width: cells(6) },
+      children: [stem(true), stem(false), stem(true, "\u2500")],
+    });
+    layoutRoot(root, 6);
+    const layers = document.createElement("div");
+    paintGrid(root, document.createElement("pre"), { glyphs, layers });
+    const boxed = (grid: Element) =>
+      (grid.querySelector("span") as HTMLElement | null)?.style.display === "inline-block";
+    expect(Array.from(layers.querySelectorAll("pre.grid"), boxed)).toEqual([false, true, true]);
+  });
+
   it("carries a shade's lattice across rows: the phase in the line box, copies a period away", () => {
     const target = document.createElement("pre");
     const root = makeNode({

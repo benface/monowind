@@ -163,9 +163,9 @@ copy event sees it in all three engines.
   vertical borders gap; and a `leading-*` on the root makes the row
   taller than any font's glyph. The adapter measures each range's
   reference glyph once per grid font — `█` for blocks, `│` for box
-  drawing; when the font draws it short of the row, or off its cell
-  width, every glyph of the range is boxed with the one transform: a
-  `font-size` scaled so the glyph is a pixel and a half taller than
+  drawing; when the font draws it short of the row, past it, or off its
+  cell width, every glyph of the range is boxed with the one transform:
+  a `font-size` scaled so the glyph is a pixel and a half taller than
   the row on each side, and a `line-height` on the box that puts its
   top that far above the row — a line box places the baseline at
   half-leading plus the font's ascent, both from the same `measureText`
@@ -196,9 +196,38 @@ copy event sees it in all three engines.
   which moves the device pixel ratio, refits. The
   halves still meet at the row's middle, and a fallback font's
   double-width block clips to its cell instead of shrinking to half a
-  row. A glyph taller than the row is left alone: it tiles already,
-  overlapping harmlessly (JetBrains Mono's `█`, 19px in an 18px row;
-  Menlo's `│`, 17.8px in 16).
+  row. A glyph drawn PAST the row takes the same box: it tiles, but its
+  rows overlap, and the two antialiased edges over each other paint a
+  darker band along every row's edge — Menlo's stem in Chromium, its
+  edge at the joint 62% darker than along the row at 1×, 14% at 3×,
+  which is why a zoom hides it (JetBrains Mono's `█`, 19px in an 18px
+  row; Menlo's `│`, 17.8px in 16). The box clips each row to its own
+  slice, so the strokes meet on one edge, and a shade takes its own fit
+  once the blocks take one, its lattice locked there as where they fall
+  short. The price is a span per cell where a run of borders was one: on
+  the macOS defaults, whose glyphs run past the row, a page of sixty
+  bordered boxes goes from 741 grid nodes to 1641, and a relayout costs
+  2% more (Chromium's own counters, 30 relayouts, three rounds). A glyph
+  the font draws at the row's height, within a twentieth of a pixel, is
+  left alone. That case alone stops at a layer that RESAMPLES its cells
+  — scaled, rotated, skewed: a transform never moves layout, so the pin
+  holds there, but each box's clip edge lands between device pixels and
+  is antialiased, a lighter seam at every row that the overshooting
+  glyph covers unboxed (a border's stems fell away from its corners in a
+  `scale-150` layer; the short and off-width fits pay the same seam
+  there, having no glyph that covers the row), so those cells keep the
+  glyph the font gives them (specs/layers.md). A layer inside one is
+  resampled too, its box a child of theirs. Every other layer takes the
+  box: one that only stacks (a dialog's, a popover's), one a filter
+  opens (a blur, a backdrop blur), one a translation moves, and one
+  resting at an identity are all the host's grid in every way that
+  matters here. The layer's read marks it (types.ts `resampled`), off
+  the effects it already reads, so the paint reads no style of its own;
+  a glyph both past the row AND off its cell width keeps its box
+  everywhere, the width fit being needed either way. Two limits to know:
+  a transform ABOVE the host resamples the main grid and nothing weighs
+  it, and a layer in transition keeps the decision of the paint before
+  it, the settle repainting at the final value.
 - **Rows cannot grow.** The grid's `line-height` is pinned to the
   measured cell height so a fallback font's taller line box (emoji
   fonts, some CJK fonts) cannot push the rows below.
@@ -461,16 +490,20 @@ Selection / Autoscroll`, a text-mode host): a press in a scroll
   story under Features, and the deviation story of a native Shift+Down
   on a drifted line.
 - Tiling fit: the stubbed-canvas unit tests (one measurement per range
-  and font, the scale and line-height from Menlo's numbers, a tall
-  glyph left alone, a double-width one clipped, box drawing fitted
-  apart from the blocks, a shade locked to its lattice and its phase
-  row by row, the pin corrected by a measured baseline), the paint
-  test of a shade's phase and period on its box, and the
-  `Features / Typography / Tiling Glyphs` story — a `leading-6` root,
-  where the bundled font's `█` and `│` are short of the row — asserting
-  every tiling glyph's box, the shades' lattice and phase, a painted
-  row's padding, and the cell as whole layout units in three engines,
-  with its golden in the sweep.
+  and font, the scale and line-height from Menlo's numbers, a glyph
+  drawn past the row boxed, a double-width one clipped, box drawing
+  fitted apart from the blocks, a shade locked to its lattice and its
+  phase row by row, the pin corrected by a measured baseline), the
+  paint test of a shade's phase and period on its box, the layer tests
+  of the effects that resample a layer's cells and of the paint told
+  which cells a resampled layer draws, and the
+  `Features / Typography / Tiling Glyphs` story — a `leading-6`
+  root, where the bundled font's `█` and `│` are short of the row,
+  beside a host at the font's own leading, where its `│` runs past it,
+  as the play asserts —
+  asserting every tiling glyph's box, the shades' lattice and phase, a
+  painted row's padding, and the cell as whole layout units in three
+  engines, with its golden in the sweep.
 
 ## Verification
 

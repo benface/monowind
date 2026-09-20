@@ -197,7 +197,9 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 ## Touch points on implementation
 
 - style.ts / types.ts: `readLayer` and `CellStyle.layer` (`Layer`
-  carries the `backdrop-filter`); styles.css carries the leading lift
+  carries the `backdrop-filter`, and whether the effects resample the
+  cells — `resampled`, which the tiling fit reads,
+  specs/wide-characters.md); styles.css carries the leading lift
   in `top` so the transforms and `filter` stay the author's, and locks
   `backdrop-filter` on the light element.
 - plain-text.ts `walk` / paint.ts `paintGrid`: the layer open/close
