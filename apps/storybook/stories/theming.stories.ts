@@ -20,7 +20,7 @@ export const BorderGlyphSets: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex max-w-max flex-col gap-1">
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-x-2 gap-y-1">
           <div class="border px-1">default</div>
           <div class="border px-1 borders-rounded">rounded</div>
           <div class="border px-1 borders-ascii">ascii</div>

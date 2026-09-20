@@ -273,6 +273,10 @@ const autosize = () => {
   source.style.height = "auto";
   source.style.height = `${source.scrollHeight}px`;
 };
+// The pane's box moves with the window, the divider, and the stacked
+// layout; a new width re-wraps the text, so the textarea follows the
+// pane as it follows its own edits.
+new ResizeObserver(autosize).observe(editor);
 
 let hashTimer;
 const onInput = () => {
@@ -476,8 +480,6 @@ divider.addEventListener("pointermove", (event) => {
   const total = drag.stacked ? main.clientHeight : main.clientWidth;
   const size = drag.size + ((drag.stacked ? event.clientY : event.clientX) - drag.start);
   setEditorShare(size, total);
-  // Width change → text re-wraps → different content height.
-  autosize();
 });
 // Fires on release AND on a cancelled pointer, so a drag never sticks.
 divider.addEventListener("lostpointercapture", () => {

@@ -228,11 +228,31 @@ const focusRestored = await page.evaluate(() => document.getElementById("focus-a
 const desktopSlot = await page.evaluate(() =>
   document.getElementById("toggle-slot-desktop").contains(document.getElementById("options")),
 );
+// A new pane width re-wraps the source, and the textarea follows the
+// pane, its height its content's: narrowed by the divider, then given
+// the stacked layout's full width by the window.
+const paneFits = (width) => {
+  const source = document.getElementById("source");
+  return (
+    document.getElementById("editor").offsetWidth !== width &&
+    source.offsetHeight === source.scrollHeight
+  );
+};
+const paneWidth = await page.evaluate(() => document.getElementById("editor").offsetWidth);
+const dividerBox = await page.locator("#divider").boundingBox();
+await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y + dividerBox.height / 2);
+await page.mouse.down();
+await page.mouse.move(dividerBox.x - 200, dividerBox.y + dividerBox.height / 2, { steps: 4 });
+await page.mouse.up();
+await page.waitForFunction(paneFits, paneWidth);
+const draggedWidth = await page.evaluate(() => document.getElementById("editor").offsetWidth);
 await page.setViewportSize({ width: 500, height: 800 });
 await page.waitForFunction(() =>
   document.getElementById("toggle-slot-mobile").contains(document.getElementById("options")),
 );
 const mobileSlot = true;
+await page.waitForFunction(paneFits, draggedWidth);
+const editorFollowsResize = true;
 
 // The highlight layer mirrors the source with token spans; a comment
 // ends at its `-->` rather than swallowing what follows.
@@ -385,6 +405,7 @@ const result = {
   focusRestored,
   desktopSlot,
   mobileSlot,
+  editorFollowsResize,
   highlighted,
   commentClosed,
   shared,
@@ -416,6 +437,7 @@ if (
   !focusRestored ||
   !desktopSlot ||
   !mobileSlot ||
+  !editorFollowsResize ||
   !highlighted ||
   !commentClosed ||
   !shared ||
