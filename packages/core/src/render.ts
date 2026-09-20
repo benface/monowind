@@ -140,7 +140,7 @@ function markRoot(node: LayoutNode): void {
 /**
  * Rewrite an inline element's authored relative insets to whole-cell
  * offsets (specs/positioning.md). The values go into engine-owned custom
- * properties consumed by a `:not([measuring])`-gated companion rule —
+ * properties consumed by a measuring-gated companion rule —
  * writing `top` etc. directly would be read back as the authored value on
  * the next measure pass and compound (a feedback loop). Sides the author
  * left `auto` get no var: the companion declaration is then invalid at

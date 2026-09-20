@@ -291,7 +291,7 @@ export function readCellStyle(
     },
     ...readTextStyle(el, cs, rootFontSizePx),
     // Both readable because the companion stylesheet's typography rewrite
-    // is gated on `:not([measuring])`.
+    // is measuring-gated.
     lineGap: lineGapRows(cs.lineHeight, fontSizePx),
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     ...readPaintStyle(cs),
@@ -777,7 +777,7 @@ export function readTextStyle(
     // `nowrap` and `pre` disable soft wrapping; `pre` additionally makes
     // the tree builder preserve the source's spaces and newlines
     // (specs/cell-model.md). Readable via getComputedStyle because the
-    // companion stylesheet's white-space lock is gated on `:not([measuring])`.
+    // companion stylesheet's white-space lock is measuring-gated.
     whiteSpace: cs.whiteSpace === "pre" ? "pre" : cs.whiteSpace === "nowrap" ? "nowrap" : "normal",
     tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",

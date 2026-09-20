@@ -166,15 +166,26 @@ copy event sees it in all three engines.
   drawing; when the font draws it short of the row, past it, or off its
   cell width, every glyph of the range is boxed with the one transform:
   a `font-size` scaled so the glyph is a pixel and a half taller than
-  the row on each side, and a `line-height` on the box that puts its
-  top that far above the row — a line box places the baseline at
-  half-leading plus the font's ascent, both from the same `measureText`
-  call, and the host then measures the baseline the engine actually
-  gives that box (an empty inline-block's top) and corrects the
-  line-height by twice the error, since engines round a scaled font's
-  metrics their own way — the box a row tall and clipping the
-  overshoot (half a pixel seamed in Chromium; a whole one left
-  Firefox's top row half bare). One transform per range is what keeps a
+  the row on each side, and a `line-height` on the box that pins it —
+  a line box places the baseline at half-leading plus the font's
+  ascent, both from the same `measureText` call, and the host then
+  measures the baseline the engine actually gives that box (an empty
+  inline-block's top) and corrects the line-height by twice the error,
+  since engines round a scaled font's metrics their own way, stepping
+  until the nearest lands where the engine snaps a baseline to whole
+  pixels (Chromium; WebKit and Firefox place it fractionally) — the
+  box a row tall and clipping the overshoot (half a pixel seamed in
+  Chromium; a whole one left Firefox's top row half bare). Box drawing
+  is pinned so its `─` stroke stays where the row's own text has it —
+  the stroke's row read off the canvas's own rendering at 4×, since
+  `measureText`'s bounds miss it by pixels in WebKit — the range scaled
+  about the stroke, and on until it reaches a pixel past the row each
+  side (within a quarter more scale; else centered), so a border sits
+  where the font sets it against the text: centered on the row, it
+  moved a pixel up in WebKit and half a pixel down elsewhere, and a
+  line of text in a box looked off its middle. Blocks stay centered,
+  their halves meeting at the row's middle. One transform per range is
+  what keeps a
   junction's strokes on its neighbors': box-drawing strokes sit at the
   glyph's center and edges, which a uniform scale around the box's
   center preserves; the cost is strokes as much bolder as the row is
@@ -204,12 +215,38 @@ copy event sees it in all three engines.
   row; Menlo's `│`, 17.8px in 16). The box clips each row to its own
   slice, so the strokes meet on one edge, and a shade takes its own fit
   once the blocks take one, its lattice locked there as where they fall
-  short. The price is a span per cell where a run of borders was one: on
-  the macOS defaults, whose glyphs run past the row, a page of sixty
-  bordered boxes goes from 741 grid nodes to 1641, and a relayout costs
-  2% more (Chromium's own counters, 30 relayouts, three rounds). A glyph
-  the font draws at the row's height, within a twentieth of a pixel, is
-  left alone. That case alone stops at a layer that RESAMPLES its cells
+  short. The box is one per cell, by design: a run of `─` in one text
+  run overdraws itself at every joint — a font draws the line past its
+  advance so joins never gap, and two antialiased ends over each other
+  darken the stroke's edge rows into a dot per cell (plain text's
+  borders always had them; SF Mono at 2x, the top edge row from 148
+  to 92 of 255) — and only the box's clip, snapped to device pixels, keeps each
+  glyph's ink to its cell; nothing in one text run can, at any
+  letter-spacing. Two more things keep the joint whole: the scale never
+  drops below 1.08, the least overhang past the cell's edge columns
+  that leaves every joint whole in the three engines at 1× and 2× (a
+  glyph at its own size leaves the edge column part bare, and JetBrains
+  Mono's `│`, 21px in an 18px row, would otherwise SHRINK to 0.987),
+  and the glyph is placed by a `text-indent` of half the room its
+  advance leaves in the box, not `text-align: center`: a centered line
+  lands on a rounded position, and at one joint in six its end fell a
+  fraction short of the clip's edge column, a lighter column through
+  the stroke (SF Mono at 2× in Chromium, 41% of the ink; Firefox at
+  1× too). The price is the row's nodes: on a page of sixty bordered
+  boxes at the macOS
+  defaults, whose glyphs run past the row, 360 grid nodes unboxed and
+  1260 boxed. What the nodes cost per layout was set by the measuring
+  gate, not the boxes: read through descendant rules, the host's
+  `[measuring]` and `[settling]` flips walked the whole subtree, shadow
+  grid included, four times a layout — 8.4 ms of the boxed page's style
+  recalc, 3.3 of the unboxed one's, where the relayout's own row costs
+  a fraction of a millisecond — so each light element gates its own
+  rules by its own flag instead (cell-model.md "Typography"): the flips
+  then cost 0.07 ms, and the page relays out in 13.2 ms boxed against
+  10.7 unboxed at the old gate (18.5 boxed at it; Chromium's own
+  counters, 30 relayouts, three rounds). A glyph the font draws at the
+  row's height, within a twentieth of a pixel, is left alone. That case
+  alone stops at a layer that RESAMPLES its cells
   — scaled, rotated, skewed: a transform never moves layout, so the pin
   holds there, but each box's clip edge lands between device pixels and
   is antialiased, a lighter seam at every row that the overshooting
@@ -383,11 +420,16 @@ selection })` — `holdStructural` while a press on the grid the engine
   lose; a press on a control is the control's — patches per ROW (styles
   in place when the row's structure matches, a rebuild between its
   neighbors' newlines when not); a boxed segment is an `inline-block` span `cells × --mw-cw`
-  wide and `--mw-ch` tall, unpadded, centered, clipped, its font-size
+  wide and `--mw-ch` tall, unpadded, clipped, the glyph placed by a
+  `text-indent` of half the room its `advance` leaves, its font-size
   the scale; a tiling fit adds its `line-height`, a shade's moved by
   twice the row's shift; a shade adds `data-shade` (its glyph, which
   the shadow's `::before`/`::after` repeat a period above and below)
-  and `--mw-period` in px; every other grid span pads
+  and `--mw-period` in px; the glyph cache's `generation` — counting
+  its refits, a font load's or a cell change's — is kept with the paint,
+  and a grid painted under an earlier one restyles every box even where
+  no row changed (a layer whose text stood still kept the fallback
+  font's fit); every other grid span pads
   `padding-block: var(--mw-bgpad)`, the host's `ceil(backgroundGap /
 2)` px; `gridOffsetAt` and `paintedCell` read the kept cell strings.
 - selection.ts: `selectedRanges(root, points)`.
@@ -491,7 +533,8 @@ Selection / Autoscroll`, a text-mode host): a press in a scroll
   on a drifted line.
 - Tiling fit: the stubbed-canvas unit tests (one measurement per range
   and font, the scale and line-height from Menlo's numbers, a glyph
-  drawn past the row boxed, a double-width one clipped, box drawing
+  drawn past the row boxed and held to 1.08, its advance for the box's
+  indent, a double-width one clipped, box drawing
   fitted apart from the blocks, a shade locked to its lattice and its
   phase row by row, the pin corrected by a measured baseline), the
   paint test of a shade's phase and period on its box, the layer tests

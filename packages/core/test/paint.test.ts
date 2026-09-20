@@ -102,8 +102,9 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     const root = makeNode({ children: [leaf] });
     layoutRoot(root, 4);
     const glyphs = {
-      box: (cluster: string) => (cluster === "中" ? { scale: 1.18 } : null),
+      box: (cluster: string) => (cluster === "中" ? { scale: 1.18, advance: 16.048 } : null),
       shift: () => 0,
+      generation: 0,
     };
     paintGrid(root, target, { glyphs });
     const span = target.querySelector("span")!;
@@ -111,11 +112,22 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     expect(span.style.display).toBe("inline-block");
     expect(span.style.width).toBe("calc(2 * var(--mw-cw, 1ch))");
     expect(span.style.fontSize).toBe("118%");
+    expect(span.style.textAlign).toBe("start");
+    expect(span.style.textIndent).toBe("calc(50% - 8.024px)");
     expect(target.textContent).toBe("a中b");
     expect(gridOffsetAt(target, 0, 0)).toBe(0);
     expect(gridOffsetAt(target, 2, 0)).toBe(2);
     expect(gridOffsetAt(target, 3, 0)).toBe(2);
     expect(gridOffsetAt(target, 4, 0)).toBe(3);
+    // A refit — the cache's next generation — restyles the box with
+    // nothing else changed; the same generation leaves it.
+    glyphs.box = (cluster) => (cluster === "中" ? { scale: 1.25, advance: 17 } : null);
+    paintGrid(root, target, { glyphs });
+    expect(span.style.fontSize).toBe("118%");
+    glyphs.generation = 1;
+    paintGrid(root, target, { glyphs });
+    expect(target.querySelector("span")).toBe(span);
+    expect(span.style.fontSize).toBe("125%");
   });
 
   it("declines a past-the-row box in a resampled layer, and keeps every other", () => {
@@ -125,11 +137,12 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     const glyphs = {
       box: (cluster: string) =>
         cluster === "\u2502"
-          ? { scale: 1, past: true, lineHeight: 17 }
+          ? { scale: 1.08, past: true, lineHeight: 18.6, advance: 8.64 }
           : cluster === "\u2500"
-            ? { scale: 1.2, lineHeight: 9 }
+            ? { scale: 1.2, lineHeight: 9, advance: 9.6 }
             : null,
       shift: () => 0,
+      generation: 0,
     };
     const cells = (value: number) => ({ kind: "cells" as const, value });
     const stem = (resampled: boolean, text = "\u2502") =>
@@ -161,8 +174,9 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     });
     layoutRoot(root, 1);
     const glyphs = {
-      box: () => ({ scale: 1.5, lineHeight: 14.31, period: 3 }),
+      box: () => ({ scale: 1.5, lineHeight: 14.31, advance: 12, period: 3 }),
       shift: (_box: unknown, row: number) => [0, -1, 1][row % 3]!,
+      generation: 0,
     };
     paintGrid(root, target, { glyphs });
     const [first, second] = Array.from(target.querySelectorAll("span"));
@@ -179,11 +193,15 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
       children: [makeNode({ style: { color: "red" }, text: "░", intrinsicWidth: 1 })],
     });
     layoutRoot(root, 1);
-    const shaded = { box: () => ({ scale: 1.5, lineHeight: 14, period: 3 }), shift: () => 0 };
+    const shaded = {
+      box: () => ({ scale: 1.5, lineHeight: 14, advance: 12, period: 3 }),
+      shift: () => 0,
+      generation: 0,
+    };
     paintGrid(root, target, { glyphs: shaded });
     const span = target.querySelector("span")!;
     expect(span.dataset.shade).toBe("░");
-    paintGrid(root, target, { glyphs: { box: () => null, shift: () => 0 } });
+    paintGrid(root, target, { glyphs: { box: () => null, shift: () => 0, generation: 0 } });
     expect(target.querySelector("span")).toBe(span);
     expect(span.dataset.shade).toBeUndefined();
     expect(span.style.lineHeight).toBe("");

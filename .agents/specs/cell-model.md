@@ -551,6 +551,16 @@ This works because the text-visibility lock is
 `-webkit-text-fill-color: transparent`, NOT `color: transparent` — the
 computed `color` stays live and authored transitions actually run on
 it (decoration ink follows `color` and gets its own transparent lock).
+A light element's gate is its own flag — `data-mw-measuring`, then
+`data-mw-settling`, set on every light element as the layout sets the
+host's attributes — never the host's attribute read through a
+descendant combinator: any rule of that shape makes each flip of the
+host's attribute walk its whole subtree, the shadow grid's every span
+included, four times a layout (0.85 µs a span a flip in Chromium, 4 ms
+of a border-heavy page's relayout), where an element's own flag
+invalidates the element alone. The host's `measuring` and `settling`
+gate its own rules. An element inserted since the last layout carries
+no flag and takes the locks until its first.
 Under `[measuring]` — and `[settling]`, which replaces it for one
 forced style flush at the end of every layout — `transition-property`
 is forced to the sampled set: lock-owned properties (backgrounds,
@@ -754,8 +764,8 @@ alone on an auto-width block does nothing — the box fills its container.
   whitespace regardless; `pre` only gets `pre`'s no-wrap behavior.
 
 The companion stylesheet locks `white-space: normal` on all descendants (so
-browser wrapping matches the engine's), gated on `:not([measuring])` so the
-style reader sees the authored value. Nowrap elements get the engine-owned
+browser wrapping matches the engine's), gated on the element's measuring
+flag so the style reader sees the authored value. Nowrap elements get the engine-owned
 `data-mw-nowrap` attribute, which switches the lock to `nowrap`.
 
 **Truncation** (Tailwind `truncate` = `overflow: hidden; text-overflow:

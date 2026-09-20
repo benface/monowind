@@ -44,11 +44,13 @@ interface PaintedRow {
 interface PaintedRows {
   rows: PaintedRow[];
   cells: string[][];
+  /** The glyph cache's generation the boxes were fit under. */
+  generation: number;
 }
 const lastPaint = new WeakMap<HTMLElement, PaintedRows>();
 
 /** What the painter asks of the glyph cache. */
-export type PaintGlyphs = Pick<GlyphBoxes, "box" | "shift">;
+export type PaintGlyphs = Pick<GlyphBoxes, "box" | "shift" | "generation">;
 
 export interface PaintOptions {
   /** Defer structural rebuilds while a primary press is down. */
@@ -452,10 +454,14 @@ function paintRows(
   options: PaintOptions,
 ): boolean {
   const glyphs = options.glyphs;
-  const signature = signatureOf(rows);
-  if (lastPaintSignature.get(target) === signature) return true;
-
+  const generation = glyphs?.generation ?? 0;
   const previous = lastPaint.get(target);
+  // A refit (a font loaded, the cell changed) restyles every box, the
+  // rows unchanged or not.
+  const refit = previous !== undefined && previous.generation !== generation;
+  const signature = signatureOf(rows);
+  if (!refit && lastPaintSignature.get(target) === signature) return true;
+
   const rebuild = new Set<number>();
   if (previous && previous.rows.length === rows.length) {
     for (let y = 0; y < rows.length; y++) {
@@ -477,7 +483,7 @@ function paintRows(
       if (newline) fragment.appendChild(newline);
       painted.push({ nodes, segments: rows[y]!, newline, units });
     }
-    lastPaint.set(target, { rows: painted, cells });
+    lastPaint.set(target, { rows: painted, cells, generation });
     const saved = captureSelection(target, false);
     target.replaceChildren(fragment);
     if (saved) restoreSelection(target, saved);
@@ -502,12 +508,14 @@ function paintRows(
     }
     for (let i = 0; i < row.length; i++) {
       const segment = row[i]!;
-      if (isBarePaint(segment) || sameSegment(segment, painted.segments[i]!)) continue;
+      const stale = refit && segment.box;
+      if (!stale && (isBarePaint(segment) || sameSegment(segment, painted.segments[i]!))) continue;
       applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs, y);
     }
     painted.segments = row;
   }
   previous.cells = cells;
+  previous.generation = generation;
   if (saved) restoreSelection(target, saved);
   return true;
 }
@@ -567,9 +575,16 @@ function applySegment(
   style.height = "var(--mw-ch, 1lh)";
   style.overflow = "hidden";
   style.verticalAlign = "top";
-  style.textAlign = "center";
+  // Placed by an indent, not centered: a centered line lands on a
+  // rounded position and, at one joint in six, ends short of the clip's
+  // edge column (specs/wide-characters.md). A box without a fit (a
+  // translucent line's) centers.
+  if (box) {
+    style.textAlign = "start";
+    style.textIndent = `calc(50% - ${box.advance / 2}px)`;
+  } else style.textAlign = "center";
   if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
-  // A tiling glyph pinned to the row's top by its own line box, the
+  // A tiling glyph pinned to its row by its own line box, the
   // overshoot clipped; a shade's line box also moves the glyph by the
   // row's shift (twice it), and copies a period above and below fill
   // the box (the shadow's `[data-shade]` rules).

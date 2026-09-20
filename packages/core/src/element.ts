@@ -2181,14 +2181,19 @@ export class MonoWindElement extends HTMLElementBase {
         textareaWidths.set(ta, Math.max(0, Math.round(contentPx / cellWidthPx)));
       }
     }
-    // The write phase is bracketed by the `measuring` attribute (gates the
-    // companion stylesheet so reads see authored values). Everything the
+    // The write phase is bracketed by the `measuring` attribute and each
+    // light element's flag (they gate the companion stylesheet so reads
+    // see authored values). Everything the
     // engine writes to the light DOM — geometry vars, data-mw-* attributes
     // — happens synchronously in here, so the synchronous takeRecords() in
     // `finally` drains exactly our own mutation records. Observation
     // resumes the moment #performLayout returns: a user mutation in the
     // same task (right after a layout) is seen normally.
     this.setAttribute("measuring", "");
+    // A flag per element, so a flip restyles that element alone
+    // (styles.css "Typography locks and measuring gates").
+    const gated = this.querySelectorAll("*");
+    for (const el of gated) el.setAttribute("data-mw-measuring", "");
     try {
       // (1) Cell metrics — measured EVERY layout from the persistent
       // probe (one getBoundingClientRect on a hidden node; layout is
@@ -2239,6 +2244,7 @@ export class MonoWindElement extends HTMLElementBase {
           width: metrics.width,
           height: metrics.height,
           letterSpacing: metrics.gridLetterSpacing ?? metrics.letterSpacing,
+          ...(metrics.baseline === undefined ? {} : { baseline: metrics.baseline }),
         },
       );
 
@@ -2329,8 +2335,13 @@ export class MonoWindElement extends HTMLElementBase {
       // delta and the authored lists stay fully respected.
       this.setAttribute("settling", "");
       this.removeAttribute("measuring");
+      for (const el of gated) {
+        el.setAttribute("data-mw-settling", "");
+        el.removeAttribute("data-mw-measuring");
+      }
       void getComputedStyle(this).transitionProperty;
       this.removeAttribute("settling");
+      for (const el of gated) el.removeAttribute("data-mw-settling");
       syncLayers(this.#layers);
       // Restore native container positions AFTER the unmask — the browser
       // re-clamps them when the mask lifts (Firefox lazily), so any

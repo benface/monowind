@@ -245,8 +245,9 @@ The engine both reads authored styles and writes geometry, and both
 own overrides. Planned solution, batched per animation frame (pre-paint, so no
 visible flash):
 
-1. Set a "measuring" attribute on the host that disables the geometry override
-   rules (they are guarded by `:not([measuring])` or equivalent).
+1. Set a "measuring" attribute on the host and a `data-mw-measuring` flag on
+   every light element; the flag disables the geometry override rules (they
+   are guarded by `:not([data-mw-measuring])` on the element itself).
 2. Read computed styles for the whole tree (one forced style recalc).
 3. Compute integer layout in JS.
 4. Write custom properties / decoration; remove the measuring attribute.
@@ -258,10 +259,15 @@ blurs focus and resets internal scroll state, violating focus preservation.
 
 Two patterns recur in `styles.css` and are easy to misread:
 
-- **Gating on `:not([measuring])`.** Any rule whose output the style reader
+- **Gating on the measuring flag.** Any rule whose output the style reader
   would otherwise read back as if the author wrote it (white-space,
-  letter-spacing, line-height, geometry) is gated on the host's `measuring`
-  attribute, so during the read pass elements show their AUTHORED values.
+  letter-spacing, line-height, geometry) is gated on the element's own
+  `data-mw-measuring` flag, so during the read pass elements show their
+  AUTHORED values. The flag sits on each light element rather than being
+  the host's `measuring` attribute read through a descendant combinator:
+  that shape makes every flip of the attribute invalidate the host's whole
+  subtree, the shadow grid's every span included (specs/cell-model.md
+  "Typography"); the host's attribute gates only the host's own rules.
   Ungated rules are only those that must hold during measurement too (the
   font lock, which defines the cell metrics).
 - **Locks in `@layer theme`.** Every `!important` rule of the engine's sits

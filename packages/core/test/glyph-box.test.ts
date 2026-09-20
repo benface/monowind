@@ -14,6 +14,9 @@ type Metrics = {
   descent?: number;
   /** A lattice, in px: the glyph draws as a square wave of this period. */
   period?: number;
+  /** A stroke, in px above the baseline: the glyph draws as one pixel
+   * of ink there. */
+  stroke?: number;
 };
 
 /** The stubbed font's line-box ascent and descent, as a 16px font. */
@@ -43,16 +46,22 @@ function stubCanvas(glyphs: Record<string, Metrics>): { calls: string[] } {
     fillText(cluster: string) {
       drawn = glyphs[cluster] ?? null;
     },
-    // The glyph at 4× from y = 32 (16px font: drawn at 8px): alpha rows
-    // on and off in runs of half its period.
+    // The glyph at 4×: a lattice from y = 32 (16px font: drawn from
+    // 8px down), alpha rows on and off in runs of half its period; a
+    // stroke a pixel thick above the baseline drawn at 32px.
     getImageData(_x: number, _y: number, w: number, h: number) {
       const data = new Uint8ClampedArray(w * h * 4);
+      const fill = (y: number) => {
+        for (let x = 0; x < w; x++) data[(y * w + x) * 4 + 3] = 255;
+      };
       const period = (drawn?.period ?? 0) * 4;
       const height = ((drawn?.ascent ?? 0) + (drawn?.descent ?? 0)) * 4;
       for (let y = 32; y < 32 + height && y < h; y++) {
-        if (period && Math.floor(((y - 32) * 2) / period) % 2 === 0) {
-          for (let x = 0; x < w; x++) data[(y * w + x) * 4 + 3] = 255;
-        }
+        if (period && Math.floor(((y - 32) * 2) / period) % 2 === 0) fill(y);
+      }
+      if (drawn?.stroke !== undefined) {
+        const top = Math.round((32 - drawn.stroke - 0.5) * 4);
+        for (let y = top; y < top + 4 && y < h; y++) fill(y);
       }
       return { data };
     },
@@ -86,15 +95,15 @@ describe("GlyphBoxes", () => {
     const boxes = new GlyphBoxes();
     boxes.configure(font, cell);
     // 16 ÷ 13.6 = 1.176, ink 12 rows tall at that scale stays inside 16.
-    expect(boxes.box("中", 2)).toEqual({ scale: 1.176 });
+    expect(boxes.box("中", 2)).toEqual({ scale: 1.176, advance: 15.994 });
     // 8 ÷ 10.4 = 0.769; the ink (8) fits at that scale.
-    expect(boxes.box("★", 1)).toEqual({ scale: 0.769 });
+    expect(boxes.box("★", 1)).toEqual({ scale: 0.769, advance: 7.998 });
     // Fill scale 0.964, but the ink is 18.5 tall: 16 ÷ 18.5 wins.
-    expect(boxes.box("😀", 2)).toEqual({ scale: 0.865 });
+    expect(boxes.box("😀", 2)).toEqual({ scale: 0.865, advance: 14.359 });
     // Within 0.01 cell: the font's own glyph. Beyond it, boxed — the
     // drift would add up along a line.
     expect(boxes.box("→", 1)).toBeNull();
-    expect(boxes.box("✓", 1)).toEqual({ scale: 0.976 });
+    expect(boxes.box("✓", 1)).toEqual({ scale: 0.976, advance: 8.003 });
     // Measured once per cluster and font.
     boxes.box("中", 2);
     boxes.box("中", 2, { fontWeight: "700" });
@@ -111,7 +120,7 @@ describe("GlyphBoxes", () => {
     });
     const boxes = new GlyphBoxes();
     boxes.configure(font, cell);
-    const fit = { scale: 1.331, lineHeight: 12.37 };
+    const fit = { scale: 1.331, lineHeight: 12.37, advance: 10.648 };
     expect(boxes.box("█", 1)).toEqual(fit);
     expect(boxes.box("▀", 1)).toEqual(fit);
     expect(boxes.box("▟", 1)).toEqual(fit);
@@ -122,6 +131,7 @@ describe("GlyphBoxes", () => {
     expect(shade).toEqual({
       scale: 1.5,
       lineHeight: 14.31,
+      advance: 12,
       period: 3,
       reach: { above: 4.85, below: 3.16 },
     });
@@ -132,16 +142,42 @@ describe("GlyphBoxes", () => {
     // Past that reach, up by the rest when the bottom stays covered.
     const tight = { ...shade, reach: { above: 1, below: 2 } };
     expect([0, 1, 2].map((row) => boxes.shift(tight, row))).toEqual([0, -1, 1]);
-    expect(boxes.shift({ scale: 1 }, 5)).toBe(0);
+    expect(boxes.shift({ scale: 1, advance: 8 }, 5)).toBe(0);
+  });
+
+  it("pins box drawing so its level stroke stays where the row has it", () => {
+    // The `│` is 15 tall on a baseline at 13, the `─` stroke drawn 5
+    // above the baseline (at the row's middle). Filling the row would
+    // take 19 ÷ 15, and reaching a pixel past the row's top from the
+    // stroke takes 1.5: pinned at 13 + 5 × 0.5, so the top sits 11 ×
+    // 1.5 − 15.5 = 1 above the row, 1.5 × (22 − 13 + 3) − 2.
+    const { calls } = stubCanvas({
+      "█": { width: 8, ascent: 10.77, descent: 3.5 },
+      "│": { width: 8, ascent: 11, descent: 4 },
+      "─": { width: 8, stroke: 5 },
+    });
+    const boxes = new GlyphBoxes();
+    boxes.configure(font, { ...cell, baseline: 13 });
+    expect(boxes.box("┌", 1)).toEqual({ scale: 1.5, lineHeight: 16, advance: 12 });
+    // A block stays centered, its halves meeting at the row's middle.
+    expect(boxes.box("█", 1)).toEqual({ scale: 1.331, lineHeight: 12.37, advance: 10.648 });
+    expect(calls).toEqual(["│", "█"]);
+    // A stroke sitting far off the row's middle would need over a
+    // quarter more scale: centered instead.
+    stubCanvas({ "│": { width: 8, ascent: 11, descent: 4 }, "─": { width: 8, stroke: 7 } });
+    const off = new GlyphBoxes();
+    off.configure(font, { ...cell, baseline: 13 });
+    expect(off.box("┌", 1)).toEqual({ scale: 1.267, lineHeight: 12.2, advance: 10.136 });
   });
 
   it("corrects the pin by the engine's measured baseline", () => {
     stubCanvas({ "█": { width: 8, ascent: 10.77, descent: 3.5 } });
     // The ink's top would land at −0.25 instead of −1.5: the box's
-    // line-height gives back twice the difference.
-    const boxes = new GlyphBoxes(() => 14.08);
+    // line-height gives back twice the difference (the engine here
+    // moves the baseline half a pixel per pixel of line-height).
+    const boxes = new GlyphBoxes((_glyph, _scale, lineHeight) => lineHeight / 2 + 7.895);
     boxes.configure(font, cell);
-    expect(boxes.box("█", 1)).toEqual({ scale: 1.331, lineHeight: 9.87 });
+    expect(boxes.box("█", 1)).toEqual({ scale: 1.331, lineHeight: 9.88, advance: 10.648 });
   });
 
   it("fits box-drawing glyphs from the font's `│`, apart from the blocks", () => {
@@ -152,10 +188,11 @@ describe("GlyphBoxes", () => {
     const boxes = new GlyphBoxes();
     boxes.configure(font, cell);
     // The block's own ink is 19 in a 16px row — past it, so its rows
-    // would overlap: 19 ÷ 19, pinned by 1 × (30 − 13 + 3) − 3.
-    expect(boxes.box("█", 1)).toEqual({ scale: 1, past: true, lineHeight: 17 });
+    // would overlap: 19 ÷ 19 held to 1.08, pinned by 1.08 × (30 − 13 +
+    // 3) − 3.
+    expect(boxes.box("█", 1)).toEqual({ scale: 1.08, past: true, lineHeight: 18.6, advance: 8.64 });
     // 19 ÷ 12; 1.583 × (18 − 13 + 3) − 3.
-    const fit = { scale: 1.583, lineHeight: 9.67 };
+    const fit = { scale: 1.583, lineHeight: 9.67, advance: 12.664 };
     expect(boxes.box("│", 1)).toEqual(fit);
     expect(boxes.box("─", 1)).toEqual(fit);
     expect(boxes.box("┌", 1)).toEqual(fit);
@@ -169,12 +206,13 @@ describe("GlyphBoxes", () => {
     stubCanvas({ "█": { width: 8, ascent: 15, descent: 4 } });
     const tall = new GlyphBoxes();
     tall.configure(font, cell);
-    const fit = { scale: 1, past: true, lineHeight: 17 };
+    // Held to 1.08, the least overhang that keeps every joint whole.
+    const fit = { scale: 1.08, past: true, lineHeight: 18.6, advance: 8.64 };
     expect(tall.box("█", 1)).toEqual(fit);
     expect(tall.box("▄", 1)).toEqual(fit);
     // A shade tiles with the blocks, so it is boxed whenever they are,
     // at its own fit: 19 ÷ 12; 1.583 × (20 − 13 + 3) − 3.
-    expect(tall.box("▒", 1)).toEqual({ scale: 1.583, lineHeight: 12.83 });
+    expect(tall.box("▒", 1)).toEqual({ scale: 1.583, lineHeight: 12.83, advance: 12.664 });
     vi.restoreAllMocks();
     // Drawn at the row's height, within a twentieth of a pixel, and at
     // its cell's width: the font's own glyph tiles, and is left alone.
@@ -189,14 +227,14 @@ describe("GlyphBoxes", () => {
     stubCanvas({ "█": { width: 16, ascent: 12, descent: 4 } });
     const wide = new GlyphBoxes();
     wide.configure(font, cell);
-    expect(wide.box("█", 1)).toEqual({ scale: 1.188, lineHeight: 13.63 });
+    expect(wide.box("█", 1)).toEqual({ scale: 1.188, lineHeight: 13.63, advance: 19.008 });
     vi.restoreAllMocks();
     // Past the row AND off its cell width takes no `past`: the width
     // fit is needed in any layer, resampled or not.
     stubCanvas({ "█": { width: 16, ascent: 15, descent: 4 } });
     const both = new GlyphBoxes();
     both.configure(font, cell);
-    expect(both.box("█", 1)).toEqual({ scale: 1, lineHeight: 17 });
+    expect(both.box("█", 1)).toEqual({ scale: 1.08, lineHeight: 18.6, advance: 17.28 });
   });
 
   it("forgets its measurements when the font or the cell changes, and on invalidate", () => {
