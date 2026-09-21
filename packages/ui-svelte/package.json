@@ -1,10 +1,11 @@
 {
   "name": "@monowind/ui-svelte",
-  "version": "0.3.0",
-  "description": "@monowind/ui for Svelte 5: a menu, a dialog, a popover, a tooltip on the monowind grid, as runes",
+  "version": "0.3.1",
+  "description": "@monowind/ui for Svelte 5: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid, as runes",
   "keywords": [
     "accessibility",
     "components",
+    "listbox",
     "monowind",
     "svelte",
     "tui",
@@ -54,7 +55,7 @@
     "@zag-js/svelte": "^1.44.0"
   },
   "devDependencies": {
-    "svelte": "^5.57.0",
+    "svelte": "^5.57.1",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {

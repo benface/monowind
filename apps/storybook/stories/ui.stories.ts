@@ -2,8 +2,10 @@ import { html } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { dialog } from "@monowind/ui/dialog";
+import { listbox } from "@monowind/ui/listbox";
 import { menu } from "@monowind/ui/menu";
 import { popover } from "@monowind/ui/popover";
+import { select } from "@monowind/ui/select";
 import { tooltip } from "@monowind/ui/tooltip";
 import {
   cellSize,
@@ -13,11 +15,12 @@ import {
   hoverOver,
   mountedOn,
   paintedBackground,
+  expectRow,
   paintedSpan,
   pressAt,
   readyHost,
   release,
-  rowsOf,
+  showsRow,
   testHooks,
   type Point,
 } from "./helpers.ts";
@@ -28,15 +31,24 @@ import {
  * the top layer, Zag runs the roles, the keyboard, typeahead, focus,
  * and dismissal. Headless: the parts are styled here through the
  * theme's tokens, and wired by the vanilla path from each render.
+ *
+ * Every part is written out: a mount reads them when lit hands it the
+ * root, which it does before committing anything a nested template
+ * would bring, so items built by a `map` or a helper arrive too late
+ * to be found.
  */
 const meta: Meta = {
   title: "Packages / ui",
 };
 export default meta;
 
-const MENU_ITEM =
+const ITEM =
   "px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg) data-disabled:text-neutral-500 not-data-disabled:cursor-default";
 const MENU_CONTENT = "border bg-clear";
+
+/** A listbox item: the item's own styles, and the selected one in bold
+ * beside its indicator. */
+const LIST_ITEM = `${ITEM} data-[state=checked]:font-bold`;
 
 /** A grid drag between two points, pressed on the host's grid where
  * the pointer lands (specs/cell-model.md), and the text it selected. */
@@ -77,29 +89,19 @@ export const Menu: StoryObj = {
               <div data-part="item-group-label" data-value="file" class="px-1 text-neutral-500">
                 File
               </div>
-              <div data-part="item" data-value="new" data-test="new" class=${MENU_ITEM}>New</div>
-              <div data-part="item" data-value="open" data-test="open" class=${MENU_ITEM}>
-                Open…
-              </div>
-              <div
-                data-part="item"
-                data-value="save"
-                data-test="save"
-                data-disabled
-                class=${MENU_ITEM}
-              >
+              <div data-part="item" data-value="new" data-test="new" class=${ITEM}>New</div>
+              <div data-part="item" data-value="open" data-test="open" class=${ITEM}>Open…</div>
+              <div data-part="item" data-value="save" data-test="save" data-disabled class=${ITEM}>
                 Save
               </div>
             </div>
             <hr data-part="separator" class="border-t" />
-            <div data-part="trigger-item" data-test="share" class=${MENU_ITEM}>Share&nbsp;›</div>
+            <div data-part="trigger-item" data-test="share" class=${ITEM}>Share&nbsp;›</div>
             <div data-part="submenu" data-value="share">
               <div data-part="positioner" data-test="sub-positioner" popover="manual" class="-mt-1">
                 <div data-part="content" data-test="sub-content" class=${MENU_CONTENT}>
-                  <div data-part="item" data-value="mail" data-test="mail" class=${MENU_ITEM}>
-                    Mail
-                  </div>
-                  <div data-part="item" data-value="link" class=${MENU_ITEM}>Copy link</div>
+                  <div data-part="item" data-value="mail" data-test="mail" class=${ITEM}>Mail</div>
+                  <div data-part="item" data-value="link" class=${ITEM}>Copy link</div>
                 </div>
               </div>
             </div>
@@ -178,7 +180,7 @@ export const Menu: StoryObj = {
       () => box("positioner").left,
       () => box("trigger").left,
     );
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("Open"))).toBe(true));
+    await expectRow(host, "Open");
     // The menu's own cells are the grid's: a drag from its border cell
     // selects its text, the focus staying on the menu, the menu open.
     const border = { x: box("content").left + 2, y: rightOf(by("open")).y };
@@ -220,7 +222,7 @@ export const Menu: StoryObj = {
       () => box("sub-positioner").left,
       () => box("share").right,
     );
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("Copy link"))).toBe(true));
+    await expectRow(host, "Copy link");
     // The arrow keys walk the submenu: its first item highlighted, on the
     // grid too; Left returns to the parent.
     await userEvent.keyboard("{ArrowDown}");
@@ -240,40 +242,282 @@ export const Menu: StoryObj = {
     // the wait is on the open alone.
     await userEvent.keyboard("{ArrowRight}");
     await waitFor(() => expect(state("sub-content")).toBe("open"));
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("Copy link"))).toBe(true));
+    await expectRow(host, "Copy link");
   },
 };
 
-/** A popover with a title, a description, and a close button, its
- * content fading in and out. */
-export const Popover: StoryObj = {
+/** A listbox of branches: a value selected, groups with their labels,
+ * an item disabled, and more items than the box shows. */
+export const Listbox: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div
-        class="p-1"
-        ${mountedOn((root) =>
-          popover(root, { id: "info", positioning: { placement: "bottom-start" } }),
-        )}
-      >
-        <p>A page with a button that opens a popover.</p>
-        <p class="mt-1">
-          <button data-part="trigger" data-test="trigger" class="border px-1">Details</button>
-        </p>
-        <div data-part="positioner" data-test="positioner" popover="manual">
+      <div class="p-1">
+        <p>A page with a list to choose from.</p>
+        <div
+          class="mt-1"
+          data-highlight-on-hover
+          ${mountedOn((root) => listbox(root, { id: "branch", defaultValue: ["main"] }))}
+        >
+          <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
+          <div data-part="content" data-test="content" class="max-h-8 w-20 overflow-y-auto border">
+            <div data-part="item-group" data-value="local">
+              <div data-part="item-group-label" data-value="local" class="px-1 text-neutral-500">
+                Local
+              </div>
+              <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">main</span>
+              </div>
+              <div data-part="item" data-value="next" data-test="next" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">next</span>
+              </div>
+              <div data-part="item" data-value="feature" data-test="feature" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">feature/grid</span>
+              </div>
+              <div
+                data-part="item"
+                data-value="stale"
+                data-test="stale"
+                data-disabled
+                class=${LIST_ITEM}
+              >
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">stale</span>
+              </div>
+            </div>
+            <div data-part="item-group" data-value="remote">
+              <div data-part="item-group-label" data-value="remote" class="px-1 text-neutral-500">
+                Remote
+              </div>
+              <div
+                data-part="item"
+                data-value="origin-main"
+                data-test="origin-main"
+                class=${LIST_ITEM}
+              >
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">origin/main</span>
+              </div>
+              <div
+                data-part="item"
+                data-value="origin-next"
+                data-test="origin-next"
+                class=${LIST_ITEM}
+              >
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">origin/next</span>
+              </div>
+              <div data-part="item" data-value="release" data-test="release" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">release</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="mt-1">More of the page under the list.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const content = by("content");
+    // Roles from the machine, on the light DOM.
+    expect(content.getAttribute("role")).toBe("listbox");
+    expect(content.getAttribute("aria-labelledby")).toBe(by("label").id);
+    expect(by("main").getAttribute("role")).toBe("option");
+    expect(by("stale").getAttribute("aria-disabled")).toBe("true");
+    // The value it was given: its item selected, its indicator painted
+    // beside the item's text.
+    expect(by("main").getAttribute("aria-selected")).toBe("true");
+    await expectRow(host, "✓ main");
+    // Tabbed to: a composite's own cells stay plain, so the selection
+    // takes the highlight and the grid shows where the focus is
+    // (specs/cell-model.md).
+    await userEvent.tab();
+    await waitFor(() => expect(document.activeElement).toBe(content));
+    await waitFor(() => expect(by("main")).toHaveAttribute("data-highlighted"));
+    await waitFor(() => expect(paintedBackground(host, "main")).not.toBe(""));
+    // A press selects, and the indicator follows the value.
+    await userEvent.click(by("next"));
+    await waitFor(() => expect(by("next").getAttribute("aria-selected")).toBe("true"));
+    expect(by("main").getAttribute("aria-selected")).toBe("false");
+    await expectRow(host, "✓ next");
+    expect(showsRow(host, "✓ main")).toBe(false);
+    // The pointer moves the highlight where the root asks for it: the
+    // item it names is the active descendant, Zag keeping
+    // `data-highlighted` for the keyboard's own focus below.
+    hoverOver(by("feature"));
+    await waitFor(() =>
+      expect(content.getAttribute("aria-activedescendant")).toBe(by("feature").id),
+    );
+    // The focus starts at the selection, wherever the list was left:
+    // the highlight moved to the first item and the list scrolled away
+    // from it, a tab back lands on the selected item and shows it
+    // (specs/ui.md).
+    content.focus();
+    await userEvent.keyboard("{Home}");
+    await waitFor(() => expect(by("main")).toHaveAttribute("data-highlighted"));
+    content.scrollTop = content.scrollHeight;
+    await waitFor(() => expect(showsRow(host, "Local")).toBe(false));
+    content.blur();
+    content.focus();
+    await waitFor(() => expect(by("next")).toHaveAttribute("data-highlighted"));
+    await expectRow(host, "✓ next");
+    expect(by("main"), "the highlight it left is not where it lands").not.toHaveAttribute(
+      "data-highlighted",
+    );
+    // More items than the box shows: the keyboard moves the highlight to
+    // the last, the browser scrolls the light content to it, and the grid
+    // repaints on the cells it moved to (specs/scrolling.md).
+    expect(showsRow(host, "release")).toBe(false);
+    content.focus();
+    await userEvent.keyboard("{End}");
+    await waitFor(() => expect(by("release")).toHaveAttribute("data-highlighted"));
+    await waitFor(() => expect(content.scrollTop).toBeGreaterThan(0));
+    await expectRow(host, "release");
+    await waitFor(() => expect(paintedBackground(host, "release")).not.toBe(""));
+    // Enter selects it; left selected and scrolled for the golden.
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(by("release").getAttribute("aria-selected")).toBe("true"));
+    await expectRow(host, "✓ release");
+  },
+};
+
+/** A listbox taking several values at once: every chosen item keeps
+ * its check, and the machine's `selectionMode` is all it takes. */
+export const ListboxMultiple: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        <p>A page with a list to choose from, several at a time.</p>
+        <div
+          class="mt-1"
+          ${mountedOn((root) =>
+            listbox(root, { id: "scopes", selectionMode: "multiple", defaultValue: ["read"] }),
+          )}
+        >
+          <span data-part="label" data-test="label" class="text-neutral-500">Scopes</span>
+          <div data-part="content" data-test="content" class="w-16 border">
+            <div data-part="item" data-value="read" data-test="read" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">read</span>
+            </div>
+            <div data-part="item" data-value="write" data-test="write" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">write</span>
+            </div>
+            <div data-part="item" data-value="admin" data-test="admin" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">admin</span>
+            </div>
+            <div data-part="item" data-value="audit" data-test="audit" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">audit</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    expect(by("content").getAttribute("aria-multiselectable")).toBe("true");
+    await expectRow(host, "✓ read");
+    // A press adds to the selection rather than replacing it, and each
+    // item keeps its own check on the grid.
+    await userEvent.click(by("admin"));
+    await waitFor(() => expect(by("admin").getAttribute("aria-selected")).toBe("true"));
+    expect(by("read").getAttribute("aria-selected"), "the first stays chosen").toBe("true");
+    await expectRow(host, "✓ admin");
+    await expectRow(host, "✓ read");
+    // Pressing a chosen item takes it back out; left with two for the
+    // golden.
+    await userEvent.click(by("read"));
+    await waitFor(() => expect(by("read").getAttribute("aria-selected")).toBe("false"));
+    await waitFor(() => expect(showsRow(host, "✓ read")).toBe(false));
+    await userEvent.click(by("write"));
+    await waitFor(() => expect(by("write").getAttribute("aria-selected")).toBe("true"));
+    await expectRow(host, "✓ write");
+  },
+};
+
+/** A select: the value on its trigger, its list anchored under it in
+ * the top layer, and a hidden native select carrying the value into a
+ * form, off the grid. */
+export const Select: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <form class="p-1" ${mountedOn((root) => select(root, { id: "branch", name: "branch" }))}>
+        <p>A page with a select.</p>
+        <div class="mt-1 flex gap-1">
+          <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
+          <span data-part="control">
+            <button data-part="trigger" data-test="trigger" class="border px-1">
+              <span data-part="value-text" data-test="value">Choose…</span>
+              <span data-part="indicator" class="ml-1">▼</span>
+            </button>
+          </span>
+        </div>
+        <select data-part="hidden-select" data-test="hidden"></select>
+        <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
           <div
             data-part="content"
             data-test="content"
-            class="border bg-clear px-1 transition-opacity duration-300 data-[state=closed]:opacity-0 starting:opacity-0"
+            class="${MENU_CONTENT} max-h-8 w-20 overflow-y-auto"
           >
-            <p data-part="title" class="font-bold">A popover</p>
-            <p data-part="description">Anchored to its button, above the page.</p>
-            <p class="mt-1">
-              <button data-part="close-trigger" data-test="close" class="border px-1">Close</button>
-            </p>
+            <div data-part="item-group" data-value="local">
+              <div data-part="item-group-label" data-value="local" class="px-1 text-neutral-500">
+                Local
+              </div>
+              <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">main</span>
+              </div>
+              <div data-part="item" data-value="next" data-test="next" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">next</span>
+              </div>
+              <div
+                data-part="item"
+                data-value="stale"
+                data-test="stale"
+                data-disabled
+                class=${LIST_ITEM}
+              >
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">stale</span>
+              </div>
+              <div data-part="item" data-value="feature" data-test="feature" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">feature/grid</span>
+              </div>
+            </div>
+            <div data-part="item-group" data-value="remote">
+              <div data-part="item-group-label" data-value="remote" class="px-1 text-neutral-500">
+                Remote
+              </div>
+              <div
+                data-part="item"
+                data-value="origin-main"
+                data-test="origin-main"
+                class=${LIST_ITEM}
+              >
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">origin/main</span>
+              </div>
+              <div data-part="item" data-value="release" data-test="release" class=${LIST_ITEM}>
+                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+                ><span data-part="item-text">release</span>
+              </div>
+            </div>
           </div>
         </div>
-        ${Array.from({ length: 9 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
-      </div>
+        ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+      </form>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
@@ -281,105 +525,131 @@ export const Popover: StoryObj = {
     const by = testHooks(canvasElement);
     const state = (name: string) => by(name).getAttribute("data-state");
     const box = (name: string) => by(name).getBoundingClientRect();
-    expect(by("content").getAttribute("role")).toBe("dialog");
-    // Opened: under its button, on its cells, the focus inside.
+    // Roles from the machine, on the light DOM; the hidden select is
+    // the form's, and the layout leaves it out.
+    expect(by("trigger").getAttribute("aria-haspopup")).toBe("listbox");
+    expect(by("content").getAttribute("role")).toBe("listbox");
+    expect(by("main").getAttribute("role")).toBe("option");
+    expect(by("stale").getAttribute("aria-disabled")).toBe("true");
+    expect(by("hidden")).not.toHaveAttribute("data-mw-laid-out");
+    expect(by("value").textContent, "the markup's text is the placeholder").toBe("Choose…");
+    // Opened by the trigger: an anchored popover under it, its margin
+    // pulling its border row onto the trigger's, on its own cells.
     await userEvent.click(by("trigger"));
+    await waitFor(() => expect(state("content")).toBe("open"));
     await waitFor(() =>
       expect(by("positioner").getAttribute("data-mw-area")).toBe("span-right bottom"),
     );
     expect(by("trigger").getAttribute("aria-expanded")).toBe("true");
+    expect(by("positioner").matches(":popover-open")).toBe(true);
     await expectOnItsCells(host, by("positioner"));
     await expectTouching(
-      () => box("positioner").top,
+      () => box("positioner").top + cellSize(host).height,
       () => box("trigger").bottom,
     );
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("A popover"))).toBe(true));
-    await waitFor(() => expect(by("content").contains(document.activeElement)).toBe(true));
-    // The enter from the starting style has settled at full opacity.
-    await waitFor(() => expect(getComputedStyle(by("content")).opacity).toBe("1"));
-    // Its text is the grid's to select: a drag across it, pressed where
-    // the pointer lands, selects it.
-    expect(
-      dragSelect(
-        host,
-        leftOf(by("content").querySelector("[data-part='title']")!),
-        rightOf(by("content")),
-      ),
-    ).toContain("A popover");
-    document.getSelection()!.removeAllRanges();
-    // Escape closes: the exit fades the content, the positioner held in
-    // the top layer until it ends (specs/ui.md), then hidden; the focus
-    // restored. The close button closes too; left open for the golden.
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(state("content")).toBe("closed"));
-    expect(by("positioner").matches(":popover-open")).toBe(true);
-    await waitFor(() => expect(by("positioner").matches(":popover-open")).toBe(false));
-    await waitFor(() => expect(document.activeElement).toBe(by("trigger")));
-    await userEvent.click(by("trigger"));
-    await waitFor(() => expect(state("content")).toBe("open"));
-    await userEvent.click(by("close"));
+    await expectRow(host, "feature/grid");
+    // A press selects, closes the list, and puts the value on the
+    // trigger — the grid painting it where the placeholder was.
+    await userEvent.click(by("next"));
     await waitFor(() => expect(state("content")).toBe("closed"));
     await waitFor(() => expect(by("positioner").matches(":popover-open")).toBe(false));
+    expect(by("value").textContent).toBe("next");
+    expect((by("hidden") as HTMLSelectElement).value, "the form carries it").toBe("next");
+    await expectRow(host, "next ▼");
+    // The keyboard opens it and walks the items past the disabled one,
+    // Enter selects; left open on the selection for the golden.
+    by("trigger").focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await waitFor(() => expect(by("next")).toHaveAttribute("data-highlighted"));
+    // The content takes the focus on a frame of its own: the arrows
+    // that follow are its to read.
+    await waitFor(() => expect(document.activeElement).toBe(by("content")));
+    await userEvent.keyboard("{ArrowDown}");
+    // Past the disabled item between them, which never takes it.
+    await waitFor(() => expect(by("feature")).toHaveAttribute("data-highlighted"));
+    expect(by("stale")).not.toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(by("value").textContent).toBe("feature/grid"));
+    await waitFor(() => expect(state("content")).toBe("closed"));
     await userEvent.click(by("trigger"));
     await waitFor(() => expect(state("content")).toBe("open"));
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("A popover"))).toBe(true));
+    await expectRow(host, "✓ feature/grid");
+    // More items than the list shows: End takes the highlight to the
+    // last, and the scroll brings it inside the content box rather than
+    // under the border the grid paints (specs/ui.md). Left there for
+    // the golden.
+    expect(showsRow(host, "release")).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(by("content")));
+    await userEvent.keyboard("{End}");
+    await waitFor(() => expect(by("release")).toHaveAttribute("data-highlighted"));
+    await waitFor(() => expect(by("content").scrollTop).toBeGreaterThan(0));
+    await expectRow(host, "release");
   },
 };
-
-/** A tooltip above its button, opened by hover and by focus. */
-export const Tooltip: StoryObj = {
+/** A select taking several values at once: the trigger names them
+ * together and the form control carries them all. */
+export const SelectMultiple: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div
-        class="p-1 pt-4"
-        ${mountedOn((root) =>
-          tooltip(root, {
-            id: "hint",
-            openDelay: 0,
-            closeDelay: 0,
-            positioning: { placement: "top" },
-          }),
-        )}
+      <form
+        class="p-1"
+        ${mountedOn((root) => select(root, { id: "formats", multiple: true, name: "formats" }))}
       >
-        <p>
-          A page with a
-          <button data-part="trigger" data-test="trigger" class="border px-1">button</button>
-          that carries a tooltip.
-        </p>
-        <div data-part="positioner" data-test="positioner" popover="manual">
-          <div data-part="content" data-test="content" class="border bg-clear px-1">
-            Saves the document
+        <p>A page with a select taking several values.</p>
+        <div class="mt-1 flex gap-1">
+          <span data-part="label" class="text-neutral-500">Export</span>
+          <span data-part="control">
+            <button data-part="trigger" data-test="trigger" class="border px-1">
+              <span data-part="value-text" data-test="value">Choose…</span>
+              <span data-part="indicator" class="ml-1">▼</span>
+            </button>
+          </span>
+        </div>
+        <select data-part="hidden-select" data-test="hidden"></select>
+        <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
+          <div data-part="content" data-test="content" class=${MENU_CONTENT}>
+            <div data-part="item" data-value="csv" data-test="csv" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">csv</span>
+            </div>
+            <div data-part="item" data-value="json" data-test="json" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">json</span>
+            </div>
+            <div data-part="item" data-value="yaml" data-test="yaml" class=${LIST_ITEM}>
+              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+              ><span data-part="item-text">yaml</span>
+            </div>
           </div>
         </div>
-        <p class="mt-1">More of the page.</p>
-      </div>
+        ${Array.from({ length: 6 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+      </form>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const state = (name: string) => by(name).getAttribute("data-state");
-    const box = (name: string) => by(name).getBoundingClientRect();
-    expect(by("content").getAttribute("role")).toBe("tooltip");
-    // Hovered: the tooltip above the button, centered on it, on its cells.
-    hoverOver(by("trigger"));
+    const hidden = by("hidden") as HTMLSelectElement;
+    const chosen = () => [...hidden.selectedOptions].map((option) => option.value);
+    await userEvent.click(by("trigger"));
     await waitFor(() => expect(state("content")).toBe("open"));
-    await waitFor(() => expect(by("positioner").getAttribute("data-mw-area")).toBe("span-all top"));
-    expect(by("trigger").getAttribute("aria-describedby")).toBe(by("content").id);
-    await expectOnItsCells(host, by("positioner"));
-    await expectTouching(
-      () => box("positioner").bottom,
-      () => box("trigger").top,
-    );
-    expect(box("positioner").left).toBeLessThan(box("trigger").left);
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("Saves the"))).toBe(true));
-    // Escape closes; the focus opens it again, left open for the golden.
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(state("content")).toBe("closed"));
-    await waitFor(() => expect(by("positioner").matches(":popover-open")).toBe(false));
-    by("trigger").focus();
-    await waitFor(() => expect(state("content")).toBe("open"));
-    await waitFor(() => expect(rowsOf(host).some((row) => row.includes("Saves the"))).toBe(true));
+    expect(by("content").getAttribute("aria-multiselectable")).toBe("true");
+    // Each press adds a value and leaves the list open; the trigger
+    // names them together and the form control carries them all.
+    await userEvent.click(by("csv"));
+    await waitFor(() => expect(by("value").textContent).toBe("csv"));
+    expect(state("content"), "the list stays open").toBe("open");
+    await userEvent.click(by("yaml"));
+    await waitFor(() => expect(by("value").textContent).toBe("csv, yaml"));
+    await waitFor(() => expect(chosen()).toEqual(["csv", "yaml"]));
+    await expectRow(host, "csv, yaml");
+    // A press on a chosen item takes it back out; left open for the
+    // golden.
+    await userEvent.click(by("csv"));
+    await waitFor(() => expect(by("value").textContent).toBe("yaml"));
+    await waitFor(() => expect(chosen()).toEqual(["yaml"]));
   },
 };
 
@@ -446,5 +716,144 @@ export const Dialog: StoryObj = {
     await userEvent.click(by("trigger"));
     await waitFor(() => expect(state("content")).toBe("open"));
     await waitFor(() => expect(host.shadowRoot!.textContent).toContain("Delete the file?"));
+  },
+};
+
+/** A popover with a title, a description, and a close button, its
+ * content fading in and out. */
+export const Popover: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div
+        class="p-1"
+        ${mountedOn((root) =>
+          popover(root, { id: "info", positioning: { placement: "bottom-start" } }),
+        )}
+      >
+        <p>A page with a button that opens a popover.</p>
+        <p class="mt-1">
+          <button data-part="trigger" data-test="trigger" class="border px-1">Details</button>
+        </p>
+        <div data-part="positioner" data-test="positioner" popover="manual">
+          <div
+            data-part="content"
+            data-test="content"
+            class="border bg-clear px-1 transition-opacity duration-300 data-[state=closed]:opacity-0 starting:opacity-0"
+          >
+            <p data-part="title" class="font-bold">A popover</p>
+            <p data-part="description">Anchored to its button, above the page.</p>
+            <p class="mt-1">
+              <button data-part="close-trigger" data-test="close" class="border px-1">Close</button>
+            </p>
+          </div>
+        </div>
+        ${Array.from({ length: 9 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const state = (name: string) => by(name).getAttribute("data-state");
+    const box = (name: string) => by(name).getBoundingClientRect();
+    expect(by("content").getAttribute("role")).toBe("dialog");
+    // Opened: under its button, on its cells, the focus inside.
+    await userEvent.click(by("trigger"));
+    await waitFor(() =>
+      expect(by("positioner").getAttribute("data-mw-area")).toBe("span-right bottom"),
+    );
+    expect(by("trigger").getAttribute("aria-expanded")).toBe("true");
+    await expectOnItsCells(host, by("positioner"));
+    await expectTouching(
+      () => box("positioner").top,
+      () => box("trigger").bottom,
+    );
+    await expectRow(host, "A popover");
+    await waitFor(() => expect(by("content").contains(document.activeElement)).toBe(true));
+    // The enter from the starting style has settled at full opacity.
+    await waitFor(() => expect(getComputedStyle(by("content")).opacity).toBe("1"));
+    // Its text is the grid's to select: a drag across it, pressed where
+    // the pointer lands, selects it.
+    expect(
+      dragSelect(
+        host,
+        leftOf(by("content").querySelector("[data-part='title']")!),
+        rightOf(by("content")),
+      ),
+    ).toContain("A popover");
+    document.getSelection()!.removeAllRanges();
+    // Escape closes: the exit fades the content, the positioner held in
+    // the top layer until it ends (specs/ui.md), then hidden; the focus
+    // restored. The close button closes too; left open for the golden.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(state("content")).toBe("closed"));
+    expect(by("positioner").matches(":popover-open")).toBe(true);
+    await waitFor(() => expect(by("positioner").matches(":popover-open")).toBe(false));
+    await waitFor(() => expect(document.activeElement).toBe(by("trigger")));
+    await userEvent.click(by("trigger"));
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await userEvent.click(by("close"));
+    await waitFor(() => expect(state("content")).toBe("closed"));
+    await waitFor(() => expect(by("positioner").matches(":popover-open")).toBe(false));
+    await userEvent.click(by("trigger"));
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await expectRow(host, "A popover");
+  },
+};
+
+/** A tooltip above its button, opened by hover and by focus. */
+export const Tooltip: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div
+        class="p-1 pt-4"
+        ${mountedOn((root) =>
+          tooltip(root, {
+            id: "hint",
+            openDelay: 0,
+            closeDelay: 0,
+            positioning: { placement: "top" },
+          }),
+        )}
+      >
+        <p>
+          A page with a
+          <button data-part="trigger" data-test="trigger" class="border px-1">button</button>
+          that carries a tooltip.
+        </p>
+        <div data-part="positioner" data-test="positioner" popover="manual">
+          <div data-part="content" data-test="content" class="border bg-clear px-1">
+            Saves the document
+          </div>
+        </div>
+        <p class="mt-1">More of the page.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const state = (name: string) => by(name).getAttribute("data-state");
+    const box = (name: string) => by(name).getBoundingClientRect();
+    expect(by("content").getAttribute("role")).toBe("tooltip");
+    // Hovered: the tooltip above the button, centered on it, on its cells.
+    hoverOver(by("trigger"));
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await waitFor(() => expect(by("positioner").getAttribute("data-mw-area")).toBe("span-all top"));
+    expect(by("trigger").getAttribute("aria-describedby")).toBe(by("content").id);
+    await expectOnItsCells(host, by("positioner"));
+    await expectTouching(
+      () => box("positioner").bottom,
+      () => box("trigger").top,
+    );
+    expect(box("positioner").left).toBeLessThan(box("trigger").left);
+    await expectRow(host, "Saves the");
+    // Escape closes; the focus opens it again, left open for the golden.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(state("content")).toBe("closed"));
+    await waitFor(() => expect(by("positioner").matches(":popover-open")).toBe(false));
+    by("trigger").focus();
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await expectRow(host, "Saves the");
   },
 };

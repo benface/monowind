@@ -1,8 +1,10 @@
 import type { MachineSchema } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/react";
 import * as dialog from "@monowind/ui/dialog";
+import * as listbox from "@monowind/ui/listbox";
 import * as menu from "@monowind/ui/menu";
 import * as popover from "@monowind/ui/popover";
+import * as select from "@monowind/ui/select";
 import * as tooltip from "@monowind/ui/tooltip";
 import { syncTopLayer, type Anchored, type Component } from "@monowind/ui/top-layer";
 import { useEffect, useRef, type RefObject } from "react";
@@ -22,14 +24,28 @@ function useTopLayer(open: boolean): RefObject<HTMLDivElement | null> {
 }
 
 /** A component as a hook: Zag's `useMachine` on the grid's props, the
- * API connected on each render, the positioner's ref in its props. */
-function hook<T extends MachineSchema, P, G extends Partial<T["props"]>, A extends Anchored>(
+ * API connected on each render. */
+function hook<T extends MachineSchema, P, G extends Partial<T["props"]>, A>(
   component: Component<T, P, G, typeof normalizeProps, A>,
-): (props: P) => Positioned<A> {
+): (props: P) => A {
   return function useComponent(props) {
     const gridProps = component.props(props);
     const service = useMachine(component.machine, gridProps);
-    const api = component.connect(service, normalizeProps, gridProps);
+    return component.connect(service, normalizeProps, gridProps);
+  };
+}
+
+/** A component with a floating part as a hook: the API with the
+ * positioner's ref in its props. */
+function anchoredHook<
+  T extends MachineSchema,
+  P,
+  G extends Partial<T["props"]>,
+  A extends Anchored,
+>(component: Component<T, P, G, typeof normalizeProps, A>): (props: P) => Positioned<A> {
+  const useComponent = hook(component);
+  return function useAnchoredComponent(props) {
+    const api = useComponent(props);
     const positioner = useTopLayer(api.open);
     return {
       ...api,
@@ -41,12 +57,18 @@ function hook<T extends MachineSchema, P, G extends Partial<T["props"]>, A exten
 // Types written out, so the declarations name them through this
 // package's own dependencies.
 /** Zag's menu on the grid, as a hook. */
-export const useMenu: (props: menu.Props) => Positioned<menu.Api<PropTypes>> = hook(menu);
+export const useMenu: (props: menu.Props) => Positioned<menu.Api<PropTypes>> = anchoredHook(menu);
+/** Zag's listbox on the grid, as a hook. */
+export const useListbox: (props: listbox.Props) => listbox.Api<PropTypes> = hook(listbox);
+/** Zag's select on the grid, as a hook. */
+export const useSelect: (props: select.Props) => Positioned<select.Api<PropTypes>> =
+  anchoredHook(select);
 /** Zag's dialog on the grid, as a hook. */
-export const useDialog: (props: dialog.Props) => Positioned<dialog.Api<PropTypes>> = hook(dialog);
+export const useDialog: (props: dialog.Props) => Positioned<dialog.Api<PropTypes>> =
+  anchoredHook(dialog);
 /** Zag's popover on the grid, as a hook. */
 export const usePopover: (props: popover.Props) => Positioned<popover.Api<PropTypes>> =
-  hook(popover);
+  anchoredHook(popover);
 /** Zag's tooltip on the grid, as a hook. */
 export const useTooltip: (props: tooltip.Props) => Positioned<tooltip.Api<PropTypes>> =
-  hook(tooltip);
+  anchoredHook(tooltip);

@@ -120,6 +120,14 @@ export const cellSize = (host: HTMLElement): { width: number; height: number } =
 export const gridOf = (host: HTMLElement): HTMLElement => host.shadowRoot!.getElementById("grid")!;
 export const rowsOf = (host: HTMLElement): string[] => gridOf(host).textContent!.split("\n");
 
+/** Whether the grid painted a row holding `text`. */
+export const showsRow = (host: HTMLElement, text: string): boolean =>
+  rowsOf(host).some((row) => row.includes(text));
+
+/** A wait for the grid to paint a row holding `text`. */
+export const expectRow = (host: HTMLElement, text: string): Promise<void> =>
+  waitFor(() => expect(showsRow(host, text), `the grid paints "${text}"`).toBe(true));
+
 /** The first span the grid painted holding `text`. */
 export const paintedSpan = (host: HTMLElement, text: string): HTMLElement | undefined =>
   Array.from(gridOf(host).querySelectorAll("span")).find((el) => el.textContent!.includes(text));

@@ -1,15 +1,16 @@
 # @monowind/ui-vue
 
 [`@monowind/ui`](https://github.com/benface/monowind/tree/main/packages/ui)
-as Vue composables: `useMenu`, `useDialog`, `usePopover`, `useTooltip`.
-Each takes Zag's machine props (`id` required) — or a ref or getter of
-them, so a controlled `open` or `highlightedValue` follows your state —
-and returns `api`, Zag's
-API with the grid's props on the trigger, the positioner, and the
-content, as a computed, and `positioner`, the ref for the positioner
-element that keeps its place in the top layer with the machine. Bind
-the props as Zag's docs show; style the parts with Tailwind and
-monowind classes.
+as Vue composables: `useMenu`, `useListbox`, `useSelect`, `useDialog`,
+`usePopover`, `useTooltip`. Each takes Zag's machine props (`id`
+required) — or a ref or getter of them, so a controlled `open` or
+`highlightedValue` follows your state — and returns `api`, Zag's API
+with the grid's props on the trigger, the positioner, and the content,
+as a computed, and `positioner`, the ref for the positioner element
+that keeps its place in the top layer with the machine. A listbox
+stands in the flow, so `useListbox` returns `api` alone. Bind the props
+as Zag's docs show; style the parts with Tailwind and monowind
+classes.
 
 ```vue
 <script setup lang="ts">

@@ -145,6 +145,44 @@ describe("anonymous runs", () => {
     ]);
   });
 
+  it("measures a sized inline box by its width, not by the text inside it", () => {
+    // A box with a width of its own is that wide in the run that holds
+    // it, so a max-content container leaves room for it: an indicator
+    // in a 2-cell box beside a word of 12.
+    const { root } = build(
+      '<div style="width: max-content">' +
+        '<p><span style="display: inline-block; width: 8px">*</span>abcdefghijkl</p></div>',
+      40,
+    );
+    expect(root.localRect.width).toBe(2 + 12);
+  });
+
+  it("makes a sized inline box the widest unbreakable unit for min-content", () => {
+    // The box rides the run as one unit, so a min-content container is
+    // at least as wide as the box: 4 cells against two words of 2.
+    const { root } = build(
+      '<div style="width: min-content">' +
+        '<p><span style="display: inline-block; width: 16px">*</span>ab cd</p></div>',
+      40,
+    );
+    expect(root.localRect.width).toBe(4);
+  });
+
+  it("clamps a sized inline box's own measure by its min and max width", () => {
+    const wide = build(
+      '<div style="width: max-content">' +
+        '<p><span style="display: inline-block; min-width: 12px">*</span>ab</p></div>',
+      40,
+    );
+    expect(wide.root.localRect.width).toBe(3 + 2);
+    const capped = build(
+      '<div style="width: max-content">' +
+        '<p><span style="display: inline-block; max-width: 8px">abcdef</span>ab</p></div>',
+      40,
+    );
+    expect(capped.root.localRect.width).toBe(2 + 2);
+  });
+
   it("keeps a positioned container's own z-index beside its runs", () => {
     const { root } = build(
       '<div><div style="position: relative; z-index: 10">foo<div>bar</div></div></div>',

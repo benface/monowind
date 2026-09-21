@@ -7,6 +7,8 @@ export default defineConfig({
     lib: {
       entry: {
         menu: resolve(import.meta.dirname, "src/menu.ts"),
+        listbox: resolve(import.meta.dirname, "src/listbox.ts"),
+        select: resolve(import.meta.dirname, "src/select.ts"),
         dialog: resolve(import.meta.dirname, "src/dialog.ts"),
         popover: resolve(import.meta.dirname, "src/popover.ts"),
         tooltip: resolve(import.meta.dirname, "src/tooltip.ts"),

@@ -25,6 +25,11 @@ truth.
   instead of chaining. Rounding can still put the native ceiling a
   pixel either side of the multiple, so "at the native ceiling" reads
   as "at max" and the settle parks the max cell ON the ceiling.
+- **A container is known once its box is.** The offsets the paint
+  mirrors are collected from the laid-out tree, and an out-of-flow box
+  takes its size in the positioning pass, so the collection runs again
+  after it: a scroller inside a popover, a menu, or a select's content
+  is a container like any other, and the grid follows its scroll.
 - **The browser owns scroll physics; the engine mirrors on the grid.**
   Authored `overflow(-x|-y): auto | scroll` stays LIVE on the light
   element (not normalized away like `clip`/`hidden` are), so the
@@ -46,7 +51,10 @@ truth.
   descendants by the cell-quantized scroll and CULLS ink at the
   PADDING box per CSS (reserved gutter cells excluded — the bar owns
   them): padding sits blank at the scroll extremes and content flows
-  through it mid-scroll. The same rect covers `overflow: clip`. During a live grid-mode drag,
+  through it mid-scroll, under the border's own cells where the box has
+  one — a native `scrollIntoView` aligns to the scrollport, so a
+  component bringing an item into view aims at the content box instead
+  (specs/ui.md). The same rect covers `overflow: clip`. During a live grid-mode drag,
   scroll repaints are HELD like any structural repaint
   (`holdStructural`) and apply on release.
 - **Offsets are cell-quantized for ink; the native position settles to

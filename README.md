@@ -124,17 +124,18 @@ attributes.
 
 ## Components
 
-`@monowind/ui` adds accessible components — a menu, a dialog, a
-popover, a tooltip — as [Zag.js](https://zagjs.com) state machines
-wired to the grid: Zag runs the roles, the keyboard, typeahead, focus,
-and dismissal; the engine places each floating part against its
-trigger in cells, in the top layer above everything, flipped where
-the host leaves no room. Headless, so a component styled through the
-theme's tokens wears whatever theme its host does. Mount one on
-markup marked with `data-part`, take `@monowind/ui-react`'s hooks,
-`@monowind/ui-vue`'s composables, or `@monowind/ui-svelte`'s functions, or
-use Zag's adapter for another framework with the package's `props()`
-and `connect()`.
+`@monowind/ui` adds accessible components — a menu, a listbox, a
+select, a dialog, a popover, a tooltip — as
+[Zag.js](https://zagjs.com) state machines wired to the grid: Zag runs
+the roles, the keyboard, typeahead, focus, and dismissal; the engine
+places each floating part against its trigger in cells, in the top
+layer above everything, flipped where the host leaves no room, and a
+listbox in the flow like any other box. Headless, so a component styled
+through the theme's tokens wears whatever theme its host does. Mount
+one on markup marked with `data-part`, take `@monowind/ui-react`'s
+hooks, `@monowind/ui-vue`'s composables, or `@monowind/ui-svelte`'s
+functions, or use Zag's adapter for another framework with the
+package's `props()` and `connect()`.
 
 ```ts
 import { menu } from "@monowind/ui/menu";

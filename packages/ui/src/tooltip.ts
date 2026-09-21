@@ -2,7 +2,7 @@ import * as Tooltip from "@zag-js/tooltip";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, positionedProps, type MachineProps } from "./anchor.ts";
-import { mount, start, type Mounted } from "./vanilla.ts";
+import { mountAnchored, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Tooltip.Props;
 export type Api<T extends PropTypes = PropTypes> = Tooltip.Api<T>;
@@ -42,7 +42,7 @@ export function api<T extends PropTypes>(
  * `positioner`, `content`. */
 export function tooltip(root: Element, machineProps: Props): Mounted<Api> {
   const gridProps = props(machineProps);
-  return mount(root, start(Tooltip.machine, gridProps), (service) =>
+  return mountAnchored(root, start(Tooltip.machine, gridProps), (service) =>
     connect(service, normalizeProps, gridProps),
   );
 }

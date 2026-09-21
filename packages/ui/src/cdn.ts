@@ -7,8 +7,10 @@
  * Mounts components on markup through `monowind.ui`, Zag bundled in.
  */
 import { dialog } from "./dialog.ts";
+import { listbox } from "./listbox.ts";
 import { menu } from "./menu.ts";
 import { popover } from "./popover.ts";
+import { select } from "./select.ts";
 import { tooltip } from "./tooltip.ts";
 
 // Injected by vite.cdn.config.ts from package.json.
@@ -19,6 +21,15 @@ const existing = (globalThis as { monowind?: { ui?: object } }).monowind;
 Object.assign(globalThis, {
   monowind: {
     ...existing,
-    ui: { ...existing?.ui, menu, dialog, popover, tooltip, version: __MONOWIND_UI_VERSION__ },
+    ui: {
+      ...existing?.ui,
+      menu,
+      listbox,
+      select,
+      dialog,
+      popover,
+      tooltip,
+      version: __MONOWIND_UI_VERSION__,
+    },
   },
 });

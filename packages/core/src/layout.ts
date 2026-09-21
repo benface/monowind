@@ -72,6 +72,10 @@ export function layoutRoot(
   // by flow layout; place them against their containing blocks, and apply
   // relative offsets. Runs top-down so ancestor rects are final first.
   walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], cache);
+  // Again for the containers that pass made: an out-of-flow box takes
+  // its size there, so a scroller inside one — a menu's or a select's
+  // content in the top layer — is only knowable now (specs/scrolling.md).
+  syncScroll?.(root);
   // The host keeps its in-flow height; the grid covers the INK — visible
   // overflow paints past the host like CSS paints it past any box
   // (specs/cell-model.md "Overflow"). A clipping axis keeps the box: the

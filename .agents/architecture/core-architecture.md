@@ -196,9 +196,9 @@ All three share one core. Concretely, the planned packages:
   Tailwind palettes, period fonts (int10h pack, CC BY-SA), ANSI tokens,
   and border glyph sets via the core theming contract (specs/theming.md).
 - **`@monowind/ui`** (`packages/ui`) — accessible components (menu,
-  dialog, popover, tooltip) as Zag.js machines placed and layered by the
-  engine (specs/ui.md), one entry per component, a vanilla mount, and a
-  CDN bundle; **`@monowind/ui-react`**, **`@monowind/ui-vue`**,
+  listbox, select, dialog, popover, tooltip) as Zag.js machines placed
+  and layered by the engine (specs/ui.md), one entry per component, a
+  vanilla mount, and a CDN bundle; **`@monowind/ui-react`**, **`@monowind/ui-vue`**,
   **`@monowind/ui-svelte`** fold each framework's Zag adapter in, one
   function per component.
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle

@@ -64,8 +64,9 @@ The elements also serve any framework as plain markup.
   `onSelect`) with the argument as `detail` and `preventDefault`
   relayed, `api` and `destroy()` exposed, `attributeChangedCallback`
   into `updateProps`, `disconnectedCallback` destroying.
-- `menu.ts`, `submenu.ts`, `dialog.ts`, `popover.ts`, `tooltip.ts`:
-  one subclass each with its table and callbacks; the menu mount takes
+- `menu.ts`, `submenu.ts`, `listbox.ts`, `select.ts`, `dialog.ts`,
+  `popover.ts`, `tooltip.ts`: one subclass each with its table and
+  callbacks; the menu mount takes
   `<mono-submenu>` roots as it takes `[data-part=submenu]` today,
   reading their attributes for the submenu's positioning and
   reflecting their `open`.

@@ -3,9 +3,45 @@ import { quantizeScroll } from "../src/element.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText, thumbSpan } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
+import type { LayoutNode } from "../src/types.ts";
 
 /** Scroll containers (specs/scrolling.md): gutter reservation, the
  * engine-derived scroll range, and the scrolled/clipped paint. */
+
+describe("the containers a layout reports", () => {
+  /** The nodes a scroll pass would track, as the host collects them. */
+  const scrollers = (root: LayoutNode): LayoutNode[] => {
+    const out: LayoutNode[] = [];
+    const visit = (node: LayoutNode): void => {
+      if (node.scrollRange) out.push(node);
+      for (const child of node.children) visit(child);
+    };
+    visit(root);
+    return out;
+  };
+
+  it("reports a scroller inside an out-of-flow box, sized by the later pass", () => {
+    // A menu's content scrolls inside its positioner; the positioner is
+    // out of flow, so its subtree takes its size in the positioning
+    // pass — after the first report (specs/scrolling.md).
+    const content = makeNode({
+      style: {
+        overflow: { x: "visible", y: "auto" },
+        height: { kind: "cells", value: 2 },
+      },
+      text: "aaa\nbbb\nccc\nddd",
+    });
+    const positioner = makeNode({
+      style: { position: "absolute", width: { kind: "cells", value: 6 } },
+      children: [content],
+    });
+    const root = makeNode({ children: [positioner] });
+    const reports: LayoutNode[][] = [];
+    layoutRoot(root, 20, (laidOut) => reports.push(scrollers(laidOut)));
+    expect(reports.length, "reported before and after the positioning pass").toBe(2);
+    expect(reports.at(-1)).toContain(content);
+  });
+});
 
 describe("scroll gutter", () => {
   it("a y-scroll container reserves the rightmost content column", () => {

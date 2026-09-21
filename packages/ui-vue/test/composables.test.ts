@@ -1,9 +1,11 @@
 import { expect, it } from "vitest";
 import { computed, createApp, h, nextTick, ref } from "vue";
-import { useDialog, useMenu } from "../src/index.ts";
+import { collection } from "@monowind/ui/listbox";
+import { useDialog, useListbox, useMenu } from "../src/index.ts";
 
 /** The composables (specs/ui.md): the grid's props in the DOM Vue
- * renders, the positioner's ref handed back. */
+ * renders, the positioner's ref handed back, and a component with no
+ * floating part rendering its parts in the flow. */
 
 // Vue's `h` and Zag's prop types disagree under exactOptionalPropertyTypes;
 // the DOM is what the test reads.
@@ -79,6 +81,39 @@ it("follows a controlled prop through a ref", async () => {
   await nextTick();
   await nextTick();
   expect(api.value.open).toBe(true);
+  app.unmount();
+  container.remove();
+});
+
+it("renders a component with no floating part in the flow", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const app = createApp({
+    setup() {
+      const { api } = useListbox({
+        id: "branch",
+        collection: collection({ items: ["main", "next"] }),
+      });
+      return () =>
+        h("div", bind(api.value.getRootProps()), [
+          h("span", bind(api.value.getLabelProps()), "Branch"),
+          h(
+            "div",
+            bind(api.value.getContentProps()),
+            api.value.collection.items.map((item: string) =>
+              h("div", bind(api.value.getItemProps({ item })), item),
+            ),
+          ),
+        ]);
+    },
+  });
+  app.mount(container);
+  await nextTick();
+  const content = container.querySelector<HTMLElement>("[role='listbox']");
+  expect(content).not.toBeNull();
+  expect(content!.getAttribute("aria-labelledby")).toBe("listbox:branch:label");
+  expect(container.querySelectorAll("[role='option']")).toHaveLength(2);
+  expect(container.querySelector("[popover]"), "nothing in the top layer").toBeNull();
   app.unmount();
   container.remove();
 });

@@ -1,16 +1,16 @@
 # @monowind/ui-svelte
 
 [`@monowind/ui`](https://github.com/benface/monowind/tree/main/packages/ui)
-for Svelte 5: `createMenu`, `createDialog`, `createPopover`,
-`createTooltip`, called in a component's script. Each takes Zag's
-machine props (`id` required) — or a getter of them, so a controlled
-`open` or `highlightedValue` follows your state — and returns `api`,
-Zag's API with the
-grid's props on the trigger, the positioner, and the content, live
-through a getter, and `positioner`, an action for the positioner
-element that keeps its place in the top layer with the machine. Spread
-the props as Zag's docs show; style the parts with Tailwind and
-monowind classes.
+for Svelte 5: `createMenu`, `createListbox`, `createSelect`,
+`createDialog`, `createPopover`, `createTooltip`, called in a
+component's script. Each takes Zag's machine props (`id` required) — or
+a getter of them, so a controlled `open` or `highlightedValue` follows
+your state — and returns `api`, Zag's API with the grid's props on the
+trigger, the positioner, and the content, live through a getter, and
+`positioner`, an action for the positioner element that keeps its place
+in the top layer with the machine. A listbox stands in the flow, so
+`createListbox` returns its `api` alone. Spread the props as Zag's docs
+show; style the parts with Tailwind and monowind classes.
 
 ```svelte
 <script lang="ts">

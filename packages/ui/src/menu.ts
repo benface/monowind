@@ -2,7 +2,7 @@ import * as Menu from "@zag-js/menu";
 import { normalizeProps, type VanillaMachine } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, pick, positionedProps, type MachineProps, type SchemaOf } from "./anchor.ts";
-import { mount, parts, start, type Mounted } from "./vanilla.ts";
+import { mountAnchored, parts, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Menu.Props;
 export type Api<T extends PropTypes = PropTypes> = Menu.Api<T>;
@@ -104,7 +104,7 @@ function mountMenu(root: Element, machineProps: Props): MenuMount {
     grid(machine.service).setChild(submenu.machine.service);
     submenu.mounted.api.setParent(machine.service);
   }
-  const mounted = mount(
+  const mounted = mountAnchored(
     root,
     machine,
     grid,

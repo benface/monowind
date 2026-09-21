@@ -1,14 +1,17 @@
 # Spec: `@monowind/ui` — accessible components on the grid
 
 Status: **implemented** (2026-09-13, the framework packages and
-examples 2026-09-18; `packages/ui`, one entry per component, plan
-`2026-09-13-ui.md`). The engine features it needs are
-`top-layer.md` and `anchor-positioning.md`; motion is `animations.md`.
+examples 2026-09-18, the listbox and the select 2026-09-21;
+`packages/ui`, one entry per component, plan `2026-09-13-ui.md`). The
+engine features it needs are `top-layer.md` and
+`anchor-positioning.md`; motion is `animations.md`, and a list's scroll
+is `scrolling.md`.
 
 ## Motivation
 
-A menu, a dialog, a popover, a tooltip: every application needs them,
-and doing them accessibly — roles and states, roving focus, typeahead,
+A menu, a list to choose from, a dialog, a popover, a tooltip: every
+application needs them, and doing them accessibly — roles and states,
+roving focus, typeahead,
 focus trapping and restore, dismissal, nested menus — is where most
 hand-rolled components fail. monowind is a custom element that renders
 whatever DOM it holds, so its components must be framework-agnostic
@@ -21,9 +24,10 @@ the engine places and layers the parts, Zag runs them.
 ## Shape
 
 - **One package, a subpath per component**: `@monowind/ui/menu`,
-  `@monowind/ui/dialog`, `@monowind/ui/popover`, `@monowind/ui/tooltip`
-  first; `select`, `combobox`, `tabs` and the rest follow the same
-  shape. Versioned in lockstep with `monowind`.
+  `@monowind/ui/listbox`, `@monowind/ui/select`, `@monowind/ui/dialog`,
+  `@monowind/ui/popover`, and `@monowind/ui/tooltip`, in that order
+  wherever they are listed; `combobox`, `tabs` and the rest follow the
+  same shape. Versioned in lockstep with `monowind`.
 - **A core that touches no DOM**: per component, `props(p)`, the
   machine's props with Zag's own positioning off, Zag's `machine`
   re-exported, `connect(service, normalizeProps, p)` — Zag's connect
@@ -77,6 +81,53 @@ props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   highlight, and ids are its own. It returns the API and a `destroy`
   that stops the machine and takes its handlers off the parts, after
   which a mount on the same markup wires it again.
+- **A component with no floating part stands in the flow.** A listbox
+  is roles, selection, and keyboard alone, so the engine lays its parts
+  out as it lays out any box and the entry adds no props to Zag's. It
+  takes the mount the anchored components build on, without the
+  trigger, positioner, and content that one spreads, and the framework
+  packages return its API alone. Its scroll is the engine's
+  (scrolling.md): `overflow-y-auto` with a `max-h-*` on the content
+  scrolls natively, a select's list the same, and Zag scrolling the
+  highlighted item into view repaints the grid on the cells it moved
+  to. That scroll targets the content box, not the scrollport
+  (`scrollToIndexFn` in the machine's props, an author's own over it):
+  the engine reserves a box's border cells as padding, so a scroll into
+  the scrollport would stop with the item under the border.
+- **A list's focus starts at its selection.** The content taking focus
+  highlights the selected item, or the first where nothing is selected,
+  as ARIA's listbox pattern has it, and brings that row into view. A
+  composite's own cells stay plain and the grid draws no focus ring to
+  fall back on (cell-model.md), so the highlight is the whole of the
+  indication and a stale one misplaces it: Zag leaves the highlight
+  empty on focus wherever a value is selected, and a pointer passing
+  over an unfocused list leaves its own, which nothing shows until the
+  next focus. The scroll skips a focus the pointer caused, as the
+  machine's own does, so a press on a visible item never jumps the list
+  out from under it.
+- **The markup is a listbox's collection.** Zag takes its items as a
+  `collection` the author builds; for markup that names none, the
+  marked items make one — the `data-value` each carries, the words of
+  its `item-text`, and `data-disabled` — so a list of static items is
+  markup alone, and an item the author's own collection leaves out
+  stays plain markup. The mount's own element is the `root`, its id the
+  markup's so the page still finds it, and `data-highlight-on-hover` on
+  it passes Zag's `highlightOnHover` for every item: it moves the
+  highlight, Zag keeping `data-highlighted` for the keyboard's focus
+  and leaving the pointer's feedback to `hover:`.
+- **A select is a listbox on a trigger.** Zag's select is the anchored
+  one — the same collection, items, and keyboard, its content in the
+  top layer — so it takes the anchored mount and the placement mapping
+  unchanged, and shares the items and the scroll with the listbox. Two
+  parts are the mount's to fill, a markup author having nothing else to
+  render them with: the `value-text`, whose markup text is its
+  placeholder and whose content the mount writes from the API; and an
+  optional `hidden-select`, the native control a form posts under the
+  machine's `name`, filled with an option per item and set to
+  `display: none`, which the layout skips while a form still submits
+  it; where the select takes several values, the options carry the
+  selection, the adapter's one assignment of `value` being a single
+  control's.
 - **States are attributes**: `data-state`, `data-highlighted`,
   `data-disabled`, `data-placement`, as Zag sets them, so an author
   styles them with Tailwind's data variants
@@ -157,7 +208,8 @@ the functions; the functions change only where the elements need them
 to, and additively.
 
 - **Elements for markup**: `<mono-menu>`, `<mono-submenu>`,
-  `<mono-dialog>`, `<mono-popover>`, `<mono-tooltip>`, from
+  `<mono-listbox>`, `<mono-select>`, `<mono-dialog>`,
+  `<mono-popover>`, `<mono-tooltip>`, from
   `@monowind/ui/elements`, registered by `defineMonoUi()` as core's
   are by `defineMonoWind()` — the entry registers nothing on import,
   so the package's `sideEffects: false` holds; the CDN bundle calls it.
@@ -223,11 +275,15 @@ to, and additively.
 false`), one namespace per component with Ark UI's anatomy —
   `Menu.Root`, `Menu.Trigger`, `Menu.Positioner`, `Menu.Content`,
   `Menu.Item`, `Menu.ItemGroup`, `Menu.ItemGroupLabel`,
-  `Menu.Separator`, `Menu.TriggerItem`; `Dialog.Root`, `.Trigger`,
+  `Menu.Separator`, `Menu.TriggerItem`; `Listbox.Root`, `.Label`,
+  `.Content`, `.Item`, `.ItemText`, `.ItemIndicator`, `.ItemGroup`,
+  `.ItemGroupLabel`; `Select` the same with `.Control`, `.Trigger`,
+  `.ValueText`, `.Indicator`, `.ClearTrigger`, `.Positioner`, and
+  `.HiddenSelect` around them; `Dialog.Root`, `.Trigger`,
   `.Positioner`, `.Content`, `.Title`, `.Description`,
   `.CloseTrigger`; `Popover` the same; `Tooltip.Root`, `.Trigger`,
-  `.Positioner`, `.Content` — Ark's other parts (arrows, indicators,
-  a backdrop, checkbox and radio items) left for a later need. `Root`
+  `.Positioner`, `.Content` — Ark's other parts (arrows, a backdrop,
+  checkbox and radio items) left for a later need. `Root`
   takes the machine's props, `id` optional and generated (`useId`,
   Vue's `useId`, Svelte's `$props.id()`), renders nothing of its own,
   and hands the API down through context; `RootProvider` takes an
@@ -255,12 +311,20 @@ false`), one namespace per component with Ark UI's anatomy —
 ## Testing
 
 - Node: the placement mapping to `position-area`; the vanilla path's
-  parts found and wired; the show and hide of the positioner around
-  the exit's transitions; the React hooks and Vue composables rendered
-  through their frameworks (`hooks.test.tsx`, `composables.test.ts`).
-- Storybook, per component, in every engine: open and close by
-  pointer and keyboard; the floating part's cells directly under (or
-  beside, above) the trigger and the light element's box on them, over
+  parts found and wired, a list's collection read from its markup and a
+  select's hidden control among them; the show and hide of the
+  positioner around the exit's transitions; the React hooks and Vue
+  composables rendered through their frameworks (`hooks.test.tsx`,
+  `composables.test.ts`), a component with no floating part included.
+- Storybook, per component, in every engine: the listbox's roles, its
+  value selected by press and by Enter with the indicator following it
+  on the grid, the pointer highlight its root asks for, and the list
+  scrolled to the item the keyboard highlights; the select's list
+  anchored under its trigger, the value it puts on the trigger and in
+  its form control, and that control left out of the layout; per
+  anchored component, open and close by pointer and keyboard; the
+  floating part's cells directly under (or beside, above) the trigger
+  and the light element's box on them, over
   the page's later text; Escape and focus restore (an outside press
   dismisses through Zag's document listener on a deferred animation
   frame, which WebKit suspends in a backgrounded window, so the
@@ -297,7 +361,10 @@ false`), one namespace per component with Ark UI's anatomy —
 - `packages/ui`: `anchor.ts` (the placement table, the anchor name,
   the props and their merge, `anchoredApi`), `top-layer.ts`
   (`syncTopLayer`, its own `./top-layer` subpath for the framework
-  packages), `vanilla.ts` (the parts, the mount), and `menu.ts`,
+  packages), `vanilla.ts` (the parts, the mount, and the anchored mount
+  over it), `items.ts` (the markup's collection and the item parts a
+  listbox and a select share), `scroll.ts` (the highlight scrolled into
+  the content box), and `menu.ts`, `listbox.ts`, `select.ts`,
   `dialog.ts`, `popover.ts`, `tooltip.ts` (each `props`, `api`, the
   mount); `@zag-js/vanilla` and the machines as dependencies;
   `dist/cdn.js` for classic scripts, `monowind.ui`.

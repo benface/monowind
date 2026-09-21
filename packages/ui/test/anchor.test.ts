@@ -8,6 +8,7 @@ import {
   pick,
   positioning,
   triggerProps,
+  withHandlers,
   withProps,
   type Placement,
 } from "../src/anchor.ts";
@@ -110,6 +111,25 @@ describe("the merge", () => {
     expect(omit({ hidden: true, "data-state": "closed" }, "hidden")).toEqual({
       "data-state": "closed",
     });
+  });
+
+  it("runs Zag's handler and ours in turn, under the key the adapter gives it", () => {
+    const ran: string[] = [];
+    // The vanilla adapter reads `onFocus` as the element's `focusin`,
+    // so ours lands on Zag's own key or on none at all.
+    const merged = withHandlers(
+      normalizeProps,
+      { onfocusin: () => ran.push("zag"), "data-part": "content" },
+      { onFocus: () => ran.push("ours") },
+    ) as { onfocusin: (event: unknown) => void; "data-part": string };
+    merged.onfocusin({});
+    expect(ran).toEqual(["zag", "ours"]);
+    expect(merged["data-part"], "the rest of Zag's props ride along").toBe("content");
+    const alone = withHandlers(normalizeProps, {}, { onFocus: () => ran.push("alone") }) as {
+      onfocusin: (event: unknown) => void;
+    };
+    alone.onfocusin({});
+    expect(ran).toEqual(["zag", "ours", "alone"]);
   });
 
   it("picks a parent's set props for a submenu, an explicit undefined left out", () => {

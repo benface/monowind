@@ -1,10 +1,11 @@
 {
   "name": "@monowind/ui-react",
-  "version": "0.3.0",
-  "description": "@monowind/ui as React hooks: a menu, a dialog, a popover, a tooltip on the monowind grid",
+  "version": "0.3.1",
+  "description": "@monowind/ui as React hooks: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid",
   "keywords": [
     "accessibility",
     "components",
+    "listbox",
     "monowind",
     "react",
     "tui",
@@ -51,7 +52,7 @@
     "@zag-js/react": "^1.44.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.1",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@zag-js/core": "^1.44.0",

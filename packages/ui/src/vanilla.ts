@@ -33,15 +33,16 @@ export function parts(root: Element, name: string): HTMLElement[] {
 }
 
 /** The root's one element of a part, if marked. */
-function part(root: Element, name: string): HTMLElement | undefined {
+export function part(root: Element, name: string): HTMLElement | undefined {
   return parts(root, name)[0];
 }
 
 /** Zag's props onto a part, if the markup has it. */
-type Spread = (element: Element | undefined, props: object) => void;
+export type Spread = (element: Element | undefined, props: object) => void;
 
-/** What every component's API gives the mount past `Anchored`: the
- * props of its triggers — a menu's each by value — and its content. */
+/** What an anchored component's API gives its mount past `Anchored`:
+ * the props of its triggers — a menu's each by value — and its
+ * content. */
 interface CommonApi extends Anchored {
   getTriggerProps(props?: { value?: string | undefined }): object;
   getContentProps(): object;
@@ -55,9 +56,9 @@ interface TitledApi {
   getCloseTriggerProps(): object;
 }
 
-/** The parts a popover and a dialog share past the three every component
- * has — `title`, `description`, `close-trigger` — found once, wired on
- * each render. */
+/** The parts a popover and a dialog share past the three every anchored
+ * component has — `title`, `description`, `close-trigger` — found once,
+ * wired on each render. */
 export function titledParts<A extends TitledApi>(root: Element): (api: A, spread: Spread) => void {
   const title = part(root, "title");
   const description = part(root, "description");
@@ -75,21 +76,17 @@ interface Followed {
 }
 
 /** A started machine mounted on its markup (specs/ui.md): the API
- * connected and spread onto the parts — found once, Zag's spread
- * rewriting a trigger item's `data-part` — on every change of its own
- * or a linked machine's (its mount subscribed first, its API fresh
- * here), first a microtask after the mount, past the vanilla machine's
- * deferred sends. */
-export function mount<T extends MachineSchema, A extends CommonApi>(
-  root: Element,
+ * connected and spread onto the parts — found once by the caller's
+ * `wire`, Zag's spread rewriting a trigger item's `data-part` — on
+ * every change of its own or a linked machine's (its mount subscribed
+ * first, its API fresh here), first a microtask after the mount, past
+ * the vanilla machine's deferred sends. */
+export function mount<T extends MachineSchema, A>(
   machine: VanillaMachine<T>,
   connect: (service: Service<T>) => A,
-  wire?: (api: A, spread: Spread) => void,
+  wire: (api: A, spread: Spread) => void,
   linked: Iterable<Followed> = [],
 ): Mounted<A> {
-  const triggers = parts(root, "trigger");
-  const positioner = part(root, "positioner");
-  const content = part(root, "content");
   let current = connect(machine.service);
   let stopped = false;
   let unwire: (() => void)[] = [];
@@ -100,13 +97,7 @@ export function mount<T extends MachineSchema, A extends CommonApi>(
     if (stopped) return;
     current = connect(machine.service);
     unwire = [];
-    for (const trigger of triggers) {
-      spread(trigger, current.getTriggerProps({ value: trigger.dataset["value"] }));
-    }
-    spread(positioner, current.getPositionerProps());
-    spread(content, current.getContentProps());
-    wire?.(current, spread);
-    syncTopLayer(positioner, current.open);
+    wire(current, spread);
   };
   const followed: Followed[] = [machine, ...linked];
   const unsubscribes = followed.map((source) => source.subscribe(render));
@@ -119,8 +110,46 @@ export function mount<T extends MachineSchema, A extends CommonApi>(
       stopped = true;
       for (const unsubscribe of unsubscribes) unsubscribe();
       for (const cleanup of unwire) cleanup();
-      syncTopLayer(positioner, false);
       machine.stop();
+    },
+  };
+}
+
+/** A mount whose floating part is the top layer's: the triggers, the
+ * positioner, and the content spread as every anchored component's,
+ * the positioner shown while the machine is open and hidden once its
+ * exit has played, at the destroy too. */
+export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
+  root: Element,
+  machine: VanillaMachine<T>,
+  connect: (service: Service<T>) => A,
+  wire?: (api: A, spread: Spread) => void,
+  linked: Iterable<Followed> = [],
+): Mounted<A> {
+  const triggers = parts(root, "trigger");
+  const positioner = part(root, "positioner");
+  const content = part(root, "content");
+  const mounted = mount(
+    machine,
+    connect,
+    (api, spread) => {
+      for (const trigger of triggers) {
+        spread(trigger, api.getTriggerProps({ value: trigger.dataset["value"] }));
+      }
+      spread(positioner, api.getPositionerProps());
+      spread(content, api.getContentProps());
+      wire?.(api, spread);
+      syncTopLayer(positioner, api.open);
+    },
+    linked,
+  );
+  return {
+    get api() {
+      return mounted.api;
+    },
+    destroy() {
+      mounted.destroy();
+      syncTopLayer(positioner, false);
     },
   };
 }

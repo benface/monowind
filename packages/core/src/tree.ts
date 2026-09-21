@@ -1,4 +1,4 @@
-import { intrinsicOuterWidth, makeIntrinsicCache } from "./layout.ts";
+import { makeIntrinsicCache, widthContribution } from "./layout.ts";
 import { leafRendererFor, renderLeafContent } from "./leaf.ts";
 import type { LeafRegistration } from "./leaf.ts";
 import { pxToCells } from "./metrics.ts";
@@ -266,12 +266,13 @@ function buildLeaf(
   // cluster's advance sits on its first unit and its inline index on
   // every unit (specs/wide-characters.md).
   const { advances, charInline } = expandClusters(run);
-  // Intrinsic advances for the box markers use the boxes' max-content
-  // widths; layout overwrites them with the laid-out widths per pass.
+  // Intrinsic advances for the box markers are the boxes' own width
+  // contributions — a sized box counts its width, not its content;
+  // layout overwrites them with the laid-out widths per pass.
   if (run.boxes.length > 0) {
     const cache = makeIntrinsicCache();
     eachObjectMarker(text, (charIndex, boxIndex) => {
-      advances[charIndex] = Math.max(1, intrinsicOuterWidth(run.boxes[boxIndex]!, cache));
+      advances[charIndex] = Math.max(1, widthContribution(run.boxes[boxIndex]!, "max", cache));
     });
   }
   // Form controls with no explicit width would otherwise be 0 cells

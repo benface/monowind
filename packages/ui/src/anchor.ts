@@ -152,9 +152,33 @@ export function withProps<P extends object, T extends PropTypes>(
   return merged as P;
 }
 
-/** Props without one of them: Zag's `hidden` off the content, so a
- * closed state's exit plays before the positioner hides (specs/ui.md);
- * Zag's `style` off the positioner, the grid's taking its place. */
+/** Zag's props of a part with ours beside them, in the adapter's
+ * shape: an event both handle runs Zag's first, then ours, so neither
+ * loses the other's. */
+export function withHandlers<P extends object, T extends PropTypes>(
+  normalize: NormalizeProps<T>,
+  zag: P,
+  extra: object,
+): P {
+  const ours = normalize.element(extra as never) as Record<string, (event: never) => void>;
+  const merged: Record<string, unknown> = { ...(zag as Record<string, unknown>) };
+  for (const [key, ourHandler] of Object.entries(ours)) {
+    const theirHandler = merged[key];
+    merged[key] =
+      typeof theirHandler === "function"
+        ? (event: never) => {
+            (theirHandler as (event: never) => void)(event);
+            ourHandler(event);
+          }
+        : ourHandler;
+  }
+  return merged as P;
+}
+
+/** Props without one of them, where the grid or the markup owns it
+ * instead: the positioner's `style`, a root's `id`, and the content's
+ * `hidden`, so a closed state's exit plays before the positioner hides
+ * (specs/ui.md). */
 export function omit<P extends object>(props: P, key: string): P {
   const rest = { ...(props as Record<string, unknown>) };
   delete rest[key];

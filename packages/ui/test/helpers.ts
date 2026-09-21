@@ -7,6 +7,27 @@ export const by = (root: Element, part: string, value?: string) =>
     value ? `[data-part="${part}"][data-value="${value}"]` : `[data-part="${part}"]`,
   )!;
 
+/** A key pressed on a mount's content, and whether Zag took it. */
+export function press(root: Element, key: string): boolean {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  by(root, "content").dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+/** The modality Zag reads, as the reader's own input sets it: a
+ * component shows a keyboard focus and leaves a pointer's scroll be. */
+export const fromKeyboard = (): void => {
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+};
+export const fromPointer = (): void => {
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }));
+};
+
+/** A pointer moving onto an element, as a mouse makes it. */
+export const hover = (element: Element): void => {
+  element.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+};
+
 interface Animated {
   finished: Promise<void>;
   playState: string;

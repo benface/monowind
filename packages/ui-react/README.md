@@ -1,12 +1,14 @@
 # @monowind/ui-react
 
 [`@monowind/ui`](https://github.com/benface/monowind/tree/main/packages/ui)
-as React hooks: `useMenu`, `useDialog`, `usePopover`, `useTooltip`.
-Each takes Zag's machine props (`id` required) and returns Zag's API
-with the grid's props on the trigger, the positioner, and the content,
-the positioner's `ref` inside `getPositionerProps()` so its place in
-the top layer follows the machine. Spread the props as Zag's docs
-show; style the parts with Tailwind and monowind classes.
+as React hooks: `useMenu`, `useListbox`, `useSelect`, `useDialog`,
+`usePopover`, `useTooltip`. Each takes Zag's machine props (`id`
+required) and returns Zag's API with the grid's props on the trigger,
+the positioner, and the content, the positioner's `ref` inside
+`getPositionerProps()` so its place in the top layer follows the
+machine. A listbox stands in the flow, so `useListbox` returns the API
+alone. Spread the props as Zag's docs show; style the parts with
+Tailwind and monowind classes.
 
 ```tsx
 import { useMenu } from "@monowind/ui-react";

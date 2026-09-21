@@ -317,7 +317,10 @@ text run iff its computed display is exactly `inline` (or `contents`).
 ride the run as SINGLE UNBREAKABLE UNITS, per CSS: the run holds an
 object-replacement marker (U+FFFC) whose advance is the box's laid-out
 width (shrink-to-fit against the leaf's content box), with break
-opportunities on both sides like browsers give replaced elements. The
+opportunities on both sides like browsers give replaced elements. Where
+the container sizes itself to its content, the marker's advance is the
+box's width contribution, as it is for any child: a width of its own,
+clamped by its min and max, else its content's. The
 box stays IN FLOW — the engine sizes it to exactly those cells and the
 browser's own line layout places it, so the two agree by construction;
 its interior is a normal layout subtree on the grid (`inline-flex`

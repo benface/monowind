@@ -1,10 +1,11 @@
 {
   "name": "@monowind/ui-vue",
-  "version": "0.3.0",
-  "description": "@monowind/ui as Vue composables: a menu, a dialog, a popover, a tooltip on the monowind grid",
+  "version": "0.3.1",
+  "description": "@monowind/ui as Vue composables: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid",
   "keywords": [
     "accessibility",
     "components",
+    "listbox",
     "monowind",
     "tui",
     "vue",
@@ -51,7 +52,7 @@
     "@zag-js/vue": "^1.44.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.1",
+    "@types/node": "^26.6.2",
     "@zag-js/core": "^1.44.0",
     "happy-dom": "^20.14.5",
     "typescript": "^7.0.2",

@@ -10,15 +10,9 @@ export interface Anchored {
 /** One of this package's entries as a framework package takes it: Zag's
  * machine, the props as the machine takes them, and Zag's API with the
  * grid's props for the adapter's `normalizeProps` (`N`), typed as the
- * framework package writes it (`A`), an erased generic `connect` naming
- * none. */
-export interface Component<
-  T extends MachineSchema,
-  P,
-  G extends Partial<T["props"]>,
-  N,
-  A extends Anchored,
-> {
+ * framework package writes it (`A`, `Anchored` where the entry has a
+ * floating part), an erased generic `connect` naming none. */
+export interface Component<T extends MachineSchema, P, G extends Partial<T["props"]>, N, A> {
   machine: Machine<T>;
   props(machineProps: P): G;
   connect(service: Service<T>, normalize: N, gridProps: G): NoInfer<A>;

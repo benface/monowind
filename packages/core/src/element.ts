@@ -759,18 +759,26 @@ export class MonoWindElement extends HTMLElementBase {
   /** Per-container offsets for the paint: from the pre-mask snapshot during
    * a layout pass (native reads are clamped inside the mask; pins
    * resolve to the NEW max), from the live position on a scroll
-   * repaint. */
+   * repaint, and from where it last painted for a container the pass
+   * itself brought. */
   #syncScrollOffsets(metrics: CellMetrics, snapshot?: ScrollSnapshot): void {
     for (const node of this.#scrollNodes) {
       const el = node.source as HTMLElement;
       const { maxX, maxY } = node.scrollRange!;
       const entry = snapshot?.get(el);
-      node.scroll = entry
-        ? {
-            x: entry.pinX ? maxX : Math.min(entry.x, maxX),
-            y: entry.pinY ? maxY : Math.min(entry.y, maxY),
-          }
-        : this.#quantize(node, metrics);
+      if (entry) {
+        node.scroll = {
+          x: entry.pinX ? maxX : Math.min(entry.x, maxX),
+          y: entry.pinY ? maxY : Math.min(entry.y, maxY),
+        };
+      } else if (snapshot) {
+        // An out-of-flow box's scroller, known only once the
+        // positioning pass sized it: the mask makes its native position
+        // unreadable, and the next paint syncs it live.
+        node.scroll ??= { x: 0, y: 0 };
+      } else {
+        node.scroll = this.#quantize(node, metrics);
+      }
     }
   }
 
