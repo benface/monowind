@@ -36,7 +36,7 @@ import { buildChildren, buildRootLeaf, hostLeafStyle } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
 import { zeroInsets } from "./types.ts";
 import { warnOnce, warnSubject } from "./warn.ts";
-import type { CellMetrics, LayoutNode } from "./types.ts";
+import type { CellMetrics, LayoutNode, Rect } from "./types.ts";
 
 const SHADOW_TEMPLATE = `
 <style>
@@ -202,6 +202,29 @@ export const INTERACTIVE = [
  * the host holding it. */
 const behind = (el: Element): Element | null =>
   el.parentElement ?? (el.parentNode instanceof ShadowRoot ? el.parentNode.host : null);
+
+/** The events a covered element must not take (see #onCoveredEvent):
+ * the press, whose default moves the focus, and the activations. A
+ * context menu is left alone — canceling it shows none at all, and
+ * its items are the browser's, not the page's. */
+const COVERED_EVENTS = ["mousedown", "click", "dblclick", "auxclick"] as const;
+
+/** Whether the grid shows `el` where the cell's own element is
+ * `innermost`: that element, one it contains, or one containing it —
+ * an inline element is no box of its own, so its cells are its
+ * block's, and native hover climbs to its ancestors. */
+const showsElement = (innermost: Element, el: Element): boolean =>
+  innermost.contains(el) || el.contains(innermost);
+
+/** Two cell rects, or the absence of one, the same. */
+const sameRect = (a: Rect | null, b: Rect | null): boolean =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.width === b.width &&
+    a.height === b.height);
 
 const DYNAMIC_RELAYOUT_EVENTS = [
   "pointerover",
@@ -437,6 +460,9 @@ export class MonoWindElement extends HTMLElementBase {
    * overflow, then the page), collected per layout so a wheel tick
    * never reads computed styles (see #outsideCanScroll). */
   #outerScrollers: Element[] = [];
+  /** The boxes between the host and the page that CLIP the grid — the
+   * scrollers among them included (specs/top-layer.md). */
+  #outerClips: Element[] = [];
 
   /** Whether a record is a change the grid must follow: the tree and
    * the text always, an attribute when it renders (observed.ts); on the
@@ -595,6 +621,8 @@ export class MonoWindElement extends HTMLElementBase {
     this.addEventListener("pointermove", this.#onPointerMove);
     this.addEventListener("pointerleave", this.#onPointerLeave);
     this.addEventListener("pointerdown", this.#onPointerDown);
+    // Capture, so a covered element's own listeners never run.
+    for (const evt of COVERED_EVENTS) this.addEventListener(evt, this.#onCoveredEvent, true);
     // Scroll events don't bubble — capture catches every light-DOM
     // container's scroll (specs/scrolling.md).
     this.addEventListener("scroll", this.#onScroll, { capture: true, passive: true });
@@ -653,6 +681,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("pointermove", this.#onPointerMove);
     this.removeEventListener("pointerleave", this.#onPointerLeave);
     this.removeEventListener("pointerdown", this.#onPointerDown);
+    for (const evt of COVERED_EVENTS) this.removeEventListener(evt, this.#onCoveredEvent, true);
     this.removeEventListener("scroll", this.#onScroll, { capture: true });
     this.removeEventListener("scrollend", this.#onScrollEnd, { capture: true });
     this.removeEventListener("wheel", this.#onWheel);
@@ -682,6 +711,11 @@ export class MonoWindElement extends HTMLElementBase {
 
   #hovered = new Set<Element>();
   #pressed = new Set<Element>();
+  /** The light elements the grid covers where the pointer is. */
+  #covered = new Set<Element>();
+  /** The light element the browser last hit, from the pointer's own
+   * event: what it would hover and press. */
+  #hoverTarget: Element | null = null;
   #pressTarget: Element | null = null;
   #pressing = false;
   #paintHeld = false;
@@ -1139,6 +1173,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.setAttribute("data-mw-dragging", "");
     }
     this.#hoverClient = { x: clientX, y: clientY };
+    this.#hoverTarget = event.target instanceof Element ? event.target : null;
     // High-frequency path: skip the update while the pointer stays in
     // the same cell (state can only change with the cell — relayouts
     // and scrolls have their own refresh calls).
@@ -1179,7 +1214,13 @@ export class MonoWindElement extends HTMLElementBase {
         e.target.closest("dialog:modal") !== null);
     if (asText) {
       if (!this.#isTextTarget(e.target)) return;
-    } else if (mode !== "grid" || (!onGrid && !this.#isPhantomTarget(e.target))) return;
+    } else if (mode !== "grid") {
+      return;
+    } else if (!onGrid && !this.#isPhantomTarget(e.target) && !this.#isCoveredTarget(e)) {
+      // The press is a light element's own: it is a pointer target of
+      // its own, and the grid shows it where the press landed.
+      return;
+    }
     const finePointer = this.#lastPointerType === "mouse" || this.#lastPointerType === "pen";
     if (e.detail <= 1) {
       if (e.detail !== 1) return;
@@ -1404,6 +1445,37 @@ export class MonoWindElement extends HTMLElementBase {
       !target.matches(INTERACTIVE)
     );
   }
+
+  /** A light element another box paints over at the event's cell
+   * (specs/cell-model.md "Pointer states"): in grid mode that box is
+   * `pointer-events: none`, so the browser's hit test saw through it
+   * and found the element underneath — the event belongs to the cell,
+   * as a phantom target's does. Only a real pointer hit is corrected:
+   * a script's `click()` addresses the element itself, as it does
+   * natively; a modal dialog's subtree is the light DOM's
+   * (specs/top-layer.md deviation 7). */
+  #isCoveredTarget(event: Event): boolean {
+    const e = event as MouseEvent;
+    const target = e.target;
+    if (!e.isTrusted || this.getAttribute("select") !== "grid") return false;
+    if (!(target instanceof Element) || target === this || !this.contains(target)) return false;
+    if (target.closest("dialog:modal")) return false;
+    const layout = this.#lastLayout;
+    const metrics = this.#cellMetrics;
+    if (!layout || !metrics) return false;
+    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
+    const cell = hitChain(layout, col, row).at(-1);
+    return cell !== undefined && !showsElement(cell, target);
+  }
+
+  /** A covered element takes no activation, and no focus from the
+   * press — which flows on to the grid's own handling (#onMouseDown
+   * takes it like a phantom target's). */
+  #onCoveredEvent = (event: Event): void => {
+    if (!this.#isCoveredTarget(event)) return;
+    event.preventDefault();
+    if (event.type !== "mousedown") event.stopPropagation();
+  };
 
   /** An event path through the main grid or a layer's. */
   #onGrid(path: EventTarget[]): boolean {
@@ -1701,6 +1773,7 @@ export class MonoWindElement extends HTMLElementBase {
 
   #onPointerLeave = (): void => {
     this.#hoverClient = null;
+    this.#hoverTarget = null;
     this.#updatePointerStates();
   };
 
@@ -1724,6 +1797,7 @@ export class MonoWindElement extends HTMLElementBase {
       return;
     }
     this.#hoverClient = { x: e.clientX, y: e.clientY };
+    this.#hoverTarget = e.target instanceof Element ? e.target : null;
     this.#pressing = true;
     this.#pressOnGrid = this.#onGrid(e.composedPath());
     this.#updatePointerStates(true);
@@ -1772,6 +1846,40 @@ export class MonoWindElement extends HTMLElementBase {
     this.#updatePointerStates();
   };
 
+  /** The light elements the browser hit where the grid shows another
+   * box (specs/cell-model.md "Pointer states"), `innermost` the cell's
+   * own element: each gives up its pointer events, so the browser
+   * hovers it no more than it presses it. A mark lasts no longer than
+   * the pointer's stay in that element's box — the browser hits it no
+   * more, so nothing else can tell — or a press that never hovered it
+   * first would find it deaf. The hit element's ancestors go with it
+   * up to the cell's own, since native hover climbs to them; its
+   * descendants follow in the stylesheet. */
+  #coveredElements(innermost: Element | null): Element[] {
+    if (innermost === null) return [];
+    const covers = (el: Element): boolean =>
+      el.isConnected &&
+      !showsElement(innermost, el) &&
+      this.#underPointer(el) &&
+      // Under a modal dialog the light DOM owns the pointer
+      // (specs/top-layer.md deviation 7).
+      el.closest("dialog:modal") === null;
+    const covered = [...this.#covered].filter(covers);
+    for (let el = this.#hoverTarget; el && this.#owns(el) && covers(el); el = el.parentElement) {
+      if (!covered.includes(el)) covered.push(el);
+    }
+    return covered;
+  }
+
+  /** Whether the pointer lies in an element's own box — how a marked
+   * element's cover is judged, the browser hitting it no more. */
+  #underPointer(el: Element): boolean {
+    const at = this.#hoverClient;
+    if (!at) return false;
+    const box = el.getBoundingClientRect();
+    return at.x >= box.left && at.x < box.right && at.y >= box.top && at.y < box.bottom;
+  }
+
   /** Recompute both synthesized chains from the stored pointer
    * position and diff them onto the DOM; a change schedules a repaint.
    * `claimPress` (pointerdown only) makes the fresh chain's innermost
@@ -1798,6 +1906,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.#hoverRow = NaN;
     }
     const innermost = chain.at(-1) ?? null;
+    this.#applyChain("data-mw-covered", this.#covered, this.#coveredElements(innermost));
     if (claimPress) this.#pressTarget = innermost;
     // Hover applies only on hover-capable pointers; the press chain
     // exists regardless (touch has :active). Like native :active, the
@@ -1876,6 +1985,28 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** The host's top-layer stack (specs/top-layer.md). */
   #topLayer = new TopLayer();
+  /** The cells the reader could see at the last layout, and whether
+   * the stack holds an element the UA centers in them. */
+  #visibleCells: Rect | null = null;
+  #centeredTopLayer = false;
+
+  /** The boxes around the host, per layout, read before the mask — the
+   * engine's rules stop at the host, so the ancestors read authored
+   * either way, but a wheel arrives between layouts: the native
+   * scrollers a page-owned wheel sequence may still have room in
+   * (#outsideCanScroll), and every box that clips the grid, which
+   * bounds the cells its reader can see (#visibleCells). */
+  #collectSurroundingBoxes(): void {
+    this.#outerScrollers = [];
+    this.#outerClips = [];
+    const page = this.ownerDocument.scrollingElement ?? this.ownerDocument.documentElement;
+    for (let el = this.parentElement; el; el = el.parentElement) {
+      const { overflow } = getComputedStyle(el);
+      if (el === page || /auto|scroll/.test(overflow)) this.#outerScrollers.push(el);
+      // The page's own clip is the window, which #visibleCells starts from.
+      if (el !== page && /auto|scroll|hidden|clip/.test(overflow)) this.#outerClips.push(el);
+    }
+  }
 
   /** A popover's or a dialog's toggle: an opening into the top layer
    * enters the stack, and either state lays out — nothing else of a
@@ -1908,12 +2039,59 @@ export class MonoWindElement extends HTMLElementBase {
     if (tokens.getPropertyValue("--mw-bg") !== bg) tokens.setProperty("--mw-bg", bg);
   }
 
+  /** The cells of the grid its reader can see, where the top layer's
+   * UA placement resolves (specs/top-layer.md): the window's box,
+   * narrowed by every box that clips the host — the grid is
+   * clipped to those too — in whole cells from the grid's rect,
+   * clamped to the host by the placement itself. Null where the grid
+   * is off-screen, or where the platform measures no window; the
+   * host's own box serves then. */
+  #measureVisibleCells(metrics: CellMetrics, rect: DOMRect): Rect | null {
+    const view = this.ownerDocument.documentElement;
+    let right = view.clientWidth;
+    let bottom = view.clientHeight;
+    if (right <= 0 || bottom <= 0) return null;
+    let left = 0;
+    let top = 0;
+    for (const clip of this.#outerClips) {
+      const port = clip.getBoundingClientRect();
+      left = Math.max(left, port.left);
+      top = Math.max(top, port.top);
+      right = Math.min(right, port.right);
+      bottom = Math.min(bottom, port.bottom);
+    }
+    const band = (
+      start: number,
+      from: number,
+      to: number,
+      cell: number,
+    ): { at: number; span: number } => {
+      const first = Math.max(0, Math.ceil((from - start) / cell));
+      return { at: first, span: Math.floor((to - start) / cell) - first };
+    };
+    const x = band(rect.left, left, right, metrics.width);
+    const y = band(rect.top, top, bottom, metrics.height);
+    if (x.span <= 0 || y.span <= 0) return null;
+    return { x: x.at, y: y.at, width: x.span, height: y.span };
+  }
+
   /** The grid's client origin, for the companion to place the top-layer
    * elements' light boxes in the viewport (specs/top-layer.md); current
    * through layouts and page scrolls. */
   #syncTopLayerOrigin(): void {
     if (!this.#lastLayout?.topLayer) return;
     const rect = this.#grid.getBoundingClientRect();
+    // The cells the reader sees move with the page under a centered
+    // element, which lays out again to follow them — by whole cells,
+    // so most scroll frames pass (specs/top-layer.md).
+    const metrics = this.#cellMetrics;
+    if (
+      this.#centeredTopLayer &&
+      metrics &&
+      !sameRect(this.#measureVisibleCells(metrics, rect), this.#visibleCells)
+    ) {
+      this.#scheduleLayout();
+    }
     const origin = this.#hostRule;
     const [ox, oy] = [`${rect.left}px`, `${rect.top}px`];
     if (origin.getPropertyValue("--mw-ox") !== ox) origin.setProperty("--mw-ox", ox);
@@ -2158,6 +2336,7 @@ export class MonoWindElement extends HTMLElementBase {
     // Container positions are read before the mask and written back after
     // it (specs/scrolling.md); bottom-stick resolves in between.
     const scrollState = this.#captureScrollState();
+    this.#collectSurroundingBoxes();
     // Snapshot each textarea's content-area width in cells BEFORE the
     // measuring attribute goes on. Inside measuring the engine's width
     // rule is off — the textarea reverts to its browser-default width
@@ -2256,6 +2435,10 @@ export class MonoWindElement extends HTMLElementBase {
       const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
       const availableCols = Math.max(0, Math.floor((this.clientWidth - padX) / metrics.width));
       if (availableCols === 0) return;
+      // The cells the reader can see, where the top layer's UA
+      // placement resolves (specs/top-layer.md). Read here, beside the
+      // host's own box, so it costs no layout of its own.
+      this.#visibleCells = this.#measureVisibleCells(metrics, this.#grid.getBoundingClientRect());
 
       // (3) Build a tree from the light DOM: the host's own inline
       // content is the root leaf (specs/host-leaf.md); with a block-level
@@ -2267,11 +2450,16 @@ export class MonoWindElement extends HTMLElementBase {
         this.#buildRootContainer(rootFontSizePx, metrics, textareaWidths);
 
       // (4) Compute integer layout, and the top-layer stack over it.
+      if (this.#visibleCells) virtualRoot.visibleCells = this.#visibleCells;
       const { height } = layoutRoot(virtualRoot, availableCols, (root) => {
         this.#scrollNodes = collectScrollContainers(root);
         this.#syncScrollOffsets(metrics, scrollState);
       });
       this.#topLayer.assign(virtualRoot);
+      // A stack element the UA centers follows the cells the reader
+      // sees; an anchored one follows its anchor, which the host moves.
+      this.#centeredTopLayer =
+        virtualRoot.topLayer?.some((entry) => !entry.node.style.positionArea) ?? false;
 
       // (5) Write geometry to light DOM + paint the shadow grid. Do this
       // before clearing the measuring attribute so the browser only
@@ -2369,17 +2557,9 @@ export class MonoWindElement extends HTMLElementBase {
           this.#scheduleLayout();
         }
       }
-      // Surroundings, outside the mask so the reads are authored values:
-      // the resize signals a capped host needs, and the native scrollers
-      // a page-owned wheel sequence may still have room in.
+      // The resize signals a capped host needs, outside the mask so the
+      // reads are authored values.
       this.#observeSurroundings();
-      this.#outerScrollers = [];
-      const scrolling = document.scrollingElement ?? document.documentElement;
-      for (let el = this.parentElement; el; el = el.parentElement) {
-        if (el === scrolling || /auto|scroll/.test(getComputedStyle(el).overflow)) {
-          this.#outerScrollers.push(el);
-        }
-      }
       // The layout may have moved content under a stationary pointer —
       // re-derive the synthesized pointer states (cheap when nothing
       // changed; a chain change coalesces into the next frame).

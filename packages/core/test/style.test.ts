@@ -315,6 +315,23 @@ describe("calc() spacing lengths", () => {
     expect(read({ class: "absolute inset-x-full" }).insets.right).toEqual({ percent: 100 });
     expect(read({ class: "absolute top-[10%]" }).insets.top).toEqual({ percent: 10 });
   });
+
+  it("reads an axis inset utility on its own axis alone", () => {
+    // Without the Typed OM a positioned box's `auto` sides read as USED
+    // distances, so a side counts only where a utility authors it —
+    // `.used` stands in for those, as a real pre-157 Firefox reports
+    // them. An `inset-y` utility must leave the x axis alone, or the
+    // box stretches between a real left and a used right.
+    const sheet = document.createElement("style");
+    sheet.textContent = ".used { right: 480px; bottom: 240px }";
+    document.head.appendChild(sheet);
+    expect(read({ class: "absolute inset-y-0 left-0 used" }).insets.right).toBeNull();
+    expect(read({ class: "absolute inset-x-0 top-0 used" }).insets.bottom).toBeNull();
+    // `inset` itself authors every side.
+    expect(read({ class: "absolute inset-0 used" }).insets.right).not.toBeNull();
+    expect(read({ class: "absolute inset-0 used" }).insets.bottom).not.toBeNull();
+    sheet.remove();
+  });
 });
 
 describe("mixed-unit calc()", () => {

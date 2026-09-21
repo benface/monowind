@@ -27,7 +27,10 @@ element. Behavior:
   fixed box outside its scrollers; a layer root above it captures it
   (specs/layers.md), as a transformed ancestor does in CSS.
   **Deviation** (CSS anchors to the viewport) — a component shouldn't
-  escape its host; revisit only if a real use case appears.
+  escape its host. A top-layer element is the one exception, and only
+  for its placement: it resolves in the cells of the host the viewport
+  shows, so a dialog opens where the reader is looking
+  (specs/top-layer.md).
 - **sticky**: normal flow, then a paint-time shift that keeps the box
   inside its scroll container's scrollport by its insets, per
   css-position-3 §3.4 — `sticky.md`. The insets are constraints, not
@@ -50,6 +53,15 @@ browser expands to longhands before we read them) are read as
 - Over-constrained axes follow CSS LTR resolution: `top` wins over
   `bottom`, `left` wins over `right` (for relative, the losing side is
   ignored; for absolute with a definite size, the losing inset yields).
+- An `auto` side must read as `auto`. On a positioned element
+  `getComputedStyle` gives the USED distance instead, which would read
+  as an authored inset and stretch the box between its two sides; the
+  Typed OM keeps the computed value, and without it (Firefox pre-157)
+  a side counts only where an inline style or a utility for THAT side
+  authors it (style.ts `readInsets`). The axis shorthands author their
+  own axis alone: `inset-y-*` leaves left and right `auto`, as
+  `inset-x-*` leaves top and bottom — `inset-*` itself authors all
+  four.
 
 ## Containing block (per CSS)
 

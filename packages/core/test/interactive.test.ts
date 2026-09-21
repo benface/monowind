@@ -32,7 +32,7 @@ const css = readFileSync(join(import.meta.dirname, "../src/styles.css"), "utf8")
 it("styles.css keeps the same interactive elements' cursor and pointer events", () => {
   const cursor = css.match(/\[data-mw-float\]\):not\(([^{]*)\)\s*\{\s*cursor: text/);
   const pointer = css.match(
-    /:not\(\[data-mw-dragging\]\)\s*:is\(([^{]*)\)\s*\{\s*pointer-events: auto/,
+    /:not\(\[data-mw-dragging\]\)\s*:is\(([\s\S]*?)\):not\(\[data-mw-covered\][^)]*\)\s*\{\s*pointer-events: auto/,
   );
   expect(cursor, "the grid-mode cursor rule").not.toBeNull();
   expect(pointer, "the grid-mode pointer-events rule").not.toBeNull();

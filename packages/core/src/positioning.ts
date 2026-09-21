@@ -154,8 +154,12 @@ function scrollersOf(ancestors: Frame[]): LayoutNode[] {
 }
 
 /** The containing block's padding box, in absolute cells: the nearest
- * positioned ancestor, or the host for `fixed` / when none exists. */
-function containingBlock(ancestors: Frame[], fixed: boolean): Rect {
+ * positioned ancestor, or the host for `fixed` / when none exists —
+ * for a top-layer element, the host's cells the viewport shows, since
+ * the platform resolves the top layer against the viewport and a
+ * dialog centered in a host taller than the window would open out of
+ * sight (specs/top-layer.md). */
+function containingBlock(ancestors: Frame[], fixed: boolean, topLayer = false): Rect {
   if (!fixed) {
     for (let i = ancestors.length - 1; i > 0; i--) {
       const frame = ancestors[i]!;
@@ -170,12 +174,20 @@ function containingBlock(ancestors: Frame[], fixed: boolean): Rect {
     }
   }
   const host = ancestors[0]!;
-  return {
+  const box = {
     x: host.absX,
     y: host.absY,
     width: host.node.localRect.width,
     height: host.node.localRect.height,
   };
+  const visible = topLayer ? host.node.visibleCells : undefined;
+  if (!visible) return box;
+  const x = Math.max(box.x, visible.x);
+  const y = Math.max(box.y, visible.y);
+  const width = Math.min(box.x + box.width, visible.x + visible.width) - x;
+  const height = Math.min(box.y + box.height, visible.y + visible.height) - y;
+  // A host scrolled entirely out of view leaves the element its own.
+  return width > 0 && height > 0 ? { x, y, width, height } : box;
 }
 
 function placeAbsolute(
@@ -200,7 +212,7 @@ function placeAbsolute(
           width: slot.area.width,
           height: slot.area.height,
         }
-      : containingBlock(ancestors, fixed);
+      : containingBlock(ancestors, fixed, style.topLayer);
   const anchor = style.positionAnchor === null ? undefined : anchors.get(style.positionAnchor);
   if (style.positionArea && anchor) {
     // A fixed box, painted from the host, escapes every scroll.

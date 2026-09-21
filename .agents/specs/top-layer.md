@@ -50,14 +50,24 @@ connected — join the stack in tree order.
 
 ## Locked decisions
 
-- **A top-layer element lays out as a fixed box in the host.** Its
-  containing block is the host's content box, as for `fixed`
-  (positioning.md deviation 1), its position and size the UA's unless
-  the author overrides them: `inset: 0` with `fit-content` sizes and
-  `auto` margins, which centers a dialog or a plain popover in the
-  host (the layout's auto-margin centering, positioning.md), and an
-  anchored placement where `position-area` names one
-  (anchor-positioning.md). Nothing about its subtree changes: it is
+- **A top-layer element lays out as a fixed box in the host, placed
+  in the cells the viewport shows.** Its containing block is the
+  host's content box as for `fixed` (positioning.md deviation 1),
+  intersected with the cells of the grid the window shows — the whole
+  host where it fits the window, so nothing moves there — its position
+  and size the UA's unless the author overrides them: `inset: 0` with
+  `fit-content` sizes and `auto` margins, which centers a dialog or a
+  plain popover in those cells (the layout's auto-margin centering,
+  positioning.md), and an anchored placement where `position-area`
+  names one (anchor-positioning.md). The platform resolves the top
+  layer against the viewport, and a dialog centered in a host taller
+  than the window opens out of sight — with the page locked behind it,
+  out of reach. The cells are the window's box narrowed by every scroll
+  container the host sits in, since the grid is clipped to those too;
+  the host writes them per layout (element.ts `#visibleCells`, the
+  root's `visibleCells`), and a page scroll that moves them by a whole
+  cell lays out again while the stack holds an element the UA centers
+  — an anchored one follows its anchor, which the host moves itself. Nothing about its subtree changes: it is
   laid out and painted like any box of the host, scrolls inside it,
   opens layers, holds its own scrollers.
 - **The stack paints last, in the order elements entered it.** After
@@ -127,9 +137,10 @@ connected — join the stack in tree order.
    grid-mode drag across it and the page selects in DOM order
    (layers.md deviation 3); under a modal dialog the page is blocked
    anyway.
-3. A top-layer element centers in the host, not the viewport, as
-   `fixed` anchors to the host, and its backdrop covers the host's
-   grid, not the page.
+3. A top-layer element centers in the cells the viewport shows OF the
+   host, not in the viewport: it paints on the host's grid, so a host
+   smaller than the window cannot center a dialog outside its own
+   cells. Its backdrop covers the host's grid, not the page.
 4. An exit that rides a discrete `display` transition runs where the
    browser runs it (Chromium today; WebKit and Firefox drop the
    display at once, probed 2026-09-13); an exit run while the element

@@ -77,12 +77,16 @@ gate) to keep grid-mode hover working:
 ```css
 @custom-variant hover {
   @media (hover: hover) {
-    &:is(:hover, [data-mw-hover]) {
+    &:is(:hover:where(:not([data-mw-covered])), [data-mw-hover]) {
       @slot;
     }
   }
 }
 ```
+
+(`[data-mw-covered]` marks an element another box paints over: the
+browser drops its hover with its pointer events, and the `:where()`
+drops the style at once where an engine lags.)
 
 ## Ascii-art banners
 

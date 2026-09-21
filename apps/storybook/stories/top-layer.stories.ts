@@ -86,6 +86,50 @@ export const Popover: StoryObj = {
  * `backdrop:backdrop-blur-*` would blur it — with focus inside and the
  * page inert until it closes.
  */
+/**
+ * A dialog in a page taller than the window (specs/top-layer.md): the
+ * UA's placement resolves in the cells the window SHOWS, so the dialog
+ * opens above the middle of this page — where the reader is looking.
+ * Centered in the whole host it could open past the fold, with the
+ * page locked behind it and out of reach. Its backdrop still dims the
+ * whole grid, past the window (deviation 3).
+ * `visual/top-layer.spec.ts` scrolls the page and reopens it, which
+ * needs a real window.
+ */
+export const DialogInATallPage: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        <button
+          data-test="open"
+          class="border px-1 text-cyan-300"
+          @click=${(event: Event) =>
+            (event.target as Element).closest("mono-wind")!.querySelector("dialog")!.showModal()}
+        >
+          open the dialog
+        </button>
+        ${Array.from(
+          { length: 40 },
+          (_, i) => html`<p>Line ${i + 1} of a page taller than the window.</p>`,
+        )}
+        <dialog data-test="dialog" class="border p-1 backdrop:bg-black/50">
+          <p>In view, wherever the page sits.</p>
+          <form method="dialog">
+            <button data-test="close" class="border px-1" autofocus>close</button>
+          </form>
+        </dialog>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    expect(rowsOf(host).length).toBeGreaterThan(40);
+    (by("dialog") as HTMLDialogElement).showModal();
+    await waitFor(() => expect(host.shadowRoot!.textContent).toContain("In view"));
+  },
+};
+
 export const Dialog: StoryObj = {
   render: () => html`
     <mono-wind>

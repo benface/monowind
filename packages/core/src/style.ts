@@ -1091,10 +1091,12 @@ function readInsets(
     return value ? readSpacing(value, rootFontSizePx) : null;
   };
   return {
-    top: side("top", "top|inset|inset-y"),
-    right: side("right", "right|end|inset|inset-x"),
-    bottom: side("bottom", "bottom|inset|inset-y"),
-    left: side("left", "left|start|inset|inset-x"),
+    // `inset` takes no axis: `inset-y-0` authors neither side of the
+    // x axis, and its own sides come from the `inset-y` stem.
+    top: side("top", "top|inset(?!-[xy])|inset-y"),
+    right: side("right", "right|end|inset(?!-[xy])|inset-x"),
+    bottom: side("bottom", "bottom|inset(?!-[xy])|inset-y"),
+    left: side("left", "left|start|inset(?!-[xy])|inset-x"),
   };
 }
 

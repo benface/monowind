@@ -865,6 +865,11 @@ export interface LayoutNode {
    * under a box it does not move (specs/anchor-positioning.md), so a
    * scroll of one relays out. */
   anchorScrollers?: Set<Element>;
+  /** On the root: the cells of the grid its reader can see, where the
+   * top layer's UA placement resolves (specs/top-layer.md) — so a
+   * dialog opens in view however tall the host. Absent where nothing
+   * measured a window; the placement clamps it to the host itself. */
+  visibleCells?: Rect;
   /** The gutter cells this container actually reserved — `scroll`
    * axes always, `auto` axes only when content overflows (the layout
    * second pass). Paint, hit-testing, and thumb drags read THIS, not

@@ -372,6 +372,13 @@ export const Link: StoryObj = {
   },
 };
 
+/** Clicks counted without touching the label, so the grid never
+ * relayouts under the pointer. */
+const countClicks = (event: Event) => {
+  const el = event.currentTarget as HTMLElement;
+  el.dataset.clicks = String(Number(el.dataset.clicks ?? "0") + 1);
+};
+
 const bumpCount = (event: Event) => {
   const btn = event.currentTarget as HTMLButtonElement;
   const count = Number(btn.dataset.count ?? "0") + 1;
@@ -392,6 +399,32 @@ export const Button: StoryObj = {
         >
           full-width, centered label, with custom hover, active, and focus states
         </button>
+        <!-- An overlay painted over a button and a link: the grid
+             shows it on those cells, so a press there is the
+             overlay's — the light DOM sees through it, being
+             pointer-events: none in grid mode (specs/cell-model.md
+             "Pointer states"). An inline link is no box of its own,
+             and keeps its own cells' presses. -->
+        <div class="relative max-w-64">
+          <button
+            id="btn-covered"
+            class="w-full cursor-pointer truncate border px-1 text-center transition duration-200 hover:not-focus-visible:text-emerald-400 focus-visible:bg-amber-400 active:scale-98 active:opacity-50 active:transition-none"
+            @click=${countClicks}
+          >
+            part of me is covered
+          </button>
+          <p class="mt-1">
+            <a id="lnk-covered" href="#covered" class="underline" @click=${countClicks}>under it</a>
+            and
+            <a id="lnk-free" href="#free" class="underline" @click=${countClicks}>past it</a>
+          </p>
+          <div
+            data-test="overlay"
+            class="absolute inset-y-0 left-0 flex items-center justify-center bg-red-500 px-2"
+          >
+            covered
+          </div>
+        </div>
       </div>
     </mono-wind>
   `,
@@ -425,5 +458,15 @@ export const Button: StoryObj = {
       (span) => span.textContent!.includes("full-width") && span.style.color === "rgba(0, 0, 0, 0)",
     );
     expect(invisible, "transitioned label paints visibly").toHaveLength(0);
+    // The overlay paints over the covered button's left edge, its own
+    // text where that border would be — the label, centered, still
+    // shows. What a pointer over those cells addresses is
+    // `visual/pointer.spec.ts`, which needs a trusted hit.
+    const border = host
+      .toPlainText()
+      .split("\n")
+      .find((row) => row.includes("part of me is covered"))!;
+    expect(border.trimStart(), "the overlay stands over the border").not.toMatch(/^[│|]/);
+    expect(border, "the label still shows").toContain("part of me is covered");
   },
 };

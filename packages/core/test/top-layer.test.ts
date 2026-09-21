@@ -127,6 +127,62 @@ describe("the stack", () => {
   });
 });
 
+describe("the UA's placement", () => {
+  /** A dialog's geometry: the UA's insets and auto margins, which
+   * center it in what it resolves against. */
+  const dialog = (text: string) =>
+    top(text, 0, 0, {
+      intrinsicWidth: text.length,
+      style: {
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        margin: { top: null, right: null, bottom: null, left: null },
+        width: { kind: "fit-content" },
+        height: { kind: "fit-content" },
+      },
+    });
+
+  it("centers an element in the host, and in the cells the viewport shows of a taller one", () => {
+    const root = makeNode({ style: { minHeight: 20 }, children: [dialog("dialog")] });
+    layoutRoot(root, 20);
+    // The whole host shows: centered in its 20 rows, a row tall.
+    expect(root.children[0]!.localRect.y).toBe(9);
+    // Only rows 12 to 20 show — the page scrolled the rest off: the
+    // dialog opens centered THERE, never out of sight.
+    const scrolled = makeNode({ style: { minHeight: 20 }, children: [dialog("dialog")] });
+    scrolled.visibleCells = { x: 0, y: 12, width: 20, height: 8 };
+    layoutRoot(scrolled, 20);
+    expect(scrolled.children[0]!.localRect.y).toBe(15);
+    expect(scrolled.children[0]!.hostRect).toEqual({ x: 7, y: 15 });
+  });
+
+  it("leaves an element the host's own box where nothing of the host shows", () => {
+    const root = makeNode({ style: { minHeight: 20 }, children: [dialog("dialog")] });
+    // A band past the host's cells meets none of them.
+    root.visibleCells = { x: 0, y: 40, width: 20, height: 8 };
+    layoutRoot(root, 20);
+    expect(root.children[0]!.localRect.y).toBe(9);
+  });
+
+  it("leaves an ordinary fixed box the host, which it anchors to (specs/positioning.md)", () => {
+    const fixed = makeNode({
+      text: "fixed",
+      source: document.createElement("div"),
+      intrinsicWidth: 5,
+      style: {
+        position: "fixed",
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        margin: { top: null, right: null, bottom: null, left: null },
+        width: { kind: "fit-content" },
+        height: { kind: "fit-content" },
+      },
+    });
+    const root = makeNode({ style: { minHeight: 20 }, children: [fixed] });
+    root.visibleCells = { x: 0, y: 12, width: 20, height: 8 };
+    layoutRoot(root, 20);
+    expect(fixed.localRect.y).toBe(9);
+  });
+});
+
 describe("top layer paint", () => {
   it("paints a fixed box inside a scroller at the host's cells, unmoved by the scroll", () => {
     const fixed = makeNode({

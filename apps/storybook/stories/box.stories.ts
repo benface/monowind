@@ -110,7 +110,7 @@ export const BorderSides: StoryObj = {
 export const BorderRadius: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap gap-x-2 gap-y-1">
         <div data-test="rounded" class="rounded border px-1">rounded</div>
         <div data-test="top" class="rounded-t-lg border px-1">rounded-t-lg</div>
         <div data-test="heavy" class="rounded-lg border-2 px-1">border-2 rounded-lg</div>

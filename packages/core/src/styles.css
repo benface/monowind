@@ -227,8 +227,11 @@
 /* select="grid": pointer events pass through the light DOM so a drag
  * lands on the grid <pre>; the interactives opt back in for clicks,
  * except during a grid drag, so the selection sweeps through their
- * cells. The list repeats the cursor rule's: these rules must be
- * important (a library writes inline pointer-events on its layers) and
+ * cells, and except where the grid covers one (`data-mw-covered`,
+ * element.ts): the box painted over it takes the pointer, hover and
+ * cursor included (specs/cell-model.md "Pointer states"), its own
+ * subtree with it. The list repeats the cursor rule's: these rules
+ * must be important (a library writes inline pointer-events on its layers) and
  * unlayered, out of the lock layer (an author's `pointer-events-none!`
  * or `pointer-events-auto!` still wins), the cursor rule layered and
  * plain (an author's cursor wins). interactive.test.ts holds the two
@@ -268,7 +271,7 @@ mono-wind[select="grid"]:not([data-mw-dragging])
     [role="slider"],
     [role="link"],
     [role="combobox"]
-  ) {
+  ):not([data-mw-covered], [data-mw-covered] *) {
   pointer-events: auto !important;
 }
 /* A modal dialog blocks the page, the grid included (specs/top-layer.md

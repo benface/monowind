@@ -6,10 +6,16 @@
  * peer-* compose from them automatically. A consumer redefining a
  * variant later wins (last definition counts) — their selector must
  * include the data attribute to keep grid-mode states. The block form
- * preserves Tailwind's own (hover: hover) gate for hover. */
+ * preserves Tailwind's own (hover: hover) gate for hover.
+ *
+ * A covered element's own :hover is none of ours: the grid shows
+ * another box on those cells, and the browser drops the hover with the
+ * element's pointer events — WebKit a quarter second later, which the
+ * :where() covers at once, costing no specificity so no utility
+ * outranks another. */
 @custom-variant hover {
   @media (hover: hover) {
-    &:is(:hover, [data-mw-hover]) {
+    &:is(:hover:where(:not([data-mw-covered])), [data-mw-hover]) {
       @slot;
     }
   }

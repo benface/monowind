@@ -327,7 +327,10 @@ dominant.
   `:hover`/`:active` on non-interactive elements are SYNTHESIZED from
   cell hit-testing instead (`data-mw-hover`/`data-mw-active` +
   redefined Tailwind variants — specs/cell-model.md "Pointer
-  states"), since the light DOM is never the hit target there. Above
+  states"), since the light DOM is never the hit target there; an
+  interactive element, which is, gives up its pointer events where the
+  grid covers it (`data-mw-covered`), so the browser's own hit test
+  agrees with the cells. Above
   the host, a `class` or `style` change on an ancestor and a color
   scheme change schedule a layout (a theme class on the page reaches
   the cells through the cascade) — cell-model.md "Observation".

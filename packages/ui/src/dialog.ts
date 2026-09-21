@@ -29,8 +29,9 @@ export function connect<T extends PropTypes>(
 }
 
 /** Zag's API with the grid's props: the positioner a manual popover —
- * the top layer's, centered by the UA, its `::backdrop` the dialog's
- * (specs/top-layer.md) — the content shown by it; the props every
+ * the top layer's, centered by the UA in the cells the window shows,
+ * its `::backdrop` the dialog's (specs/top-layer.md) — the content
+ * shown by it; the props every
  * `api`'s, the `Component` shape. */
 export function api<T extends PropTypes>(
   zag: Dialog.Api<T>,

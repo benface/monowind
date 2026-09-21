@@ -692,7 +692,7 @@ is the engine's, and moves the focus as the click would have: onto the
 nearest `tabindex` above the cell's element, else off the focused
 control. The engine synthesizes
 both (pointer.ts + element.ts): pointer events stay on the grid, the
-pointer's cell is hit-tested against the layout tree, and the covered
+pointer's cell is hit-tested against the layout tree, and the cell's
 element plus its ancestors — the same chain native `:hover` marks —
 carry `data-mw-hover` (`data-mw-active` between press and release,
 kept native-faithful: only while the pointer stays over the pressed
@@ -709,6 +709,31 @@ so do wheel routing, thumb drags, arrow-key focus
 hover-gated (touch presses count). The chain re-derives on scroll and
 after every layout, so content moving under a stationary pointer
 updates like native `:hover`.
+
+**An element the grid covers takes no pointer.** What the browser's
+own hit test lands on an element the grid does not show at that cell —
+another box paints over it there, and that box is `pointer-events:
+none`, so the hit test saw through it — belongs to the cell, hover and
+cursor included. The element gives up its own pointer events while the
+pointer stays off its cells (`data-mw-covered`, element.ts, its own
+subtree with it), so the browser stops matching its `:hover`, stops
+showing its cursor, and hands the press to the grid; the Tailwind
+`hover:` variant drops that element's `:hover` too (variants.css), so
+the style goes in the frame where the browser's own hover state lags —
+Chromium and Firefox re-run theirs in the frame, WebKit about a fifth
+of a second later (probed 2026-09-20), which hand-written `:hover`
+CSS, native-only by the deviations below, waits out in Safari. A press
+that reaches the element anyway — a tap, which no hover precedes —
+takes neither the focus nor the activation (element.ts
+`#isCoveredTarget`). The cell's own element is the hit test's
+innermost, and an element it contains is not covered: an inline one —
+a link in a paragraph — is no box of its own, so its cells are its
+block's. A mark lasts no longer than the pointer's stay in the
+element's own box, the browser hitting it no more: an element the
+pointer left holds none, or a press that never hovered it first would
+find it deaf. Only a real pointer hit is corrected; a script's
+`click()` addresses its element, as it does natively, and a modal
+dialog's subtree is the light DOM's (top-layer.md deviation 7).
 
 Consumers who redefine `@custom-variant hover` themselves win (last
 definition counts) — their selector must include `[data-mw-hover]`
