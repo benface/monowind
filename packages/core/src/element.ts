@@ -77,8 +77,25 @@ const SHADOW_TEMPLATE = `
   .layer > .grid { background: transparent; }
   /* A background reaches the row's edges: the host's measured half-gap
    * between the line box and the font's content area, which an inline
-   * span paints without moving the line (specs/cell-model.md). */
-  .grid span { padding-block: var(--mw-bgpad, 0px); }
+   * span paints without moving the line (specs/cell-model.md). Only
+   * where the font leaves a gap, so a span pays for the lookup on no
+   * other page, and never on a box — a box was unpadded by an inline
+   * declaration, which no rule could outrank. */
+  :host([data-mw-bgpad]) .grid span:not([data-box]) {
+    padding-block: var(--mw-bgpad, 0px);
+  }
+  /* The shape every box shares (specs/wide-characters.md), one rule
+   * rather than six declarations on each: its cells' width and the
+   * glyph's placement stay inline, being the box's own. */
+  .grid span[data-box] {
+    display: inline-block;
+    padding: 0;
+    height: var(--mw-ch, 1lh);
+    overflow: clip;
+    vertical-align: top;
+    text-align: start;
+  }
+  .grid span[data-box="center"] { text-align: center; }
   /* A shade's lattice runs on from row to row (specs/wide-characters.md):
    * copies a period above and below the glyph, in its own line box. */
   .grid span[data-shade] { position: relative; }
@@ -512,7 +529,10 @@ export class MonoWindElement extends HTMLElementBase {
    * inline-block at its baseline, both unpadded (specs/wide-characters.md). */
   #baselineOf(glyph: string, scale: number, lineHeight: number): number {
     const box = document.createElement("span");
-    box.style.cssText = `display:inline-block;vertical-align:top;overflow:hidden;padding:0;height:${this.#cellMetrics?.height ?? 0}px;line-height:${lineHeight}px;font-size:${scale * 100}%`;
+    box.style.cssText =
+      "display:inline-block;vertical-align:top;overflow:clip;padding:0;" +
+      `height:${this.#cellMetrics?.height ?? 0}px;` +
+      `line-height:${lineHeight}px;font-size:${scale * 100}%`;
     box.textContent = glyph;
     const mark = document.createElement("span");
     mark.style.cssText = "display:inline-block;width:0;height:0;padding:0";
@@ -2409,7 +2429,9 @@ export class MonoWindElement extends HTMLElementBase {
         this.style.setProperty("--mw-ink", `${metrics.inkOverhang ?? 0}px`);
         // A whole pixel: Chromium snaps an inline box's fractional padding
         // and drags its text a pixel with it.
-        this.style.setProperty("--mw-bgpad", `${Math.ceil((metrics.backgroundGap ?? 0) / 2)}px`);
+        const bgpad = Math.ceil((metrics.backgroundGap ?? 0) / 2);
+        this.style.setProperty("--mw-bgpad", `${bgpad}px`);
+        this.toggleAttribute("data-mw-bgpad", bgpad > 0);
         this.style.setProperty("--mw-base", `${metrics.baseline ?? 0}px`);
         // Rows cannot grow (specs/wide-characters.md): a fallback font's
         // taller line box stays inside the measured cell.

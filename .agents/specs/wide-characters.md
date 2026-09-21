@@ -455,10 +455,15 @@ selection })` — `holdStructural` while a press on the grid the engine
   has not taken over may be a native drag, whose anchor a rebuild would
   lose; a press on a control is the control's — patches per ROW (styles
   in place when the row's structure matches, a rebuild between its
-  neighbors' newlines when not); a boxed segment is an `inline-block` span `cells × --mw-cw`
-  wide and `--mw-ch` tall, unpadded, clipped, the glyph placed by a
+  neighbors' newlines when not); a boxed segment wears `data-box`, which
+  a shadow rule draws as an `inline-block` `--mw-ch` tall, unpadded and
+  clipped — the shape every box shares costs one rule rather than six
+  declarations apiece — with its own `cells × --mw-cw` width inline,
+  the glyph placed by a
   `text-indent` of half the room its `advance` leaves, its font-size
-  the scale; a tiling fit adds its `line-height`, a shade's moved by
+  the scale; boxes repeat down a page, so a span's style is built once
+  and its fellows are clones of it; a tiling fit adds its
+  `line-height`, a shade's moved by
   twice the row's shift; a shade adds `data-shade` (its glyph, which
   the shadow's `::before`/`::after` repeat a period above and below)
   and `--mw-period` in px; the glyph cache's `generation` — counting
@@ -467,7 +472,8 @@ selection })` — `holdStructural` while a press on the grid the engine
   no row changed (a layer whose text stood still kept the fallback
   font's fit); every other grid span pads
   `padding-block: var(--mw-bgpad)`, the host's `ceil(backgroundGap /
-2)` px; `gridOffsetAt` and `paintedCell` read the kept cell strings.
+2)` px — on a host wearing `data-mw-bgpad`, which it sets only where
+  that gap is real, so a span carries no lookup on any other page; `gridOffsetAt` and `paintedCell` read the kept cell strings.
 - selection.ts: `selectedRanges(root, points)`.
 - element.ts: `#paint` (glyph boxes plus the selection's ranges);
   `#onSelectionChange` repaints a host holding the range or just left

@@ -62,8 +62,10 @@ export const Opacity: StoryObj = {
       const line = Array.from(host.shadowRoot!.querySelectorAll("#grid span")).find(
         (span) => span.textContent === "│" && (span as HTMLElement).style.opacity === "0.75",
       ) as HTMLElement | undefined;
-      expect(line?.style.display).toBe("inline-block");
-      expect(line?.style.overflow).toBe("hidden");
+      // The shape every box shares is one rule in the shadow; the
+      // marker is what says a span wears it.
+      expect(line?.dataset.box).toBeDefined();
+      expect(line && getComputedStyle(line).overflow).toBe("clip");
     });
   },
 };

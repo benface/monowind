@@ -581,10 +581,14 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     white-space: pre !important;
   }
 
-  /* Truncation (`truncate` = nowrap + clip + text-overflow: ellipsis): use
-   * `hidden` rather than the normalized `clip` for this combo — some engines
-   * only apply `text-overflow` to scroll containers, which `clip` boxes are
-   * not. Wins over the `[data-mw-clip]` rule below on specificity. */
+  /* Truncation (`truncate` = nowrap + clip + text-overflow: ellipsis)
+   * keeps `hidden` rather than the normalized `clip`: a clip box is no
+   * scroll container, so focus can never reveal what the ellipsis hides
+   * — a link past the cut stays off screen for a keyboard (measured:
+   * Chromium and Firefox scroll it into view under `hidden`, neither
+   * does under `clip`; WebKit reveals it under neither). `text-overflow`
+   * itself works the same either way in all three. Wins over the
+   * `[data-mw-clip]` rule below on specificity. */
   mono-wind [data-mw-nowrap][data-mw-clip]:not([data-mw-measuring]) {
     overflow: hidden !important;
   }

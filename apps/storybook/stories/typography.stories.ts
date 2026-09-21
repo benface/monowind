@@ -478,7 +478,7 @@ export const TilingGlyphs: StoryObj = {
           const rect = box.getBoundingClientRect();
           const rowOffset = ((rect.top - top) / row) % 1;
           return (
-            box.style.display !== "inline-block" ||
+            box.dataset.box === undefined ||
             !box.style.lineHeight.endsWith("px") ||
             Math.abs(rect.height - row) > 0.5 ||
             Math.min(rowOffset, 1 - rowOffset) > 0.05

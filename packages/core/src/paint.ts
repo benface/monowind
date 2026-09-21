@@ -455,6 +455,7 @@ function paintRows(
   cells: string[][],
   options: PaintOptions,
 ): boolean {
+  prototypes.clear();
   const glyphs = options.glyphs;
   const generation = glyphs?.generation ?? 0;
   const previous = lastPaint.get(target);
@@ -536,6 +537,13 @@ function isLineGlyph(cluster: string): boolean {
   return code >= 0x2500 && code <= 0x259f;
 }
 
+/** Boxes repeat: a page of borders is one style over and over, so a
+ * span's style is built once and the rest are clones of it. Keyed by
+ * a segment's paint and its ROW — all `applySegment` reads, a shade's
+ * lattice shifting with the row. Cleared per paint, the fits being the
+ * same throughout one. */
+const prototypes = new Map<string, HTMLElement>();
+
 /** A row's nodes: bare text for unpainted runs, a span per painted one. */
 function rowNodes(
   row: CellSegment[],
@@ -550,8 +558,16 @@ function rowNodes(
       nodes.push(document.createTextNode(segment.text));
       continue;
     }
-    const span = document.createElement("span");
-    applySegment(span, segment, glyphs, y);
+    const key = segment.box ? `${segmentKey(segment)}\x1f${y}` : null;
+    const prototype = key === null ? undefined : prototypes.get(key);
+    let span: HTMLElement;
+    if (prototype) {
+      span = prototype.cloneNode(false) as HTMLElement;
+    } else {
+      span = document.createElement("span");
+      applySegment(span, segment, glyphs, y);
+      if (key !== null) prototypes.set(key, span.cloneNode(false) as HTMLElement);
+    }
     span.textContent = segment.text;
     nodes.push(span);
   }
@@ -575,6 +591,7 @@ function applySegment(
 ): void {
   span.style.cssText = "";
   delete span.dataset.shade;
+  delete span.dataset.box;
   applyCellPaint(segment, span.style);
   if (!segment.box) return;
   const cells = segment.cells ?? 1;
@@ -584,18 +601,15 @@ function applySegment(
   // the fit it holds is the first character's.
   const box = glyphs?.box(clusters === 1 ? segment.text : segment.text[0]!, clusterCells, segment);
   const style = span.style;
-  style.display = "inline-block";
-  style.padding = "0";
+  // Through `--mw-cw`, so a box keeps its cells when a root font size
+  // changes them and no row's text changed to repaint it.
   style.width = `calc(${cells} * var(--mw-cw, 1ch))`;
-  style.height = "var(--mw-ch, 1lh)";
-  style.overflow = "hidden";
-  style.verticalAlign = "top";
   // Placed by an indent, not centered: a centered line lands on a
   // rounded position and, at one joint in six, ends short of the clip's
   // edge column (specs/wide-characters.md). A box without a fit (a
   // translucent line's) centers.
+  span.dataset.box = box ? "" : "center";
   if (box) {
-    style.textAlign = "start";
     const half = clusters === 1 ? "50%" : `50% / ${clusters}`;
     style.textIndent = `calc(${half} - ${box.advance / 2}px)`;
     // Each cluster on its own cells: the grid's tracking would set
@@ -603,7 +617,7 @@ function applySegment(
     if (clusters > 1) {
       style.letterSpacing = `calc(${clusterCells} * var(--mw-cw, 1ch) - ${box.advance}px)`;
     }
-  } else style.textAlign = "center";
+  }
   if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
   // A tiling glyph pinned to its row by its own line box, the
   // overshoot clipped; a shade's line box also moves the glyph by the
@@ -717,24 +731,29 @@ function restoreSelection(target: HTMLElement, saved: SavedSelection): void {
   }
 }
 
+/** A segment's paint as a string: one list of the fields a span is
+ * styled from, for the paint's signature and the prototype cache
+ * both. */
+function segmentKey(s: CellSegment): string {
+  return [
+    s.text,
+    s.color ?? "",
+    s.backgroundColor ?? "",
+    s.backgrounds?.join(",") ?? "",
+    s.colors?.join(",") ?? "",
+    s.fontWeight ?? "",
+    s.fontStyle ?? "",
+    s.textDecorationLine ?? "",
+    s.opacity ?? "",
+    s.selected ? "s" : "",
+    s.box ? `b${s.cells}` : "",
+  ].join("\x1f");
+}
+
 function signatureOf(rows: CellSegment[][]): string {
   const parts: string[] = [];
   for (const row of rows) {
-    for (const s of row) {
-      parts.push(
-        s.text,
-        s.color ?? "",
-        s.backgroundColor ?? "",
-        s.backgrounds?.join(",") ?? "",
-        s.colors?.join(",") ?? "",
-        s.fontWeight ?? "",
-        s.fontStyle ?? "",
-        s.textDecorationLine ?? "",
-        s.opacity ?? "",
-        s.selected ? "s" : "",
-        s.box ? `b${s.cells}` : "",
-      );
-    }
+    for (const s of row) parts.push(segmentKey(s));
     parts.push("\n");
   }
   return parts.join("\x1f");

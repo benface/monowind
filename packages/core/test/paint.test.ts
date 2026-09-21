@@ -109,10 +109,11 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     paintGrid(root, target, { glyphs });
     const span = target.querySelector("span")!;
     expect(span.textContent).toBe("中");
-    expect(span.style.display).toBe("inline-block");
+    // A box wears `data-box`; the shape every box shares (the inline
+    // block, its height, the clip) is one rule in the shadow.
+    expect(span.dataset.box).toBe("");
     expect(span.style.width).toBe("calc(2 * var(--mw-cw, 1ch))");
     expect(span.style.fontSize).toBe("118%");
-    expect(span.style.textAlign).toBe("start");
     expect(span.style.textIndent).toBe("calc(50% - 8.024px)");
     expect(target.textContent).toBe("a中b");
     expect(gridOffsetAt(target, 0, 0)).toBe(0);
@@ -160,7 +161,7 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     const layers = document.createElement("div");
     paintGrid(root, document.createElement("pre"), { glyphs, layers });
     const boxed = (grid: Element) =>
-      (grid.querySelector("span") as HTMLElement | null)?.style.display === "inline-block";
+      (grid.querySelector("span") as HTMLElement | null)?.dataset.box !== undefined;
     expect(Array.from(layers.querySelectorAll("pre.grid"), boxed)).toEqual([false, true, true]);
   });
 

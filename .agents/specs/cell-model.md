@@ -802,8 +802,11 @@ one hard line tall, and the browser clips and draws the `…` ellipsis
 itself. The ellipsis lands on-grid (U+2026 is one monospace glyph; the clip
 edge is the content edge, always a whole cell). For a nowrap element that
 also clips, the companion stylesheet uses `overflow: hidden` rather than
-the usual normalized `clip`, because `text-overflow` requires the box to be
-a scroll container in some engines. The plain-text renderer mirrors truncation:
+the usual normalized `clip`, because only a scroll container can be
+scrolled to what the ellipsis hides: focus a link past the cut and
+Chromium and Firefox bring it into view under `hidden` and neither does
+under `clip` (WebKit under neither). `text-overflow` itself draws the
+same either way in all three. The plain-text renderer mirrors truncation:
 a clipped nowrap line is cut at the content width, with `…` in the last
 visible cell when `text-overflow: ellipsis` is set.
 

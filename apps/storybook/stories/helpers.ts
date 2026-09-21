@@ -369,7 +369,7 @@ export function expectGridOnItsCells(host: HTMLElement): void {
         // content area, which a period font draws taller than the cell
         // (Courier New by 2px) without moving a row — the grid's own
         // height above covers that.
-        if (node.style.display === "inline-block") {
+        if (node.dataset.box !== undefined) {
           const styled = `${which} [${node.getAttribute("style")}]`;
           expect(Math.abs(rect.height - cellHeight), styled).toBeLessThan(1);
           expect(Math.abs(rect.top - (gridRect.top + y * cellHeight)), styled).toBeLessThan(1);
