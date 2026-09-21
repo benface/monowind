@@ -73,28 +73,32 @@ export interface CellPaint {
 /** One row of same-paint runs. Joining every segment's text gives the
  * row at the grid's full width (specs/cell-model.md "Selection"): the
  * <pre> is a rectangle of cells, so a drag's highlight sweeps whole
- * rows and a copy is the visible rectangle. A boxed segment is one
- * cluster the font does not draw at its cell count, to be painted in a
- * box of exactly `cells` cells. */
+ * rows and a copy is the visible rectangle. A boxed segment is painted
+ * in a box of exactly `cells` cells: one cluster the font does not draw
+ * at its cell count, or a run of one-cell clusters on the same fit. */
 export interface CellSegment extends CellPaint {
   text: string;
   cells?: number;
-  box?: true;
+  /** The cells ONE cluster of the box takes; `cells` over it is how
+   * many the box holds. */
+  box?: number;
 }
 
 /** What the DOM adapter knows and the plain-text model does not: which
  * clusters its font draws off their cell count (`boxed`), and which
  * leaves hold the light-DOM selection, as character ranges. */
 export interface RenderOptions {
-  /** Whether the caller boxes a cluster, told whether the cells are a
+  /** The caller's fit for a cluster, told whether the cells are a
    * resampled layer's (types.ts `resampled`), where a box's clip edge
-   * seams every row (specs/wide-characters.md). */
+   * seams every row (specs/wide-characters.md): falsy leaves the
+   * cluster unboxed, `true` boxes it alone, and identical one-cell
+   * neighbors given the same other fit share one box. */
   boxed?: (
     cluster: string,
     cells: number,
     paint: CellPaint | undefined,
     resampled: boolean,
-  ) => boolean;
+  ) => unknown;
   selection?: Map<LayoutNode, { start: number; end: number }>;
   /** The cell in px, for paint that measures — a gradient's geometry
    * (specs/gradients.md); a 1:2 cell without. */
@@ -173,7 +177,8 @@ function layerResampled(layer: PaintedLayer): boolean {
  * their run (underline spans an inline run's inner spaces; a
  * borderless focus-invert fill is nothing but spaces). A continuation
  * cell (`""`) rides with the wide cluster before it; a cluster the
- * caller boxes closes its own segment. */
+ * caller boxes opens a box, which its neighbors on the same fit
+ * share. */
 function rowSegments(
   row: string[],
   paints: (CellPaint | undefined)[],
@@ -182,22 +187,42 @@ function rowSegments(
 ): CellSegment[] {
   const segments: CellSegment[] = [];
   let lastCells = 0;
+  let lastFit: unknown;
   for (let x = 0; x < row.length; x++) {
     const cell = row[x]!;
     if (cell === "") continue;
     const paint = paints[x];
     let cells = 1;
     while (row[x + cells] === "") cells++;
-    if (
-      boxed &&
-      (cell.length > 1 || cell.charCodeAt(0) >= 0x80) &&
-      boxed(cell, cells, paint, resampled)
-    ) {
-      segments.push({ text: cell, cells, box: true, ...paint });
-      lastCells = 0;
+    const fit =
+      boxed && (cell.length > 1 || cell.charCodeAt(0) >= 0x80)
+        ? boxed(cell, cells, paint, resampled)
+        : undefined;
+    const last = segments[segments.length - 1];
+    // One box for a run of the same cluster on the same fit: a page of
+    // block glyphs is a span a row, not a span a cell. A fit scales its
+    // glyph past the cell and the box clips it, so a cell joins only
+    // where its neighbor draws the ink it takes — a blank beside a
+    // block would take the block's overflow. Single-cell clusters
+    // only, so the box's cluster is its first character.
+    const joins =
+      last?.box === 1 &&
+      cells === 1 &&
+      cell === last.text[0] &&
+      fit !== true &&
+      fit === lastFit &&
+      samePaint(last, paint);
+    if (joins) {
+      last.text += cell;
+      last.cells = last.cells! + 1;
       continue;
     }
-    const last = segments[segments.length - 1];
+    if (fit) {
+      segments.push({ text: cell, cells, box: cells, ...paint });
+      lastCells = 0;
+      lastFit = fit;
+      continue;
+    }
     if (last && !last.box && samePaint(last, paint)) {
       last.text += cell;
       lastCells += cells;

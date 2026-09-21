@@ -40,6 +40,12 @@ export default defineConfig({
     viewport: { width: 800, height: 600 },
   },
   expect: {
-    toHaveScreenshot: { animations: "disabled" },
+    // A hair above nothing: the image is pinned and the render
+    // deterministic (both verified at 0), so 0.01 only absorbs a
+    // one-bit wobble, where the default 0.2 passed nine baselines that
+    // had drifted up to a percent of their pixels at 70/255. No pixel
+    // BUDGET here, so a spec that needs one (the per-engine selection
+    // ink) still sets its own on the call.
+    toHaveScreenshot: { animations: "disabled", threshold: 0.01 },
   },
 });

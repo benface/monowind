@@ -111,9 +111,11 @@ export class GlyphBoxes {
   }
 
   /** The box for a cluster painted with `paint`, or null when the font
-   * draws it at `cells` cells within 0.01 cell (a block: at its width
-   * and the row's height). Nothing is cached while fonts are still
-   * loading. */
+   * draws THAT cluster at `cells` cells within 0.01 cell (a block: at
+   * its width and the row's height). Null is the grid's promise that
+   * the cluster needs no box to keep to its cells, so it is never
+   * given on another glyph's measurement. Nothing is cached while
+   * fonts are still loading. */
   box(cluster: string, cells: number, paint?: CellPaint): GlyphBox | null {
     const weight = paint?.fontWeight ?? this.#font.weight;
     const style = paint?.fontStyle ?? this.#font.style;
@@ -135,18 +137,24 @@ export class GlyphBoxes {
     const { width: cellWidth, height: cellHeight, letterSpacing } = this.#cell;
     if (!context || cellWidth <= 0 || cellHeight <= 0) return null;
     context.font = font;
+    // The range's fit first: where it exists every glyph of the range
+    // takes it and none needs measuring, which is most fonts.
+    let fit: GlyphBox | null = null;
     const tiling = TILING.find((t) => t.range.test(cluster));
-    if (tiling) return this.#tileFit(tiling.reference, context, font, false, tiling.level);
-    if (SHADE.test(cluster)) {
-      if (!this.#tileFit("\u2588", context, font)) return null;
-      return this.#tileFit(cluster, context, font, true);
+    if (tiling) fit = this.#tileFit(tiling.reference, context, font, false, tiling.level);
+    else if (SHADE.test(cluster) && this.#tileFit("\u2588", context, font)) {
+      fit = this.#tileFit(cluster, context, font, true);
     }
+    if (fit) return fit;
     const metrics = context.measureText(cluster);
     const advance = metrics.width + letterSpacing;
     const target = cells * cellWidth;
-    // Floating-point noise only: a glyph a few hundredths of a cell off
-    // still drifts a line by a pixel over a few glyphs (WebKit's ★ and ✎
-    // at 0.974), and its box scales it imperceptibly.
+    // The one way out unboxed, so it is the CLUSTER's own advance: a
+    // fit above is its range's REFERENCE glyph's, which says nothing
+    // about a cluster the font has not got — the VGA fonts draw `│` on
+    // the cell and have no arc, whose substitute advances 9.633 in an
+    // 8px cell. Within 0.01 cell is floating-point noise, which a box
+    // would scale imperceptibly (WebKit's ★ and ✎ at 0.974).
     if (Math.abs(advance - target) <= 0.01 * cellWidth) return null;
     let scale = advance > 0 ? target / advance : 1;
     const inkWidth = metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight;

@@ -152,6 +152,26 @@ copy event sees it in all three engines.
   adapter's: the paint model takes a `boxed(cluster)` predicate from
   the caller the way it takes the selection, and the Node renderer
   passes none.
+- **That measurement is the one way past a box, and it is the
+  cluster's own.** A range's fit below is measured from its reference
+  glyph, and a reference says nothing about a cluster the FONT HAS NOT
+  GOT: the VGA bitmap fonts the dos, dos-blue, green-phosphor, amber,
+  and bbs themes wear draw `│` and `─` on the cell and have no arc at
+  all, so `borders-rounded` on them falls back to another font at
+  9.633px in an 8px cell. Left unboxed on the range's behalf, two arcs
+  carried 3.27px of drift to every box after them on the row while the
+  rows above and below stayed put. So a cluster whose own advance is
+  off its cells is boxed whatever range it belongs to, and a fit taken
+  from a reference is returned only when it exists — a range that
+  needs none leaves each of its clusters to the measurement above.
+  A box cannot overflow (its width is its cells and it clips), so this
+  gate is the whole of the grid's promise that a run keeps its
+  columns. It is the BACKSTOP, not the cure: those five themes now
+  declare the arcs missing (theming.md), so the corner falls back to
+  one the font draws and never reaches a box at all — the gate is what
+  holds the grid together for a gap nobody declared. The
+  Test / Themes "Glyph Sets On Every Font" story holds
+  every set against every period font for it.
 - **Tiling glyphs fit their row.** Block Elements (U+2580–U+259F:
   `█ ▀ ▄`, the quadrants) and Box Drawing (U+2500–U+257F) are the
   glyphs meant to abut, and a font's line box need not match them:
@@ -215,14 +235,30 @@ copy event sees it in all three engines.
   row; Menlo's `│`, 17.8px in 16). The box clips each row to its own
   slice, so the strokes meet on one edge, and a shade takes its own fit
   once the blocks take one, its lattice locked there as where they fall
-  short. The box is one per cell, by design: a run of `─` in one text
+  short. The box is one per cell for a stroke, by design: a run of `─`
+  in one text
   run overdraws itself at every joint — a font draws the line past its
   advance so joins never gap, and two antialiased ends over each other
   darken the stroke's edge rows into a dot per cell (plain text's
   borders always had them; SF Mono at 2x, the top edge row from 148
   to 92 of 255) — and only the box's clip, snapped to device pixels, keeps each
   glyph's ink to its cell; nothing in one text run can, at any
-  letter-spacing. Two more things keep the joint whole: the scale never
+  letter-spacing.
+- **A run of one full-width band shares a box.** `▀`, `█`, the lower
+  eighths and `▔` (U+2580–U+2588, U+2594) draw the same ink at both
+  edges of the cell, so the ink one pushes into its neighbor is ink the
+  neighbor draws there anyway: repeats of ONE of them, on one paint,
+  take a single box of their cells, the glyphs kept on their cells by a
+  `letter-spacing` of the cell less the advance and placed by the same
+  `text-indent`, halved per cell. The overdraw then shows only where
+  the band's own antialiased edge row meets a joint (Menlo at 2× in
+  Chromium, a `█` row's top row from 180 to 127 of 255 on the joint's
+  columns), against a span a cell for every module of a QR code —
+  a page of seven codes, bordered panels, a scroller and two shade rows
+  paints 2191 grid spans against 3341, and 220 with nothing boxed at
+  all. A half, a quadrant, a shade or a stroke keeps its own box: their
+  ink would spill into what the neighbor leaves blank, or rasterize
+  differently at every phase. Two more things keep the joint whole: the scale never
   drops below 1.08, the least overhang past the cell's edge columns
   that leaves every joint whole in the three engines at 1× and 2× (a
   glyph at its own size leaves the edge column part bare, and JetBrains

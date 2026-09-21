@@ -114,6 +114,8 @@ export function registerBorderGlyphs(name: string, set: BorderGlyphSet): void {
     Object.freeze(table);
   }
   sets.set(key, Object.freeze(set));
+  derived.clear();
+  derivedNames.clear();
   for (const listener of listeners) listener();
 }
 
@@ -123,7 +125,116 @@ export function registerBorderGlyphs(name: string, set: BorderGlyphSet): void {
  * defaults. */
 export function glyphSetFor(name: string | null | undefined): BorderGlyphSet | undefined {
   if (!name) return undefined;
-  return sets.get(name.toLowerCase().trim());
+  return derived.get(name) ?? sets.get(name.toLowerCase().trim());
+}
+
+/** Sets derived for the glyphs a font has not got, under keys no CSS
+ * ident can spell (a name is trimmed, so a NUL is out of reach), and
+ * the name each `(set, missing)` pair resolves to — read once per
+ * ELEMENT, so a hit costs no allocation. `registerBorderGlyphs` clears
+ * both: a derived set is a copy of one that just changed. */
+const derived = new Map<string, BorderGlyphSet>();
+const derivedNames = new Map<string, Map<string, string | null>>();
+
+/** The clusters a `--mw-missing-glyphs` value names: a CSS string of
+ * the characters the themed font has not got, commas and whitespace
+ * free to separate them. */
+export function missingGlyphs(value: string | null | undefined): Set<string> {
+  const text = (value ?? "").trim().replace(/^["']|["']$/g, "");
+  return new Set(Array.from(text).filter((cluster) => !/[\s,]/.test(cluster)));
+}
+
+/** The set name a node carries for `name` on a font whose
+ * `--mw-missing-glyphs` reads `declared` (specs/theming.md): the name
+ * itself where the set draws none of them, else a derived registration
+ * `glyphSetFor` resolves like any other, so every call site keeps
+ * taking a NAME. */
+export function glyphSetNameFor(
+  name: string | null,
+  declared: string | null | undefined,
+): string | null {
+  if (!declared) return name;
+  const key = name ?? "";
+  let names = derivedNames.get(key);
+  if (!names) derivedNames.set(key, (names = new Map()));
+  const cached = names.get(declared);
+  if (cached !== undefined) return cached;
+  const missing = missingGlyphs(declared);
+  const set = missing.size > 0 ? withoutGlyphs(glyphSetFor(name) ?? {}, missing) : undefined;
+  let resolved = name;
+  if (set !== undefined) {
+    resolved = `${key}\u0000${declared}`;
+    derived.set(resolved, set);
+  }
+  names.set(declared, resolved);
+  return resolved;
+}
+
+/** A set with every glyph in `missing` dropped, or undefined where it
+ * draws none of them. A corner band is REWRITTEN rather than removed:
+ * an absent `rounded` inherits the defaults' arcs (`DEFAULT_BANDS`),
+ * so the way to say "no arc here" is an empty band list, which is what
+ * `cp437` and `single` register by hand. A shadow ramp goes whole —
+ * its levels are a sequence, and dropping one shifts the rest. */
+function withoutGlyphs(set: BorderGlyphSet, missing: Set<string>): BorderGlyphSet | undefined {
+  const out: BorderGlyphSet = {};
+  let changed = false;
+  const styles = new Set([...Object.keys(set), ...Object.keys(DEFAULT_BANDS)] as BorderStyle[]);
+  for (const style of styles) {
+    const table = set[style];
+    const next: GlyphTable = { ...table };
+    for (const [role, glyph] of Object.entries(next)) {
+      if (typeof glyph === "string" && missing.has(glyph)) {
+        delete next[role as keyof GlyphTable];
+        changed = true;
+      }
+    }
+    if (next.shadow?.some((glyph) => missing.has(glyph))) {
+      delete next.shadow;
+      changed = true;
+    }
+    if (next.weights) {
+      next.weights = next.weights.map((band) => {
+        const kept: WeightBand = { ...band };
+        for (const [role, glyph] of Object.entries(kept)) {
+          if (typeof glyph === "string" && missing.has(glyph)) {
+            delete kept[role as keyof LineRoles];
+            changed = true;
+          }
+        }
+        return kept;
+      });
+    }
+    // Which bands a corner reaches is cornerGlyph's rule, read on what
+    // is LEFT: a role that just lost its glyph starts reaching the
+    // defaults' arcs, and dropping those is the point.
+    const bands = next.rounded ?? DEFAULT_BANDS[style] ?? [];
+    let dropped = false;
+    const rounded = bands
+      .map((band) => {
+        const kept: CornerBand = { radius: band.radius };
+        for (const role of ["tl", "tr", "bl", "br"] as const) {
+          const glyph = band[role];
+          if (glyph === undefined) continue;
+          if (!missing.has(glyph)) kept[role] = glyph;
+          else if (next.rounded !== undefined || next[role] === undefined) dropped = true;
+        }
+        return kept;
+      })
+      .filter((band) => band.tl ?? band.tr ?? band.bl ?? band.br);
+    if (dropped) {
+      next.rounded = rounded;
+      changed = true;
+    }
+    // Frozen as a registered set is: `glyphSetFor` hands these out too.
+    for (const bands of [next.weights, next.rounded]) {
+      if (!bands) continue;
+      for (const band of bands) Object.freeze(band);
+      Object.freeze(bands);
+    }
+    if (Object.keys(next).length > 0) out[style] = Object.freeze(next);
+  }
+  return changed ? Object.freeze(out) : undefined;
 }
 
 /** Host subscription to registrations; returns the unsubscriber. */

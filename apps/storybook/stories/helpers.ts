@@ -338,13 +338,14 @@ export async function expectBrowserLineBreaksToMatchEngine(
   if (!isFirefox) expect(checked).toBeGreaterThan(0);
 }
 
-/** Assert that every painted grid row is exactly the grid's width and
- * every boxed glyph exactly one cell tall on its row
- * (specs/wide-characters.md): a fallback glyph drawn off its cell count
- * would stretch or shrink its row, and a taller fallback line box would
- * push the rows below. Element boxes are read directly — a Range's
- * rect would also union the text inside a box, which a scaled glyph
- * overflows by design. */
+/** Assert that every painted run STARTS on its cell and every boxed
+ * glyph is exactly one cell tall on its row (specs/wide-characters.md):
+ * a fallback glyph drawn off its cell count carries its drift to
+ * everything after it on the row, and a taller fallback line box would
+ * push the rows below. Run by run, so a drift is caught where it
+ * begins — a row's total width hides one until it passes half a cell.
+ * Element boxes are read directly — a Range's rect would also union
+ * the text inside a box, which a scaled glyph overflows by design. */
 export function expectGridOnItsCells(host: HTMLElement): void {
   const grid = host.shadowRoot!.getElementById("grid")!;
   const cellWidth = cellSize(host).width;
@@ -361,19 +362,34 @@ export function expectGridOnItsCells(host: HTMLElement): void {
     let right = -Infinity;
     for (const node of row) {
       let rect: DOMRect;
-      if (node instanceof Element) {
+      const which = `row ${y} "${node.textContent}"`;
+      if (node instanceof HTMLElement) {
         rect = node.getBoundingClientRect();
-        const which = `row ${y} "${node.textContent}" [${node.getAttribute("style")}]`;
-        expect(Math.abs(rect.height - cellHeight), which).toBeLessThan(1);
-        expect(Math.abs(rect.top - (gridRect.top + y * cellHeight)), which).toBeLessThan(1);
+        // Boxed spans only: an unpainted span's rect is the font's
+        // content area, which a period font draws taller than the cell
+        // (Courier New by 2px) without moving a row — the grid's own
+        // height above covers that.
+        if (node.style.display === "inline-block") {
+          const styled = `${which} [${node.getAttribute("style")}]`;
+          expect(Math.abs(rect.height - cellHeight), styled).toBeLessThan(1);
+          expect(Math.abs(rect.top - (gridRect.top + y * cellHeight)), styled).toBeLessThan(1);
+        }
       } else {
         const range = document.createRange();
         range.selectNodeContents(node);
         rect = range.getBoundingClientRect();
       }
+      // Whole cells from the grid's left, whatever the run holds — a
+      // count of columns would have to know each cluster's cells, and
+      // a quarter cell is under a rounding of the run's own edges.
+      const offset = rect.left - gridRect.left;
+      const drift = Math.abs(offset - Math.round(offset / cellWidth) * cellWidth);
+      expect(drift, which).toBeLessThan(cellWidth / 4);
       left = Math.min(left, rect.left);
       right = Math.max(right, rect.right);
     }
+    // And the row as a whole, so a drift of a FULL cell cannot hide in
+    // the modulus above.
     if (row.length > 0) expect(Math.abs(right - left - gridRect.width)).toBeLessThan(cellWidth / 2);
   });
 }

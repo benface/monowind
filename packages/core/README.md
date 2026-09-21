@@ -113,6 +113,24 @@ registerBorderGlyphs("stars", { solid: { tl: "✧", tr: "✧", bl: "✧", br: "�
 
 A registered set is frozen; to change one, register it again.
 
+A set names glyphs; whether the FONT has them is the page's business.
+Where it hasn't got one, the browser substitutes another font's, which
+the engine boxes onto its cell so the grid holds — but a substitute
+cannot both fit the cell and fill the row, so it shows as a corner
+broken from the line beside it. Say so and it falls back instead, to a
+glyph the font does draw:
+
+```css
+.retro {
+  font-family: "Some 8x16 bitmap font";
+  --mw-missing-glyphs: "╭╮╰╯"; /* no arcs in this font */
+}
+```
+
+Inherited, so a theme declares it once for the page; a glyph named
+there counts as unregistered, whatever set an author later asks for.
+The bundled themes declare what their own fonts are missing.
+
 A set can also register corner glyphs by `border-radius` — a corner
 draws the registration nearest its radius in cells, the plain corner
 counting at 0 (the defaults round light-line corners to `╭ ╮ ╰ ╯`

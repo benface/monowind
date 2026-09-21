@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   glyphSetFor,
+  glyphSetNameFor,
+  missingGlyphs,
   onGlyphRegistryChange,
   registerBorderGlyphs,
   weightBand,
@@ -317,5 +319,71 @@ describe("QR module roles (specs/qr-code.md)", () => {
         undefined,
       ]);
     }
+  });
+});
+
+describe("a font's gaps (specs/theming.md)", () => {
+  const noArcs = '"\u256D\u256E\u2570\u256F"';
+
+  it("reads the characters a theme names, however it separates them", () => {
+    expect([...missingGlyphs('"\u256D\u256E"')]).toEqual(["\u256D", "\u256E"]);
+    expect([...missingGlyphs("\u256D, \u256E")]).toEqual(["\u256D", "\u256E"]);
+    expect(missingGlyphs(null).size).toBe(0);
+  });
+
+  it("keeps the name where the set draws none of them", () => {
+    expect(glyphSetNameFor("ascii", noArcs)).toBe("ascii");
+    expect(glyphSetNameFor("rounded", "")).toBe("rounded");
+    expect(glyphSetNameFor("rounded", null)).toBe("rounded");
+  });
+
+  it("drops an arc the font has not got, square corners taking its place", () => {
+    expect(box("rounded")).toBe(
+      ["\u256D\u2500\u2500\u2500\u256E", "\u2502x  \u2502", "\u2570\u2500\u2500\u2500\u256F"].join(
+        "\n",
+      ),
+    );
+    expect(box(glyphSetNameFor("rounded", noArcs))).toBe(
+      ["\u250C\u2500\u2500\u2500\u2510", "\u2502x  \u2502", "\u2514\u2500\u2500\u2500\u2518"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("holds back the DEFAULTS' arcs too, which no set had to name", () => {
+    // `default` registers nothing: its arcs come from DEFAULT_BANDS at
+    // radius 1, so dropping them has to REWRITE the band, not remove it.
+    const rounded = glyphSetFor(glyphSetNameFor("default", noArcs)!)?.solid?.rounded;
+    expect(rounded).toEqual([]);
+  });
+
+  it("forgets a derived set when the registry changes under it", () => {
+    const first = glyphSetNameFor("default", noArcs);
+    expect(glyphSetFor(first!)?.solid?.rounded).toEqual([]);
+    registerBorderGlyphs("default", {});
+    expect(glyphSetFor(first!), "the derived copy went with it").toBeUndefined();
+    expect(glyphSetFor(glyphSetNameFor("default", noArcs)!)?.solid?.rounded).toEqual([]);
+  });
+
+  it("is declared in CSS beside the set", () => {
+    expect(domBox("border: 1px solid; --mw-border-glyphs: rounded")).toBe(
+      [
+        "\u256D\u2500\u2500\u2500\u2500\u2500\u256E",
+        "\u2502x    \u2502",
+        "\u2570\u2500\u2500\u2500\u2500\u2500\u256F",
+      ].join("\n"),
+    );
+    expect(
+      // Single-quoted: the value rides a style="" attribute here.
+      domBox(
+        "border: 1px solid; --mw-border-glyphs: rounded; --mw-missing-glyphs: '\u256D\u256E\u2570\u256F'",
+      ),
+    ).toBe(
+      [
+        "\u250C\u2500\u2500\u2500\u2500\u2500\u2510",
+        "\u2502x    \u2502",
+        "\u2514\u2500\u2500\u2500\u2500\u2500\u2518",
+      ].join("\n"),
+    );
   });
 });

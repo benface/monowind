@@ -3,7 +3,7 @@ import { animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
 import { colorAlpha, isLegacyColor, parseColor } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
-import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
+import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack, zeroInsets } from "./types.ts";
@@ -72,7 +72,12 @@ export function readCellStyle(
   warnAuthoredFontSize(el, classAttr, inlineStyle);
   // The glyph set decides a border's or rule's cells (its weight band),
   // so it is resolved before they are read.
-  const glyphSet = cs.getPropertyValue("--mw-border-glyphs").trim() || null;
+  // A glyph the themed font has not got counts as unregistered, so the
+  // set falls back per glyph to one the font draws (specs/theming.md).
+  const glyphSet = glyphSetNameFor(
+    cs.getPropertyValue("--mw-border-glyphs").trim() || null,
+    cs.getPropertyValue("--mw-missing-glyphs"),
+  );
   const set = glyphSetFor(glyphSet);
   // A min/max limit: an authored calc() or viewport length first (their
   // units carry intent the computed px has lost), then the computed px.

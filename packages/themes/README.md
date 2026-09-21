@@ -53,9 +53,11 @@ bypass the mapping and stay literal.
 Also set per theme: the host's `color` and `background-color` (the
 engine derives `--mw-fg`/`--mw-bg` from them), the ANSI-16 `--mw-ansi-*`
 tokens (SGR-colored ascii art and `effect` filters follow the theme),
-the border glyph set (`--mw-border-glyphs`), and the font with its
-native bitmap size (keep `font-size` at integer multiples for crisp
-cells).
+the border glyph set (`--mw-border-glyphs`), the glyphs the font has
+not got (`--mw-missing-glyphs` — six of the seven themes have no arcs,
+so a set asking for them falls back to square corners rather than
+borrowing another font's), and the font with its native bitmap size
+(keep `font-size` at integer multiples for crisp cells).
 
 ## Fonts
 

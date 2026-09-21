@@ -12,6 +12,8 @@
     background-color: #000000;
     color: #ffb000;
     --mw-border-glyphs: single;
+    /* The VGA font has no arcs: a set naming them falls back. */
+    --mw-missing-glyphs: "╭╮╰╯";
     --mw-ansi-black: #000000;
     --mw-ansi-red: #7a4a00;
     --mw-ansi-green: #b87400;

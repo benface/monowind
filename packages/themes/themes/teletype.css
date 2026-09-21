@@ -11,6 +11,8 @@
     background-color: #f5f1e6;
     color: #20201c;
     --mw-border-glyphs: ascii;
+    /* Courier New has no arcs: a set naming them falls back. */
+    --mw-missing-glyphs: "╭╮╰╯";
     /* ANSI ladder inverted for paper: SGR art assumes light-on-dark,
      * so the bright end maps to the darkest ink. */
     --mw-ansi-black: #f5f1e6;

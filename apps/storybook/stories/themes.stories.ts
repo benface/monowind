@@ -1,6 +1,6 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
-import { readyHosts } from "./helpers.ts";
+import { expectGridOnItsCells, readyHosts } from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
@@ -71,6 +71,58 @@ export const Gallery: StoryObj = {
       expect(
         getComputedStyle(canvasElement.querySelector('[data-test="theme-dos"]')!).fontFamily,
       ).toContain("Web IBM VGA 8x16");
+    });
+  },
+};
+
+/** Every border glyph set on every theme's period font, the pairing an
+ * author is free to make and a theme cannot foresee: a set names
+ * glyphs the font may not have — six of the seven have no arc, so
+ * `borders-rounded` would fall back to another font at another advance.
+ * Two rules meet here. A theme DECLARES its font's gaps, so nothing it
+ * names reaches the grid whatever set was asked for
+ * (specs/theming.md); and whatever slips through undeclared is boxed
+ * onto its cells rather than drifting the row
+ * (specs/wide-characters.md). */
+const sets = html`
+  <div class="border px-1 borders-default">default</div>
+  <div class="border px-1 borders-rounded">rounded</div>
+  <div class="border px-1 borders-ascii">ascii</div>
+  <div class="border px-1 borders-single">single</div>
+  <div class="border px-1 borders-blocks">blocks</div>
+  <div class="border px-1 borders-cp437">cp437</div>
+`;
+
+export const GlyphSetsOnEveryFont: StoryObj = {
+  render: () => html`
+    <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
+      ${THEMES.map(
+        (theme) => html`
+          <mono-wind class="theme-${theme} p-1" data-test=${"theme-" + theme}>
+            <div class="flex flex-wrap gap-1">${sets}</div>
+          </mono-wind>
+        `,
+      )}
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const hosts = await readyHosts(canvasElement);
+    // The period fonts have to be the ones measured: until they land,
+    // every glyph is the fallback's and the grid is consistently wrong.
+    await document.fonts.ready;
+    await waitFor(() => {
+      for (const host of hosts) {
+        expectGridOnItsCells(host);
+        // A glyph the font has not got is boxed onto its cell and
+        // cannot also fill the row, so it breaks from the line beside
+        // it: nothing a theme declares missing may reach the grid,
+        // whatever set an author named (specs/theming.md).
+        const art = host.shadowRoot!.getElementById("grid")!.textContent!;
+        const declared = getComputedStyle(host).getPropertyValue("--mw-missing-glyphs");
+        for (const glyph of declared.replaceAll(/["',\s]/g, "")) {
+          expect(art, `${host.className} draws ${glyph}`).not.toContain(glyph);
+        }
+      }
     });
   },
 };

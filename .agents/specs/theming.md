@@ -65,6 +65,28 @@ truth.
   from the themed font falls to the fallback font, whose different
   advance can drift the grid — themes pair sets with fonts verified
   to cover them.
+- **A theme DECLARES what its font has not got**, since it cannot know
+  which set an author will name: the inherited
+  `--mw-missing-glyphs: "╭╮╰╯"` (commas and whitespace free to
+  separate) lists characters, read beside `--mw-border-glyphs` and
+  applied to whatever set resolved — **a glyph the font has not got
+  counts as UNREGISTERED**, so it falls through the per-glyph fallback
+  above to one the font draws. Six of the seven themes declare the
+  arcs — the five on `Web IBM VGA 8x16` and teletype on Courier New;
+  only c64's Pet Me 64 draws them, at its cell. A substitute advancing
+  9.633px in an 8px cell is boxed onto its cell, which no scale can do
+  while also filling the row — `borders-rounded` on `theme-dos` drew a
+  corner broken from the line below it until the declaration, and now
+  draws the square corner the font has, as `cp437` always did. An
+  absent band is REWRITTEN empty rather than removed, since an absent
+  `rounded` inherits the defaults' arcs. Declared, never measured: the
+  grid's text stays decided without the canvas, so a document yields
+  the same cells in Node and the browser and none change when a
+  webfont lands. Declared BECAUSE it cannot be measured: Courier New's
+  substitute arc advances 9.03px against a 9.0156px cell, inside the
+  tolerance that boxes a glyph, so nothing drifts and no signal fires —
+  a wrong-looking corner is visible only to a reader, which is what the
+  Test / Themes golden is for.
 
 ## Resolved design (as implemented)
 

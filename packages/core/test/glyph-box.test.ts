@@ -135,6 +135,8 @@ describe("GlyphBoxes", () => {
       period: 3,
       reach: { above: 4.85, below: 3.16 },
     });
+    // One measurement for the range, none per glyph: the fit exists,
+    // so no cluster needs its own advance.
     expect(calls).toEqual(["█", "░"]);
     // Row by row the lattice carries on: 16px rows against a 3px period,
     // down while the content area still covers the box's top.
@@ -197,6 +199,25 @@ describe("GlyphBoxes", () => {
     expect(boxes.box("─", 1)).toEqual(fit);
     expect(boxes.box("┌", 1)).toEqual(fit);
     expect(calls).toEqual(["█", "│"]);
+  });
+
+  it("boxes a cluster its font lacks, though the range needs no fit", () => {
+    // The VGA bitmap fonts draw `│` and `─` on the cell and have no arc
+    // at all: the arc falls back to another font at another advance,
+    // and unboxed it would carry 1.6px of drift to the rest of the row.
+    const { calls } = stubCanvas({
+      "│": { width: 8, ascent: 12, descent: 4 },
+      "─": { width: 8, ascent: 8.5, descent: -7.5 },
+      "╭": { width: 9.633, ascent: 8, descent: 2 },
+    });
+    const boxes = new GlyphBoxes();
+    boxes.configure(font, cell);
+    expect(boxes.box("│", 1), "drawn on its cell, so left alone").toBeNull();
+    expect(boxes.box("─", 1), "likewise").toBeNull();
+    const arc = boxes.box("╭", 1);
+    expect(arc, "off its cell, so boxed onto it").not.toBeNull();
+    expect(arc!.advance).toBeLessThanOrEqual(8);
+    expect(calls).toContain("╭");
   });
 
   it("boxes a block drawn past the row, leaving one drawn at its height", () => {

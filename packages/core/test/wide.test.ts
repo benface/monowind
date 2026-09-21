@@ -175,8 +175,29 @@ describe("paint", () => {
     const boxed = (cluster: string) => cluster !== "★";
     expect(renderCellSegments(root, { boxed })[0]).toEqual([
       { text: "a★" },
-      { text: "中", cells: 2, box: true },
+      { text: "中", cells: 2, box: 2 },
       { text: "b" },
+    ]);
+  });
+
+  it("gives a run of one cluster on one fit a single box", () => {
+    const leaf = wide("███▀");
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 4);
+    const fits = new Map([
+      ["█", {}],
+      ["▀", {}],
+    ]);
+    expect(renderCellSegments(root, { boxed: (cluster) => fits.get(cluster) })[0]).toEqual([
+      { text: "███", cells: 3, box: 1 },
+      { text: "▀", cells: 1, box: 1 },
+    ]);
+    // A cluster the caller boxes alone takes a box a cell.
+    expect(renderCellSegments(root, { boxed: () => true })[0]).toEqual([
+      { text: "█", cells: 1, box: 1 },
+      { text: "█", cells: 1, box: 1 },
+      { text: "█", cells: 1, box: 1 },
+      { text: "▀", cells: 1, box: 1 },
     ]);
   });
 

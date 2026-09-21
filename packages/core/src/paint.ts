@@ -90,7 +90,9 @@ export function paintGrid(
       // In a resampled layer a box's clip edge is antialiased at every
       // row, a seam the overshooting glyph covers unboxed.
       const box = glyphs.box(cluster, cells, paint);
-      if (box !== null && (!box.past || !resampled)) return true;
+      if (box !== null && (!box.past || !resampled)) {
+        return UNIFORM_BLOCK.test(cluster) ? box : true;
+      }
       return paint?.opacity !== undefined && isLineGlyph(cluster);
     };
   }
@@ -520,6 +522,14 @@ function paintRows(
   return true;
 }
 
+/** The glyphs a run may share a box with: one horizontal band across
+ * the cell (U+2580-U+2588, U+2594), where the ink a fit pushes past a
+ * cell's edge is the ink its neighbor draws there anyway
+ * (specs/wide-characters.md). A half, a quadrant or a shade would
+ * spill into what its neighbor leaves blank, and a stroke's ends
+ * overdraw into a dot per joint. */
+const UNIFORM_BLOCK = /^[\u2580-\u2588\u2594]$/;
+
 /** A box-drawing or block-element glyph (U+2500–U+259F). */
 function isLineGlyph(cluster: string): boolean {
   const code = cluster.codePointAt(0) ?? 0;
@@ -555,7 +565,8 @@ export function paintedCell(target: HTMLElement, col: number, row: number): stri
 
 /** A span's paint, and its box when the segment is one: an inline
  * block of exactly its cells, the glyph scaled to fill it and clipped
- * to the row (specs/wide-characters.md). */
+ * to the row, a repeated one kept on its cells by the box's own
+ * tracking (specs/wide-characters.md). */
 function applySegment(
   span: HTMLElement,
   segment: CellSegment,
@@ -567,7 +578,11 @@ function applySegment(
   applyCellPaint(segment, span.style);
   if (!segment.box) return;
   const cells = segment.cells ?? 1;
-  const box = glyphs?.box(segment.text, cells, segment);
+  const clusterCells = segment.box;
+  const clusters = cells / clusterCells;
+  // A shared box repeats one single-cell cluster (plain-text.ts), so
+  // the fit it holds is the first character's.
+  const box = glyphs?.box(clusters === 1 ? segment.text : segment.text[0]!, clusterCells, segment);
   const style = span.style;
   style.display = "inline-block";
   style.padding = "0";
@@ -581,7 +596,13 @@ function applySegment(
   // translucent line's) centers.
   if (box) {
     style.textAlign = "start";
-    style.textIndent = `calc(50% - ${box.advance / 2}px)`;
+    const half = clusters === 1 ? "50%" : `50% / ${clusters}`;
+    style.textIndent = `calc(${half} - ${box.advance / 2}px)`;
+    // Each cluster on its own cells: the grid's tracking would set
+    // them at the font's advance, not the cell's.
+    if (clusters > 1) {
+      style.letterSpacing = `calc(${clusterCells} * var(--mw-cw, 1ch) - ${box.advance}px)`;
+    }
   } else style.textAlign = "center";
   if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
   // A tiling glyph pinned to its row by its own line box, the
