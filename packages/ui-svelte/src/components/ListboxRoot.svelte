@@ -17,7 +17,7 @@
     children,
     child,
     ...props
-  }: Omit<listbox.MountProps, "id"> & {
+  }: Omit<listbox.Props, "id"> & {
     id?: string;
     children?: Snippet;
     child?: Snippet<[Record<string, unknown>]>;
@@ -36,7 +36,7 @@
     onValueChange: bound("value", (next) => (value = next), onValueChange),
     ...(highlightedValue === undefined ? {} : { highlightedValue }),
     onHighlightChange: bound("highlightedValue", (next) => (highlightedValue = next), onHighlightChange),
-  } as unknown as listbox.MountProps);
+  } as unknown as listbox.Props);
   const created = createListbox(() => machineProps);
   listboxContext.set(created);
 </script>

@@ -1,5 +1,6 @@
 import type { MachineSchema, Service } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/react";
+import * as combobox from "@monowind/ui/combobox";
 import * as dialog from "@monowind/ui/dialog";
 import * as listbox from "@monowind/ui/listbox";
 import * as menu from "@monowind/ui/menu";
@@ -75,6 +76,10 @@ export const useListbox: (
 export const useSelect: (
   props: select.Props,
 ) => Connected<Positioned<select.Api<PropTypes>>, select.Service> = anchoredHook(select);
+/** Zag's combobox on the grid, as a hook. */
+export const useCombobox: (
+  props: combobox.Props,
+) => Connected<Positioned<combobox.Api<PropTypes>>, combobox.Service> = anchoredHook(combobox);
 /** Zag's dialog on the grid, as a hook. */
 export const useDialog: (
   props: dialog.Props,

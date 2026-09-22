@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import { collection, combobox } from "@monowind/ui/combobox";
 import { dialog } from "@monowind/ui/dialog";
 import { defineMonoUi } from "@monowind/ui/elements";
 import { listbox } from "@monowind/ui/listbox";
@@ -655,6 +656,122 @@ export const SelectMultiple: StoryObj = {
     await userEvent.click(by("csv"));
     await waitFor(() => expect(by("value").textContent).toBe("yaml"));
     await waitFor(() => expect(chosen()).toEqual(["yaml"]));
+  },
+};
+
+/** The branches a combobox filters, in markup order. */
+const BRANCHES = ["main", "next", "release", "feature/grid", "origin/main"];
+
+/** A combobox: a listbox under the input the reader types into, its
+ * list anchored to the control rather than the button beside it, and
+ * filtering the page's own — it hands back a narrowed collection, and
+ * the items left out go. */
+export const Combobox: StoryObj = {
+  render: () => {
+    return html`
+      <mono-wind>
+        <div
+          class="p-1"
+          ${mountedOn((root) => {
+            // Filtering is the page's: the callback hands the mount a
+            // narrowed collection, and the items it drops go.
+            const mounted = combobox(root, {
+              id: "branch",
+              collection: collection({ items: BRANCHES }),
+              onInputValueChange: ({ inputValue }) => {
+                const matches = BRANCHES.filter((branch) =>
+                  branch.toLowerCase().includes(inputValue.toLowerCase()),
+                );
+                mounted.updateProps({ collection: collection({ items: matches }) });
+                const count = root.querySelector("[data-test='typed']");
+                if (count) count.textContent = `${matches.length}`;
+              },
+            });
+            return mounted;
+          })}
+        >
+          <p>
+            A page with a combobox, matching
+            <b data-test="typed" class="text-yellow-300">${BRANCHES.length}</b> of
+            ${BRANCHES.length} branches.
+          </p>
+          <div class="mt-1 flex gap-1">
+            <label data-part="label" data-test="label" class="text-neutral-500">Branch</label>
+            <span data-part="control" data-test="control" class="border px-1">
+              <input data-part="input" data-test="input" size="14" placeholder="type to filter" />
+              <button data-part="trigger" data-test="trigger" class="ml-1">▼</button>
+            </span>
+          </div>
+          <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
+            <div data-part="content" data-test="content" class="${MENU_CONTENT} w-20">
+              <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
+                <span data-part="item-text">main</span>
+              </div>
+              <div data-part="item" data-value="next" data-test="next" class=${LIST_ITEM}>
+                <span data-part="item-text">next</span>
+              </div>
+              <div data-part="item" data-value="release" data-test="release" class=${LIST_ITEM}>
+                <span data-part="item-text">release</span>
+              </div>
+              <div
+                data-part="item"
+                data-value="feature/grid"
+                data-test="feature/grid"
+                class=${LIST_ITEM}
+              >
+                <span data-part="item-text">feature/grid</span>
+              </div>
+              <div
+                data-part="item"
+                data-value="origin/main"
+                data-test="origin/main"
+                class=${LIST_ITEM}
+              >
+                <span data-part="item-text">origin/main</span>
+              </div>
+            </div>
+          </div>
+          ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+        </div>
+      </mono-wind>
+    `;
+  },
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const input = by("input") as HTMLInputElement;
+    expect(input.getAttribute("role")).toBe("combobox");
+    // The list is anchored to the control, so it lines up under the
+    // text rather than under the button beside it.
+    await userEvent.click(by("trigger"));
+    await waitFor(() =>
+      expect(by("content").getAttribute("data-state"), "opened by the trigger").toBe("open"),
+    );
+    await waitFor(() =>
+      expect(by("positioner").getAttribute("data-mw-area"), "placed below").toBe(
+        "span-right bottom",
+      ),
+    );
+    await expectTouching(
+      () => by("positioner").getBoundingClientRect().left,
+      () => by("control").getBoundingClientRect().left,
+    );
+    await expectOnItsCells(host, by("positioner"));
+    await expectRow(host, "feature/grid");
+    // Typing narrows the collection, and the items it drops go — the
+    // grid lays the shorter list out.
+    await userEvent.type(input, "rel");
+    await waitFor(() =>
+      expect(by("main").hidden, `main hidden; matched ${by("typed").textContent}`).toBe(true),
+    );
+    expect(by("release").hidden, "release still listed").toBe(false);
+    await waitFor(() => expect(paintedSpan(host, "feature/grid")).toBeUndefined());
+    // Picking writes the value into the input; left open for the
+    // golden with the list showing what the text matches.
+    await userEvent.click(by("release"));
+    await waitFor(() => expect(input.value).toBe("release"));
+    await userEvent.type(input, "{Backspace}");
+    await waitFor(() => expect(by("content").getAttribute("data-state")).toBe("open"));
   },
 };
 

@@ -9,7 +9,6 @@
 </script>
 
 <Positioner
-  tag="div"
   props={dialog.api.getPositionerProps()}
   positioner={dialog.positioner}
   {children}

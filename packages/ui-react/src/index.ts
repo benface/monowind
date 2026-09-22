@@ -4,6 +4,7 @@
  * the same machines, so a page may mix them.
  */
 export {
+  useCombobox,
   useDialog,
   useListbox,
   useMenu,
@@ -20,6 +21,7 @@ export { collection, gridCollection } from "@monowind/ui/listbox";
 export type { PartProps } from "./components/part.tsx";
 export type { ItemProps } from "./components/items.tsx";
 export type { ItemApi } from "@monowind/ui/framework";
+export * as Combobox from "./components/combobox.tsx";
 export * as Dialog from "./components/dialog.tsx";
 export * as Listbox from "./components/listbox.tsx";
 export * as Menu from "./components/menu.tsx";

@@ -1,16 +1,16 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Positioner from "./Positioner.svelte";
-  import { popoverContext } from "./context.ts";
+  import { comboboxContext } from "./context.ts";
 
   let { children, ...rest }: { children?: Snippet; [key: string]: unknown } = $props();
 
-  const popover = popoverContext.use();
+  const combobox = comboboxContext.use();
 </script>
 
 <Positioner
-  props={popover.api.getPositionerProps()}
-  positioner={popover.positioner}
+  props={combobox.api.getPositionerProps()}
+  positioner={combobox.positioner}
   {children}
   {...rest}
 />

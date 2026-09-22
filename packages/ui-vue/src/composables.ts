@@ -1,5 +1,6 @@
 import type { MachineSchema, Service } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/vue";
+import * as combobox from "@monowind/ui/combobox";
 import * as dialog from "@monowind/ui/dialog";
 import * as listbox from "@monowind/ui/listbox";
 import * as menu from "@monowind/ui/menu";
@@ -87,6 +88,10 @@ export const useListbox: (
 export const useSelect: (
   props: MaybeRefOrGetter<select.Props>,
 ) => Composed<select.Api<PropTypes>, select.Service> = anchoredComposable(select);
+/** Zag's combobox on the grid, in a component. */
+export const useCombobox: (
+  props: MaybeRefOrGetter<combobox.Props>,
+) => Composed<combobox.Api<PropTypes>, combobox.Service> = anchoredComposable(combobox);
 /** Zag's dialog on the grid, in a component. */
 export const useDialog: (
   props: MaybeRefOrGetter<dialog.Props>,

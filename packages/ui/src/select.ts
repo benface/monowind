@@ -97,7 +97,7 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
   const valueText = part(root, "value-text");
   const clearTrigger = part(root, "clear-trigger");
   const list = part(root, "list");
-  const wireItems = itemParts<Api>(root);
+  const wireItems = itemParts<Api>(root, "select");
   const placeholder = valueText?.textContent ?? "";
   const hiddenSelect = prepareHiddenSelect(root, live.machine.collection?.getValues() ?? []);
   const mounted = mountAnchored(

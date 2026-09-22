@@ -1,15 +1,16 @@
 # Spec: `@monowind/ui` — accessible components on the grid
 
 Status: **implemented** (2026-09-13, the framework packages and
-examples 2026-09-18, the listbox and the select 2026-09-21;
-`packages/ui`, one entry per component, plan `2026-09-13-ui.md`). The
-engine features it needs are `top-layer.md` and
-`anchor-positioning.md`; motion is `animations.md`, and a list's scroll
-is `scrolling.md`.
+examples 2026-09-18, the listbox and the select 2026-09-21, the
+component layer and the combobox 2026-09-22; `packages/ui`, one entry
+per component, plan `2026-09-13-ui.md`). The engine features it needs
+are `top-layer.md` and `anchor-positioning.md`; motion is
+`animations.md`, and a list's scroll is `scrolling.md`.
 
 ## Motivation
 
-A menu, a list to choose from, a dialog, a popover, a tooltip: every
+A menu, a list to choose from, a combobox, a dialog, a popover, a
+tooltip: every
 application needs them, and doing them accessibly — roles and states,
 roving focus, typeahead,
 focus trapping and restore, dismissal, nested menus — is where most
@@ -24,10 +25,13 @@ the engine places and layers the parts, Zag runs them.
 ## Shape
 
 - **One package, a subpath per component**: `@monowind/ui/menu`,
-  `@monowind/ui/listbox`, `@monowind/ui/select`, `@monowind/ui/dialog`,
+  `@monowind/ui/listbox`, `@monowind/ui/select`,
+  `@monowind/ui/combobox`, `@monowind/ui/dialog`,
   `@monowind/ui/popover`, and `@monowind/ui/tooltip`, in that order
-  wherever they are listed; `combobox`, `tabs` and the rest follow the
-  same shape. Versioned in lockstep with `monowind`.
+  wherever they are listed; `tabs` and the rest follow the same
+  shape. A combobox anchors to its `control` rather than its trigger,
+  so its list lines up under the input, and it hides the items its
+  collection leaves out, filtering being what a collection narrows. Versioned in lockstep with `monowind`.
 - **A core that touches no DOM**: per component, `props(p)`, the
   machine's props with Zag's own positioning off, Zag's `machine`
   re-exported, `connect(service, normalizeProps, p)` — Zag's connect
@@ -208,8 +212,8 @@ the functions; the functions change only where the elements need them
 to, and additively.
 
 - **Elements for markup**: `<mono-menu>`, `<mono-submenu>`,
-  `<mono-listbox>`, `<mono-select>`, `<mono-dialog>`,
-  `<mono-popover>`, `<mono-tooltip>`, from
+  `<mono-listbox>`, `<mono-select>`, `<mono-combobox>`,
+  `<mono-dialog>`, `<mono-popover>`, `<mono-tooltip>`, from
   `@monowind/ui/elements`, registered by `defineMonoUi()` as core's
   are by `defineMonoWind()` — the entry registers nothing on import,
   so the package's `sideEffects: false` holds; the CDN bundle calls it.
@@ -239,13 +243,15 @@ to, and additively.
   `loop-focus`, `open-delay`), the positioning flattened (`placement`,
   `gutter`, `offset-cross-axis`, `offset-main-axis`, in cells), and
   the dialog's `role` prop `content-role`, the element's own `role`
-  being its own. A boolean is true by presence and false as `"false"`
+  being its own, and `aria-label` — which names the content, and
+  which Zag spells with the hyphen — written as it is. A boolean is true by presence and false as `"false"`
   (React 19 removes an attribute it sets to `false`; `"false"` comes
   from string templating alone, and reads as it means); a number
   parses, a string stays a string (so a `highlighted-value` matches
   its item's `data-value` as written). Props without an attribute form
-  — `ids`, `translations`, a menu's `navigate`, a listbox's and a
-  select's `collection`, a dialog's `initialFocusEl` — are accessors
+  — `ids`, `translations`, a menu's `navigate` and `anchorPoint`, a
+  listbox's and a select's `collection`, a dialog's `initialFocusEl`
+  — are accessors
   on the class, so a framework that sets a property it finds (React
   does) hands the value over whole; setting the same value again does
   nothing, React setting one on every render. A name the DOM already
@@ -256,7 +262,10 @@ to, and additively.
   mount reaches the running machine (Zag's `updateProps`, through a
   `Mounted.updateProps` the vanilla mount gains) and the grid's props
   alike, the mount reading its props per render rather than once; a
-  menu hands the behavior props it shares down to its submenus.
+  menu hands the behavior props it shares down to its submenus. Every
+  element covers its machine's whole prop list, which a test checks
+  against Zag's own `props`; an initial `value` is the exception, Zag
+  typing it `string[]` where markup has no agreed way to spell one.
 - **`open` is the state, reflected.** The machine stays uncontrolled:
   the attribute at the mount is the initial state, a later change
   opens or closes through `api.setOpen`, and the element writes the

@@ -1,5 +1,6 @@
 import type { MachineSchema, Service } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/svelte";
+import * as combobox from "@monowind/ui/combobox";
 import * as dialog from "@monowind/ui/dialog";
 import * as listbox from "@monowind/ui/listbox";
 import * as menu from "@monowind/ui/menu";
@@ -20,6 +21,7 @@ import type { Action } from "svelte/action";
  * same `ListCollection`, so one export serves each. */
 export { collection, gridCollection } from "@monowind/ui/listbox";
 export {
+  useComboboxContext,
   useDialogContext,
   useItemContext,
   useListboxContext,
@@ -28,6 +30,21 @@ export {
   useSelectContext,
   useTooltipContext,
 } from "./components/context.ts";
+export { default as ComboboxClearTrigger } from "./components/ComboboxClearTrigger.svelte";
+export { default as ComboboxContent } from "./components/ComboboxContent.svelte";
+export { default as ComboboxControl } from "./components/ComboboxControl.svelte";
+export { default as ComboboxInput } from "./components/ComboboxInput.svelte";
+export { default as ComboboxItem } from "./components/ComboboxItem.svelte";
+export { default as ComboboxItemGroup } from "./components/ComboboxItemGroup.svelte";
+export { default as ComboboxItemGroupLabel } from "./components/ComboboxItemGroupLabel.svelte";
+export { default as ComboboxItemIndicator } from "./components/ComboboxItemIndicator.svelte";
+export { default as ComboboxItemText } from "./components/ComboboxItemText.svelte";
+export { default as ComboboxLabel } from "./components/ComboboxLabel.svelte";
+export { default as ComboboxList } from "./components/ComboboxList.svelte";
+export { default as ComboboxPositioner } from "./components/ComboboxPositioner.svelte";
+export { default as ComboboxRoot } from "./components/ComboboxRoot.svelte";
+export { default as ComboboxRootProvider } from "./components/ComboboxRootProvider.svelte";
+export { default as ComboboxTrigger } from "./components/ComboboxTrigger.svelte";
 export { default as DialogCloseTrigger } from "./components/DialogCloseTrigger.svelte";
 export { default as DialogContent } from "./components/DialogContent.svelte";
 export { default as DialogDescription } from "./components/DialogDescription.svelte";
@@ -180,6 +197,10 @@ export const createListbox: (
 export const createSelect: (
   props: select.Props | (() => select.Props),
 ) => Created<select.Api<PropTypes>, select.Service> = anchoredCreate(select);
+/** Zag's combobox on the grid, in a component. */
+export const createCombobox: (
+  props: combobox.MountProps | (() => combobox.MountProps),
+) => Created<combobox.Api<PropTypes>, combobox.Service> = anchoredCreate(combobox);
 /** Zag's dialog on the grid, in a component. */
 export const createDialog: (
   props: dialog.Props | (() => dialog.Props),

@@ -4,7 +4,14 @@ import type * as select from "@monowind/ui/select";
 import type { PropTypes } from "@zag-js/vue";
 import { useSelect, type Composed } from "../composables.ts";
 import { defineItemParts } from "./items.ts";
-import { defineContext, defineRoot, defineRootProvider, partsOf, renderPart } from "./part.ts";
+import {
+  defineContext,
+  definePart,
+  defineRoot,
+  defineRootProvider,
+  partsOf,
+  renderPart,
+} from "./part.ts";
 
 /** Zag's select as a compound component (specs/ui.md "Component
  * layer"): a listbox on a trigger, its root an element of its own —
@@ -66,21 +73,10 @@ export const SelectList = part("List", (api) => api.getListProps());
 
 /** The floating part, carrying the ref that keeps it in the top layer
  * with the machine. */
-export const SelectPositioner = defineComponent(
-  (props: { asChild?: boolean }, { slots, attrs }) => {
-    const value = context.use();
-    return () =>
-      renderPart(
-        "div",
-        { ...value.api.value.getPositionerProps(), ref: value.positioner },
-        attrs as Record<string, unknown>,
-        Boolean(props.asChild),
-        slots["default"]?.(),
-        "SelectPositioner",
-      );
-  },
-  { name: "SelectPositioner", inheritAttrs: false, props: ["asChild"] },
-);
+export const SelectPositioner = definePart<Api>("SelectPositioner", context, (value) => ({
+  ...value.api.value.getPositionerProps(),
+  ref: value.positioner,
+}));
 
 /** The native select a form submits, an option per item: out of the
  * grid, a `display: none` control being one the layout skips and a

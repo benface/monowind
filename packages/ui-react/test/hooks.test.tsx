@@ -3,7 +3,16 @@ import { expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { collection } from "@monowind/ui/listbox";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Listbox, Menu, Select, useDialog, useListbox, useMenu, useSelect } from "../src/index.ts";
+import {
+  Combobox,
+  Listbox,
+  Menu,
+  Select,
+  useDialog,
+  useListbox,
+  useMenu,
+  useSelect,
+} from "../src/index.ts";
 
 /** The hooks (specs/ui.md): the grid's props in the DOM React renders,
  * the positioner's ref in an anchored component's props, and a
@@ -435,5 +444,36 @@ it("gives a select's label the element the association needs", async () => {
   expect((label as HTMLLabelElement).htmlFor).toBe(
     tree.container.querySelector<HTMLSelectElement>("select")!.id,
   );
+  await tree.unmount();
+});
+
+it("renders a combobox, its list anchored under the control it types into", async () => {
+  const items = collection({ items: ["main", "next"] });
+  const tree = await mount(
+    <Combobox.Root collection={items} placeholder="branch…">
+      <Combobox.Label>Find</Combobox.Label>
+      <Combobox.Control>
+        <Combobox.Input />
+        <Combobox.Trigger>▼</Combobox.Trigger>
+      </Combobox.Control>
+      <Combobox.Positioner>
+        <Combobox.Content>
+          {items.items.map((value) => (
+            <Combobox.Item key={value} value={value}>
+              <Combobox.ItemText>{value}</Combobox.ItemText>
+            </Combobox.Item>
+          ))}
+        </Combobox.Content>
+      </Combobox.Positioner>
+    </Combobox.Root>,
+  );
+  const input = tree.by("input") as HTMLInputElement;
+  expect(input.getAttribute("role")).toBe("combobox");
+  expect(input.placeholder).toBe("branch…");
+  // The list lines up under the control, not the button beside it.
+  const anchor = tree.by("control").style.getPropertyValue("anchor-name");
+  expect(anchor).toMatch(/^--mw-ui-/);
+  expect(tree.by("positioner").style.getPropertyValue("position-anchor")).toBe(anchor);
+  expect(tree.by("trigger").style.getPropertyValue("anchor-name")).toBe("");
   await tree.unmount();
 });

@@ -4,6 +4,7 @@
  * the same machines, so a page may mix them.
  */
 export {
+  useCombobox,
   useDialog,
   useListbox,
   useMenu,
@@ -13,6 +14,25 @@ export {
   type Composed,
   type InFlow,
 } from "./composables.ts";
+export {
+  ComboboxClearTrigger,
+  ComboboxContent,
+  ComboboxControl,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemGroup,
+  ComboboxItemGroupLabel,
+  ComboboxItemIndicator,
+  ComboboxItemText,
+  ComboboxLabel,
+  ComboboxList,
+  ComboboxPositioner,
+  ComboboxRoot,
+  ComboboxRootProvider,
+  ComboboxTrigger,
+  useComboboxContext,
+  useComboboxItemContext,
+} from "./components/combobox.ts";
 export {
   DialogCloseTrigger,
   DialogContent,

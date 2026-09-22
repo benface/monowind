@@ -92,7 +92,7 @@ export function listbox(root: Element, machineProps: MountProps): Mounted<Api> {
   );
   const label = part(root, "label");
   const content = part(root, "content");
-  const wireItems = itemParts<Api>(root, () => ({
+  const wireItems = itemParts<Api>(root, "listbox", () => ({
     highlightOnHover: root.hasAttribute("data-highlight-on-hover"),
   }));
   return mount(

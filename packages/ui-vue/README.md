@@ -3,8 +3,8 @@
 [`@monowind/ui`](https://github.com/benface/monowind/tree/main/packages/ui)
 for Vue, two ways over the same machines: a **component** per part —
 `MenuRoot`, `MenuTrigger`, `DialogRoot`, … — and a **composable** per
-component — `useMenu`, `useListbox`, `useSelect`, `useDialog`,
-`usePopover`, `useTooltip`. Style the parts with Tailwind and monowind
+component — `useMenu`, `useListbox`, `useSelect`, `useCombobox`,
+`useDialog`, `usePopover`, `useTooltip`. Style the parts with Tailwind and monowind
 classes; the engine places each floating part against its trigger in
 cells, in the top layer.
 
@@ -54,6 +54,13 @@ is a listener, so `onSelect` is `@select` and `onOpenChange` is
   `SelectIndicator`, `SelectClearTrigger`, `SelectPositioner`,
   `SelectList` and `SelectHiddenSelect`, the native control a form
   submits.
+- Combobox — `ComboboxRoot` (an element of its own),
+  `ComboboxLabel`, `ComboboxControl`, `ComboboxInput`,
+  `ComboboxTrigger`, `ComboboxClearTrigger`, `ComboboxPositioner`,
+  `ComboboxContent`, `ComboboxList`, and the item parts below. Its
+  list anchors to the control, so it lines up under the input;
+  filtering is yours, and the items your collection leaves out are
+  hidden.
 
 A root emits `update:open`, `update:value`,
 `update:highlighted-value` and `update:trigger-value` where its
@@ -75,7 +82,6 @@ An item names one of the collection's items, by `item` or by the
 indicator inside; `useListboxItemContext()` and
 `useSelectItemContext()` read it. `SelectValueText` shows what is
 selected, its slot the placeholder until something is.
-
 A `MenuRoot` inside another is that menu's **submenu**: Zag links the
 two, and the submenu takes the side it opens on (`right-start`, or
 `left-start` in a right-to-left menu) and the behavior its parent

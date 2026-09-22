@@ -2,6 +2,7 @@ import { getContext, setContext } from "svelte";
 import type { Snippet } from "svelte";
 import type { ItemApi } from "@monowind/ui/framework";
 export { warnStray } from "@monowind/ui/framework";
+import type * as combobox from "@monowind/ui/combobox";
 import type * as dialog from "@monowind/ui/dialog";
 import type * as listbox from "@monowind/ui/listbox";
 import type * as menu from "@monowind/ui/menu";
@@ -53,6 +54,7 @@ export type PopoverApi = Created<popover.Api<PropTypes>, popover.Service>;
 export type TooltipApi = Created<tooltip.Api<PropTypes>, tooltip.Service>;
 export type ListboxApi = InFlow<listbox.Api<PropTypes>, listbox.Service>;
 export type SelectApi = Created<select.Api<PropTypes>, select.Service>;
+export type ComboboxApi = Created<combobox.Api<PropTypes>, combobox.Service>;
 
 /** What a menu's parts read: its own create, the menu it is nested
  * in, and the props it was given, which its own submenus take the
@@ -67,6 +69,7 @@ export interface MenuValue {
 export const menuContext = defineContext<MenuValue>("Menu");
 export const listboxContext = defineContext<ListboxApi>("Listbox");
 export const selectContext = defineContext<SelectApi>("Select");
+export const comboboxContext = defineContext<ComboboxApi>("Combobox");
 export const dialogContext = defineContext<DialogApi>("Dialog");
 export const popoverContext = defineContext<PopoverApi>("Popover");
 export const tooltipContext = defineContext<TooltipApi>("Tooltip");
@@ -83,6 +86,8 @@ export const useTooltipContext = (): TooltipApi => tooltipContext.use();
 export const useListboxContext = (): ListboxApi => listboxContext.use();
 /** The select a part is in, as `createSelect()` returns it. */
 export const useSelectContext = (): SelectApi => selectContext.use();
+/** The combobox a part is in, as `createCombobox()` returns it. */
+export const useComboboxContext = (): ComboboxApi => comboboxContext.use();
 
 /** The item an `Item` holds, for the text and the indicator inside
  * it: whatever the collection holds, which is the author's shape. A

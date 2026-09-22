@@ -250,6 +250,37 @@ describe("the mount", () => {
     root.remove();
   });
 
+  it("names the mount that found none of its collection's items", async () => {
+    // A mount reads its parts once, so markup a template commits
+    // after it is markup it never sees: the rest of the component
+    // works, and only the items are missing.
+    const root = document.createElement("div");
+    root.innerHTML = `<div data-part="content"></div>`;
+    document.body.append(root);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mounted = listbox(root, {
+      id: "late",
+      collection: collection({ items: ["main", "next"] }),
+    });
+    await settle();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("listbox mounted with 2 items");
+    warn.mockRestore();
+    mounted.destroy();
+    root.remove();
+  });
+
+  it("says nothing where the markup marks its items", async () => {
+    const root = markup();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mounted = listbox(root, { id: "quiet" });
+    await settle();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    mounted.destroy();
+    root.remove();
+  });
+
   it("destroy takes Zag's handlers off the parts", async () => {
     const root = markup();
     const mounted = listbox(root, { id: "d" });

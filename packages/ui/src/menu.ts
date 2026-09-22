@@ -9,7 +9,7 @@ import {
   type MachineProps,
   type SchemaOf,
 } from "./anchor.ts";
-import { liveProps, mountAnchored, parts, start, withProps, type Mounted } from "./vanilla.ts";
+import { liveProps, mergePartial, mountAnchored, parts, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Menu.Props;
 export type Api<T extends PropTypes = PropTypes> = Menu.Api<T>;
@@ -89,7 +89,7 @@ export function asSubmenuOf(parent: Props, own: Props): Props {
     id: own.id,
     positioning: { placement: parent.dir === "rtl" ? "left-start" : "right-start" },
   };
-  return withProps(base, own);
+  return mergePartial(base, own);
 }
 
 /** A marked submenu's props: `asSubmenuOf` with its id under the

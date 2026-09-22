@@ -1,5 +1,5 @@
 import { ListCollection } from "@zag-js/collection";
-import type { ItemApi } from "./framework.ts";
+import { warnUnmarked, type ItemApi } from "./framework.ts";
 import { part, parts, type Spread } from "./vanilla.ts";
 
 /** An item as the markup gives it, in the keys Zag's own collection
@@ -12,7 +12,7 @@ interface MarkupItem {
 
 /** A component's props as its mount takes them: Zag's, with the
  * collection optional where the marked items can make one. */
-export type WithMarkupItems<P extends { collection: unknown }> = Omit<P, "collection"> & {
+export type WithMarkupItems<P extends { collection?: unknown }> = Omit<P, "collection"> & {
   collection?: P["collection"] | undefined;
 };
 
@@ -41,7 +41,13 @@ export function markupCollection(root: Element): ListCollection<MarkupItem> {
  * its root can gain or lose). */
 export function itemParts<A extends ItemApi>(
   root: Element,
+  /** The component's name, for the warning where it finds no item. */
+  name: string,
   itemProps: () => { highlightOnHover?: boolean } = () => ({}),
+  /** Whether an item the collection leaves out is hidden rather than
+   * left as plain markup: a combobox filters by narrowing the
+   * collection, so the items it drops must go. */
+  hideUnlisted = false,
 ): (api: A, spread: Spread) => void {
   const groups = parts(root, "item-group");
   const groupLabels = parts(root, "item-group-label");
@@ -51,7 +57,12 @@ export function itemParts<A extends ItemApi>(
     text: part(element, "item-text"),
     indicator: part(element, "item-indicator"),
   }));
+  let warned = false;
   return (api, spread) => {
+    if (!warned) {
+      warned = true;
+      warnUnmarked(name, api.collection.size, items.length);
+    }
     const extra = itemProps();
     for (const group of groups) {
       spread(group, api.getItemGroupProps({ id: group.dataset["value"] ?? "" }));
@@ -62,8 +73,10 @@ export function itemParts<A extends ItemApi>(
     }
     for (const { element, value, text, indicator } of items) {
       // The collection holds what the component knows: an item the
-      // author's own collection leaves out stays plain markup.
+      // author's own collection leaves out stays plain markup, or
+      // goes entirely where the component filters by collection.
       const item = api.collection.find(value);
+      if (hideUnlisted && element instanceof HTMLElement) element.hidden = item === null;
       if (item === null) continue;
       const props = { item, ...extra };
       spread(element, api.getItemProps(props));

@@ -4,6 +4,7 @@
   "description": "Accessible components on the monowind grid: Zag.js machines placed and layered by the engine",
   "keywords": [
     "accessibility",
+    "combobox",
     "components",
     "dialog",
     "listbox",
@@ -39,6 +40,10 @@
     "./select": {
       "typecheck": "./dist/select.d.ts",
       "default": "./src/select.ts"
+    },
+    "./combobox": {
+      "typecheck": "./dist/combobox.d.ts",
+      "default": "./src/combobox.ts"
     },
     "./dialog": {
       "typecheck": "./dist/dialog.d.ts",
@@ -80,6 +85,10 @@
         "types": "./dist/select.d.ts",
         "default": "./dist/select.js"
       },
+      "./combobox": {
+        "types": "./dist/combobox.d.ts",
+        "default": "./dist/combobox.js"
+      },
       "./dialog": {
         "types": "./dist/dialog.d.ts",
         "default": "./dist/dialog.js"
@@ -117,6 +126,7 @@
   },
   "dependencies": {
     "@zag-js/collection": "^1.44.0",
+    "@zag-js/combobox": "^1.44.0",
     "@zag-js/core": "^1.44.0",
     "@zag-js/dialog": "^1.44.0",
     "@zag-js/focus-visible": "^1.44.0",

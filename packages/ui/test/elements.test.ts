@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import { props as comboboxProps } from "@zag-js/combobox";
+import { props as dialogProps } from "@zag-js/dialog";
+import { props as listboxProps } from "@zag-js/listbox";
+import { props as menuProps } from "@zag-js/menu";
+import { props as popoverProps } from "@zag-js/popover";
+import { props as selectProps } from "@zag-js/select";
+import { props as tooltipProps } from "@zag-js/tooltip";
+import type { MonoElement } from "../src/elements/element.ts";
 import { defineMonoUi } from "../src/elements/index.ts";
+import { collection as listboxCollection } from "../src/listbox.ts";
 import type { Api as MenuApi } from "../src/menu.ts";
 import { by, settle } from "./helpers.ts";
 
@@ -242,6 +251,26 @@ describe("a select", () => {
       <select data-part="hidden-select"></select>
     </mono-select>`;
 
+  it("takes a collection set as a property, whole, every time", async () => {
+    const element = render(SELECT);
+    await settle();
+    const select = element as HTMLElement & {
+      collection: unknown;
+      api: { collection: { firstValue: string; getValues(): string[] } };
+    };
+    // A framework sets a property it finds on every render, so the
+    // second one goes through the mount's partial merge: a class
+    // spread into an object literal there would keep its items and
+    // lose the accessors the machine navigates by.
+    select.collection = listboxCollection({ items: ["next", "release"] });
+    await settle();
+    select.collection = listboxCollection({ items: ["release", "main"] });
+    await settle();
+    expect(select.api.collection.getValues()).toEqual(["release", "main"]);
+    expect(select.api.collection.firstValue).toBe("release");
+    element.remove();
+  });
+
   it("fills the control a form posts without mounting again for it", async () => {
     const element = render(SELECT);
     // Hidden AS IT MOUNTS, not when Zag's first spread lands a
@@ -260,6 +289,96 @@ describe("a select", () => {
     expect(hidden.querySelectorAll("option")).toHaveLength(2);
     expect((element as HTMLElement & { api: unknown }).api).toBe(api);
     element.remove();
+  });
+});
+
+describe("a combobox", () => {
+  it("mounts on its markup and anchors its list under the control", async () => {
+    const element = render(`
+      <mono-combobox id="c" placeholder="branch…">
+        <div data-part="control">
+          <input data-part="input" />
+          <button data-part="trigger">▼</button>
+        </div>
+        <div data-part="positioner">
+          <div data-part="content">
+            <div data-part="item" data-value="main"><span data-part="item-text">main</span></div>
+          </div>
+        </div>
+      </mono-combobox>`);
+    await settle();
+    const input = by(element, "input") as HTMLInputElement;
+    expect(input.getAttribute("role")).toBe("combobox");
+    expect(input.placeholder).toBe("branch…");
+    // The list lines up under the control, not the button beside it.
+    expect(by(element, "control").style.getPropertyValue("anchor-name")).toBe("--mw-ui-c");
+    expect(by(element, "positioner").style.getPropertyValue("position-anchor")).toBe("--mw-ui-c");
+    element.remove();
+  });
+});
+
+describe("every element", () => {
+  /** Handled off the definition: the id and `open` attributes, the
+   * flattened `positioning`, and `getRootNode`, which the DOM owns. */
+  const BASE = ["id", "open", "defaultOpen", "positioning", "getRootNode"];
+  /** An initial selection has no attribute: Zag types these `string[]`
+   * and markup has no agreed way to spell a list of values. */
+  const UNSUPPORTED = ["value", "defaultValue"];
+  /** Where the floating part goes, which an anchored element flattens
+   * into `positioning`. */
+  const POSITIONING = ["placement", "gutter", "offsetMainAxis", "offsetCrossAxis"];
+
+  const camel = (attribute: string): string =>
+    attribute.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+
+  /** Each element with the props its machine takes, Zag's own list. */
+  const ELEMENTS: [string, readonly string[]][] = [
+    ["mono-menu", menuProps],
+    ["mono-listbox", listboxProps],
+    ["mono-select", selectProps],
+    ["mono-combobox", comboboxProps],
+    ["mono-dialog", dialogProps],
+    ["mono-popover", popoverProps],
+    ["mono-tooltip", tooltipProps],
+  ];
+
+  const elementOf = (tag: string) => customElements.get(tag) as unknown as typeof MonoElement;
+
+  /** The prop each of an element's attributes names: its alias, else
+   * the attribute camel-cased. */
+  function attributePropsOf(tag: string): string[] {
+    const element = elementOf(tag);
+    return Object.keys(element.table).map(
+      (name) => element.definition.aliases?.[name] ?? camel(name),
+    );
+  }
+
+  /** Everything an element declares: those, its callbacks and its
+   * properties. */
+  function declaredBy(tag: string): string[] {
+    const { callbacks, properties } = elementOf(tag).definition;
+    return [...callbacks, ...(properties ?? []), ...attributePropsOf(tag)];
+  }
+
+  it.each(ELEMENTS)("takes every prop its machine has: %s", (tag, machineProps) => {
+    const declared = new Set([...BASE, ...UNSUPPORTED, ...declaredBy(tag)]);
+    expect(machineProps.filter((prop) => !declared.has(prop))).toEqual([]);
+  });
+
+  it.each(ELEMENTS)("names each prop once: %s", (tag) => {
+    // An attribute and an accessor for one prop are two ways in that
+    // write the same thing, with no rule for which wins.
+    const attributeProps = attributePropsOf(tag);
+    const { properties } = elementOf(tag).definition;
+    expect((properties ?? []).filter((prop) => attributeProps.includes(prop))).toEqual([]);
+  });
+
+  it.each(ELEMENTS)("declares no prop its machine lacks: %s", (tag, machineProps) => {
+    // A name an element declares that its machine has never heard of
+    // is a prop that goes nowhere.
+    expect(
+      declaredBy(tag).filter((prop) => !machineProps.includes(prop) && !POSITIONING.includes(prop)),
+    ).toEqual([]);
   });
 });
 

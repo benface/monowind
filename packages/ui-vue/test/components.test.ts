@@ -2,6 +2,15 @@ import { expect, it, vi } from "vitest";
 import { createApp, h, nextTick, reactive } from "vue";
 import { collection } from "@monowind/ui/listbox";
 import {
+  ComboboxContent,
+  ComboboxControl,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemText,
+  ComboboxLabel,
+  ComboboxPositioner,
+  ComboboxRoot,
+  ComboboxTrigger,
   ListboxContent,
   ListboxItem,
   ListboxItemIndicator,
@@ -290,5 +299,32 @@ it("follows a v-model through the update events a root emits", async () => {
   await nextTick();
   expect(state.value).toEqual(["next"]);
   expect(state.open).toBe(false);
+  tree.unmount();
+});
+
+it("renders a combobox, its list anchored under the control it types into", async () => {
+  const items = collection({ items: ["main", "next"] });
+  const tree = mount(() =>
+    h(ComboboxRoot, { collection: items, placeholder: "branch…" }, () => [
+      h(ComboboxLabel, () => "Find"),
+      h(ComboboxControl, () => [h(ComboboxInput), h(ComboboxTrigger, () => "▼")]),
+      h(ComboboxPositioner, () => [
+        h(ComboboxContent, () =>
+          items.items.map((value) =>
+            h(ComboboxItem, { value, key: value }, () => [h(ComboboxItemText, () => value)]),
+          ),
+        ),
+      ]),
+    ]),
+  );
+  await nextTick();
+  const input = tree.by("input") as HTMLInputElement;
+  expect(input.getAttribute("role")).toBe("combobox");
+  expect(input.placeholder).toBe("branch…");
+  // The list lines up under the control, not the button beside it.
+  const anchor = tree.by("control").style.getPropertyValue("anchor-name");
+  expect(anchor).toMatch(/^--mw-ui-/);
+  expect(tree.by("positioner").style.getPropertyValue("position-anchor")).toBe(anchor);
+  expect(tree.by("trigger").style.getPropertyValue("anchor-name")).toBe("");
   tree.unmount();
 });

@@ -23,13 +23,19 @@ export function start<T extends MachineSchema>(
   return started;
 }
 
-const isPlain = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+/** A plain object, which a partial merges into a level deep. A class
+ * instance is not one: spread into a literal, a Zag collection keeps
+ * its items and loses the accessors the machine navigates by. */
+const isPlain = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
 
 /** A partial over props, merged as Zag's own `updateProps` merges one:
  * a level deep, so `{ positioning: { placement } }` leaves the rest of
  * `positioning` alone. */
-export function withProps<P extends object>(base: P, partial: object): P {
+export function mergePartial<P extends object>(base: P, partial: object): P {
   const merged = { ...base } as Record<string, unknown>;
   for (const [key, value] of Object.entries(partial)) {
     const had = merged[key];
@@ -54,7 +60,7 @@ export function liveProps<P extends object, G>(authored: P, derive: (props: P) =
       return derived;
     },
     update(partial) {
-      current = withProps(current, partial);
+      current = mergePartial(current, partial);
       derived = derive(current);
     },
   };
@@ -84,8 +90,16 @@ export type Spread = (element: Element | undefined, props: object) => void;
 /** What an anchored component's API gives its mount past `Anchored`:
  * the props of its triggers — a menu's each by value — and its
  * content. */
+/** What a trigger takes of its own: a menu names one of several by
+ * value, a combobox says whether its one takes focus. Both are
+ * optional, and a component ignores what it does not read. */
+interface TriggerOptions {
+  value?: string | undefined;
+  focusable?: boolean | undefined;
+}
+
 interface CommonApi extends Anchored {
-  getTriggerProps(props?: { value?: string | undefined }): object;
+  getTriggerProps(props?: TriggerOptions): object;
   getContentProps(): object;
 }
 
@@ -129,6 +143,8 @@ export function mount<T extends MachineSchema, A>(
   linked: Iterable<Followed> = [],
   live?: LiveProps<Partial<T["props"]>>,
 ): Mounted<A> {
+  // Zag declares this one private and defines it on the instance.
+  const notify = (machine as unknown as { notify?: () => void }).notify;
   let current = connect(machine.service);
   let stopped = false;
   let unwire: (() => void)[] = [];
@@ -151,9 +167,14 @@ export function mount<T extends MachineSchema, A>(
     updateProps(partial) {
       if (!live) return;
       live.update(partial);
-      // Zag defers its own notify, so the spread is this call's.
-      machine.updateProps(live.machine);
-      render();
+      // The machine reads its props from the getter it was started
+      // on, so only its watchers are owed the news, and `notify` is
+      // that. Zag's public `updateProps` wraps the props source per
+      // call, which a combobox filtering per keystroke pays for
+      // quadratically, so it is the fallback rather than the way.
+      // Either publishes, and the subscription below renders.
+      if (notify) notify();
+      else machine.updateProps(partial);
     },
     destroy() {
       stopped = true;

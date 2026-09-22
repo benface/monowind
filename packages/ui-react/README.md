@@ -2,9 +2,9 @@
 
 [`@monowind/ui`](https://github.com/benface/monowind/tree/main/packages/ui)
 for React, two ways over the same machines: a **component** per
-piece — `Menu`, `Dialog`, `Popover`, `Tooltip` — and a **hook** per
-component — `useMenu`, `useListbox`, `useSelect`, `useDialog`,
-`usePopover`, `useTooltip`. Style the parts with Tailwind and monowind
+piece — `Menu`, `Listbox`, `Select`, `Combobox`, `Dialog`, `Popover`,
+`Tooltip` — and a **hook** per component — `useMenu`, `useListbox`,
+`useSelect`, `useCombobox`, `useDialog`, `usePopover`, `useTooltip`. Style the parts with Tailwind and monowind
 classes; the engine places each floating part against its trigger in
 cells, in the top layer.
 
@@ -57,6 +57,12 @@ in — and holds the API for the parts under it. The parts:
   `ItemGroup`, `ItemGroupLabel`; the select adds `Control`,
   `Trigger`, `ValueText`, `Indicator`, `ClearTrigger`, `Positioner`,
   `List` and `HiddenSelect`, the native control a form submits.
+- `Combobox` — `Root` (an element of its own), `Label`, `Control`,
+  `Input`, `Trigger`, `ClearTrigger`, `Positioner`, `Content`,
+  `List`, and the item parts below. Its list anchors to the `Control`,
+  so it lines up under the input; filtering is yours — give `Root` the
+  collection your input value narrows, and the items it leaves out are
+  hidden.
 
 A menu's, a dialog's, a popover's and a tooltip's `Root` render
 nothing — Zag gives those four no root part, and a wrapper invented
@@ -70,7 +76,6 @@ An `Item` names one of the collection's items, by `item` or by the
 `ItemIndicator` inside; `useListboxItemContext()` and
 `useSelectItemContext()` read it. `Select.ValueText` shows what is
 selected, its children the placeholder until something is.
-
 A `Menu.Root` inside another is that menu's **submenu**: Zag links the
 two, and the submenu takes the side it opens on (`right-start`, or
 `left-start` in a right-to-left menu) and the behavior its parent

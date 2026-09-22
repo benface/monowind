@@ -1,3 +1,4 @@
+import { combobox, type MountProps as ComboboxProps } from "../combobox.ts";
 import { dialog, type Props as DialogProps } from "../dialog.ts";
 import { listbox, type MountProps as ListboxProps } from "../listbox.ts";
 import { menu, type MountProps as MenuProps, type Props } from "../menu.ts";
@@ -17,22 +18,34 @@ import { defineElement, type Kind, type MonoElement } from "./element.ts";
  * by kind, which no static type can narrow to its machine's own.
  */
 
-/** What every dismissable component handles past its own callbacks. */
-const DISMISSABLE = [
-  "onEscapeKeyDown",
-  "onInteractOutside",
-  "onFocusOutside",
-  "onPointerDownOutside",
-] as const;
+/** The content's accessible name, as Zag spells the prop. The
+ * element's own `aria-label` is inert — it carries no role — so the
+ * attribute is the plain one a markup author reaches for. */
+const CONTENT_LABEL = { "aria-label": "aria-label" } as const;
 
-/** The props no attribute can carry, which every component takes.
- * `getRootNode` is not among them: the DOM owns that name on every
- * node, so it is `setProp`'s alone. */
-const PROPERTIES = ["ids", "translations"] as const;
+/** An interaction away from the content, which a list closes on. */
+const OUTSIDE = ["onInteractOutside", "onFocusOutside", "onPointerDownOutside"] as const;
 
-/** The direction and the trigger value every component takes. */
-const COMMON: Record<string, Kind> = {
-  dir: "string",
+/** What a component the reader dismisses handles past those: a menu,
+ * a dialog and a popover, which Escape closes and which can refuse. */
+const DISMISSABLE = [...OUTSIDE, "onEscapeKeyDown", "onRequestDismiss"] as const;
+
+/** The prop no attribute can carry that every component takes. The
+ * DOM owns `getRootNode` on every node, so that one is `setProp`'s
+ * alone. */
+const PROPERTIES = ["ids"] as const;
+
+/** Those, plus the strings a component reads to its user: a select, a
+ * combobox and a popover take them. */
+const TRANSLATED = [...PROPERTIES, "translations"] as const;
+
+/** The reading direction every component takes. */
+const DIRECTION: Record<string, Kind> = { dir: "string" };
+
+/** Which of several triggers a component is open against, for the
+ * four that can have more than one: a menu, a dialog, a popover and a
+ * tooltip. */
+const TRIGGERS: Record<string, Kind> = {
   "default-trigger-value": "string",
   "trigger-value": "string",
 };
@@ -52,19 +65,22 @@ function submenusOf(root: Element): Record<string, Props> {
 }
 
 export const MonoMenu = defineElement({
-  properties: [...PROPERTIES, "navigate"],
+  properties: [...PROPERTIES, "navigate", "anchorPoint"],
   mount: (root, props) =>
     menu(root, { ...props, submenus: submenusOf(root) } as unknown as MenuProps),
   anchored: true,
   attributes: {
-    ...COMMON,
+    ...DIRECTION,
+    ...TRIGGERS,
     "close-on-select": "boolean",
     "loop-focus": "boolean",
     typeahead: "boolean",
+    "aria-label": "string",
     composite: "boolean",
     "default-highlighted-value": "string",
     "highlighted-value": "string",
   },
+  aliases: CONTENT_LABEL,
   callbacks: [
     "onSelect",
     "onHighlightChange",
@@ -88,8 +104,10 @@ export const MonoListbox = defineElement({
   properties: [...PROPERTIES, "collection", "scrollToIndexFn"],
   mount: (root, props) => listbox(root, props as unknown as ListboxProps),
   attributes: {
-    ...COMMON,
+    ...DIRECTION,
     disabled: "boolean",
+    orientation: "string",
+    "selection-mode": "string",
     "disallow-select-all": "boolean",
     "loop-focus": "boolean",
     "select-on-highlight": "boolean",
@@ -102,11 +120,11 @@ export const MonoListbox = defineElement({
 });
 
 export const MonoSelect = defineElement({
-  properties: [...PROPERTIES, "collection", "scrollToIndexFn"],
+  properties: [...TRANSLATED, "collection", "scrollToIndexFn"],
   mount: (root, props) => select(root, props as unknown as SelectProps),
   anchored: true,
   attributes: {
-    ...COMMON,
+    ...DIRECTION,
     name: "string",
     form: "string",
     "auto-complete": "string",
@@ -122,40 +140,78 @@ export const MonoSelect = defineElement({
     "default-highlighted-value": "string",
     "highlighted-value": "string",
   },
-  callbacks: ["onSelect", "onHighlightChange", "onValueChange", "onOpenChange"],
+  callbacks: ["onSelect", "onHighlightChange", "onValueChange", "onOpenChange", ...OUTSIDE],
+});
+
+export const MonoCombobox = defineElement({
+  properties: [...TRANSLATED, "collection", "navigate", "scrollToIndexFn"],
+  mount: (root, props) => combobox(root, props as unknown as ComboboxProps),
+  anchored: true,
+  attributes: {
+    ...DIRECTION,
+    name: "string",
+    form: "string",
+    placeholder: "string",
+    "input-behavior": "string",
+    "selection-behavior": "string",
+    "allow-custom-value": "boolean",
+    "auto-focus": "boolean",
+    "close-on-select": "boolean",
+    composite: "boolean",
+    disabled: "boolean",
+    invalid: "boolean",
+    "loop-focus": "boolean",
+    multiple: "boolean",
+    "open-on-change": "boolean",
+    "open-on-click": "boolean",
+    "open-on-key-press": "boolean",
+    "read-only": "boolean",
+    required: "boolean",
+    "disable-layer": "boolean",
+    "always-submit-on-enter": "boolean",
+    "default-input-value": "string",
+    "input-value": "string",
+    "default-highlighted-value": "string",
+    "highlighted-value": "string",
+  },
+  callbacks: [
+    "onSelect",
+    "onHighlightChange",
+    "onValueChange",
+    "onInputValueChange",
+    "onOpenChange",
+    ...OUTSIDE,
+  ],
 });
 
 export const MonoDialog = defineElement({
-  properties: [
-    ...PROPERTIES,
-    "initialFocusEl",
-    "finalFocusEl",
-    "restoreFocus",
-    "persistentElements",
-  ],
+  properties: [...PROPERTIES, "initialFocusEl", "finalFocusEl", "persistentElements"],
   mount: (root, props) => dialog(root, props as unknown as DialogProps),
   anchored: true,
   attributes: {
-    ...COMMON,
+    ...DIRECTION,
+    ...TRIGGERS,
     "trap-focus": "boolean",
     "prevent-scroll": "boolean",
     modal: "boolean",
     "restore-focus": "boolean",
     "close-on-interact-outside": "boolean",
     "close-on-escape": "boolean",
+    "aria-label": "string",
     // The element's own `role` is its own; the machine's names itself.
     "content-role": "string",
   },
-  aliases: { "content-role": "role" },
+  aliases: { ...CONTENT_LABEL, "content-role": "role" },
   callbacks: ["onOpenChange", "onTriggerValueChange", ...DISMISSABLE],
 });
 
 export const MonoPopover = defineElement({
-  properties: [...PROPERTIES, "initialFocusEl", "persistentElements"],
+  properties: [...TRANSLATED, "initialFocusEl", "finalFocusEl", "persistentElements"],
   mount: (root, props) => popover(root, props as unknown as PopoverProps),
   anchored: true,
   attributes: {
-    ...COMMON,
+    ...DIRECTION,
+    ...TRIGGERS,
     modal: "boolean",
     portalled: "boolean",
     "auto-focus": "boolean",
@@ -171,7 +227,8 @@ export const MonoTooltip = defineElement({
   mount: (root, props) => tooltip(root, props as unknown as TooltipProps),
   anchored: true,
   attributes: {
-    ...COMMON,
+    ...DIRECTION,
+    ...TRIGGERS,
     "open-delay": "number",
     "close-delay": "number",
     "close-on-pointer-down": "boolean",
@@ -180,7 +237,9 @@ export const MonoTooltip = defineElement({
     "close-on-click": "boolean",
     interactive: "boolean",
     disabled: "boolean",
+    "aria-label": "string",
   },
+  aliases: CONTENT_LABEL,
   callbacks: ["onOpenChange", "onTriggerValueChange"],
 });
 
@@ -189,6 +248,7 @@ const ELEMENTS: Record<string, CustomElementConstructor> = {
   "mono-submenu": MonoSubmenu,
   "mono-listbox": MonoListbox,
   "mono-select": MonoSelect,
+  "mono-combobox": MonoCombobox,
   "mono-dialog": MonoDialog,
   "mono-popover": MonoPopover,
   "mono-tooltip": MonoTooltip,

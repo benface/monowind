@@ -1,7 +1,8 @@
 # @monowind/ui
 
 Accessible components on the [monowind](https://github.com/benface/monowind)
-grid: a menu, a listbox, a select, a dialog, a popover, and a tooltip,
+grid: a menu, a listbox, a select, a combobox, a dialog, a popover,
+and a tooltip,
 each a
 [Zag.js](https://zagjs.com) state machine wired to the engine. Zag runs
 the roles and states, the keyboard, typeahead, focus trapping and
@@ -61,15 +62,19 @@ defineMonoUi();
 
 **Vanilla, or a framework without a Zag adapter** — mark the parts
 with `data-part` and mount the component on their root: `menu(root,
-props)`, `listbox(root, props)`, `select(root, props)`, `dialog(root,
-props)`, `popover(root, props)`, `tooltip(root, props)`. `props` are
-Zag's machine props (`id` required; a list's `collection` optional, the
-marked items making one). Each returns
-the live `api` and a `destroy()`. The parts are found once, at the
-mount: for markup that changes, destroy and mount again. Give the
-positioner `popover="manual"` in the markup, as above: the mount sets
-it, but a page parsed before the script runs would show the content in
-flow until then.
+props)`, `listbox(root, props)`, `select(root, props)`,
+`combobox(root, props)`, `dialog(root, props)`, `popover(root,
+props)`, `tooltip(root, props)`. `props` are Zag's machine props
+(`id` required; a list's `collection` optional, the marked items
+making one). Each returns the live `api`, an `updateProps(partial)`
+that merges into them, and a `destroy()`. The parts are found once,
+at the mount: for markup that changes, destroy and mount again — a
+template that fills the root after handing it over leaves a mount
+with nothing to wire, and a development build says so where a list's
+collection holds items its markup never marked. Give the positioner
+`popover="manual"` in the markup, as above: the mount sets it, but a
+page parsed before the script runs would show the content in flow
+until then.
 
 **React, Vue, or Svelte** — `@monowind/ui-react`, `@monowind/ui-vue`,
 and `@monowind/ui-svelte` fold Zag's adapter in: one hook, composable,
@@ -165,6 +170,16 @@ highlights the selected item, or the first where nothing is selected,
 and scrolls to it, so the focus always lands somewhere the reader can
 see.
 
+A combobox is a listbox under an input: its `root` holds a `label`
+and a `control` with the `input` inside it, a `trigger` beside it and
+a `clear-trigger`, then the `positioner` and the `content` of `item`s,
+marked as a listbox's, with an optional `list` around them. It anchors
+to the `control`, not the trigger, so the list lines up under the
+text. Its items are the markup's where the props name none, and
+filtering is the page's: give `updateProps` a narrower `collection`
+from `onInputValueChange`, and the items outside it are hidden rather
+than left standing.
+
 A select is a listbox on a trigger: its `root` holds a `label` and a
 `control` with the `trigger` inside it — a `value-text` and an
 `indicator` inside that, and a `clear-trigger` beside it — then the
@@ -192,8 +207,8 @@ sampling it. The engine writes the area a floating part took as
 ## Elements
 
 `defineMonoUi()` registers `<mono-menu>`, `<mono-submenu>`,
-`<mono-listbox>`, `<mono-select>`, `<mono-dialog>`, `<mono-popover>`
-and `<mono-tooltip>`. An element is the root the mount would take, the
+`<mono-listbox>`, `<mono-select>`, `<mono-combobox>`,
+`<mono-dialog>`, `<mono-popover>` and `<mono-tooltip>`. An element is the root the mount would take, the
 parts marked inside it as ever:
 
 ```html
@@ -220,9 +235,10 @@ parts marked inside it as ever:
 **Attributes are the props**, kebab-cased: a boolean by presence
 (`false` written out turns one off), a number parsed, a string as
 written; `placement`, `gutter`, `offset-main-axis` and
-`offset-cross-axis` fold into `positioning`, and the dialog's
+`offset-cross-axis` fold into `positioning`, the dialog's
 `content-role` is the machine's `role`, the element's own being the
-element's. An attribute absent says nothing, so the machine keeps its
+element's, and `aria-label` — which names the content — is written as
+Zag spells it. An attribute absent says nothing, so the machine keeps its
 default. A change reaches the machine and the parts are spread again.
 `id` is optional — one is generated where the markup gives none — and
 changing it roots the mount again.
@@ -238,8 +254,9 @@ state, set or removed after it opens and closes the component, and the
 machine writes it back as the reader opens or dismisses it.
 
 **A prop no attribute carries** — `ids`, `translations`, a menu's
-`navigate`, a listbox's and a select's `collection`, a dialog's
-`initialFocusEl` — is a property on the element: `element.ids = {…}`,
+`navigate` and `anchorPoint`, a listbox's and a select's
+`collection`, a dialog's `initialFocusEl` — is a property on the
+element: `element.ids = {…}`,
 or `element.setProp(name, value)` by name. `getRootNode` takes the
 second form only, the DOM owning that name on every node. React sets a property it finds, so `<mono-select collection={…}
 />` hands the value over whole rather than stringified, and setting
@@ -297,11 +314,11 @@ which the engine draws beneath it; without the class the backdrop is
 invisible and the dialog still modal, Zag's trap and `aria-hidden`
 being its own.
 
-## Components
+## Modules
 
-Each entry exports the mount, `machine`, `connect`, `props`, and
-`api`, with Zag's `Props`, `Api`, and `Service` types and `GridProps`,
-`props()`'s return.
+One entry per component. Each exports the mount, `machine`, `connect`,
+`props`, and `api`, with Zag's `Props`, `Api`, and `Service` types and
+`GridProps`, `props()`'s return.
 
 - `@monowind/ui/menu` — Zag's menu: items, groups, separators,
   submenus, typeahead, `onSelect`.
@@ -311,6 +328,11 @@ Each entry exports the mount, `machine`, `connect`, `props`, and
 - `@monowind/ui/select` — Zag's select: a listbox anchored to its
   trigger, opening on click, one value or several, with a form value
   and a clear button; Zag's `collection` comes with it.
+- `@monowind/ui/combobox` — Zag's combobox: a listbox under an input,
+  anchored to the control so it lines up under what the reader types;
+  filtering is yours — hand `updateProps` a `collection` narrowed by
+  what `onInputValueChange` gives you, and the items it leaves out are
+  hidden. Zag's `collection` comes with it.
 - `@monowind/ui/dialog` — Zag's dialog: focus trap, the page hidden
   from assistive technology, Escape and outside click.
 - `@monowind/ui/popover` — Zag's popover.
@@ -322,9 +344,10 @@ registers, plus `defineElement()` and the `MonoElement` base, for an
 element of your own over a mount.
 
 `@monowind/ui/framework` holds what the framework packages share:
-`ItemApi`, the five getters a listbox's and a select's item parts
-read, and `warnStray`, which names a prop given to a root that
-renders no element.
+`ItemApi`, what a listbox's, a select's and a combobox's item parts
+read of the API above them; `warnStray`, which names a prop given to a
+root that renders no element; and `warnUnmarked`, which names a mount
+that found none of the items its collection holds.
 
 `@monowind/ui/top-layer`'s `syncTopLayer(positioner, open)` keeps a
 positioner in the top layer while the machine is open and through its

@@ -399,6 +399,42 @@ when it finds a dependency mid-load, which aborts a `load` wait.
 - React's `asChild` error came from `Children.only`, naming React
   rather than the part, where Vue and Svelte both name it. It counts
   the children itself now and says the same sentence.
+- **Every component is rendered by a test, and a guard holds it
+  there.** Svelte compiles a `.svelte` file only where something
+  instantiates it, so a part no test mounts is a part nothing
+  compiles — 34 of 73 were in that state. React and Vue turned out to
+  have the same hole for the same reason (36 and 38 uncovered, all of
+  Dialog, Popover and Tooltip in React among them), reached only
+  through the example apps, which carry a menu, a dialog and a select
+  and nothing else. Each package now has an `every.test` that mounts
+  every part and a `coverage.test` that reads its own index and fails
+  naming any export no test file instantiates. The guards are
+  negative-tested: take a component out of the harness and the guard
+  names it.
+- **`check-workspace-deps.mjs` gained the same kind of rule.**
+  `pnpm -r typecheck` runs the script where a workspace has one and
+  skips the workspace where it does not, which is how four styling
+  examples shipped unchecked. A workspace with TypeScript sources and
+  no `typecheck` script now fails `pnpm check`.
+- **Every element's props, checked against Zag's.** The frameworks
+  take `propNames` from Zag and are complete by construction; the
+  elements list theirs by hand, and eight were missing — a select's
+  four dismissal callbacks, a listbox's `orientation` and
+  `selectionMode`, a combobox's `disableLayer` and
+  `alwaysSubmitOnEnter`, a menu's `anchorPoint`, a popover's
+  `finalFocusEl`, `onRequestDismiss` on the three that have it, and
+  `aria-label` on the three that name their content. A test in
+  `elements.test.ts` now compares each element's declared props with
+  its machine's `props` BOTH ways, so a Zag upgrade cannot reopen the
+  gap. The reverse direction found the mirror bug the `trigger-value`
+  split had: a select and a combobox were handed an `onEscapeKeyDown`
+  their machines do not have (the dismissal callbacks are now
+  `OUTSIDE`, the three every list closes on, and `DISMISSABLE`, those
+  plus Escape and `onRequestDismiss`), `translations` reached all seven
+  elements where three machines take it, and a dialog's `restoreFocus` was both an
+  attribute and a property. `value`/`defaultValue` stay out, listed in
+  the test: Zag types them `string[]` and markup has no agreed way to
+  spell a list.
 
 ### The engine gained block-in-inline
 
@@ -425,6 +461,92 @@ inline element has no element children, which is nearly all of them —
 The elements need no display at all now: the stories, the examples
 and the READMEs give none, and the `Elements` golden is unchanged
 without it.
+
+### The combobox, added 2026-09-22
+
+`@monowind/ui/combobox`, its element and its components in all three
+frameworks, the shape `select.ts` set. Two things are its own:
+
+- **It anchors to the `control`**, the box around the input and the
+  trigger, not to the trigger alone, so the list lines up under what
+  the reader types. Zag's combobox trigger takes different props from
+  the others, so it does not fit `anchoredApi`; the anchoring math it
+  shares moved out as `anchoringOf`.
+- **Filtering hides what it drops.** A combobox filters by narrowing
+  its collection, and an item outside it used to stand in the list as
+  plain markup — `itemParts` gained `hideUnlisted`, which only the
+  combobox asks for, a listbox or a select keeping an item its
+  collection leaves out.
+
+**A partial must not reach into a class.** `withProps`, the mount's
+merge, called anything that was not an array a plain object and
+merged it a level deep — so a narrowed `collection` arrived as
+`{ ...previous, ...next }`, an object literal carrying the items and
+none of the accessors (`firstValue`, `find`) the machine navigates
+by. The list narrowed on screen and the keyboard stopped moving:
+`highlightFirstOrSelectedItem` read `prop("collection").firstValue`
+and got `undefined`. `isPlain` now asks the prototype, as Zag's own
+`mergeMachineProps` does, and the same merge had been mangling every
+other class a partial can carry — the `initialFocusEl` and
+`finalFocusEl` elements among them, and an element's `collection`
+property, which a framework sets on every render.
+
+Zag's `machine.updateProps` had been hiding it, its merge being
+prototype-aware: the machine read a whole collection through its own
+wrapper while ours read a broken one. It cannot stay, though — it
+wraps the props source per call, and a combobox filtering per
+keystroke pays for every keystroke before it (100 calls 671 ms, the
+sixth hundred 6022 ms). The machine reads its props from the getter
+it was started on, so all it is owed is the re-run of its watchers
+that `notify` is, with `updateProps` behind it as the slow fallback.
+A test holds the cost flat. Either way the machine publishes and the
+mount renders from the subscription it took out, so the render the
+mount used to make itself was a second spread of every part per
+keystroke; it is gone.
+
+Building its story found a bug in the mount: `updateProps` also handed
+the props to `machine.updateProps`, which the machine never needed —
+it was started on a GETTER and reads them itself — and which LOST them
+when called from inside a machine callback, the transition re-applying
+what it started with. That is exactly how a combobox filters, from
+`onInputValueChange`, so filtering never worked. Pinned by a test that
+narrows from inside the callback.
+
+Also scoped along the way: the elements' `COMMON` gave a listbox and a
+select two `trigger-value` attributes their machines do not have, now
+split into `DIRECTION` and `TRIGGERS`; and `WithMarkupItems` required
+a required `collection`, where a combobox's is optional.
+
+### Eight more examples, added 2026-09-22
+
+Two claims the README makes had no app behind them, and each now has
+four.
+
+**The engine reads computed styles, so any CSS tool works.**
+`example-unocss`, `example-panda`, `example-vanilla-extract` and
+`example-stylex` each style the same page with a different tool —
+atomic classes, a build-time recipe, a `.css.ts` file, a compiled
+`props()` call — and `scripts/styling-smoke.mjs` asserts the same five
+things of all four: a box the engine measured, a border drawn as
+glyphs, `--mw-border-glyphs` set as a plain custom property (the escape
+hatch a non-Tailwind tool needs, since `borders-rounded` is a Tailwind
+name), a color that reached the paint, and the text on the grid.
+
+**`<mono-*>` elements are the path for anything that is not React, Vue
+or Svelte.** `example-htmx`, `example-alpine`, `example-turbo` and
+`example-datastar` each drive a `<mono-menu>` with attributes alone,
+no page JavaScript: the element mounts itself, so its trigger carries
+Zag's roles before the enhancer has run a line, and its `itemselect`
+event is what the enhancer binds to. `scripts/enhancer-smoke.mjs`
+holds the shared body — up to and including opening the menu and
+picking an item, which is the same in all four — and each app passes a
+`drive` that asserts what its own idiom did with the event: htmx
+swapping a fragment in, Alpine writing to `x-data`, Turbo navigating a
+frame from the anchor inside the item, Datastar setting a signal. The
+enhancers load from a copied vendor file rather than a CDN, so the
+tests are offline; `scripts/copy-vendor.mjs` is the one copier, and an
+app's own `copy-vendor.mjs` is the eight lines that name its bundles
+and `import.meta.resolve` its extras.
 
 ### 6. Docs and release
 

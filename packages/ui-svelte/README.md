@@ -4,8 +4,8 @@
 for Svelte 5, two ways over the same machines: a **component** per
 part — `MenuRoot`, `MenuTrigger`, `DialogRoot`, … — and a
 **`create…`** per component — `createMenu`, `createListbox`,
-`createSelect`, `createDialog`, `createPopover`, `createTooltip` —
-called in a component's script. Style the parts with Tailwind and
+`createSelect`, `createCombobox`, `createDialog`, `createPopover`,
+`createTooltip` — called in a component's script. Style the parts with Tailwind and
 monowind classes; the engine places each floating part against its
 trigger in cells, in the top layer.
 
@@ -48,6 +48,13 @@ standing in — and holds the API for the parts under it. The parts:
   `SelectIndicator`, `SelectClearTrigger`, `SelectPositioner`,
   `SelectList` and `SelectHiddenSelect`, the native control a form
   submits.
+- Combobox — `ComboboxRoot` (an element of its own),
+  `ComboboxLabel`, `ComboboxControl`, `ComboboxInput`,
+  `ComboboxTrigger`, `ComboboxClearTrigger`, `ComboboxPositioner`,
+  `ComboboxContent`, `ComboboxList`, and the item parts below. Its
+  list anchors to the control, so it lines up under the input;
+  filtering is yours, and the items your collection leaves out are
+  hidden.
 
 A root's `open`, `value`, `highlightedValue` and `triggerValue` are
 `$bindable()` where its machine has them, so **`bind:`** works as

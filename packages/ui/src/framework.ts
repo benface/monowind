@@ -9,7 +9,7 @@
  * listbox and a select the same five getters, and the mount and every
  * framework's item parts read exactly these. */
 export interface ItemApi {
-  collection: { find(value: string): unknown };
+  collection: { find(value: string): unknown; size: number };
   getItemProps(props: { item: unknown }): object;
   getItemTextProps(props: { item: unknown }): object;
   getItemIndicatorProps(props: { item: unknown }): object;
@@ -31,5 +31,19 @@ export function warnStray(name: string, stray: string[]): void {
     `[@monowind/ui] <${name}> takes the machine's props, and ${named} ` +
       `${stray.length === 1 ? "is" : "are"} not among them. This root renders no element of ` +
       `its own — put them on a part, or on the <mono-*> element instead.`,
+  );
+}
+
+/** A mount that found none of the items its collection holds: the
+ * parts are read once, so markup a template fills in after handing
+ * the root over is markup the mount never sees, and everything but
+ * the items still works. Said once, and not in production. */
+export function warnUnmarked(name: string, held: number, marked: number): void {
+  if (marked > 0 || held === 0) return;
+  if (typeof process !== "undefined" && process.env["NODE_ENV"] === "production") return;
+  console.warn(
+    `[@monowind/ui] ${name} mounted with ${held} ${held === 1 ? "item" : "items"} in its ` +
+      "collection and none marked in its markup. A mount reads its parts once: mark them " +
+      "before it runs, or use the <mono-*> element, which mounts again as they arrive.",
   );
 }

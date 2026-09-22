@@ -53,7 +53,8 @@ describe("a dialog", () => {
     const dialog = all('[role="dialog"]')[0]!;
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(dialog.getAttribute("data-state")).toBe("closed");
-    expect(all('[aria-haspopup="dialog"]')).toHaveLength(1);
+    // Scoped: a popover's trigger says `dialog` too.
+    expect(all('[data-scope="dialog"][aria-haspopup="dialog"]')).toHaveLength(1);
   });
 
   it("hands a child snippet the part's props to spread itself", () => {
@@ -64,7 +65,8 @@ describe("a dialog", () => {
     expect(close.tagName).toBe("BUTTON");
     expect(close.className.split(" ").sort()).toEqual(["from-child", "from-part"]);
     expect(close.getAttribute("data-part")).toBe("close-trigger");
-    expect(all('[data-part="close-trigger"]')).toHaveLength(1);
+    // Scoped: a popover has a close trigger of its own.
+    expect(all('[data-scope="dialog"][data-part="close-trigger"]')).toHaveLength(1);
   });
 });
 
@@ -85,7 +87,8 @@ describe("a listbox", () => {
 
 describe("a select", () => {
   it("renders its parts and hides its form control out of the grid", () => {
-    expect(all('[aria-haspopup="listbox"]')).toHaveLength(1);
+    // Scoped: a combobox's trigger says `listbox` too.
+    expect(all('[data-scope="select"][aria-haspopup="listbox"]')).toHaveLength(1);
     const hidden = container.querySelector<HTMLSelectElement>("select")!;
     expect(hidden.name).toBe("branch");
     // Hidden by display, not by Zag's visually-hidden box, which would
@@ -132,6 +135,20 @@ describe("a listbox", () => {
     expect(by("item", "main").getAttribute("data-state")).toBe("unchecked");
     const indicator = by("item", "next").querySelector('[data-part="item-indicator"]')!;
     expect(indicator.getAttribute("data-state")).toBe("checked");
+  });
+});
+
+describe("a combobox", () => {
+  it("names its input and anchors its list under the control", () => {
+    const input = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    expect(input.placeholder).toBe("branch…");
+    const control = all('[data-part="control"]').find((el) => el.contains(input))!;
+    // The list lines up under the control, not the button beside it.
+    expect(control.style.getPropertyValue("anchor-name")).toBe("--mw-ui-find");
+    const positioner = all('[data-part="positioner"]').find(
+      (el) => el.style.getPropertyValue("position-anchor") === "--mw-ui-find",
+    );
+    expect(positioner).toBeDefined();
   });
 });
 

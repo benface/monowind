@@ -220,6 +220,20 @@ interface PlacedProps {
     | undefined;
 }
 
+/** Where a component's floating part goes, read from its props: the
+ * placement asked for, else the component's own, with the gutter and
+ * the shift in cells. A component whose anchor is not its trigger — a
+ * combobox anchors to the control, so its list lines up under the
+ * input rather than the button beside it — reads this and names its
+ * own parts. */
+export function anchoringOf({ positioning }: PlacedProps, placement: Placement): Anchoring {
+  return {
+    placement: positioning?.placement ?? placement,
+    gutter: positioning?.offset?.mainAxis ?? positioning?.gutter ?? 0,
+    shift: positioning?.offset?.crossAxis ?? 0,
+  };
+}
+
 /** Zag's connected API with the grid's props: each trigger named as an
  * anchor, the positioner a manual popover placed against the current
  * one — in the placement asked for, else the component's own — the
@@ -227,14 +241,11 @@ interface PlacedProps {
 export function anchoredApi<T extends PropTypes, A extends AnchoredParts<T>>(
   zag: A,
   normalize: NormalizeProps<T>,
-  { id, positioning }: PlacedProps,
+  machineProps: PlacedProps,
   placement: Placement,
 ): A {
-  const anchoring: Anchoring = {
-    placement: positioning?.placement ?? placement,
-    gutter: positioning?.offset?.mainAxis ?? positioning?.gutter ?? 0,
-    shift: positioning?.offset?.crossAxis ?? 0,
-  };
+  const { id } = machineProps;
+  const anchoring = anchoringOf(machineProps, placement);
   return {
     ...zag,
     getTriggerProps: (props?: TriggerValue) =>
