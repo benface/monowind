@@ -1,4 +1,4 @@
-import type { GlyphBoxes } from "./glyph-box.ts";
+import type { GlyphBox, GlyphBoxes } from "./glyph-box.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
 import {
@@ -513,7 +513,7 @@ function paintRows(
       const segment = row[i]!;
       const stale = refit && segment.box;
       if (!stale && (isBarePaint(segment) || sameSegment(segment, painted.segments[i]!))) continue;
-      applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs, y);
+      applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs, y, boxOf(segment, glyphs));
     }
     painted.segments = row;
   }
@@ -539,9 +539,8 @@ function isLineGlyph(cluster: string): boolean {
 
 /** Boxes repeat: a page of borders is one style over and over, so a
  * span's style is built once and the rest are clones of it. Keyed by
- * a segment's paint and its ROW — all `applySegment` reads, a shade's
- * lattice shifting with the row. Cleared per paint, the fits being the
- * same throughout one. */
+ * a segment's paint, and a shade's row too — all `applySegment` reads.
+ * Cleared per paint, the fits being the same throughout one. */
 const prototypes = new Map<string, HTMLElement>();
 
 /** A row's nodes: bare text for unpainted runs, a span per painted one. */
@@ -558,14 +557,22 @@ function rowNodes(
       nodes.push(document.createTextNode(segment.text));
       continue;
     }
-    const key = segment.box ? `${segmentKey(segment)}\x1f${y}` : null;
+    const box = boxOf(segment, glyphs);
+    // Only a shade's style answers to its row, its lattice shifting with
+    // it; every other box is the same on every row, so one prototype
+    // serves the page rather than one per row.
+    const key = segment.box
+      ? box?.period
+        ? `${segmentKey(segment)}\x1f${y}`
+        : segmentKey(segment)
+      : null;
     const prototype = key === null ? undefined : prototypes.get(key);
     let span: HTMLElement;
     if (prototype) {
       span = prototype.cloneNode(false) as HTMLElement;
     } else {
       span = document.createElement("span");
-      applySegment(span, segment, glyphs, y);
+      applySegment(span, segment, glyphs, y, box);
       if (key !== null) prototypes.set(key, span.cloneNode(false) as HTMLElement);
     }
     span.textContent = segment.text;
@@ -579,6 +586,18 @@ export function paintedCell(target: HTMLElement, col: number, row: number): stri
   return lastPaint.get(target)?.cells[row]?.[col];
 }
 
+/** The fit a boxed segment wears: a shared box repeats one single-cell
+ * cluster (plain-text.ts), so the fit it holds is the first
+ * character's. */
+function boxOf(segment: CellSegment, glyphs: PaintGlyphs | undefined): GlyphBox | null {
+  const clusterCells = segment.box;
+  if (!clusterCells) return null;
+  const clusters = (segment.cells ?? 1) / clusterCells;
+  return (
+    glyphs?.box(clusters === 1 ? segment.text : segment.text[0]!, clusterCells, segment) ?? null
+  );
+}
+
 /** A span's paint, and its box when the segment is one: an inline
  * block of exactly its cells, the glyph scaled to fill it and clipped
  * to the row, a repeated one kept on its cells by the box's own
@@ -588,6 +607,7 @@ function applySegment(
   segment: CellSegment,
   glyphs: PaintGlyphs | undefined,
   row: number,
+  box: GlyphBox | null,
 ): void {
   span.style.cssText = "";
   delete span.dataset.shade;
@@ -597,9 +617,6 @@ function applySegment(
   const cells = segment.cells ?? 1;
   const clusterCells = segment.box;
   const clusters = cells / clusterCells;
-  // A shared box repeats one single-cell cluster (plain-text.ts), so
-  // the fit it holds is the first character's.
-  const box = glyphs?.box(clusters === 1 ? segment.text : segment.text[0]!, clusterCells, segment);
   const style = span.style;
   // Through `--mw-cw`, so a box keeps its cells when a root font size
   // changes them and no row's text changed to repaint it.

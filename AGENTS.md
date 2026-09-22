@@ -14,7 +14,8 @@ interfaces (TUIs) on the web. Start with
   for the engine and its tests; deviations from real CSS marked explicitly)
 - `.agents/plans/` — implementation plans (file names prefixed with the date:
   `YYYY-MM-DD-<topic>.md`)
-- `.agents/architecture/` — architecture notes and decisions
+- `.agents/architecture/` — architecture notes and decisions, including
+  `performance.md`: what `pnpm bench` measures and where the numbers stand
 
 ## Conventions
 

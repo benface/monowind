@@ -38,16 +38,32 @@ export interface GlyphBox {
 }
 
 /** The ranges meant to abut, each with the glyph that spans its full
- * height: Block Elements by `█`, Box Drawing by `│` — and, for the
- * pin, the glyph whose stroke lies level in the row, `─`. */
+ * height: Block Elements by `█`, Box Drawing by `│` — the latter with
+ * the glyph whose stroke lies level in the row, `─`, as its widest
+ * ink. A block stands for a cell filled, so it grows to cover a row
+ * taller than the font draws it; a stroke stands for a line, whose
+ * weight that growth would change. */
 const TILING = [
-  { range: /^[\u2580-\u2590\u2594-\u259F]$/, reference: "\u2588" },
+  { range: /^[\u2580-\u2590\u2594-\u259F]$/, reference: "\u2588", fills: true },
   { range: /^[\u2500-\u257F]$/, reference: "\u2502", level: "\u2500" },
 ];
+const BLOCKS = TILING[0]!;
 
 /** The shades: patterns, whose fit locks their lattice to device
  * pixels and carries it across rows. */
 const SHADE = /^[\u2591-\u2593]$/;
+
+/** How far a tiling glyph's ink must reach past the cell's edge
+ * columns for the clip to leave no column part bare. CSS pixels, not
+ * device ones: what closes a joint holds steady across densities, and
+ * the sweep behind the number is in specs/wide-characters.md. */
+const OVERHANG = 0.45;
+
+/** A glyph's metrics as one string, for telling one drawing of it from
+ * another. */
+function drawingOf(metrics: TextMetrics): string {
+  return `${metrics.width},${metrics.actualBoundingBoxLeft},${metrics.actualBoundingBoxRight},${metrics.actualBoundingBoxAscent},${metrics.actualBoundingBoxDescent}`;
+}
 
 /** Where the baseline of `glyph` lands, in px from the top of a box a
  * row tall with that `font-size` factor and `line-height`. */
@@ -64,6 +80,10 @@ export class GlyphBoxes {
     letterSpacing: 0,
   };
   #dpr = 1;
+  /** How the font drew each glyph a cached measurement was taken from,
+   * keyed by the font it was measured in: exactly what `invalidate()`
+   * re-measures to tell whether those measurements still hold. */
+  #drawn = new Map<string, string>();
   #baselineOf: BaselineOf | undefined;
   /** Counts the measurements forgotten: a grid painted under an
    * earlier count holds boxes fit to another font or cell (paint.ts). */
@@ -98,16 +118,43 @@ export class GlyphBoxes {
     this.#dpr = dpr;
     this.#boxes.clear();
     this.#fits.clear();
+    this.#drawn.clear();
     this.generation++;
   }
 
   /** Forget every measurement: a font finished loading, so the same
-   * cluster may draw differently now (the fallback's measurements would
-   * otherwise stay cached under the same font name). */
+   * cluster may draw differently now. Nothing is forgotten while every
+   * glyph they came from still draws as it did — `document.fonts`
+   * settles on every page, font or no font, and a paint told its fits
+   * are stale restyles every box it holds. */
   invalidate(): void {
+    if (this.#draws()) return;
     this.#boxes.clear();
     this.#fits.clear();
+    this.#drawn.clear();
     this.generation++;
+  }
+
+  /** Whether the font still draws every glyph a cached measurement came
+   * from exactly as it did; false with nothing cached, or no canvas to
+   * ask. */
+  #draws(): boolean {
+    const context = this.#canvas();
+    if (!context || this.#drawn.size === 0) return false;
+    for (const [key, was] of this.#drawn) {
+      const at = key.indexOf("\u001f");
+      context.font = key.slice(0, at);
+      if (drawingOf(context.measureText(key.slice(at + 1))) !== was) return false;
+    }
+    return true;
+  }
+
+  /** `measureText`, remembering the drawing under the caller's own
+   * `context.font` so `invalidate()` can tell whether it still holds. */
+  #measureText(cluster: string, context: CanvasRenderingContext2D, font: string): TextMetrics {
+    const metrics = context.measureText(cluster);
+    this.#drawn.set(`${font}\u001f${cluster}`, drawingOf(metrics));
+    return metrics;
   }
 
   /** The box for a cluster painted with `paint`, or null when the font
@@ -141,12 +188,13 @@ export class GlyphBoxes {
     // takes it and none needs measuring, which is most fonts.
     let fit: GlyphBox | null = null;
     const tiling = TILING.find((t) => t.range.test(cluster));
-    if (tiling) fit = this.#tileFit(tiling.reference, context, font, false, tiling.level);
-    else if (SHADE.test(cluster) && this.#tileFit("\u2588", context, font)) {
-      fit = this.#tileFit(cluster, context, font, true);
+    if (tiling) fit = this.#tileFit(tiling.reference, context, font, tiling);
+    else if (SHADE.test(cluster) && this.#tileFit(BLOCKS.reference, context, font, BLOCKS)) {
+      // A shade fills its cell as the blocks do, with a lattice of its own.
+      fit = this.#tileFit(cluster, context, font, { fills: true, patterned: true });
     }
     if (fit) return fit;
-    const metrics = context.measureText(cluster);
+    const metrics = this.#measureText(cluster, context, font);
     const advance = metrics.width + letterSpacing;
     const target = cells * cellWidth;
     // The one way out unboxed, so it is the CLUSTER's own advance: a
@@ -181,63 +229,49 @@ export class GlyphBoxes {
     return (goesUp ? -up : down) / this.#dpr;
   }
 
-  /** One fit per tiling range of a font: null when the reference glyph
-   * is the row's height at its cell width, else the scale that puts it a
-   * pixel and a half past the row on each side (the box clips it; no
-   * pixel snapping can open a seam), never below 1.08 — a `patterned`
-   * glyph's raised to whole device pixels of lattice — and the
-   * line-height that pins it (a line box sets the baseline at
-   * half-leading plus the font's ascent), corrected by the host's
-   * measured baseline. A range with a `level` glyph — box drawing's
-   * `─` — is pinned so that glyph's stroke stays where the row's own
-   * has it, the range scaled about the stroke and on until it reaches a
-   * pixel past the row each side (within a quarter more scale), so a
-   * border sits where the font sets it against the text; the rest —
-   * blocks, whose halves meet at the row's middle — center the ink a
-   * pixel and a half past each side. */
+  /** One fit per tiling range of a font: null when the font draws the
+   * reference glyph on its cell and inside the row, else a box that
+   * lands the glyph's baseline by a `line-height` and clips whatever
+   * runs past. A `fills` range grows to a pixel and a half past the
+   * row each side and centers its ink there; the rest keep the size
+   * the font draws and take the row's own baseline, so a border sits
+   * where the font sets it against the text. Either way the scale
+   * carries the range's widest ink (box drawing's `level` `─`, else
+   * the reference) OVERHANG past the cell's edge columns, and a
+   * `patterned` glyph's is raised to whole device pixels of lattice.
+   * The line-height (a line box sets the baseline at half-leading plus
+   * the font's ascent) is corrected by the host's measured one. */
   #tileFit(
     reference: string,
     context: CanvasRenderingContext2D,
     font: string,
-    patterned = false,
-    level?: string,
+    kind: { level?: string; fills?: boolean; patterned?: boolean },
   ): GlyphBox | null {
+    const { level, fills = false, patterned = false } = kind;
     const key = `${reference}|${font}`;
     let fit = this.#fits.get(key);
     if (fit !== undefined) return fit;
     const { width: cellWidth, height: cellHeight, letterSpacing, baseline } = this.#cell;
-    const metrics = context.measureText(reference);
+    const metrics = this.#measureText(reference, context, font);
     const inkHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-    // Either way off the row: short of it gaps between rows, past it
-    // overlaps them, and two antialiased edges over each other darken a
-    // band at every row's edge. The box clips the glyph to its row.
-    const short = inkHeight < cellHeight - 0.05;
     const offWidth = Math.abs(metrics.width + letterSpacing - cellWidth) > 0.01 * cellWidth;
+    // Past the row its rows overlap, and two antialiased edges over
+    // each other darken a band at every row's edge: the box clips it
+    // back to its own row. Short of the row a filling glyph grows into
+    // it; a stroke keeps the weight the font gives it, and its rows gap.
     const past = inkHeight > cellHeight + 0.05 && !offWidth;
+    const short = fills && inkHeight < cellHeight - 0.05;
     fit = null;
-    if ((short || offWidth || past) && inkHeight > 0) {
-      // Never below 1.08: the least overhang past the cell's edge
-      // columns that leaves every joint whole in the three engines at
-      // 1x and 2x (a glyph past the row by over 3px would shrink).
-      const inkAscent = metrics.actualBoundingBoxAscent;
-      const fill = (cellHeight + 3) / inkHeight;
-      let scale = Math.max(fill, 1.08);
-      // The box's baseline, where a range is pinned by its level stroke.
-      let pin: number | undefined;
-      if (level !== undefined && baseline !== undefined) {
-        const above = this.#strokeAbove(level, font);
-        if (above !== null) {
-          const needed = Math.max(
-            scale,
-            (baseline - above + 1) / (inkAscent - above),
-            (cellHeight + 1 - baseline + above) / (inkHeight - inkAscent + above),
-          );
-          if (needed <= fill * 1.25) {
-            scale = needed;
-            pin = baseline + above * (scale - 1);
-          }
-        }
-      }
+    // A shade only reaches this having found the blocks a fit, and
+    // takes a box of its own for the lattice.
+    if ((short || offWidth || past || patterned) && inkHeight > 0) {
+      // The range's widest ink over the cell by OVERHANG each side,
+      // and never a shrink.
+      const spanning = level === undefined ? metrics : this.#measureText(level, context, font);
+      const inkWidth = spanning.actualBoundingBoxLeft + spanning.actualBoundingBoxRight;
+      let scale = inkWidth > 0 ? Math.max((cellWidth + 2 * OVERHANG) / inkWidth, 1) : 1;
+      // A filling glyph reaches a pixel and a half past the row each side.
+      if (fills) scale = Math.max(scale, (cellHeight + 3) / inkHeight);
       let lattice: number | undefined;
       const period = patterned ? this.#period(reference, font) : null;
       if (period) {
@@ -248,6 +282,7 @@ export class GlyphBoxes {
         scale = units / unit;
         lattice = units / this.#dpr;
       }
+      const inkAscent = metrics.actualBoundingBoxAscent;
       const ascent = metrics.fontBoundingBoxAscent;
       const descent = metrics.fontBoundingBoxDescent;
       const rounded = Math.round(scale * 1000) / 1000;
@@ -258,16 +293,19 @@ export class GlyphBoxes {
       if (past) box.past = true;
       if (lattice) box.period = lattice;
       if (Number.isFinite(ascent + descent)) {
-        const overshoot = pin === undefined ? 1.5 : inkAscent * scale - pin;
-        let lineHeight = scale * (2 * inkAscent - ascent + descent) - 2 * overshoot;
+        // A filling glyph hangs its ink a pixel and a half past the row's
+        // top, where a shade raised to its lattice lands as it did in the
+        // row above; a stroke takes the row's own baseline, so a border
+        // sits where the font sets it against the text.
+        const hung = inkAscent * scale - 1.5;
+        const pin = fills ? hung : (baseline ?? hung);
+        let lineHeight = 2 * pin + scale * (descent - ascent);
         const measure = this.#baselineOf;
         if (measure) {
-          // The engine's actual baseline at that line-height: the ink's
-          // top should sit its overshoot above the row, and moves half
-          // a pixel per pixel of line-height — stepped until the nearest
-          // lands, where the engine snaps the baseline to a pixel.
-          const off = (at: number): number =>
-            measure(reference, rounded, at) - inkAscent * rounded + overshoot;
+          // The engine's actual baseline at that line-height, which
+          // moves half a pixel per pixel of it — stepped until the
+          // nearest lands, where the engine snaps it to a pixel.
+          const off = (at: number): number => measure(reference, rounded, at) - pin;
           let error = off(lineHeight);
           for (let step = 0; step < 3 && Math.abs(error) > 0.05; step++) {
             const next = lineHeight - 2 * error;
@@ -296,60 +334,24 @@ export class GlyphBoxes {
     return fit;
   }
 
-  /** The alpha of `glyph` drawn at 4× on a square canvas `rows` font
-   * sizes wide, its text baseline `y` px down; null where the canvas
-   * can't be read. */
-  #raster(
-    glyph: string,
-    font: string,
-    textBaseline: CanvasTextBaseline,
-    y: number,
-    rows: number,
-  ): { data: Uint8ClampedArray; side: number; k: number } | null {
+  /** The vertical period of a glyph's lattice in px — the first peak of
+   * the alpha's autocorrelation down the most patterned of a few
+   * columns of the glyph (a dark shade's holes miss its middle), drawn
+   * at four times the size on a canvas two of them square — or null
+   * when nothing repeats or the canvas can't be read. */
+  #period(glyph: string, font: string): number | null {
     const size = parseFloat(this.#font.size) || 16;
     const k = 4;
-    const side = Math.ceil(size * rows * k);
+    const side = Math.ceil(size * 2 * k);
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = side;
     const context = canvas.getContext("2d");
     if (!context || typeof context.getImageData !== "function") return null;
     context.scale(k, k);
     context.font = font;
-    context.textBaseline = textBaseline;
-    context.fillText(glyph, size / 2, y);
-    return { data: context.getImageData(0, 0, side, side).data, side, k };
-  }
-
-  /** How far above the baseline the center of `glyph`'s ink lies along
-   * the cell's middle column, in px, read off the canvas's own
-   * rendering (measureText's bounds miss it by pixels in WebKit); null
-   * where the canvas can't be read or the column holds no ink. */
-  #strokeAbove(glyph: string, font: string): number | null {
-    const size = parseFloat(this.#font.size) || 16;
-    const raster = this.#raster(glyph, font, "alphabetic", size * 2, 3);
-    if (!raster) return null;
-    const { data, side, k } = raster;
-    const x = Math.round((size / 2 + this.#cell.width / 2) * k);
-    let top = -1;
-    let bottom = -1;
-    for (let y = 0; y < side; y++) {
-      if (data[(y * side + x) * 4 + 3]! > 0) {
-        if (top < 0) top = y;
-        bottom = y;
-      }
-    }
-    return top < 0 ? null : size * 2 - (top + bottom + 1) / 2 / k;
-  }
-
-  /** The vertical period of a glyph's lattice in px — the first peak of
-   * the alpha's autocorrelation down the most patterned of a few
-   * columns of the glyph (a dark shade's holes miss its middle), drawn
-   * at four times the size — or null when nothing repeats. */
-  #period(glyph: string, font: string): number | null {
-    const size = parseFloat(this.#font.size) || 16;
-    const raster = this.#raster(glyph, font, "top", size / 2, 2);
-    if (!raster) return null;
-    const { data, side, k } = raster;
+    context.textBaseline = "top";
+    context.fillText(glyph, size / 2, size / 2);
+    const { data } = context.getImageData(0, 0, side, side);
     let centered: number[] = [];
     let energy = 0;
     for (const across of [0.25, 0.375, 0.5, 0.625, 0.75]) {

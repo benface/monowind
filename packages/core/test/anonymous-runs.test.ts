@@ -93,6 +93,20 @@ describe("anonymous runs", () => {
     expect(hitChain(root, 1, 1)).toEqual([container.source, container.source.querySelector("div")]);
   });
 
+  it("keeps an out-of-flow element the run met below a direct child", () => {
+    // A popover inside an inline wrapper — a custom element's shape:
+    // it leaves the run, and the leaf keeps it for the positioning
+    // pass the way it keeps its own (specs/cell-model.md).
+    const { host, root } = build(
+      '<div>foo <span><i style="position: absolute">abs</i></span> bar</div>',
+    );
+    const abs = host.querySelector("i")!;
+    expect(root.children.map((child) => child.source)).toContain(abs);
+    // And it lands where one the run met directly does.
+    const direct = build('<div>foo <i style="position: absolute">abs</i> bar</div>');
+    expect(renderPlainText(root)).toBe(renderPlainText(direct.root));
+  });
+
   it("selects inside a run's out-of-flow child, and splits a run at a point on its container", () => {
     const { host, root } = build(
       '<div>foo <b>x</b><i style="position: absolute">abs</i><div>bar</div>baz</div>',

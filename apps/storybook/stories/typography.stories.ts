@@ -459,9 +459,8 @@ export const TilingGlyphs: StoryObj = {
     // The cell is a whole number of layout units, so a row of boxes ends
     // where a row of text does.
     expect((cellSize(host).width * 64) % 1).toBe(0);
-    // Every tiling glyph is a box a row tall on its row, judged in bulk:
-    // the Interactions addon instruments every `expect`, and hundreds
-    // freeze the panel.
+    // The boxes are judged in bulk: the Interactions addon instruments
+    // every `expect`, and hundreds freeze the panel.
     const tiling = (from: HTMLElement) =>
       Array.from(gridOf(from).querySelectorAll("span")).filter((span) =>
         /^[\u2500-\u259F]$/.test(span.textContent ?? ""),
@@ -470,11 +469,11 @@ export const TilingGlyphs: StoryObj = {
       boxes.map((box) => `${box.textContent} [${box.getAttribute("style")}]`);
     // Boxed a row tall and pinned to its row, whichever way the font
     // draws the glyph off it.
-    const unpinned = (from: HTMLElement) => {
+    const unpinned = (judged: HTMLElement[], from: HTMLElement) => {
       const row = cellSize(from).height;
       const top = gridOf(from).getBoundingClientRect().top;
       return labels(
-        tiling(from).filter((box) => {
+        judged.filter((box) => {
           const rect = box.getBoundingClientRect();
           const rowOffset = ((rect.top - top) / row) % 1;
           return (
@@ -486,12 +485,16 @@ export const TilingGlyphs: StoryObj = {
         }),
       );
     };
-    const boxes = tiling(host);
+    // A block stands for a cell filled, so it grows into a row taller
+    // than the font draws it; a stroke stands for a line, whose weight
+    // that growth would change, so here it keeps the font's size and
+    // takes no box at all.
+    const boxes = tiling(host).filter((box) => /^[\u2580-\u259F]$/.test(box.textContent!));
     expect(boxes.length).toBeGreaterThan(60);
-    expect(boxes.some((box) => /^[\u2500-\u257F]$/.test(box.textContent!))).toBe(true);
-    expect(unpinned(host)).toEqual([]);
-    // Scaled past the row, the row being taller than the glyph here.
+    expect(unpinned(boxes, host)).toEqual([]);
     expect(labels(boxes.filter((box) => !(parseFloat(box.style.fontSize) > 100)))).toEqual([]);
+    const strokes = tiling(host).filter((box) => /^[\u2500-\u257F]$/.test(box.textContent!));
+    expect(labels(strokes.filter((box) => box.dataset.box !== undefined))).toEqual([]);
     // A shade scales past the blocks, to whole device pixels of lattice,
     // and its box carries the lattice's phase from row to row.
     const block = parseFloat(boxes.find((box) => box.textContent === "█")!.style.fontSize);
@@ -526,7 +529,7 @@ export const TilingGlyphs: StoryObj = {
       cellSize(own).height,
     );
     expect(tiling(own).length).toBeGreaterThan(20);
-    expect(unpinned(own)).toEqual([]);
+    expect(unpinned(tiling(own), own)).toEqual([]);
   },
 };
 

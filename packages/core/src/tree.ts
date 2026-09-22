@@ -349,6 +349,12 @@ function buildLeaf(
     if (box.source.parentElement === root) directBoxes.set(box.source, box);
     else nestedBoxes.push(box);
   }
+  // An out-of-flow element the run met below a direct child: the loop
+  // over `elementChildren` sees only the root's own, so these join the
+  // nested boxes and sort into document order with them.
+  for (const box of run.positioned) {
+    if (box.source.parentElement !== root) nestedBoxes.push(box);
+  }
   const children: LayoutNode[] = [];
   for (let i = 0; i < elementChildren.length; i++) {
     const el = elementChildren[i]!;
@@ -549,6 +555,10 @@ interface LeafRun {
    * marker in `chars` (layout resolves the marker's advance to the box's
    * laid-out width). */
   boxes: LayoutNode[];
+  /** Out-of-flow elements met inside the run, at any depth: they take
+   * no character, and the leaf hangs them off itself for the
+   * positioning pass the way it does its own. */
+  positioned: LayoutNode[];
 }
 
 interface RunContext {
@@ -593,6 +603,7 @@ function extractLeafRun(
     inlineIndex: [],
     inlineElements: [],
     boxes: [],
+    positioned: [],
   };
   if (nodes) collectNodes(nodes, tracking, ctx, run);
   else collectRun(el, tracking, ctx, run);
@@ -667,9 +678,17 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
       }
       // Reads happen during the measure pass, so authored values are visible.
       const cs = getComputedStyle(child);
-      // Skipped or out-of-flow content never joins the run (a hidden
-      // span's text must not render; an absolute span leaves the flow).
-      if (cs.display === "none" || cs.position === "absolute" || cs.position === "fixed") continue;
+      // A hidden span's text must not render.
+      if (cs.display === "none") continue;
+      // Out-of-flow content leaves the run but not the tree: it takes
+      // no character, and the leaf keeps it for the positioning pass
+      // (a popover inside an inline element is one, and so is every
+      // positioner a custom element wraps).
+      if (cs.position === "absolute" || cs.position === "fixed") {
+        const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics, ctx.textareaWidths);
+        if (box) run.positioned.push(box);
+        continue;
+      }
       // An atomic inline box rides the run as ONE unbreakable unit: a
       // U+FFFC marker whose advance layout resolves to the box's width.
       if (isAtomicInline(child, cs.display)) {
@@ -814,6 +833,7 @@ function normalizeRun(run: LeafRun): LeafRun {
     inlineIndex,
     inlineElements: run.inlineElements,
     boxes: run.boxes,
+    positioned: run.positioned,
   };
 }
 

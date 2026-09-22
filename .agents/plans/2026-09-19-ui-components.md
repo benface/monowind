@@ -18,19 +18,77 @@ The elements also serve any framework as plain markup.
 
 ### 0. Probe
 
-- A parser-created custom element's children at `connectedCallback`
-  (absent while the parser is mid-element, present after an
-  `innerHTML` swap or a framework render): the mount-now-or-at-
-  `DOMContentLoaded` rule and the subtree observer, in a real page in
-  the three engines (Playwright, not happy-dom).
-- Zag's `VanillaMachine.updateProps` mid-life: a `placement` change
-  reaches `getPositionerProps` on the next render once the mount reads
-  its props per render; `api.setOpen` after a props update;
-  `mergeMachineProps` deep-merging a partial `positioning` over
-  `applyStyles: false` and its kin.
-- An inline custom element wrapping a trigger and a top-layer
-  positioner, inside a paragraph's sentence: the engine's layout of the
-  paragraph and the positioner's placement (the tooltip case).
+- ~~A parser-created custom element's children at `connectedCallback`~~
+  **MEASURED 2026-09-21**, Chromium, Firefox and WebKit agreeing
+  exactly. Children at `connectedCallback`: none for an element the
+  parser made (its own `connectedCallback` runs at the START tag),
+  none for one appended empty and filled after; all of them for one
+  built and filled before it was inserted, or arriving in an
+  `innerHTML` swap. A microtask does NOT rescue the parsed case — it
+  still reads none, a 4000-child element included — so the rule takes
+  four branches, not two:
+
+  ```
+  children at connectedCallback   → mount now
+  else readyState === "loading"   → mount at DOMContentLoaded
+  else                            → mount after a microtask
+           still none             → childList observer, one shot
+  ```
+
+  The last two are what an enhancer library needs: a framework that
+  appends the element and fills it in the same tick is caught by the
+  microtask, and one that fills it in a later task only by the
+  observer. Measured with a throwaway Playwright page per case: an
+  element the parser makes, one appended empty then filled, one built
+  and filled before insertion, and one filled a task later.
+
+- ~~Zag's `VanillaMachine.updateProps` mid-life~~ **MEASURED
+  2026-09-21** against Zag 1.44. The constructor already takes a
+  getter, so a mount reading its props per render needs nothing new: a
+  `placement` change reaches `getPositionerProps` on the next read
+  (`bottom span-left` becomes `top span-right`). `updateProps` DEEP
+  MERGES a partial, so `{ positioning: { placement } }` alone keeps
+  the grid's `applyStyles: false`, `flip: false` and `listeners:
+false` — the mount may hand it a partial and need not re-run
+  `props()`. `api.setOpen` works after an update, one tick later:
+  Zag defers its sends, so a caller reads `open` after a microtask.
+  `mergeMachineProps` is NOT public — `@zag-js/vanilla` exports
+  `VanillaMachine`, `mergeProps`, `normalizeProps`, `spreadProps` and
+  `toStyleString`, and the merge above makes it unnecessary.
+- ~~An inline custom element wrapping a trigger and a top-layer
+  positioner~~ **MEASURED 2026-09-21**, the three engines agreeing.
+  The flow half works: an unknown element is `display: inline`, mounts
+  over its children, and a paragraph wraps around the trigger inside
+  it, the text resuming on the row below the trigger's box.
+
+  The top-layer half does NOT, and the wrapper's display is why — a
+  positioner is placed only where its parent generates a box:
+
+  | wrapper `display`                     | painted | `data-mw-area`    |
+  | ------------------------------------- | ------- | ----------------- |
+  | `inline` (a custom element's DEFAULT) | no      | none              |
+  | `inline-block`                        | yes     | `span-all bottom` |
+  | `block`                               | yes     | `span-all bottom` |
+  | `contents`                            | no      | none              |
+
+  **FIXED in the engine rather than worked around**: the table above
+  was a bug, not a deviation. `tree.ts` says out-of-flow children "hang
+  off the leaf as layout nodes for the positioning pass", and the
+  collection loop only ever read the root's DIRECT children, while the
+  run walker skipped a nested one without building it — the same
+  nesting that atomic inline boxes already handled through
+  `nestedBoxes`. A run now keeps what it meets at any depth, and all
+  four displays place and paint. So an element needs no display of its
+  own, and `display: contents` works.
+
+  A `<span>` positioner is fine too — the first failure was the
+  wrapper, not the part — which matters for the tooltip case, since a
+  `<div>` inside a `<p>` closes the paragraph at parse time. Probes in
+  a throwaway page per wrapper — `<div>`, `<span>` and
+  `display: contents` — each holding a positioner inside a sentence.
+  The guard that keeps it true is `anonymous-runs.test.ts` "keeps an
+  out-of-flow element the run met below a direct child".
+
 - React 19 on a custom element: a boolean attribute from `false`
   (removed), a number, a function prop `onitemselect` attached as a
   listener.

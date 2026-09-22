@@ -13,6 +13,7 @@
     "test": "pnpm -r --workspace-concurrency=1 test",
     "test:visual": "node scripts/test-visual.mjs",
     "test:visual:update": "node scripts/test-visual.mjs --update-snapshots",
+    "bench": "node scripts/bench.mjs",
     "build": "pnpm -r build",
     "prepare": "husky"
   },

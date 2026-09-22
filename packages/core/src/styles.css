@@ -347,6 +347,14 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   height: 1px;
 }
 
+/* Declared so it does NOT inherit: only the host reads it, and the
+ * layout writes it after the grid is painted, where an inherited custom
+ * property restyles every span below (architecture/performance.md). */
+@property --mw-host-w {
+  syntax: "*";
+  inherits: false;
+}
+
 /* The host's used width is a whole number of cells (specs/cell-model.md
  * "Host sizing"): the engine measures the natural CSS width with this
  * rule lifted, then caps the box to the columns that fit — so borders,

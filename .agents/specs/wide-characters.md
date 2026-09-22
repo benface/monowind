@@ -183,10 +183,15 @@ copy event sees it in all three engines.
   vertical borders gap; and a `leading-*` on the root makes the row
   taller than any font's glyph. The adapter measures each range's
   reference glyph once per grid font — `█` for blocks, `│` for box
-  drawing; when the font draws it short of the row, past it, or off its
-  cell width, every glyph of the range is boxed with the one transform:
-  a `font-size` scaled so the glyph is a pixel and a half taller than
-  the row on each side, and a `line-height` on the box that pins it —
+  drawing; when the font draws it past the row or off its cell width,
+  every glyph of the range is boxed with the one transform, and so it
+  is when a BLOCK is drawn short of the row: a block stands for a cell
+  filled, so its `font-size` is scaled until the glyph is a pixel and a
+  half taller than the row on each side. A stroke stands for a line,
+  and that growth makes it as much bolder as the row is taller than the
+  glyph — at a raised leading it turns a hairline border into a bar —
+  so a stroke short of the row keeps the size the font gives it and its
+  rows gap. Either way a `line-height` on the box pins it —
   a line box places the baseline at half-leading plus the font's
   ascent, both from the same `measureText` call, and the host then
   measures the baseline the engine actually gives that box (an empty
@@ -196,20 +201,19 @@ copy event sees it in all three engines.
   pixels (Chromium; WebKit and Firefox place it fractionally) — the
   box a row tall and clipping the overshoot (half a pixel seamed in
   Chromium; a whole one left Firefox's top row half bare). Box drawing
-  is pinned so its `─` stroke stays where the row's own text has it —
-  the stroke's row read off the canvas's own rendering at 4×, since
-  `measureText`'s bounds miss it by pixels in WebKit — the range scaled
-  about the stroke, and on until it reaches a pixel past the row each
-  side (within a quarter more scale; else centered), so a border sits
-  where the font sets it against the text: centered on the row, it
-  moved a pixel up in WebKit and half a pixel down elsewhere, and a
-  line of text in a box looked off its middle. Blocks stay centered,
-  their halves meeting at the row's middle. One transform per range is
-  what keeps a
-  junction's strokes on its neighbors': box-drawing strokes sit at the
-  glyph's center and edges, which a uniform scale around the box's
-  center preserves; the cost is strokes as much bolder as the row is
-  taller than the glyph. The shades `░ ▒ ▓` are patterns, periodic
+  is pinned to the row's own baseline, the one the host measured, so a
+  border sits where the font sets it against the text: centered on the
+  row instead, it moved a pixel up in WebKit and half a pixel down
+  elsewhere, and a line of text in a box looked off its middle. A
+  filling glyph hangs its ink a pixel and a half past the row's top,
+  where the blocks' halves meet at the row's middle and a shade raised
+  to its lattice lands as it did in the row above; a box takes that
+  same pin where the host measured no baseline. One transform per range
+  is what keeps a junction's strokes on its neighbors': box-drawing
+  strokes sit at the glyph's center and edges, which a uniform scale
+  around the box's center preserves; a block's cost for that is ink as
+  much bolder as the row is taller than the glyph, which is why a
+  stroke is not scaled to fill. The shades `░ ▒ ▓` are patterns, periodic
   by design: at an arbitrary scale a lattice resamples into moiré
   (Chromium's scrollbar tracks, twice over). A shade takes the same
   fit with its scale raised to the nearest factor that makes its
@@ -259,10 +263,21 @@ copy event sees it in all three engines.
   all. A half, a quadrant, a shade or a stroke keeps its own box: their
   ink would spill into what the neighbor leaves blank, or rasterize
   differently at every phase. Two more things keep the joint whole: the scale never
-  drops below 1.08, the least overhang past the cell's edge columns
-  that leaves every joint whole in the three engines at 1× and 2× (a
-  glyph at its own size leaves the edge column part bare, and JetBrains
-  Mono's `│`, 21px in an 18px row, would otherwise SHRINK to 0.987),
+  leaves the range's widest ink — box drawing's `─`, the blocks' own
+  reference — short of 0.45 CSS pixels past each of the cell's edge
+  columns, nor below 1 (a glyph at its own size can leave
+  the edge column part bare, and JetBrains Mono's `│`, 21px in an 18px
+  row, would otherwise SHRINK to 0.987). CSS pixels, not device ones:
+  swept glyph by glyph against the three engines at 1×, 2× and 3× — a
+  run of boxes at a sweep of scales, read back for a column lighter
+  than the stroke's own darkness — what closes a joint holds roughly
+  steady in CSS pixels (Chromium wanted 0.27 at 1× and 0.36 at 2×,
+  WebKit 0.41 at 1×) while a device-pixel floor thins as the screen
+  gets denser. 0.45 clears every case measured, and the margin is not
+  spare: at 0.25 a bordered box's top edge dips 33% of its darkness at
+  every cell joint in Chromium at 2×, and the default font's `─`,
+  which overhangs 0.277 unscaled, does not close one on its own. It
+  costs that font's borders 3.9% of scale,
   and the glyph is placed by a `text-indent` of half the room its
   advance leaves in the box, not `text-align: center`: a centered line
   lands on a rounded position, and at one joint in six its end fell a
@@ -575,7 +590,8 @@ Selection / Autoscroll`, a text-mode host): a press in a scroll
   on a drifted line.
 - Tiling fit: the stubbed-canvas unit tests (one measurement per range
   and font, the scale and line-height from Menlo's numbers, a glyph
-  drawn past the row boxed and held to 1.08, its advance for the box's
+  drawn past the row boxed and held to its overhang floor, a stroke
+  short of it left alone where a block fills, its advance for the box's
   indent, a double-width one clipped, box drawing
   fitted apart from the blocks, a shade locked to its lattice and its
   phase row by row, the pin corrected by a measured baseline), the
