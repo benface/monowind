@@ -129,3 +129,50 @@ test.describe("a tap on covered cells", () => {
       .toBe(1);
   });
 });
+
+/**
+ * A scroll container's border is drawn in cells the NATIVE box gives
+ * its content — the engine zeroes the border and paints it as glyphs
+ * — so an item scrolled under it is still inside the padding box for
+ * the browser to hit. The grid covers it there, and the press
+ * addresses the grid instead (element.ts `showsElement`: a descendant
+ * with a box of its own would have been the cell's element had the
+ * grid shown it).
+ */
+test("a press on a scroll container's border misses the item clipped under it", async ({
+  page,
+}) => {
+  await page.goto("/iframe.html?id=packages-ui--listbox&viewMode=story");
+  await page.waitForFunction(() =>
+    document.querySelector("mono-wind")?.hasAttribute("data-mw-ready"),
+  );
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(200);
+  const selected = (): Promise<string> =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('[data-test="content"] [role="option"]')]
+        .filter((option) => option.getAttribute("aria-selected") === "true")
+        .map((option) => (option as HTMLElement).dataset["value"])
+        .join(","),
+    );
+  const geometry = await page.evaluate(() => {
+    const host = document.querySelector("mono-wind")!;
+    const content = document.querySelector('[data-test="content"]') as HTMLElement;
+    const box = content.getBoundingClientRect();
+    const cell = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+    return {
+      x: box.left + box.width / 2,
+      topBorder: box.top + cell / 2,
+      scrolled: content.scrollTop,
+    };
+  });
+  // The story leaves its list scrolled, so items sit above the view.
+  expect(geometry.scrolled, "the story leaves the list scrolled").toBeGreaterThan(0);
+  const before = await selected();
+  expect(before, "the story leaves an item selected").not.toBe("");
+  await page.mouse.move(geometry.x, geometry.topBorder);
+  await page.waitForTimeout(150);
+  await page.mouse.click(geometry.x, geometry.topBorder);
+  await page.waitForTimeout(200);
+  expect(await selected(), "a press on the border selects nothing new").toBe(before);
+});

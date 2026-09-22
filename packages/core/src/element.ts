@@ -227,11 +227,19 @@ const behind = (el: Element): Element | null =>
 const COVERED_EVENTS = ["mousedown", "click", "dblclick", "auxclick"] as const;
 
 /** Whether the grid shows `el` where the cell's own element is
- * `innermost`: that element, one it contains, or one containing it —
- * an inline element is no box of its own, so its cells are its
- * block's, and native hover climbs to its ancestors. */
-const showsElement = (innermost: Element, el: Element): boolean =>
-  innermost.contains(el) || el.contains(innermost);
+ * `innermost`: that element, one containing it, or one it contains
+ * that has no box of its own — an inline element's cells are its
+ * block's, and native hover climbs to its ancestors. A descendant
+ * WITH a box would have been the cell's element had the grid shown it
+ * there, so one that was not hit is not shown: an item scrolled under
+ * its container's glyph border is inside the native padding box, the
+ * engine having drawn that border in cells the browser gives the
+ * content. */
+const showsElement = (innermost: Element, el: Element, hasBox: HasBox): boolean =>
+  el === innermost || el.contains(innermost) || (innermost.contains(el) && !hasBox(el));
+
+/** Whether an element has a layout box of its own. */
+type HasBox = (el: Element) => boolean;
 
 /** Two cell rects, or the absence of one, the same. */
 const sameRect = (a: Rect | null, b: Rect | null): boolean =>
@@ -1493,7 +1501,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (!layout || !metrics) return false;
     const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
     const cell = hitChain(layout, col, row).at(-1);
-    return cell !== undefined && !showsElement(cell, target);
+    return cell !== undefined && !showsElement(cell, target, this.#hasBox);
   }
 
   /** A covered element takes no activation, and no focus from the
@@ -1887,7 +1895,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (innermost === null) return [];
     const covers = (el: Element): boolean =>
       el.isConnected &&
-      !showsElement(innermost, el) &&
+      !showsElement(innermost, el, this.#hasBox) &&
       this.#underPointer(el) &&
       // Under a modal dialog the light DOM owns the pointer
       // (specs/top-layer.md deviation 7).
@@ -2136,6 +2144,9 @@ export class MonoWindElement extends HTMLElementBase {
   #animationPathOf(el: Element): AnimationPath | null {
     return animationPath(animatedProperties(el), this.#nodeOf(el));
   }
+
+  /** `showsElement`'s test, bound for it. */
+  #hasBox: HasBox = (el) => this.#nodeOf(el) !== null;
 
   #nodeOf(el: Element): LayoutNode | null {
     if (!this.#lastLayout) return null;
