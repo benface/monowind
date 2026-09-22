@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>monowind — Datastar example</title>
+    <!-- monowind as two classic scripts, no build step. In a real page:
+         <script src="https://unpkg.com/monowind/dist/cdn.js"></script>
+         <script src="https://unpkg.com/@monowind/ui/dist/cdn.js"></script>
+         (the local copies come from copy-vendor.mjs). Datastar's own
+         browser build lives on a CDN and npm carries its source, so
+         here it is imported and the bundler resolves it. -->
+    <script src="./cdn.js"></script>
+    <script src="./ui-cdn.js"></script>
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body class="min-h-screen bg-neutral-900 p-8 text-neutral-100">
+    <!-- Datastar keeps its signals in attributes, and @monowind/ui
+         keeps the component in one: a <mono-menu> mounts itself, and
+         `data-on-itemselect` reads the value its event carries. The
+         page's own behavior is attributes alone; the one module in
+         the head imports Datastar and nothing else. -->
+    <mono-wind>
+      <div data-signals="{branch: 'nothing yet'}">
+        <p>A page Datastar drives, with components written as elements.</p>
+
+        <div class="mt-1 flex items-center gap-2">
+          <mono-menu placement="bottom-start" data-on-itemselect="$branch = evt.detail.value">
+            <button data-part="trigger" class="border px-1">Branch</button>
+            <div data-part="positioner" popover="manual">
+              <div data-part="content" class="border bg-clear">
+                <div
+                  data-part="item"
+                  data-value="main"
+                  class="px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg)"
+                >
+                  main
+                </div>
+                <div
+                  data-part="item"
+                  data-value="next"
+                  class="px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg)"
+                >
+                  next
+                </div>
+              </div>
+            </div>
+          </mono-menu>
+
+          <span id="log">picked <b class="text-yellow-400" data-text="$branch">…</b></span>
+        </div>
+
+        <p class="mt-1">More of the page, under the menu.</p>
+      </div>
+    </mono-wind>
+  </body>
+</html>

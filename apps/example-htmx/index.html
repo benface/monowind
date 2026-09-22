@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>monowind — htmx example</title>
+    <!-- Three classic scripts, no build step. In a real page:
+         <script src="https://unpkg.com/monowind/dist/cdn.js"></script>
+         <script src="https://unpkg.com/@monowind/ui/dist/cdn.js"></script>
+         <script src="https://unpkg.com/htmx.org"></script>
+         (the local copies come from copy-vendor.mjs) -->
+    <script src="./cdn.js"></script>
+    <script src="./ui-cdn.js"></script>
+    <script src="./htmx.js"></script>
+  </head>
+  <body class="min-h-screen bg-neutral-900 p-8 text-neutral-100">
+    <!-- htmx drives the page from attributes, and so does @monowind/ui:
+         a <mono-menu> needs no script of its own, and its callbacks are
+         events, which htmx triggers on. Nothing here is written in
+         JavaScript. -->
+    <mono-wind>
+      <p>A page htmx drives, with components written as elements.</p>
+
+      <div class="mt-1 flex items-center gap-2">
+        <mono-menu placement="bottom-start">
+          <button data-part="trigger" class="border px-1">Branch</button>
+          <div data-part="positioner" popover="manual">
+            <div data-part="content" class="border bg-clear">
+              <div
+                data-part="item"
+                data-value="main"
+                class="px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg)"
+              >
+                main
+              </div>
+              <div
+                data-part="item"
+                data-value="next"
+                class="px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg)"
+              >
+                next
+              </div>
+            </div>
+          </div>
+        </mono-menu>
+
+        <!-- The element's `itemselect` event is what htmx listens for,
+             exactly as it would a click: the menu needs no wiring, and
+             the fragment the server returns lands in #log. -->
+        <span
+          id="log"
+          hx-get="./fragments/branch.html"
+          hx-trigger="itemselect from:closest mono-wind"
+          hx-swap="innerHTML"
+          >nothing picked yet</span
+        >
+      </div>
+
+      <p class="mt-1">More of the page, under the menu.</p>
+    </mono-wind>
+  </body>
+</html>

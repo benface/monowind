@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>monowind — UnoCSS example</title>
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body class="min-h-screen bg-neutral-900 p-8 text-neutral-100">
+    <mono-wind>
+      <!-- UnoCSS writes the styles; the engine reads what they compute.
+           monowind's own utilities are custom properties, which any
+           tool can set: `--mw-border-glyphs` is what `borders-rounded`
+           would write in Tailwind. -->
+      <div
+        data-test="box"
+        class="border border-emerald-400 px-1"
+        style="--mw-border-glyphs: rounded"
+      >
+        <p>A page styled by <b class="text-yellow-400">UnoCSS</b>.</p>
+        <p>The corners are rounded because a custom property says so.</p>
+      </div>
+    </mono-wind>
+  </body>
+</html>

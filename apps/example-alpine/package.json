@@ -1,0 +1,18 @@
+{
+  "name": "@monowind/example-alpine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node copy-vendor.mjs && vite --port 5186",
+    "build": "node copy-vendor.mjs && vite build",
+    "test": "node copy-vendor.mjs && node smoke.test.mjs"
+  },
+  "devDependencies": {
+    "@monowind/ui": "workspace:*",
+    "alpinejs": "^3.17.4",
+    "monowind": "workspace:*",
+    "playwright": "^1.63.0",
+    "vite": "^8.3.0"
+  }
+}

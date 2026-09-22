@@ -10,7 +10,8 @@ packages/*/LICENSE
 /apps/storybook/test-results/
 /apps/storybook/playwright-report/
 
-# Copied from packages/*/dist by copy-cdn.mjs
+# Copied from packages/*/dist and node_modules by copy-cdn.mjs
+# and copy-vendor.mjs
 /apps/**/cdn.js
 /apps/**/cdn.js.map
 /apps/**/ascii-cdn.js
@@ -19,6 +20,9 @@ packages/*/LICENSE
 /apps/**/qr-cdn.js.map
 /apps/**/ui-cdn.js
 /apps/**/ui-cdn.js.map
+/apps/**/htmx.js
+/apps/**/alpine.js
+/apps/**/turbo.js
 /apps/play/fonts/
 /apps/play/themes/
 /apps/**/sort.js

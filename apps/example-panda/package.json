@@ -1,0 +1,20 @@
+{
+  "name": "@monowind/example-panda",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "panda codegen",
+    "dev": "panda codegen && vite --port 5191",
+    "build": "panda codegen && vite build",
+    "test": "panda codegen && node smoke.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@pandacss/dev": "^1.12.1",
+    "monowind": "workspace:*",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}
