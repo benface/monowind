@@ -199,7 +199,7 @@ flip-block, flip-inline, flip-block flip-inline`; the gutter
   framework packages follow a changed prop as Zag's adapters do; the
   vanilla mount reads its props once.
 
-## Component layer (proposed 2026-09-19; plan `2026-09-19-ui-components.md`)
+## Component layer (built 2026-09-21; plan `2026-09-19-ui-components.md`)
 
 The functions above are the floor: the author writes every part's
 markup and spreads its props. Two layers above them give the parts
@@ -215,16 +215,21 @@ to, and additively.
   so the package's `sideEffects: false` holds; the CDN bundle calls it.
   An element is the vanilla mount's root and nothing more: no shadow
   root, its parts the `data-part` descendants the mount finds, all of
-  them light DOM the engine lays out; inline, as a custom element is,
-  its trigger its only in-flow content, the positioner out of flow in
-  the top layer, so a `<mono-tooltip>` sits inside a paragraph's
-  sentence. It exposes its `api` and `destroy()`.
+  them light DOM the engine lays out. It has no display of its own, so
+  a `<mono-tooltip>` is inline and sits inside a paragraph's sentence,
+  and one that wraps blocks needs none either — the engine splits an
+  inline box around a block inside it (`cell-model.md`), so those
+  blocks lay out as the parent's own. It exposes its `api` and
+  `destroy()`.
 - **The mount follows the markup.** The element mounts when its parts
   are there: at connection when they are (`innerHTML`, `append`, a
   framework's render, an upgrade after parsing), else — a document
   still parsing, the parser having connected the element before its
   children — at `DOMContentLoaded`; a `MutationObserver` on its
-  subtree mounts again, a microtask after, when parts come or go; a
+  subtree mounts again, a microtask after, when the marked parts come
+  or go — the parts the mount was given, by identity, so a mount that
+  writes into its own markup (a select filling the hidden control a
+  form posts) changes none of them and starts no loop; a
   disconnection destroys the mount (hiding the popover), a
   reconnection mounts again. As the README asks of any vanilla
   positioner, `popover="manual"` in the markup keeps a page parsed
@@ -239,8 +244,13 @@ to, and additively.
   from string templating alone, and reads as it means); a number
   parses, a string stays a string (so a `highlighted-value` matches
   its item's `data-value` as written). Props without an attribute form
-  — `ids`, `getRootNode`, `navigate`, `initialFocusEl`,
-  `finalFocusEl`, `translations` — are properties on the element. `id`
+  — `ids`, `translations`, a menu's `navigate`, a listbox's and a
+  select's `collection`, a dialog's `initialFocusEl` — are accessors
+  on the class, so a framework that sets a property it finds (React
+  does) hands the value over whole; setting the same value again does
+  nothing, React setting one on every render. A name the DOM already
+  carries is left alone and takes `setProp` instead — `getRootNode`
+  is a method on every node, and an accessor would shadow it. `id`
   is the element's own, generated when it has none, and bound at the
   mount: a change to it mounts again. An attribute changed after the
   mount reaches the running machine (Zag's `updateProps`, through a
@@ -264,40 +274,71 @@ to, and additively.
   components below spell the same events Vue's way (`open-change`),
   both intended.
 - **A submenu is an element of its own, mounted by its parent.**
-  `<mono-submenu value="…">` sits where the `submenu` root sits today,
-  after its trigger item, with its own placement attributes; the
-  parent's mount finds it as it finds a `data-part="submenu"` root,
-  reads its attributes for the submenu's positioning, links it, and
-  reflects its `open`; its events surface on the parent element.
+  `<mono-submenu value="…">` sits where the `submenu` root sits, after
+  its trigger item, with its own placement attributes. It marks its
+  own `data-part` and `data-value` and publishes the props its
+  attributes carry, which the menu's mount takes through
+  `MountProps.submenus`, a record keyed by value that spans the whole
+  tree — so nothing about attributes reaches `menu.ts`. Its own
+  callbacks dispatch on it and bubble, and it reflects its `open`; a
+  change to one of its attributes has the mount above it read the
+  markup again.
 - **Framework components over the functions**: each of
   `@monowind/ui-react`, `-vue`, `-svelte` exports from its one entry,
   beside its functions and tree-shaken like them (`sideEffects:
-false`), one namespace per component with Ark UI's anatomy —
-  `Menu.Root`, `Menu.Trigger`, `Menu.Positioner`, `Menu.Content`,
-  `Menu.Item`, `Menu.ItemGroup`, `Menu.ItemGroupLabel`,
-  `Menu.Separator`, `Menu.TriggerItem`; `Listbox.Root`, `.Label`,
-  `.Content`, `.Item`, `.ItemText`, `.ItemIndicator`, `.ItemGroup`,
-  `.ItemGroupLabel`; `Select` the same with `.Control`, `.Trigger`,
-  `.ValueText`, `.Indicator`, `.ClearTrigger`, `.Positioner`, and
-  `.HiddenSelect` around them; `Dialog.Root`, `.Trigger`,
-  `.Positioner`, `.Content`, `.Title`, `.Description`,
-  `.CloseTrigger`; `Popover` the same; `Tooltip.Root`, `.Trigger`,
-  `.Positioner`, `.Content` — Ark's other parts (arrows, a backdrop,
-  checkbox and radio items) left for a later need. `Root`
-  takes the machine's props, `id` optional and generated (`useId`,
-  Vue's `useId`, Svelte's `$props.id()`), renders nothing of its own,
-  and hands the API down through context; `RootProvider` takes an
-  author's own API from the functions instead. Every other part
-  renders one element (a `button` for a trigger, an `h2` for a title,
-  an `hr` for a separator, a `div` else) with the API's props for it
-  merged (Zag's `mergeProps`) under the author's own — `class`,
-  handlers, anything — and its children, or with `asChild` renders its
-  one child element with those props merged onto it; `Positioner`
-  owns the top layer as the function does. A `Menu.Root` inside
-  another's content is a submenu, linked to its parent through
-  context, its `TriggerItem` the parent's item. Callbacks are props in
-  React and Svelte and emits in Vue (`@select`), each framework's
-  idiom. The Svelte parts are `.svelte` files shipped as source under
+false`), the menu, dialog, popover and tooltip with Ark UI's
+  anatomy — `Root`, `Trigger`, `Positioner`, `Content`, and per
+  component `Item`, `ItemGroup`, `ItemGroupLabel`, `Separator`,
+  `TriggerItem`; `Title`, `Description`, `CloseTrigger`; the popover's
+  `Indicator`; the listbox's and the select's `Label`, `ItemText`,
+  `ItemIndicator`, and the select's `Control`, `ValueText`,
+  `Indicator`, `ClearTrigger`, `List` and `HiddenSelect`. React groups
+  them as namespaces (`Menu.Root`), Vue and Svelte name them flat
+  (`MenuRoot`), each framework's idiom. Ark's other parts (arrows, a
+  backdrop, checkbox and radio items) are left for a later need.
+  `Root` takes the machine's props, `id` optional and generated
+  (`useId`, Vue's `useId`, Svelte's `$props.id()`), and hands the API
+  down through context; `RootProvider` takes an author's own API from
+  the functions instead. A menu's, a dialog's, a popover's and a
+  tooltip's `Root` renders nothing — Zag gives those four no root
+  part, and a wrapper invented for one would put a box in the grid's
+  layout. Such a root takes no attributes, and says so twice: its type
+  omits them, and a development build warns and names what it was
+  given. The element layer is why that is worth saying — a
+  class on `<mono-menu>` styles the element, while
+  `<Menu.Root className>` can only go nowhere, so the same-looking
+  line means opposite things one layer apart. A
+  listbox's and a select's `Root` renders its root part, and takes
+  attributes as any part does: a root's own props are the ones Zag's `propNames` lists, and
+  the rest are its element's. An `Item` names one of the collection's
+  items, by `item` or by the `value` that finds it there, and holds it
+  for the `ItemText` and `ItemIndicator` inside; the select's
+  `HiddenSelect` carries `display: none` over Zag's visually-hidden
+  style, as the mount does and for the same reason: Zag's arrives with
+  the first spread, a microtask late, and an in-flow `<select>` is a
+  box as wide as its longest option, so the grid would jump. Either
+  hiding suits the grid — measured in Chromium 2026-09-22, an
+  absolutely positioned clipped control takes no cells, which is why
+  `sr-only` content needs nothing of the engine. Every other
+  part renders one element (a `button` for a trigger, an `h2` for a
+  title, an `hr` for a separator, a `span` for a tooltip's, a `div`
+  else) with the API's props for it merged (Zag's `mergeProps`) under
+  the author's own — `class`, handlers, anything — and its children,
+  or with `asChild` renders its one child element with those props
+  merged onto it; `Positioner` owns the top layer as the function
+  does. A `Menu.Root` inside another's content is a submenu, linked to
+  its parent through context, its `TriggerItem` the parent's item, and
+  `asSubmenuOf` gives it the same side and inherited behavior a marked
+  `submenu` root gets. Callbacks are props in React and Svelte and
+  listeners in Vue (`@select`), each framework's idiom, and a
+  controlled prop follows that idiom too: a React part takes the props
+  of the element it renders, a Vue root emits `update:open` and its
+  kin for `v-model`, and a Svelte root's are `$bindable()` for
+  `bind:`. A Svelte
+  snippet renders DOM rather than describing it, so Svelte's stand-in
+  for `asChild` is a `child` snippet the part hands those props to,
+  and its positioner renders its own element, which carries the
+  action. The Svelte parts are `.svelte` files shipped as source under
   the package's `svelte` condition, as its `.svelte.ts` module is; the
   peers (Vue 3.5, Svelte 5.20) already carry the id generators.
 - **Nothing else moves.** The functions stay public and are what the

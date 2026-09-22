@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@monowind/ui": "workspace:^",
     "@solidjs/web": "2.0.0-rc.9",
     "solid-js": "2.0.0-rc.9"
   },

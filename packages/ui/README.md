@@ -47,6 +47,18 @@ menu(document.getElementById("file-menu")!, { id: "file" });
 
 ## Setup, by integration
 
+**Markup alone** — register the elements once and write
+`<mono-menu>`, `<mono-dialog>` and their kin around the parts: each
+roots its own mount, its attributes the machine's props and its
+callbacks events (see [Elements](#elements)). Any framework can render
+them, and the CDN bundle registers them for you.
+
+```ts
+import { defineMonoUi } from "@monowind/ui/elements";
+
+defineMonoUi();
+```
+
 **Vanilla, or a framework without a Zag adapter** — mark the parts
 with `data-part` and mount the component on their root: `menu(root,
 props)`, `listbox(root, props)`, `select(root, props)`, `dialog(root,
@@ -63,6 +75,14 @@ flow until then.
 and `@monowind/ui-svelte` fold Zag's adapter in: one hook, composable,
 or function per component, the positioner's top layer handled inside
 (see their READMEs).
+
+**Solid 2** — the elements, which need no adapter: Zag's own reaches
+`solid-js/web`, which Solid 2 no longer exports
+([chakra-ui/zag#3211](https://github.com/chakra-ui/zag/issues/3211)).
+`apps/example-solid` is built that way. Attributes are the props and
+events the callbacks; a listener goes on through a `ref`, this
+release candidate compiling `on:itemselect` to a listener for
+`":itemselect"`.
 
 **Another framework Zag supports (Solid 1, Preact)** — use Zag's
 adapter as you would, on this package's entry alone: `props()` gives
@@ -99,7 +119,9 @@ An API you connected yourself takes the same props through
 `data-value`) anchors its positioner to the one the machine's
 `triggerValue` names.
 
-**CDN, no build** — one script after monowind's, then `monowind.ui`:
+**CDN, no build** — one script after monowind's. It registers the
+elements, so markup alone is enough; `monowind.ui` holds the mounts
+for markup you would rather wire yourself:
 
 ```html
 <script src="https://unpkg.com/monowind/dist/cdn.js"></script>
@@ -149,10 +171,14 @@ A select is a listbox on a trigger: its `root` holds a `label` and a
 `positioner` and the `content` of `item`s, marked as a listbox's are,
 with an optional `list` around them. The markup's own `value-text` is
 the placeholder; the mount writes the selection there as it changes.
-A `<select data-part="hidden-select">` carries the value into a form
-under the machine's `name`: the mount fills it with an option per item
-and hides it with `display: none`, which the grid skips and a form
-still posts. With `multiple: true` the trigger names every chosen item
+A select is a trigger and a listbox, not a form control, so a
+`<select data-part="hidden-select">` beside it carries the value into
+a form under the machine's `name`, and into a reset. The mount fills
+it with an option per item and hides it with `display: none` as it
+mounts, rather than waiting for Zag's own visually-hidden style,
+which arrives a microtask later with the first spread: an in-flow
+`<select>` is a box as wide as its longest option, so the grid would
+jump. Zag gives it `aria-hidden` and `tabIndex="-1"` either way. With `multiple: true` the trigger names every chosen item
 (Zag's `valueAsString`) and the form control carries them all.
 
 States are attributes Zag sets — `data-state`, `data-highlighted`,
@@ -162,6 +188,77 @@ styles a highlighted item, and an enter or exit is a transition on
 starting:opacity-0` on the content fades it both ways, the engine
 sampling it. The engine writes the area a floating part took as
 `data-mw-area` (`span-right bottom`, `span-right top` after a flip).
+
+## Elements
+
+`defineMonoUi()` registers `<mono-menu>`, `<mono-submenu>`,
+`<mono-listbox>`, `<mono-select>`, `<mono-dialog>`, `<mono-popover>`
+and `<mono-tooltip>`. An element is the root the mount would take, the
+parts marked inside it as ever:
+
+```html
+<mono-wind>
+  <mono-menu placement="bottom-start" gutter="1">
+    <button data-part="trigger" class="border px-1">File</button>
+    <div data-part="positioner" popover="manual">
+      <div data-part="content" class="border bg-clear">
+        <div data-part="item" data-value="new" class="px-1">New</div>
+        <div data-part="trigger-item" class="px-1">Share ›</div>
+        <mono-submenu value="share">
+          <div data-part="positioner" popover="manual">
+            <div data-part="content" class="border bg-clear">
+              <div data-part="item" data-value="mail" class="px-1">Mail</div>
+            </div>
+          </div>
+        </mono-submenu>
+      </div>
+    </div>
+  </mono-menu>
+</mono-wind>
+```
+
+**Attributes are the props**, kebab-cased: a boolean by presence
+(`false` written out turns one off), a number parsed, a string as
+written; `placement`, `gutter`, `offset-main-axis` and
+`offset-cross-axis` fold into `positioning`, and the dialog's
+`content-role` is the machine's `role`, the element's own being the
+element's. An attribute absent says nothing, so the machine keeps its
+default. A change reaches the machine and the parts are spread again.
+`id` is optional — one is generated where the markup gives none — and
+changing it roots the mount again.
+
+**Callbacks are events** that bubble: the name without `on`, lower
+cased as one run (`onOpenChange` is `openchange`, `onValueChange` is
+`valuechange`), the argument the `detail`. `onSelect` is `itemselect`,
+a native `select` event bubbling from inputs. Where the argument
+carries a `preventDefault`, cancelling the event calls it.
+
+**`open` runs both ways**: present at the mount it is the initial
+state, set or removed after it opens and closes the component, and the
+machine writes it back as the reader opens or dismisses it.
+
+**A prop no attribute carries** — `ids`, `translations`, a menu's
+`navigate`, a listbox's and a select's `collection`, a dialog's
+`initialFocusEl` — is a property on the element: `element.ids = {…}`,
+or `element.setProp(name, value)` by name. `getRootNode` takes the
+second form only, the DOM owning that name on every node. React sets a property it finds, so `<mono-select collection={…}
+/>` hands the value over whole rather than stringified, and setting
+the same value again does nothing, which matters because React sets
+one on every render.
+
+`element.api` is the live API and `element.destroy()` stops the mount.
+The element mounts when its parts are there — at the end of the parse
+for markup the browser is still reading, and as they arrive for markup
+a framework fills in — and mounts again as they are replaced. Leaving
+the document destroys it.
+
+An element has no display of its own, so it is inline, as a custom
+element is — which is what a `<mono-tooltip>` in a sentence wants,
+and no obstacle to one that wraps blocks: the engine splits an inline
+box around a block inside it, as CSS does, so the blocks lay out as
+the parent's own. Give it a display where you want one
+(`class="block"` to make it a box of its own, `flex` to lay its parts
+out); none is needed for it to work.
 
 ## Placement
 
@@ -185,9 +282,11 @@ level with the item that opened it, past the submenu's border, and a
 flip upward puts its last item there. A margin utility on a positioner
 is the same margin (`mt-1` under a trigger is a gap, `-mt-1` on a
 submenu's positioner that shift, `ml-1` its gap), the route for a
-vanilla submenu, whose positioning the mount sets. A submenu on the
-framework path names its placement, `right-start` (`left-start` in a
-right-to-left menu).
+vanilla submenu, whose positioning the mount sets. A submenu opens on
+the reading side by default — `right-start`, `left-start` in a
+right-to-left menu — however it is written: the mount gives a marked
+`submenu` root that placement, and `asSubmenuOf(parent, own)` gives it
+to a framework's nested root, along with the behavior a parent shares.
 
 A positioner is a surface in the host's colors by default (the
 engine's, in place of the browser's canvas colors); `bg-clear` on the
@@ -217,6 +316,15 @@ Each entry exports the mount, `machine`, `connect`, `props`, and
 - `@monowind/ui/popover` — Zag's popover.
 - `@monowind/ui/tooltip` — Zag's tooltip; `openDelay` and `closeDelay`
   are its.
+
+`@monowind/ui/elements` exports `defineMonoUi()` and the classes it
+registers, plus `defineElement()` and the `MonoElement` base, for an
+element of your own over a mount.
+
+`@monowind/ui/framework` holds what the framework packages share:
+`ItemApi`, the five getters a listbox's and a select's item parts
+read, and `warnStray`, which names a prop given to a root that
+renders no element.
 
 `@monowind/ui/top-layer`'s `syncTopLayer(positioner, open)` keeps a
 positioner in the top layer while the machine is open and through its

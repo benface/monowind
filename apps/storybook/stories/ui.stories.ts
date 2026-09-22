@@ -2,6 +2,7 @@ import { html } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { dialog } from "@monowind/ui/dialog";
+import { defineMonoUi } from "@monowind/ui/elements";
 import { listbox } from "@monowind/ui/listbox";
 import { menu } from "@monowind/ui/menu";
 import { popover } from "@monowind/ui/popover";
@@ -37,6 +38,10 @@ import {
  * would bring, so items built by a `map` or a helper arrive too late
  * to be found.
  */
+
+// The elements the `Elements` story writes; the functions above need
+// no registry.
+defineMonoUi();
 const meta: Meta = {
   title: "Packages / ui",
 };
@@ -855,5 +860,168 @@ export const Tooltip: StoryObj = {
     by("trigger").focus();
     await waitFor(() => expect(state("content")).toBe("open"));
     await expectRow(host, "Saves the");
+  },
+};
+
+/**
+ * The same components as markup alone: `<mono-menu>` and its kin root
+ * the mount themselves, their attributes the machine's props and their
+ * callbacks events that bubble — so a selection in the menu opens the
+ * dialog by writing its `open`, and the dialog writes it back when it
+ * closes itself. A select's items are its collection, and its mount
+ * fills the control a form posts. No script mounts anything here.
+ *
+ * An element has no display of its own: it is inline, as a custom
+ * element is, and the engine splits that inline box around the blocks
+ * inside it (specs/cell-model.md), so none of them needs one.
+ */
+export const Elements: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        <p>A page whose components are written as elements.</p>
+        <mono-menu id="edit" placement="bottom-start" gutter="1">
+          <p class="mt-1">
+            <button data-part="trigger" data-test="trigger" class="border px-1">Edit</button>
+          </p>
+          <div data-part="positioner" data-test="positioner" popover="manual">
+            <div data-part="content" data-test="content" class=${MENU_CONTENT}>
+              <div data-part="item" data-value="undo" data-test="undo" class=${ITEM}>Undo</div>
+              <div data-part="item" data-value="delete" data-test="delete" class=${ITEM}>
+                Delete…
+              </div>
+              <div data-part="trigger-item" data-test="share" class=${ITEM}>Share&nbsp;›</div>
+              <mono-submenu value="share" placement="right-start">
+                <div data-part="positioner" data-test="sub-positioner" popover="manual">
+                  <div data-part="content" data-test="sub-content" class=${MENU_CONTENT}>
+                    <div data-part="item" data-value="mail" data-test="mail" class=${ITEM}>
+                      Mail
+                    </div>
+                  </div>
+                </div>
+              </mono-submenu>
+            </div>
+          </div>
+        </mono-menu>
+        <p class="mt-1">
+          The
+          <mono-tooltip id="hint" open-delay="0" close-delay="0" placement="top">
+            <button data-part="trigger" data-test="hint-trigger" class="border px-1">
+              Delete…
+            </button>
+            <span data-part="positioner" data-test="hint-positioner" popover="manual">
+              <span data-part="content" data-test="hint" class="border bg-clear px-1">
+                Asks first
+              </span>
+            </span>
+          </mono-tooltip>
+          item asks before it removes anything.
+        </p>
+        <mono-select id="branch" name="branch" data-test="select">
+          <div data-part="control">
+            <button data-part="trigger" data-test="select-trigger" class="border px-1">
+              <span data-part="value-text" data-test="value-text">branch…</span>
+              <span data-part="indicator" class="ml-1">▼</span>
+            </button>
+          </div>
+          <div data-part="positioner" data-test="select-positioner" popover="manual">
+            <div data-part="content" data-test="select-content" class=${MENU_CONTENT}>
+              <div data-part="item" data-value="main" data-test="main" class=${ITEM}>
+                <span data-part="item-text">main</span>
+              </div>
+              <div data-part="item" data-value="next" data-test="next" class=${ITEM}>
+                <span data-part="item-text">next</span>
+              </div>
+            </div>
+          </div>
+          <select data-part="hidden-select"></select>
+        </mono-select>
+        <mono-dialog id="confirm" data-test="dialog">
+          <div data-part="positioner" data-test="dialog-positioner" class="backdrop:bg-black/50">
+            <div data-part="content" data-test="dialog-content" class="border px-1">
+              <p data-part="title" class="font-bold">Delete the file?</p>
+              <p class="mt-1">
+                <button data-part="close-trigger" data-test="cancel" class="border px-1">
+                  Cancel
+                </button>
+              </p>
+            </div>
+          </div>
+        </mono-dialog>
+        ${Array.from({ length: 6 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const state = (name: string) => by(name).getAttribute("data-state");
+    const dialogElement = by("dialog");
+    // The events the callbacks dispatch are the wiring: a selection in
+    // the menu opens the dialog by writing the attribute.
+    const selections: string[] = [];
+    canvasElement.addEventListener("itemselect", (event) => {
+      const { value } = (event as CustomEvent<{ value: string }>).detail;
+      selections.push(value);
+      if (value === "delete") dialogElement.setAttribute("open", "");
+    });
+    // Roles from the machines, on markup no script mounted.
+    expect(by("trigger").getAttribute("aria-haspopup")).toBe("menu");
+    expect(by("content").getAttribute("role")).toBe("menu");
+    expect(by("undo").getAttribute("role")).toBe("menuitem");
+    expect(by("dialog-content").getAttribute("role")).toBe("dialog");
+    // The attributes are the props: the menu opens where its placement
+    // says, a row below its trigger for the gutter.
+    await userEvent.click(by("trigger"));
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await waitFor(() =>
+      expect(by("positioner").getAttribute("data-mw-area")).toBe("span-right bottom"),
+    );
+    await expectTouching(
+      () => by("positioner").getBoundingClientRect().top - cellSize(host).height,
+      () => by("trigger").getBoundingClientRect().bottom,
+    );
+    // The submenu is an element too, placed where its own markup says.
+    hoverOver(by("share"));
+    await waitFor(() => expect(state("sub-content")).toBe("open"));
+    await waitFor(() =>
+      expect(by("sub-positioner").getAttribute("data-mw-area")).toBe("right span-bottom"),
+    );
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(state("content")).toBe("closed"));
+    // A selection reaches the page as an event, and the dialog opens on
+    // the attribute it writes.
+    await userEvent.click(by("trigger"));
+    await waitFor(() => expect(state("content")).toBe("open"));
+    await userEvent.click(by("delete"));
+    await waitFor(() => expect(selections).toEqual(["delete"]));
+    await waitFor(() => expect(state("dialog-content")).toBe("open"));
+    await waitFor(() => expect(host.shadowRoot!.textContent).toContain("Delete the file?"));
+    // Closed by its own button, the machine writes `open` back off.
+    await userEvent.click(by("cancel"));
+    await waitFor(() => expect(state("dialog-content")).toBe("closed"));
+    await waitFor(() => expect(dialogElement.hasAttribute("open")).toBe(false));
+    // A select is an element too: its items are its collection, and
+    // the mount fills the control a form posts — a write into its own
+    // markup, which must not have it mount again.
+    expect(by("select-trigger").getAttribute("aria-haspopup")).toBe("listbox");
+    const hidden = by("select").querySelector<HTMLSelectElement>("select")!;
+    expect(hidden.querySelectorAll("option")).toHaveLength(2);
+    expect(hidden.style.display).toBe("none");
+    await userEvent.click(by("select-trigger"));
+    await waitFor(() => expect(state("select-content")).toBe("open"));
+    await expectOnItsCells(host, by("select-positioner"));
+    await userEvent.click(by("next"));
+    await waitFor(() => expect(by("value-text").textContent).toBe("next"));
+    expect(hidden.value).toBe("next");
+    await expectRow(host, "next");
+    // A tooltip element sits in the sentence and opens over it; left
+    // open for the golden.
+    hoverOver(by("hint-trigger"));
+    await waitFor(() => expect(state("hint")).toBe("open"));
+    await waitFor(() =>
+      expect(by("hint-positioner").getAttribute("data-mw-area")).toBe("span-all top"),
+    );
+    await expectRow(host, "Asks first");
   },
 };

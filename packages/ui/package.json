@@ -56,6 +56,14 @@
       "typecheck": "./dist/top-layer.d.ts",
       "default": "./src/top-layer.ts"
     },
+    "./framework": {
+      "typecheck": "./dist/framework.d.ts",
+      "default": "./src/framework.ts"
+    },
+    "./elements": {
+      "typecheck": "./dist/elements/index.d.ts",
+      "default": "./src/elements/index.ts"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -87,6 +95,14 @@
       "./top-layer": {
         "types": "./dist/top-layer.d.ts",
         "default": "./dist/top-layer.js"
+      },
+      "./framework": {
+        "types": "./dist/framework.d.ts",
+        "default": "./dist/framework.js"
+      },
+      "./elements": {
+        "types": "./dist/elements/index.d.ts",
+        "default": "./dist/elements.js"
       },
       "./package.json": "./package.json"
     }

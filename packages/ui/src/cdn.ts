@@ -4,7 +4,8 @@
  *   <script src=".../monowind/dist/cdn.js"></script>
  *   <script src=".../@monowind/ui/dist/cdn.js"></script>
  *
- * Mounts components on markup through `monowind.ui`, Zag bundled in.
+ * Mounts components on markup through `monowind.ui`, Zag bundled in,
+ * and registers the elements so markup alone is enough.
  */
 import { dialog } from "./dialog.ts";
 import { listbox } from "./listbox.ts";
@@ -12,6 +13,9 @@ import { menu } from "./menu.ts";
 import { popover } from "./popover.ts";
 import { select } from "./select.ts";
 import { tooltip } from "./tooltip.ts";
+import { defineMonoUi } from "./elements/index.ts";
+
+defineMonoUi();
 
 // Injected by vite.cdn.config.ts from package.json.
 declare const __MONOWIND_UI_VERSION__: string;
@@ -29,6 +33,7 @@ Object.assign(globalThis, {
       dialog,
       popover,
       tooltip,
+      defineMonoUi,
       version: __MONOWIND_UI_VERSION__,
     },
   },

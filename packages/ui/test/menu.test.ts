@@ -238,4 +238,48 @@ describe("the mount", () => {
     third.destroy();
     root.remove();
   });
+
+  it("moves the positioner on a placement given later, the rest of `positioning` kept", async () => {
+    const root = markup();
+    const mounted = menu(root, { id: "m", positioning: { placement: "bottom-start", gutter: 1 } });
+    await settle();
+    const area = () => by(root, "positioner").style.getPropertyValue("position-area");
+    expect(area()).toBe("bottom span-right");
+    // A partial: the machine and the API read the merge, not the
+    // partial, so the gutter the mount was given still spaces it.
+    mounted.updateProps({ positioning: { placement: "top-end" } });
+    await settle();
+    expect(area()).toBe("top span-left");
+    expect(by(root, "positioner").style.getPropertyValue("margin-bottom")).toBe("0.25rem");
+    mounted.destroy();
+    root.remove();
+  });
+
+  it("hands a submenu the behavior its parent shares, and nothing else", async () => {
+    const root = markup();
+    const first = vi.fn();
+    const mounted = menu(root, { id: "m", onSelect: first, closeOnSelect: false });
+    await settle();
+    mounted.api.setOpen(true);
+    await settle();
+    by(root, "trigger-item").click();
+    await settle();
+    const submenu = by(root, "submenu");
+    by(submenu, "item", "mail").click();
+    await settle();
+    expect(first).toHaveBeenCalledWith({ value: "mail" });
+    // The submenu takes the parent's new `onSelect`; its own id and
+    // placement, which are not shared, stay as the mount made them.
+    const second = vi.fn();
+    mounted.updateProps({ onSelect: second });
+    await settle();
+    by(submenu, "item", "mail").click();
+    await settle();
+    expect(second).toHaveBeenCalledWith({ value: "mail" });
+    expect(by(submenu, "positioner").style.getPropertyValue("position-anchor")).toBe(
+      "--mw-ui-m-share",
+    );
+    mounted.destroy();
+    root.remove();
+  });
 });

@@ -2,7 +2,7 @@ import * as Popover from "@zag-js/popover";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, positionedProps, type MachineProps } from "./anchor.ts";
-import { mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
+import { liveProps, mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
 
 export type Props = Popover.Props;
 export type Api<T extends PropTypes = PropTypes> = Popover.Api<T>;
@@ -12,6 +12,9 @@ export type GridProps = MachineProps<typeof Popover.machine>;
 
 /** Zag's machine, for the framework's `useMachine`. */
 export { machine } from "@zag-js/popover";
+/** The machine props' names, for a framework that declares its
+ * components' props at runtime. */
+export { props as propNames } from "@zag-js/popover";
 
 /** The machine's props, `props()`'s return, with Zag's placement off. */
 export function props(machineProps: Props): GridProps {
@@ -42,11 +45,13 @@ export function api<T extends PropTypes>(
  * `positioner`, `content`, and inside it `title`, `description`, and
  * `close-trigger`. */
 export function popover(root: Element, machineProps: Props): Mounted<Api> {
-  const gridProps = props(machineProps);
+  const live = liveProps(machineProps, props);
   return mountAnchored(
     root,
-    start(Popover.machine, gridProps),
-    (service) => connect(service, normalizeProps, gridProps),
+    start(Popover.machine, () => live.machine),
+    (service) => connect(service, normalizeProps, live.machine),
     titledParts(root),
+    [],
+    live,
   );
 }

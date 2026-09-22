@@ -1,5 +1,30 @@
 <script lang="ts">
-  import { createDialog, createMenu } from "@monowind/ui-svelte";
+  import {
+    collection,
+    DialogCloseTrigger,
+    DialogContent,
+    DialogDescription,
+    DialogPositioner,
+    DialogRoot,
+    DialogTitle,
+    DialogTrigger,
+    MenuContent,
+    MenuItem,
+    MenuPositioner,
+    MenuRoot,
+    MenuTrigger,
+    MenuTriggerItem,
+    SelectContent,
+    SelectControl,
+    SelectHiddenSelect,
+    SelectIndicator,
+    SelectItem,
+    SelectItemText,
+    SelectPositioner,
+    SelectRoot,
+    SelectTrigger,
+    SelectValueText,
+  } from "@monowind/ui-svelte";
 
   // Svelte owns the light DOM (runes updating the text in place);
   // monowind reads it and lays it out on the character grid. The counter
@@ -9,16 +34,9 @@
   let count = $state(0);
   let picked = $state("nothing yet");
 
-  // A menu and a dialog from @monowind/ui-svelte, each positioner kept
-  // in the top layer by its action.
-  const menu = createMenu({
-    id: "file",
-    positioning: { placement: "bottom-start" },
-    onSelect: ({ value }) => (picked = value),
-  });
-  const dialog = createDialog({ id: "confirm" });
-
   const item = "px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg) data-disabled:text-neutral-500";
+
+  const branches = collection({ items: ["main", "next", "release"] });
 </script>
 
 <mono-wind>
@@ -29,25 +47,67 @@
     <button class="cursor-pointer" onclick={() => (count += 1)}>increment</button>
   </div>
   <div class="mt-1 flex items-center gap-2">
-    <button {...menu.api.getTriggerProps()} class="border px-1">File</button>
-    <div use:menu.positioner {...menu.api.getPositionerProps()}>
-      <div {...menu.api.getContentProps()} class="border bg-clear">
-        <div {...menu.api.getItemProps({ value: "new" })} class={item}>New</div>
-        <div {...menu.api.getItemProps({ value: "open" })} class={item}>Open…</div>
-        <div {...menu.api.getItemProps({ value: "save", disabled: true })} class={item}>Save</div>
-      </div>
-    </div>
-    <button {...dialog.api.getTriggerProps()} class="border px-1">Delete</button>
-    <div use:dialog.positioner {...dialog.api.getPositionerProps()} class="backdrop:bg-black/50">
-      <div {...dialog.api.getContentProps()} class="border px-1">
-        <p {...dialog.api.getTitleProps()} class="font-bold">Delete the file?</p>
-        <p {...dialog.api.getDescriptionProps()}>This cannot be undone.</p>
-        <p class="mt-1 flex gap-2">
-          <button {...dialog.api.getCloseTriggerProps()} class="border px-1">Cancel</button>
-          <button class="border px-1" onclick={() => dialog.api.setOpen(false)}>Delete</button>
-        </p>
-      </div>
-    </div>
+    <!-- A menu from @monowind/ui-svelte: the positioner part carries
+         the action that keeps it in the top layer, and a nested
+         MenuRoot is this menu's submenu. -->
+    <MenuRoot positioning={{ placement: "bottom-start" }} onSelect={({ value }) => (picked = value)}>
+      <MenuTrigger class="border px-1">File</MenuTrigger>
+      <MenuPositioner>
+        <MenuContent class="border bg-clear">
+          <MenuItem value="new" class={item}>New</MenuItem>
+          <MenuItem value="open" class={item}>Open…</MenuItem>
+          <MenuItem value="save" disabled class={item}>Save</MenuItem>
+          <MenuRoot>
+            <MenuTriggerItem class={item}>Share ›</MenuTriggerItem>
+            <MenuPositioner>
+              <MenuContent class="border bg-clear">
+                <MenuItem value="mail" class={item}>Mail</MenuItem>
+                <MenuItem value="link" class={item}>Copy link</MenuItem>
+              </MenuContent>
+            </MenuPositioner>
+          </MenuRoot>
+        </MenuContent>
+      </MenuPositioner>
+    </MenuRoot>
+    <!-- A dialog the same way, its backdrop the engine's to draw; the
+         `child` snippet puts a part's props on an element of your own,
+         which is Svelte's stand-in for asChild. -->
+    <DialogRoot>
+      <DialogTrigger class="border px-1">Delete</DialogTrigger>
+      <DialogPositioner class="backdrop:bg-black/50">
+        <DialogContent class="border px-1">
+          <DialogTitle class="font-bold">Delete the file?</DialogTitle>
+          <DialogDescription>This cannot be undone.</DialogDescription>
+          <p class="mt-1 flex gap-2">
+            <DialogCloseTrigger class="border px-1">Cancel</DialogCloseTrigger>
+            <DialogCloseTrigger class="border px-1">
+              {#snippet child(props)}
+                <button {...props}>Delete</button>
+              {/snippet}
+            </DialogCloseTrigger>
+          </p>
+        </DialogContent>
+      </DialogPositioner>
+    </DialogRoot>
+    <!-- A select: a listbox on a trigger, its own root element in the
+         flow and its list in the top layer, with a native control for
+         a form. -->
+    <SelectRoot collection={branches} name="branch">
+      <SelectControl>
+        <SelectTrigger class="border px-1">
+          <SelectValueText>branch…</SelectValueText>
+          <SelectIndicator class="ml-1">▼</SelectIndicator>
+        </SelectTrigger>
+      </SelectControl>
+      <SelectPositioner>
+        <SelectContent class="border bg-clear">
+          {#each branches.items as value (value)}
+            <SelectItem {value} class={item}><SelectItemText>{value}</SelectItemText></SelectItem>
+          {/each}
+        </SelectContent>
+      </SelectPositioner>
+      <SelectHiddenSelect />
+    </SelectRoot>
     <span>picked <b class="text-yellow-400">{picked}</b></span>
   </div>
   {#each { length: 6 } as _, i}

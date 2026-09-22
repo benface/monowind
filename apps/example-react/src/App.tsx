@@ -1,5 +1,5 @@
-import { useDialog, useMenu } from "@monowind/ui-react";
-import { useId, useState } from "react";
+import { collection, Dialog, Menu, Select } from "@monowind/ui-react";
+import { useState } from "react";
 
 /**
  * React owns the light DOM (state, events, reconciliation); monowind reads
@@ -24,6 +24,7 @@ export function App() {
       <div className="mt-1 flex items-center gap-2">
         <FileMenu onSelect={setPicked} />
         <DeleteDialog />
+        <BranchSelect />
         <span>
           picked <b className="text-yellow-400">{picked}</b>
         </span>
@@ -38,61 +39,93 @@ export function App() {
 const ITEM =
   "px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg) data-disabled:text-neutral-500";
 
-/** A menu from `@monowind/ui-react`: Zag's machine as a hook, the grid's
- * props in the parts, the positioner kept in the top layer. */
-function FileMenu({ onSelect }: { onSelect: (value: string) => void }) {
-  const menu = useMenu({
-    id: useId(),
-    positioning: { placement: "bottom-start" },
-    onSelect: ({ value }) => onSelect(value),
-  });
+const branches = collection({ items: ["main", "next", "release"] });
+
+/** A select: a listbox on a trigger, its own root element in the flow
+ * and its list in the top layer, with a native control for a form. */
+function BranchSelect() {
   return (
-    <>
-      <button {...menu.getTriggerProps()} className="border px-1">
-        File
-      </button>
-      <div {...menu.getPositionerProps()}>
-        <div {...menu.getContentProps()} className="border bg-clear">
-          <div {...menu.getItemProps({ value: "new" })} className={ITEM}>
+    <Select.Root collection={branches} name="branch">
+      <Select.Control>
+        <Select.Trigger className="border px-1">
+          <Select.ValueText>branch…</Select.ValueText>
+          <Select.Indicator className="ml-1">▼</Select.Indicator>
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content className="border bg-clear">
+          {branches.items.map((value: string) => (
+            <Select.Item key={value} value={value} className={ITEM}>
+              <Select.ItemText>{value}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+      <Select.HiddenSelect />
+    </Select.Root>
+  );
+}
+
+/** A menu from `@monowind/ui-react`: Zag's machine behind a compound
+ * component, the grid's props in the parts, the positioner kept in the
+ * top layer. A nested `Menu.Root` is the submenu of the menu around
+ * it, opening beside the item that carries it. */
+function FileMenu({ onSelect }: { onSelect: (value: string) => void }) {
+  return (
+    <Menu.Root
+      positioning={{ placement: "bottom-start" }}
+      onSelect={({ value }) => onSelect(value)}
+    >
+      <Menu.Trigger className="border px-1">File</Menu.Trigger>
+      <Menu.Positioner>
+        <Menu.Content className="border bg-clear">
+          <Menu.Item value="new" className={ITEM}>
             New
-          </div>
-          <div {...menu.getItemProps({ value: "open" })} className={ITEM}>
+          </Menu.Item>
+          <Menu.Item value="open" className={ITEM}>
             Open…
-          </div>
-          <div {...menu.getItemProps({ value: "save", disabled: true })} className={ITEM}>
+          </Menu.Item>
+          <Menu.Item value="save" disabled className={ITEM}>
             Save
-          </div>
-        </div>
-      </div>
-    </>
+          </Menu.Item>
+          <Menu.Root>
+            <Menu.TriggerItem className={ITEM}>Share ›</Menu.TriggerItem>
+            <Menu.Positioner>
+              <Menu.Content className="border bg-clear">
+                <Menu.Item value="mail" className={ITEM}>
+                  Mail
+                </Menu.Item>
+                <Menu.Item value="link" className={ITEM}>
+                  Copy link
+                </Menu.Item>
+              </Menu.Content>
+            </Menu.Positioner>
+          </Menu.Root>
+        </Menu.Content>
+      </Menu.Positioner>
+    </Menu.Root>
   );
 }
 
 /** A dialog the same way: its positioner the top-layer element, its
- * backdrop the engine's to draw. */
+ * backdrop the engine's to draw. `asChild` puts a part's props on an
+ * element of your own, here a second button that closes it. */
 function DeleteDialog() {
-  const dialog = useDialog({ id: useId() });
   return (
-    <>
-      <button {...dialog.getTriggerProps()} className="border px-1">
-        Delete
-      </button>
-      <div {...dialog.getPositionerProps()} className="backdrop:bg-black/50">
-        <div {...dialog.getContentProps()} className="border px-1">
-          <p {...dialog.getTitleProps()} className="font-bold">
-            Delete the file?
-          </p>
-          <p {...dialog.getDescriptionProps()}>This cannot be undone.</p>
+    <Dialog.Root>
+      <Dialog.Trigger className="border px-1">Delete</Dialog.Trigger>
+      <Dialog.Positioner className="backdrop:bg-black/50">
+        <Dialog.Content className="border px-1">
+          <Dialog.Title className="font-bold">Delete the file?</Dialog.Title>
+          <Dialog.Description>This cannot be undone.</Dialog.Description>
           <p className="mt-1 flex gap-2">
-            <button {...dialog.getCloseTriggerProps()} className="border px-1">
-              Cancel
-            </button>
-            <button className="border px-1" onClick={() => dialog.setOpen(false)}>
-              Delete
-            </button>
+            <Dialog.CloseTrigger className="border px-1">Cancel</Dialog.CloseTrigger>
+            <Dialog.CloseTrigger asChild>
+              <button className="border px-1">Delete</button>
+            </Dialog.CloseTrigger>
           </p>
-        </div>
-      </div>
-    </>
+        </Dialog.Content>
+      </Dialog.Positioner>
+    </Dialog.Root>
   );
 }

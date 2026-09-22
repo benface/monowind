@@ -14,5 +14,4 @@ await runFrameworkSmoke({
   dir: import.meta.dirname,
   chromium,
   createServer,
-  ui: false,
 });

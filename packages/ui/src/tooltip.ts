@@ -2,7 +2,7 @@ import * as Tooltip from "@zag-js/tooltip";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, positionedProps, type MachineProps } from "./anchor.ts";
-import { mountAnchored, start, type Mounted } from "./vanilla.ts";
+import { liveProps, mountAnchored, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Tooltip.Props;
 export type Api<T extends PropTypes = PropTypes> = Tooltip.Api<T>;
@@ -12,6 +12,9 @@ export type GridProps = MachineProps<typeof Tooltip.machine>;
 
 /** Zag's machine, for the framework's `useMachine`. */
 export { machine } from "@zag-js/tooltip";
+/** The machine props' names, for a framework that declares its
+ * components' props at runtime. */
+export { props as propNames } from "@zag-js/tooltip";
 
 /** The machine's props, `props()`'s return, with Zag's placement off. */
 export function props(machineProps: Props): GridProps {
@@ -41,8 +44,13 @@ export function api<T extends PropTypes>(
 /** A tooltip on markup marked with `data-part`: `trigger`,
  * `positioner`, `content`. */
 export function tooltip(root: Element, machineProps: Props): Mounted<Api> {
-  const gridProps = props(machineProps);
-  return mountAnchored(root, start(Tooltip.machine, gridProps), (service) =>
-    connect(service, normalizeProps, gridProps),
+  const live = liveProps(machineProps, props);
+  return mountAnchored(
+    root,
+    start(Tooltip.machine, () => live.machine),
+    (service) => connect(service, normalizeProps, live.machine),
+    undefined,
+    [],
+    live,
   );
 }

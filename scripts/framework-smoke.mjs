@@ -25,7 +25,13 @@ export async function runFrameworkSmoke({ name, dir, chromium, createServer, ui 
   const browser = await chromium.launch();
   const page = await browser.newPage();
   page.setDefaultTimeout(10_000);
-  await page.goto(url);
+  // The first navigation waits on the dev server, which holds it
+  // while it pre-bundles dependencies — a minute's headroom, against
+  // the ten seconds every later step gets. Not `load` either: a
+  // server that finds a dependency mid-load reloads the page and
+  // aborts that navigation, while the host's own ready flag below
+  // survives a reload.
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForSelector("mono-wind[data-mw-ready]");
 
   // The ownership loop: clicking the button updates framework state, the
@@ -66,11 +72,36 @@ export async function runFrameworkSmoke({ name, dir, chromium, createServer, ui 
         Math.abs(positioner.left - trigger.left) < 1
       );
     });
+    // The submenu: hovering the item that carries it opens a second
+    // positioner, beside that item on the reading side.
+    await page.hover('[data-part="trigger-item"]');
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-part="positioner"]:popover-open').length === 2,
+    );
+    result.submenuBesideItem = await page.evaluate(() => {
+      const item = document.querySelector('[data-part="trigger-item"]').getBoundingClientRect();
+      const open = document.querySelectorAll('[data-part="positioner"]:popover-open');
+      return Math.abs(open[1].getBoundingClientRect().left - item.right) < 1;
+    });
     await page.click('[role="menuitem"][data-value="open"]');
     await page.waitForFunction(() => document.body.textContent?.includes("picked open"));
     result.menuPicked = await page.evaluate(
       () => document.body.textContent?.includes("picked open") ?? false,
     );
+    // The select: its own root element in the flow, its list in the
+    // top layer, the choice written into the trigger and the native
+    // control a form would post.
+    await page.click('button[aria-haspopup="listbox"]');
+    await page.waitForSelector('[role="listbox"]');
+    await page.click('[role="option"][data-value="next"]');
+    await page.waitForFunction(
+      () => document.querySelector('[data-part="value-text"]')?.textContent?.trim() === "next",
+    );
+    result.selectChose = await page.evaluate(() => {
+      const hidden = document.querySelector("select");
+      return hidden?.value === "next" && getComputedStyle(hidden).display === "none";
+    });
+
     await page.click('button[aria-haspopup="dialog"]');
     await page.waitForSelector(
       '[data-part="positioner"]:popover-open [role="dialog"][data-state="open"]',

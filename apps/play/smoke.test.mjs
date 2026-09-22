@@ -27,17 +27,16 @@ const sampleRendered = await page.evaluate(() => {
   return (grid?.textContent ?? "").includes("┌") && (grid?.textContent ?? "").includes("│");
 });
 
-// The sample's share menu, mounted through the ui CDN bundle on the
-// marked root: its button opens it under itself, in the top layer.
+// The sample's share menu, an element the ui CDN bundle registers and
+// that roots its own mount: its button opens it under itself, in the
+// top layer.
 const preview = page.frameLocator("#preview");
-await preview.locator('[data-component="menu"] [data-part="trigger"]').click();
-await preview
-  .locator('[data-component="menu"] [data-part="positioner"]:popover-open[data-mw-area]')
-  .waitFor();
+await preview.locator('mono-menu [data-part="trigger"]').click();
+await preview.locator('mono-menu [data-part="positioner"]:popover-open[data-mw-area]').waitFor();
 const uiMounted = await page.evaluate(() => {
   const doc = document.getElementById("preview")?.contentDocument;
-  const trigger = doc?.querySelector('[data-component="menu"] [data-part="trigger"]');
-  const positioner = doc?.querySelector('[data-component="menu"] [data-part="positioner"]');
+  const trigger = doc?.querySelector('mono-menu [data-part="trigger"]');
+  const positioner = doc?.querySelector('mono-menu [data-part="positioner"]');
   if (!trigger || !positioner) return false;
   // On the side the engine took: under its button, or above it where the
   // sample's bottom edge leaves no room; left edges aligned either way.
@@ -52,7 +51,7 @@ await page.keyboard.press("Escape");
 // The sample's star dialog, mounted the same way: once the grid has
 // painted its [ ok ] button, right-aligned, a click on those cells
 // closes it.
-await preview.locator('[data-component="dialog"] [data-part="trigger"]').click();
+await preview.locator('mono-dialog [data-part="trigger"]').click();
 const okPainted = await page
   .waitForFunction(() => {
     const frame = document.getElementById("preview");
@@ -76,7 +75,7 @@ if (okPainted) await page.mouse.click(okPainted.x, okPainted.y);
 const dialogClosedFromItsCells =
   okPainted !== null &&
   (await preview
-    .locator('[data-component="dialog"] [data-part="content"][data-state="closed"]')
+    .locator('mono-dialog [data-part="content"][data-state="closed"]')
     .waitFor({ state: "attached" })
     .then(
       () => true,

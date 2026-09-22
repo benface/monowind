@@ -4,3 +4,5 @@ packages:
 minimumReleaseAge: 1440 # default in pnpm 11, but `npm-check-updates` needs it to be explicit
 allowBuilds:
   esbuild: true
+minimumReleaseAgeExclude:
+  - "@oxlint/binding-linux-x64-musl@1.85.0"

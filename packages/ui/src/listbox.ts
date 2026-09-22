@@ -5,7 +5,7 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, withHandlers, type MachineProps } from "./anchor.ts";
 import { itemParts, markupCollection, type WithMarkupItems } from "./items.ts";
 import { scrollToItem } from "./scroll.ts";
-import { mount, part, start, type Mounted } from "./vanilla.ts";
+import { liveProps, mount, part, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Listbox.Props;
 export type Api<T extends PropTypes = PropTypes> = Listbox.Api<T>;
@@ -15,6 +15,9 @@ export type GridProps = MachineProps<typeof Listbox.machine>;
 
 /** Zag's machine, for the framework's `useMachine`. */
 export { machine } from "@zag-js/listbox";
+/** The machine props' names, for a framework that declares its
+ * components' props at runtime. */
+export { props as propNames } from "@zag-js/listbox";
 /** Zag's collections, the items a listbox holds: a list, or a grid of
  * items in `columnCount` columns. */
 export { collection, gridCollection } from "@zag-js/listbox";
@@ -83,18 +86,18 @@ export type MountProps = WithMarkupItems<Props>;
  * `data-highlight-on-hover` on the root moves the highlight to the item
  * the pointer is on. */
 export function listbox(root: Element, machineProps: MountProps): Mounted<Api> {
-  const gridProps = props({
-    ...machineProps,
-    collection: machineProps.collection ?? markupCollection(root),
-  });
+  const live = liveProps(
+    { ...machineProps, collection: machineProps.collection ?? markupCollection(root) },
+    props,
+  );
   const label = part(root, "label");
   const content = part(root, "content");
   const wireItems = itemParts<Api>(root, () => ({
     highlightOnHover: root.hasAttribute("data-highlight-on-hover"),
   }));
   return mount(
-    start(Listbox.machine, gridProps),
-    (service) => connect(service, normalizeProps, gridProps),
+    start(Listbox.machine, () => live.machine),
+    (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
       // The root is the element the mount was given, its id the
       // markup's — the page finds it by that.
@@ -103,5 +106,7 @@ export function listbox(root: Element, machineProps: MountProps): Mounted<Api> {
       spread(content, current.getContentProps());
       wireItems(current, spread);
     },
+    [],
+    live,
   );
 }

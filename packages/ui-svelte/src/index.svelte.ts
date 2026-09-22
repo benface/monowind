@@ -1,4 +1,4 @@
-import type { MachineSchema } from "@zag-js/core";
+import type { MachineSchema, Service } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/svelte";
 import * as dialog from "@monowind/ui/dialog";
 import * as listbox from "@monowind/ui/listbox";
@@ -9,15 +9,96 @@ import * as tooltip from "@monowind/ui/tooltip";
 import { syncTopLayer, type Anchored, type Component } from "@monowind/ui/top-layer";
 import type { Action } from "svelte/action";
 
-/** A component in a Svelte component: its API, live. */
-export interface InFlow<A> {
+/**
+ * `@monowind/ui` for Svelte: a `create…` per component for a
+ * component's script, and a compound component over each
+ * (specs/ui.md "Component layer"). Both read from the same machines,
+ * so a page may mix them.
+ */
+/** The collections a listbox and a select take, Zag's own: `items`
+ * and, for a grid of them, `columnCount`. Both components build the
+ * same `ListCollection`, so one export serves each. */
+export { collection, gridCollection } from "@monowind/ui/listbox";
+export {
+  useDialogContext,
+  useItemContext,
+  useListboxContext,
+  useMenuContext,
+  usePopoverContext,
+  useSelectContext,
+  useTooltipContext,
+} from "./components/context.ts";
+export { default as DialogCloseTrigger } from "./components/DialogCloseTrigger.svelte";
+export { default as DialogContent } from "./components/DialogContent.svelte";
+export { default as DialogDescription } from "./components/DialogDescription.svelte";
+export { default as DialogPositioner } from "./components/DialogPositioner.svelte";
+export { default as DialogRoot } from "./components/DialogRoot.svelte";
+export { default as DialogRootProvider } from "./components/DialogRootProvider.svelte";
+export { default as DialogTitle } from "./components/DialogTitle.svelte";
+export { default as DialogTrigger } from "./components/DialogTrigger.svelte";
+export { default as ListboxContent } from "./components/ListboxContent.svelte";
+export { default as ListboxItem } from "./components/ListboxItem.svelte";
+export { default as ListboxItemGroup } from "./components/ListboxItemGroup.svelte";
+export { default as ListboxItemGroupLabel } from "./components/ListboxItemGroupLabel.svelte";
+export { default as ListboxItemIndicator } from "./components/ListboxItemIndicator.svelte";
+export { default as ListboxItemText } from "./components/ListboxItemText.svelte";
+export { default as ListboxLabel } from "./components/ListboxLabel.svelte";
+export { default as ListboxRoot } from "./components/ListboxRoot.svelte";
+export { default as ListboxRootProvider } from "./components/ListboxRootProvider.svelte";
+export { default as MenuContent } from "./components/MenuContent.svelte";
+export { default as MenuItem } from "./components/MenuItem.svelte";
+export { default as MenuItemGroup } from "./components/MenuItemGroup.svelte";
+export { default as MenuItemGroupLabel } from "./components/MenuItemGroupLabel.svelte";
+export { default as MenuPositioner } from "./components/MenuPositioner.svelte";
+export { default as MenuRoot } from "./components/MenuRoot.svelte";
+export { default as MenuRootProvider } from "./components/MenuRootProvider.svelte";
+export { default as MenuSeparator } from "./components/MenuSeparator.svelte";
+export { default as MenuTrigger } from "./components/MenuTrigger.svelte";
+export { default as MenuTriggerItem } from "./components/MenuTriggerItem.svelte";
+export { default as PopoverCloseTrigger } from "./components/PopoverCloseTrigger.svelte";
+export { default as PopoverContent } from "./components/PopoverContent.svelte";
+export { default as PopoverDescription } from "./components/PopoverDescription.svelte";
+export { default as PopoverIndicator } from "./components/PopoverIndicator.svelte";
+export { default as PopoverPositioner } from "./components/PopoverPositioner.svelte";
+export { default as PopoverRoot } from "./components/PopoverRoot.svelte";
+export { default as PopoverRootProvider } from "./components/PopoverRootProvider.svelte";
+export { default as PopoverTitle } from "./components/PopoverTitle.svelte";
+export { default as PopoverTrigger } from "./components/PopoverTrigger.svelte";
+export { default as SelectClearTrigger } from "./components/SelectClearTrigger.svelte";
+export { default as SelectContent } from "./components/SelectContent.svelte";
+export { default as SelectControl } from "./components/SelectControl.svelte";
+export { default as SelectHiddenSelect } from "./components/SelectHiddenSelect.svelte";
+export { default as SelectIndicator } from "./components/SelectIndicator.svelte";
+export { default as SelectItem } from "./components/SelectItem.svelte";
+export { default as SelectItemGroup } from "./components/SelectItemGroup.svelte";
+export { default as SelectItemGroupLabel } from "./components/SelectItemGroupLabel.svelte";
+export { default as SelectItemIndicator } from "./components/SelectItemIndicator.svelte";
+export { default as SelectItemText } from "./components/SelectItemText.svelte";
+export { default as SelectLabel } from "./components/SelectLabel.svelte";
+export { default as SelectList } from "./components/SelectList.svelte";
+export { default as SelectPositioner } from "./components/SelectPositioner.svelte";
+export { default as SelectRoot } from "./components/SelectRoot.svelte";
+export { default as SelectRootProvider } from "./components/SelectRootProvider.svelte";
+export { default as SelectTrigger } from "./components/SelectTrigger.svelte";
+export { default as SelectValueText } from "./components/SelectValueText.svelte";
+export { default as TooltipContent } from "./components/TooltipContent.svelte";
+export { default as TooltipPositioner } from "./components/TooltipPositioner.svelte";
+export { default as TooltipRoot } from "./components/TooltipRoot.svelte";
+export { default as TooltipRootProvider } from "./components/TooltipRootProvider.svelte";
+export { default as TooltipTrigger } from "./components/TooltipTrigger.svelte";
+
+/** A component in a Svelte component: its API, live, and the
+ * machine's service beside it for a caller that must link two — a
+ * submenu to the menu above it, which Zag links by service. */
+export interface InFlow<A, S = unknown> {
   readonly api: A;
+  readonly service: S;
 }
 
 /** A component with a floating part in a Svelte component: its API and
  * the action for its positioner (`use:positioner`), which keeps the
  * positioner in the top layer with the machine. */
-export interface Created<A> extends InFlow<A> {
+export interface Created<A, S = unknown> extends InFlow<A, S> {
   positioner: Action<HTMLElement>;
 }
 
@@ -41,7 +122,7 @@ function topLayer(open: () => boolean): Action<HTMLElement> {
  * props flowing — the API derived. */
 function create<T extends MachineSchema, P, G extends Partial<T["props"]>, A>(
   component: Component<T, P, G, typeof normalizeProps, A>,
-): (props: P | (() => P)) => InFlow<A> {
+): (props: P | (() => P)) => InFlow<A, Service<T>> {
   return (props) => {
     const gridProps = $derived(
       component.props(typeof props === "function" ? (props as () => P)() : props),
@@ -51,6 +132,9 @@ function create<T extends MachineSchema, P, G extends Partial<T["props"]>, A>(
     return {
       get api() {
         return api;
+      },
+      get service() {
+        return service;
       },
     };
   };
@@ -63,13 +147,18 @@ function anchoredCreate<
   P,
   G extends Partial<T["props"]>,
   A extends Anchored,
->(component: Component<T, P, G, typeof normalizeProps, A>): (props: P | (() => P)) => Created<A> {
+>(
+  component: Component<T, P, G, typeof normalizeProps, A>,
+): (props: P | (() => P)) => Created<A, Service<T>> {
   const createComponent = create(component);
   return (props) => {
     const created = createComponent(props);
     return {
       get api() {
         return created.api;
+      },
+      get service() {
+        return created.service;
       },
       positioner: topLayer(() => created.api.open),
     };
@@ -79,26 +168,27 @@ function anchoredCreate<
 // Types written out, so the declarations name them through this
 // package's own dependencies.
 /** Zag's menu on the grid, in a component. */
-export const createMenu: (props: menu.Props | (() => menu.Props)) => Created<menu.Api<PropTypes>> =
-  anchoredCreate(menu);
+export const createMenu: (
+  props: menu.Props | (() => menu.Props),
+) => Created<menu.Api<PropTypes>, menu.Service> = anchoredCreate(menu);
 /** Zag's listbox on the grid, in a component: its API alone, the parts
  * all in the flow. */
 export const createListbox: (
   props: listbox.Props | (() => listbox.Props),
-) => InFlow<listbox.Api<PropTypes>> = create(listbox);
+) => InFlow<listbox.Api<PropTypes>, listbox.Service> = create(listbox);
 /** Zag's select on the grid, in a component. */
 export const createSelect: (
   props: select.Props | (() => select.Props),
-) => Created<select.Api<PropTypes>> = anchoredCreate(select);
+) => Created<select.Api<PropTypes>, select.Service> = anchoredCreate(select);
 /** Zag's dialog on the grid, in a component. */
 export const createDialog: (
   props: dialog.Props | (() => dialog.Props),
-) => Created<dialog.Api<PropTypes>> = anchoredCreate(dialog);
+) => Created<dialog.Api<PropTypes>, dialog.Service> = anchoredCreate(dialog);
 /** Zag's popover on the grid, in a component. */
 export const createPopover: (
   props: popover.Props | (() => popover.Props),
-) => Created<popover.Api<PropTypes>> = anchoredCreate(popover);
+) => Created<popover.Api<PropTypes>, popover.Service> = anchoredCreate(popover);
 /** Zag's tooltip on the grid, in a component. */
 export const createTooltip: (
   props: tooltip.Props | (() => tooltip.Props),
-) => Created<tooltip.Api<PropTypes>> = anchoredCreate(tooltip);
+) => Created<tooltip.Api<PropTypes>, tooltip.Service> = anchoredCreate(tooltip);

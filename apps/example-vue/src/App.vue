@@ -1,5 +1,30 @@
 <script setup lang="ts">
-import { useDialog, useMenu } from "@monowind/ui-vue";
+import {
+  collection,
+  DialogCloseTrigger,
+  DialogContent,
+  DialogDescription,
+  DialogPositioner,
+  DialogRoot,
+  DialogTitle,
+  DialogTrigger,
+  MenuContent,
+  MenuItem,
+  MenuPositioner,
+  MenuRoot,
+  MenuTrigger,
+  MenuTriggerItem,
+  SelectContent,
+  SelectControl,
+  SelectHiddenSelect,
+  SelectIndicator,
+  SelectItem,
+  SelectItemText,
+  SelectPositioner,
+  SelectRoot,
+  SelectTrigger,
+  SelectValueText,
+} from "@monowind/ui-vue";
 import { ref } from "vue";
 
 // Vue owns the light DOM (reactive state patching the text in place);
@@ -9,17 +34,10 @@ import { ref } from "vue";
 const count = ref(0);
 const picked = ref("nothing yet");
 
-// A menu and a dialog from @monowind/ui-vue, each positioner kept in
-// the top layer by its ref.
-const { api: menu, positioner: menuPositioner } = useMenu({
-  id: "file",
-  positioning: { placement: "bottom-start" },
-  onSelect: ({ value }) => (picked.value = value),
-});
-const { api: dialog, positioner: dialogPositioner } = useDialog({ id: "confirm" });
-
 const item =
   "px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg) data-disabled:text-neutral-500";
+
+const branches = collection({ items: ["main", "next", "release"] });
 </script>
 
 <template>
@@ -31,27 +49,67 @@ const item =
       <button class="cursor-pointer" @click="count += 1">increment</button>
     </div>
     <div class="mt-1 flex items-center gap-2">
-      <button v-bind="menu.getTriggerProps()" class="border px-1">File</button>
-      <div ref="menuPositioner" v-bind="menu.getPositionerProps()">
-        <div v-bind="menu.getContentProps()" class="border bg-clear">
-          <div v-bind="menu.getItemProps({ value: 'new' })" :class="item">New</div>
-          <div v-bind="menu.getItemProps({ value: 'open' })" :class="item">Open…</div>
-          <div v-bind="menu.getItemProps({ value: 'save', disabled: true })" :class="item">
-            Save
-          </div>
-        </div>
-      </div>
-      <button v-bind="dialog.getTriggerProps()" class="border px-1">Delete</button>
-      <div ref="dialogPositioner" v-bind="dialog.getPositionerProps()" class="backdrop:bg-black/50">
-        <div v-bind="dialog.getContentProps()" class="border px-1">
-          <p v-bind="dialog.getTitleProps()" class="font-bold">Delete the file?</p>
-          <p v-bind="dialog.getDescriptionProps()">This cannot be undone.</p>
-          <p class="mt-1 flex gap-2">
-            <button v-bind="dialog.getCloseTriggerProps()" class="border px-1">Cancel</button>
-            <button class="border px-1" @click="dialog.setOpen(false)">Delete</button>
-          </p>
-        </div>
-      </div>
+      <!-- A menu from @monowind/ui-vue: its positioner is kept in the
+           top layer by the part itself, and a nested MenuRoot is this
+           menu's submenu, opening beside the item that carries it. -->
+      <MenuRoot
+        :positioning="{ placement: 'bottom-start' }"
+        @select="({ value }) => (picked = value)"
+      >
+        <MenuTrigger class="border px-1">File</MenuTrigger>
+        <MenuPositioner>
+          <MenuContent class="border bg-clear">
+            <MenuItem value="new" :class="item">New</MenuItem>
+            <MenuItem value="open" :class="item">Open…</MenuItem>
+            <MenuItem value="save" disabled :class="item">Save</MenuItem>
+            <MenuRoot>
+              <MenuTriggerItem :class="item">Share ›</MenuTriggerItem>
+              <MenuPositioner>
+                <MenuContent class="border bg-clear">
+                  <MenuItem value="mail" :class="item">Mail</MenuItem>
+                  <MenuItem value="link" :class="item">Copy link</MenuItem>
+                </MenuContent>
+              </MenuPositioner>
+            </MenuRoot>
+          </MenuContent>
+        </MenuPositioner>
+      </MenuRoot>
+      <!-- A dialog the same way, its backdrop the engine's to draw;
+           `as-child` puts a part's props on an element of your own. -->
+      <DialogRoot>
+        <DialogTrigger class="border px-1">Delete</DialogTrigger>
+        <DialogPositioner class="backdrop:bg-black/50">
+          <DialogContent class="border px-1">
+            <DialogTitle class="font-bold">Delete the file?</DialogTitle>
+            <DialogDescription>This cannot be undone.</DialogDescription>
+            <p class="mt-1 flex gap-2">
+              <DialogCloseTrigger class="border px-1">Cancel</DialogCloseTrigger>
+              <DialogCloseTrigger as-child>
+                <button class="border px-1">Delete</button>
+              </DialogCloseTrigger>
+            </p>
+          </DialogContent>
+        </DialogPositioner>
+      </DialogRoot>
+      <!-- A select: a listbox on a trigger, its own root element in
+           the flow and its list in the top layer, with a native
+           control for a form. -->
+      <SelectRoot :collection="branches" name="branch">
+        <SelectControl>
+          <SelectTrigger class="border px-1">
+            <SelectValueText>branch…</SelectValueText>
+            <SelectIndicator class="ml-1">▼</SelectIndicator>
+          </SelectTrigger>
+        </SelectControl>
+        <SelectPositioner>
+          <SelectContent class="border bg-clear">
+            <SelectItem v-for="value in branches.items" :key="value" :value="value" :class="item">
+              <SelectItemText>{{ value }}</SelectItemText>
+            </SelectItem>
+          </SelectContent>
+        </SelectPositioner>
+        <SelectHiddenSelect />
+      </SelectRoot>
       <span
         >picked <b class="text-yellow-400">{{ picked }}</b></span
       >

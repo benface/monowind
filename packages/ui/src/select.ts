@@ -4,7 +4,7 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, omit, positionedProps, type MachineProps } from "./anchor.ts";
 import { itemParts, markupCollection, type WithMarkupItems } from "./items.ts";
 import { scrollToItem } from "./scroll.ts";
-import { mountAnchored, part, start, type Mounted } from "./vanilla.ts";
+import { liveProps, mountAnchored, part, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Select.Props;
 export type Api<T extends PropTypes = PropTypes> = Select.Api<T>;
@@ -14,6 +14,9 @@ export type GridProps = MachineProps<typeof Select.machine>;
 
 /** Zag's machine, for the framework's `useMachine`. */
 export { machine } from "@zag-js/select";
+/** The machine props' names, for a framework that declares its
+ * components' props at runtime. */
+export { props as propNames } from "@zag-js/select";
 /** Zag's collection, the items a select holds. */
 export { collection } from "@zag-js/select";
 
@@ -47,9 +50,20 @@ export function api<T extends PropTypes>(
  * the props name none. */
 export type MountProps = WithMarkupItems<Props>;
 
-/** The hidden native select a form submits, filled with an option per
- * item: out of the grid, a `display: none` control being one the
- * layout skips and a form still posts. */
+/** The native control behind the widget, filled with an option per
+ * item. A select is a trigger and a listbox, not a form control, so
+ * this real `<select>` beside it is what carries the value into a
+ * form and a reset; Zag gives it `aria-hidden` and `tabIndex: -1`,
+ * the visible widget owning every semantic.
+ *
+ * Hidden HERE, not left to Zag's own visually-hidden style, because
+ * that style arrives with the first spread, which is a microtask
+ * late: an in-flow `<select>` is a box as wide as its longest option
+ * (7 cells for "release"), so the grid would jump. Either hiding
+ * suits the grid — measured, an absolutely positioned clipped
+ * control takes no cells — and `display: none` is the shorter one to
+ * write, and the one a browser will not try to autofill behind the
+ * machine's back. */
 function prepareHiddenSelect(root: Element, values: string[]): HTMLSelectElement | undefined {
   const element = part(root, "hidden-select");
   if (!(element instanceof HTMLSelectElement)) return undefined;
@@ -73,10 +87,10 @@ function prepareHiddenSelect(root: Element, values: string[]): HTMLSelectElement
  * marked items are the collection where the props name none, and the
  * text the markup gives the `value-text` is its placeholder. */
 export function select(root: Element, machineProps: MountProps): Mounted<Api> {
-  const gridProps = props({
-    ...machineProps,
-    collection: machineProps.collection ?? markupCollection(root),
-  });
+  const live = liveProps(
+    { ...machineProps, collection: machineProps.collection ?? markupCollection(root) },
+    props,
+  );
   const label = part(root, "label");
   const control = part(root, "control");
   const indicator = part(root, "indicator");
@@ -85,11 +99,11 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
   const list = part(root, "list");
   const wireItems = itemParts<Api>(root);
   const placeholder = valueText?.textContent ?? "";
-  const hiddenSelect = prepareHiddenSelect(root, gridProps.collection?.getValues() ?? []);
+  const hiddenSelect = prepareHiddenSelect(root, live.machine.collection?.getValues() ?? []);
   const mounted = mountAnchored(
     root,
-    start(Select.machine, gridProps),
-    (service) => connect(service, normalizeProps, gridProps),
+    start(Select.machine, () => live.machine),
+    (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
       // The root is the element the mount was given, its id the
       // markup's — the page finds it by that.
@@ -115,10 +129,15 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
         }
       }
     },
+    [],
+    live,
   );
   return {
     get api() {
       return mounted.api;
+    },
+    updateProps(partial) {
+      mounted.updateProps(partial);
     },
     destroy() {
       mounted.destroy();

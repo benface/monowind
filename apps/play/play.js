@@ -59,7 +59,7 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
   </div>
   <div class="flex shrink-0 items-center justify-between gap-3 px-2 py-1 text-neutral-400">
     <div class="flex gap-3">
-      <div data-component="dialog">
+      <mono-dialog>
         <button data-part="trigger" class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg) active:focus-visible:bg-(--mw-bg) active:focus-visible:text-(--mw-fg)">★ star</button>
         <div data-part="positioner" popover="manual">
           <div data-part="content" class="border border-double px-2 py-1">
@@ -70,8 +70,8 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
             </p>
           </div>
         </div>
-      </div>
-      <div data-component="menu">
+      </mono-dialog>
+      <mono-menu>
         <button data-part="trigger" class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg) active:focus-visible:bg-(--mw-bg) active:focus-visible:text-(--mw-fg)">→ share</button>
         <div data-part="positioner" popover="manual">
           <div data-part="content" class="border bg-clear">
@@ -80,7 +80,7 @@ const SAMPLE = `<div class="mx-auto flex max-h-[calc(100vh-(--spacing(2)))] min-
             <div data-part="item" data-value="print" class="cursor-default px-1 data-highlighted:bg-(--mw-fg) data-highlighted:text-(--mw-bg)">Print</div>
           </div>
         </div>
-      </div>
+      </mono-menu>
     </div>
     <button class="cursor-pointer not-focus-visible:text-sky-300 hover:not-active:not-focus-visible:text-sky-100 active:bg-(--mw-fg) active:text-(--mw-bg) active:focus-visible:bg-(--mw-bg) active:focus-visible:text-(--mw-fg)">✎ edit me</button>
   </div>
@@ -231,33 +231,19 @@ const stateQuery = () => {
 };
 const writeUrl = () => history.replaceState(null, "", `${appPath}${stateQuery()}${lastHash}`);
 
-// --- Components: each data-component root is mounted through the
-// --- preview's monowind.ui after a render (a script in the sample would
-// --- not run through innerHTML), the previous mounts destroyed before
-// --- their markup goes, so Zag's teardown (focus, aria-hidden, the
-// --- scroll lock) runs on attached nodes.
-let mounted = [];
+// --- Components: the sample's <mono-*> elements mount themselves as
+// --- the preview's ui bundle registers them. They are destroyed
+// --- before their markup goes, so Zag's teardown (focus, aria-hidden,
+// --- the scroll lock) runs on attached nodes.
+const COMPONENTS = "mono-menu, mono-listbox, mono-select, mono-dialog, mono-popover, mono-tooltip";
 const unmountComponents = () => {
-  const previous = mounted;
-  mounted = [];
-  for (const component of previous) component.destroy();
-};
-const mountComponents = () => {
-  const ui = previewFrame.contentWindow?.monowind?.ui;
-  if (!ui || !previewRoot) return;
-  for (const root of previewRoot.querySelectorAll("[data-component]")) {
-    const name = root.dataset.component;
-    // The bundle's own mounts: the sample is typed, so any name reaches here.
-    const mount = Object.hasOwn(ui, name) ? ui[name] : undefined;
-    if (typeof mount === "function") mounted.push(mount(root, { id: `${name}-${mounted.length}` }));
-  }
+  for (const element of previewRoot?.querySelectorAll(COMPONENTS) ?? []) element.destroy?.();
 };
 
 const render = () => {
   if (previewRoot) {
     unmountComponents();
     previewRoot.innerHTML = source.value;
-    mountComponents();
   }
   // A trailing guard space keeps the last line's height matched to the
   // textarea's (an empty final line otherwise measures as zero).

@@ -1,8 +1,15 @@
 import * as Menu from "@zag-js/menu";
 import { normalizeProps, type VanillaMachine } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
-import { anchoredApi, pick, positionedProps, type MachineProps, type SchemaOf } from "./anchor.ts";
-import { mountAnchored, parts, start, type Mounted } from "./vanilla.ts";
+import {
+  anchoredApi,
+  omit,
+  pick,
+  positionedProps,
+  type MachineProps,
+  type SchemaOf,
+} from "./anchor.ts";
+import { liveProps, mountAnchored, parts, start, withProps, type Mounted } from "./vanilla.ts";
 
 export type Props = Menu.Props;
 export type Api<T extends PropTypes = PropTypes> = Menu.Api<T>;
@@ -12,6 +19,9 @@ export type GridProps = MachineProps<typeof Menu.machine>;
 
 /** Zag's machine, for the framework's `useMachine`. */
 export { machine } from "@zag-js/menu";
+/** The machine props' names, for a framework that declares its
+ * components' props at runtime. */
+export { props as propNames } from "@zag-js/menu";
 
 /** The machine's props, `props()`'s return, with Zag's placement off. */
 export function props(machineProps: Props): GridProps {
@@ -40,16 +50,24 @@ export function api<T extends PropTypes>(
   return anchoredApi(zag, normalize, machineProps, "bottom-start");
 }
 
+/** The props the mount takes: Zag's, and per submenu value the props
+ * that submenu's own markup carries. The record spans the whole tree
+ * of submenus, each keyed by the value that pairs it with its trigger
+ * item. */
+export interface MountProps extends Props {
+  submenus?: Record<string, Props> | undefined;
+}
+
 /** A menu on markup marked with `data-part` (the parts in the README),
  * a `submenu` root mounted as a menu of its own beside the
  * `trigger-item` before it, on the parent's behavior props. */
-export function menu(root: Element, machineProps: Props): Mounted<Api> {
+export function menu(root: Element, machineProps: MountProps): Mounted<Api> {
   return mountMenu(root, machineProps).mounted;
 }
 
 /** The parent's props a submenu takes, Zag calling a menu's `onSelect`
  * for its own items: how its items behave and select. */
-const SHARED = [
+export const SHARED = [
   "closeOnSelect",
   "composite",
   "dir",
@@ -60,14 +78,26 @@ const SHARED = [
   "typeahead",
 ] as const satisfies readonly (keyof Props)[];
 
-/** A submenu's props: its id under the parent's, placed beside its item
- * on the reading side, the parent's shared props. */
-function submenuProps(parent: Props, value: string): Props {
-  return {
-    id: `${parent.id}-${value}`,
-    positioning: { placement: parent.dir === "rtl" ? "left-start" : "right-start" },
+/** A submenu's props under the menu above it: the behavior its parent
+ * shares and the side it opens on, with the submenu's own over them.
+ * The mount applies it to every marked `submenu` root, and a
+ * framework's nested root applies it too, so a submenu behaves the
+ * same however it is written. */
+export function asSubmenuOf(parent: Props, own: Props): Props {
+  const base: Props = {
     ...pick(parent, SHARED),
+    id: own.id,
+    positioning: { placement: parent.dir === "rtl" ? "left-start" : "right-start" },
   };
+  return withProps(base, own);
+}
+
+/** A marked submenu's props: `asSubmenuOf` with its id under the
+ * parent's, which the tree of ids depends on, and the record of
+ * submenu props carried on down. */
+function submenuProps(parent: MountProps, value: string): MountProps {
+  const props = asSubmenuOf(parent, { ...parent.submenus?.[value], id: `${parent.id}-${value}` });
+  return parent.submenus ? { ...props, submenus: parent.submenus } : props;
 }
 
 /** A mounted menu with its machine, for the menu above it to link to
@@ -88,9 +118,11 @@ function triggerItemBefore(submenu: Element): HTMLElement | undefined {
   return undefined;
 }
 
-function mountMenu(root: Element, machineProps: Props): MenuMount {
-  const gridProps = props(machineProps);
-  const machine = start(Menu.machine, gridProps);
+function mountMenu(root: Element, machineProps: MountProps): MenuMount {
+  // The submenus' own props are the markup's, read here and not the
+  // machine's to take.
+  const live = liveProps(machineProps, (all: MountProps) => props(omit(all, "submenus")));
+  const machine = start(Menu.machine, () => live.machine);
   const items = parts(root, "item");
   const groups = parts(root, "item-group");
   const labels = parts(root, "item-group-label");
@@ -99,7 +131,7 @@ function mountMenu(root: Element, machineProps: Props): MenuMount {
     item: triggerItemBefore(child),
     ...mountMenu(child, submenuProps(machineProps, child.dataset["value"] ?? "")),
   }));
-  const grid = (service: Menu.Service): Api => connect(service, normalizeProps, gridProps);
+  const grid = (service: Menu.Service): Api => connect(service, normalizeProps, live.machine);
   for (const submenu of submenus) {
     grid(machine.service).setChild(submenu.machine.service);
     submenu.mounted.api.setParent(machine.service);
@@ -130,12 +162,21 @@ function mountMenu(root: Element, machineProps: Props): MenuMount {
       }
     },
     submenus.map((submenu) => submenu.machine),
+    live,
   );
   return {
     machine,
     mounted: {
       get api() {
         return mounted.api;
+      },
+      updateProps(partial) {
+        mounted.updateProps(partial);
+        // A submenu is a menu of its own: it takes the behavior its
+        // parent shares, never its id or its placement.
+        const shared = pick(partial as Props, SHARED);
+        if (Object.keys(shared).length === 0) return;
+        for (const submenu of submenus) submenu.mounted.updateProps(shared);
       },
       destroy() {
         mounted.destroy();

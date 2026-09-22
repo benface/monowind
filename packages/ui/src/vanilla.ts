@@ -2,21 +2,62 @@ import type { Machine, MachineSchema, Service } from "@zag-js/core";
 import { VanillaMachine, spreadProps } from "@zag-js/vanilla";
 import { syncTopLayer, type Anchored } from "./top-layer.ts";
 
-/** A component mounted on markup: its API, live, and a `destroy` that
- * stops its machine and takes its handlers off the parts. */
+/** A component mounted on markup: its API, live, a way to change the
+ * props it was mounted on, and a `destroy` that stops its machine and
+ * takes its handlers off the parts. */
 export interface Mounted<A> {
   readonly api: A;
+  /** Merge a partial into the props the machine and the API read, and
+   * spread the parts again from them. */
+  updateProps(partial: object): void;
   destroy(): void;
 }
 
-/** A machine started on its props. */
+/** A machine started on its props, which it may read per render. */
 export function start<T extends MachineSchema>(
   machine: Machine<T>,
-  props: Partial<T["props"]>,
+  props: Partial<T["props"]> | (() => Partial<T["props"]>),
 ): VanillaMachine<T> {
   const started = new VanillaMachine(machine, props);
   started.start();
   return started;
+}
+
+const isPlain = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A partial over props, merged as Zag's own `updateProps` merges one:
+ * a level deep, so `{ positioning: { placement } }` leaves the rest of
+ * `positioning` alone. */
+export function withProps<P extends object>(base: P, partial: object): P {
+  const merged = { ...base } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(partial)) {
+    const had = merged[key];
+    merged[key] = isPlain(had) && isPlain(value) ? { ...had, ...value } : value;
+  }
+  return merged as P;
+}
+
+/** The props a mount reads: the authored ones a partial merges into,
+ * and what the machine and the API take from them, re-derived on every
+ * change so the next spread sees it. */
+export interface LiveProps<G> {
+  readonly machine: G;
+  update(partial: object): void;
+}
+
+export function liveProps<P extends object, G>(authored: P, derive: (props: P) => G): LiveProps<G> {
+  let current = authored;
+  let derived = derive(current);
+  return {
+    get machine() {
+      return derived;
+    },
+    update(partial) {
+      current = withProps(current, partial);
+      derived = derive(current);
+    },
+  };
 }
 
 /** The nearest submenu root above an element, null outside any. */
@@ -86,6 +127,7 @@ export function mount<T extends MachineSchema, A>(
   connect: (service: Service<T>) => A,
   wire: (api: A, spread: Spread) => void,
   linked: Iterable<Followed> = [],
+  live?: LiveProps<Partial<T["props"]>>,
 ): Mounted<A> {
   let current = connect(machine.service);
   let stopped = false;
@@ -106,6 +148,13 @@ export function mount<T extends MachineSchema, A>(
     get api() {
       return current;
     },
+    updateProps(partial) {
+      if (!live) return;
+      live.update(partial);
+      // Zag defers its own notify, so the spread is this call's.
+      machine.updateProps(live.machine);
+      render();
+    },
     destroy() {
       stopped = true;
       for (const unsubscribe of unsubscribes) unsubscribe();
@@ -125,6 +174,7 @@ export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
   connect: (service: Service<T>) => A,
   wire?: (api: A, spread: Spread) => void,
   linked: Iterable<Followed> = [],
+  live?: LiveProps<Partial<T["props"]>>,
 ): Mounted<A> {
   const triggers = parts(root, "trigger");
   const positioner = part(root, "positioner");
@@ -142,10 +192,14 @@ export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
       syncTopLayer(positioner, api.open);
     },
     linked,
+    live,
   );
   return {
     get api() {
       return mounted.api;
+    },
+    updateProps(partial) {
+      mounted.updateProps(partial);
     },
     destroy() {
       mounted.destroy();

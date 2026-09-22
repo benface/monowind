@@ -9,6 +9,12 @@ declare module "@solidjs/web/jsx-runtime" {
   namespace JSX {
     interface IntrinsicElements {
       "mono-wind": HTMLAttributes<HTMLElement>;
+      // The components as markup: attributes are the machine's props,
+      // and its callbacks are events a listener takes.
+      "mono-menu": HTMLAttributes<HTMLElement> & { placement?: string };
+      "mono-submenu": HTMLAttributes<HTMLElement> & { value?: string };
+      "mono-dialog": HTMLAttributes<HTMLElement>;
+      "mono-select": HTMLAttributes<HTMLElement> & { name?: string };
     }
   }
 }

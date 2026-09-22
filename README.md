@@ -131,17 +131,29 @@ the roles, the keyboard, typeahead, focus, and dismissal; the engine
 places each floating part against its trigger in cells, in the top
 layer above everything, flipped where the host leaves no room, and a
 listbox in the flow like any other box. Headless, so a component styled
-through the theme's tokens wears whatever theme its host does. Mount
-one on markup marked with `data-part`, take `@monowind/ui-react`'s
-hooks, `@monowind/ui-vue`'s composables, or `@monowind/ui-svelte`'s
-functions, or use Zag's adapter for another framework with the
-package's `props()` and `connect()`.
+through the theme's tokens wears whatever theme its host does.
 
-```ts
-import { menu } from "@monowind/ui/menu";
+Write one as markup — `<mono-menu>` and its kin, attributes for props
+and events for callbacks, which any framework or none can render, and
+the whole answer where a framework has no Zag adapter (Solid 2, and
+any markup-first stack — htmx, Turbo, Alpine, a server's views):
 
-menu(document.getElementById("file-menu")!, { id: "file" });
+```html
+<mono-menu placement="bottom-start">
+  <button data-part="trigger" class="border px-1">File</button>
+  <div data-part="positioner" popover="manual">
+    <div data-part="content" class="border bg-clear">
+      <div data-part="item" data-value="new" class="px-1">New</div>
+    </div>
+  </div>
+</mono-menu>
 ```
+
+Or take the components of your framework —
+[`Menu.Root`](packages/ui-react/README.md) in React, `MenuRoot` in Vue
+and Svelte — its hook, composable or `create…`, the mount on markup
+marked with `data-part`, or Zag's adapter for another framework with
+the package's `props()` and `connect()`.
 
 See [packages/ui/README.md](packages/ui/README.md) for the parts,
 states, placement, and the framework path, and

@@ -1,4 +1,5 @@
 import { ListCollection } from "@zag-js/collection";
+import type { ItemApi } from "./framework.ts";
 import { part, parts, type Spread } from "./vanilla.ts";
 
 /** An item as the markup gives it, in the keys Zag's own collection
@@ -30,16 +31,6 @@ export function markupCollection(root: Element): ListCollection<MarkupItem> {
       disabled: item.hasAttribute("data-disabled"),
     })),
   });
-}
-
-/** What an API gives the items its collection holds and their groups. */
-interface ItemApi {
-  collection: { find(value: string): unknown };
-  getItemProps(props: { item: unknown }): object;
-  getItemTextProps(props: { item: unknown }): object;
-  getItemIndicatorProps(props: { item: unknown }): object;
-  getItemGroupProps(props: { id: string }): object;
-  getItemGroupLabelProps(props: { htmlFor: string }): object;
 }
 
 /** The parts a listbox and a select share, found once and wired on

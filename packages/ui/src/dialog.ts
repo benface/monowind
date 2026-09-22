@@ -2,7 +2,7 @@ import * as Dialog from "@zag-js/dialog";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, withProps, type MachineProps } from "./anchor.ts";
-import { mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
+import { liveProps, mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
 
 export type Props = Dialog.Props;
 export type Api<T extends PropTypes = PropTypes> = Dialog.Api<T>;
@@ -12,6 +12,9 @@ export type GridProps = MachineProps<typeof Dialog.machine>;
 
 /** Zag's machine, for the framework's `useMachine`. */
 export { machine } from "@zag-js/dialog";
+/** The machine props' names, for a framework that declares its
+ * components' props at runtime. */
+export { props as propNames } from "@zag-js/dialog";
 
 /** The machine's props as it takes them, `props()`'s return. */
 export function props(machineProps: Props): GridProps {
@@ -49,11 +52,13 @@ export function api<T extends PropTypes>(
 /** A dialog on markup marked with `data-part`: `trigger`, `positioner`,
  * `content`, and inside it `title`, `description`, and `close-trigger`. */
 export function dialog(root: Element, machineProps: Props): Mounted<Api> {
-  const gridProps = props(machineProps);
+  const live = liveProps(machineProps, props);
   return mountAnchored(
     root,
-    start(Dialog.machine, gridProps),
-    (service) => connect(service, normalizeProps, gridProps),
+    start(Dialog.machine, () => live.machine),
+    (service) => connect(service, normalizeProps, live.machine),
     titledParts(root),
+    [],
+    live,
   );
 }

@@ -13,6 +13,8 @@ export default defineConfig({
         popover: resolve(import.meta.dirname, "src/popover.ts"),
         tooltip: resolve(import.meta.dirname, "src/tooltip.ts"),
         "top-layer": resolve(import.meta.dirname, "src/top-layer.ts"),
+        framework: resolve(import.meta.dirname, "src/framework.ts"),
+        elements: resolve(import.meta.dirname, "src/elements/index.ts"),
       },
       formats: ["es"],
     },
