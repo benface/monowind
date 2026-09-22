@@ -23,17 +23,25 @@ export async function runStylingSmoke({ name, dir, chromium, createServer }) {
   // that re-optimizes a dependency reloads the page mid-load, and the
   // first paint after can carry no border at all. The glyphs are the
   // signal that the styles reached the grid.
-  await page.waitForFunction(
-    () =>
-      (
-        document.querySelector("mono-wind")?.shadowRoot?.getElementById("grid")?.textContent ?? ""
-      ).includes("│"),
-    undefined,
-    // The same grace the first navigation gets: a cold dev server
-    // pre-bundles, then reloads the page when it finds a dependency
-    // mid-load, and the styles land only on the run after.
-    { timeout: 60_000 },
-  );
+  // Polled rather than waited on: a cold dev server pre-bundles, then
+  // RELOADS the page when it finds a dependency mid-load, which
+  // destroys the execution context a `waitForFunction` is living in —
+  // it never re-evaluates and the wait runs out. Each read stands on
+  // its own, so a reload costs one poll.
+  const deadline = Date.now() + 60_000;
+  let painted = false;
+  while (!painted && Date.now() < deadline) {
+    try {
+      painted = await page.evaluate(() =>
+        (
+          document.querySelector("mono-wind")?.shadowRoot?.getElementById("grid")?.textContent ?? ""
+        ).includes("│"),
+      );
+    } catch {
+      // The reload took the context; the next read gets the new one.
+    }
+    if (!painted) await page.waitForTimeout(250);
+  }
 
   const result = await page.evaluate(() => {
     const host = document.querySelector("mono-wind");
