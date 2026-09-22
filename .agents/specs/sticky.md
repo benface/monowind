@@ -238,9 +238,15 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
 
 ## Touch points on implementation
 
-- positioning.md: the `sticky` value bullet points here; deviation 2 is
-  removed; the inline-elements section drops sticky from the relative
-  rescaling.
-- scrolling.md: the "out of scope" bullet points here.
-- cell-model.md "Positioning and insets" summary line.
-- README: the supported-CSS summary.
+- sticky.ts: `stickyShiftAxis`, the shift on one axis from the
+  scroll container's cell-quantized offset, and the pass that walks
+  each sticky box's ancestor chain and stores `node.stickyShift`.
+- types.ts: `sticky` (the insets, `null` for `auto`) and
+  `stickyShift` on the layout node; tree.ts reads the insets off a
+  `position: sticky` inline element.
+- The walks add the shift where they add the box's own position:
+  render.ts, plain-text.ts, pointer.ts (hit-testing) and focus.ts.
+- lattice.ts: a table part's shift, taken from the sticky-shifted
+  node among the cell, its row, and its row group.
+- positioning.md, scrolling.md and cell-model.md "Positioning and
+  insets" point here, as does the README's supported-CSS summary.

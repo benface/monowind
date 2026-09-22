@@ -6,7 +6,7 @@ character grid — box-drawing borders, integer-cell geometry, monospace
 everything — while native links, buttons, inputs, focus, forms, and
 accessibility semantics stay fully intact.
 
-**Early development.** APIs and behavior will change.
+**Pre-1.0.** APIs and behavior can still change.
 
 ## Try it — no build step
 

@@ -624,18 +624,15 @@ per change, the DOM patch is per row.
 
 ## Touch points on implementation
 
-- cell-model.md: deviation 10 rewritten; "Selection" describes the
-  painted highlight and the routed text-mode drag; "Text alignment"
-  loses the nudge.
-- semantic-selection.md: text mode's drag joins the gesture model; the
-  "highlight is the native layer's" statement inverts.
-- README "Selection": selection in both modes is drawn on the grid;
-  a "Unicode" note on terminal widths.
-- core-architecture.md: the "Unicode display width" backlog item
-  becomes the pointer to this spec.
-- Tiling glyphs (2026-09-05): glyph-box.ts `#tileFit` and the
-  `BaselineOf` measurer the host lends (`#baselineOf` in element.ts);
-  paint.ts `applySegment` pins, clips, and stretches; metrics.ts
-  `backgroundGap` (→ the host's `--mw-bgpad`, the grid's span padding)
-  and `gridLetterSpacing` (the cell rounded up to 1/64 px, set on the
-  grid); cell-model.md "Typography" records both.
+- width.ts: `clusterWidth` (0, 1 or 2 cells per grapheme),
+  `graphemes`, `clusterAdvance`, `clusterAdvances` and `textCells` —
+  the terminal convention every measure goes through.
+- glyph-box.ts: `#tileFit` and the `BaselineOf` measurer the host
+  lends it, which scale a glyph the font lacks into its cells.
+- paint.ts `applySegment`: pins, clips and stretches a tiled glyph.
+- metrics.ts: `backgroundGap` (the host's `--mw-bgpad`, the grid's
+  span padding) and `gridLetterSpacing` (the cell rounded up to
+  1/64 px, set on the grid).
+- cell-model.md "Selection", "Text alignment" and "Typography",
+  semantic-selection.md's gesture model, core-architecture.md's
+  display-width entry, and the README's "Selection" all point here.

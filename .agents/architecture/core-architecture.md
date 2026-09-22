@@ -163,7 +163,7 @@ components (`<mono-textarea>`, `<mono-scroll>`), consider migrating the host to
   `@tailwindcss/browser` (the Play CDN compiler): no build step, full JIT and
   arbitrary variants at runtime.
 
-All three share one core. Concretely, the planned packages:
+All three share one core. Concretely, the packages:
 
 - **`monowind`** (`packages/core`) — the engine:
   the `<mono-wind>` element, style reader, layout engine, decoration renderer,
@@ -196,11 +196,12 @@ All three share one core. Concretely, the planned packages:
   Tailwind palettes, period fonts (int10h pack, CC BY-SA), ANSI tokens,
   and border glyph sets via the core theming contract (specs/theming.md).
 - **`@monowind/ui`** (`packages/ui`) — accessible components (menu,
-  listbox, select, dialog, popover, tooltip) as Zag.js machines placed
-  and layered by the engine (specs/ui.md), one entry per component, a
-  vanilla mount, and a CDN bundle; **`@monowind/ui-react`**, **`@monowind/ui-vue`**,
+  listbox, select, combobox, dialog, popover, tooltip) as Zag.js
+  machines placed and layered by the engine (specs/ui.md), one entry
+  per component, a vanilla mount, the `<mono-*>` elements, and a CDN
+  bundle; **`@monowind/ui-react`**, **`@monowind/ui-vue`**,
   **`@monowind/ui-svelte`** fold each framework's Zag adapter in, one
-  function per component.
+  function and a component per part.
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_

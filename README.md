@@ -26,106 +26,99 @@ forms, and accessibility semantics stay fully intact.
 └──────────────────────────────────────────────────────┘
 ```
 
-> **Status: early development.** Block, flex, grid (subgrid and named
-> areas included), multi-column (`columns-*`, balancing, spanners,
-> column rules), and table layout (collapsed borders as shared
-> box-drawing lattices), gap decorations (`rule-*` separators with
-> junction glyphs), text wrap, floats (`float-*`/`clear-*`, text
-> wrapping beside them), margins, scrolling
-> (`overflow-auto`/`-scroll` scroll containers with native physics and engine-drawn
-> TUI scrollbars), sticky positioning (`sticky` boxes, table
-> headers and columns included), rounded corners (`rounded-*` picks a
-> theme's corner glyphs), box shadows (`shadow-*` as shade glyphs),
-> gradient backgrounds (`bg-linear-*`, `bg-radial-*`, `bg-conic-*`,
-> `bg-clip-text`), and transforms and filters (`rotate-*`, `scale-*`,
-> `translate-*`, `blur-*`, `grayscale`, `backdrop-blur-*`, … — the
-> element's cells in a layer of their own the browser transforms) work,
-> and CSS animations (`animate-spin`, `animate-pulse`, keyframe enters
-> and exits) are sampled like transitions; popovers and modal dialogs
-> (`popover`, `showModal()`) paint in a top layer above everything,
-> their `backdrop:` drawn beneath, and anchor positioning
-> (`anchor-name`, `position-area`, `position-try-fallbacks`) places a
-> menu under its button in cells. The unified-render
-> initiative shipped: one cell-precise renderer that keeps the light
-> DOM fully interactive, with the ASCII grid selectable via
-> `<mono-wind select="text">` for a semantic text mirror. Opacity and
-> CSS transitions animate the grid (backgrounds synthesized by the
-> engine), hover/active states work on any element without breaking
-> grid selection, `<mono-ascii>` renders FIGlet banner text,
-> `<mono-qr>` scannable QR codes, and `@monowind/ui` accessible
-> components on the grid — see the sections below. Design docs
-> live in [.agents/architecture](.agents/architecture),
+> **Status: pre-1.0.** The feature surface below works and is covered
+> by unit, story, and visual-regression tests, but APIs and behavior
+> can still change. Design docs live in
+> [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
 
-## Pointer states in grid mode
+## What works
 
-Under the default `select="grid"`, non-interactive elements pass
-pointer events through to the grid so drag-selection works — which
-would normally make `:hover`/`:active` dead on a plain `<div>`.
-monowind synthesizes both instead: the engine hit-tests the pointer
-against the cell layout and Tailwind's `hover:` and `active:` variants
-(plus `group-*`/`peer-*`) respond as usual, `cursor-*` included, with
-selection intact. Two things still need a real hit target: native
-`title` tooltips and your own JS click handlers on non-interactive
-elements — opt those elements in with `pointer-events-auto!` (they
-then block grid selection over their cells, like buttons do).
+**Layout** — block, flex, and grid (subgrid and named areas included),
+multi-column (`columns-*`, balancing, spanners, column rules), tables
+(collapsed borders as shared box-drawing lattices), floats
+(`float-*`/`clear-*`, with text wrapping beside them), margins, text
+wrap, and gap decorations (`rule-*` separators with junction glyphs).
 
-If you redefine Tailwind's `hover:` variant yourself, your definition
-wins — include the data attribute (and Tailwind's hover-capability
-gate) to keep grid-mode hover working:
+**Paint** — rounded corners (`rounded-*` picks a theme's corner
+glyphs), box shadows (`shadow-*` as shade glyphs), gradients
+(`bg-linear-*`, `bg-radial-*`, `bg-conic-*`, `bg-clip-text`), opacity,
+and transforms and filters (`rotate-*`, `scale-*`, `translate-*`,
+`blur-*`, `grayscale`, `backdrop-blur-*`, … — the element's cells in a
+layer of their own, which the browser transforms).
+
+**Motion** — CSS transitions and animations (`animate-spin`,
+`animate-pulse`, keyframe enters and exits) sampled onto the grid.
+
+**Scrolling and position** — scroll containers
+(`overflow-auto`/`-scroll`) with native physics and engine-drawn TUI
+scrollbars, sticky positioning (table headers and columns included),
+and anchor positioning (`anchor-name`, `position-area`,
+`position-try-fallbacks`) that places a menu under its button in
+cells.
+
+**Top layer** — popovers and modal dialogs (`popover`, `showModal()`)
+paint above everything, their `backdrop:` drawn beneath.
+
+**Interaction** — one cell-precise renderer draws the grid while the
+light DOM stays the browser's own, so everything above is native
+behavior rather than a reimplementation. Drag-select the grid, or set
+`<mono-wind select="text">` for a semantic text mirror; `:hover` and
+`:active` work on any element without breaking selection (see
+[Pointer states](#pointer-states-in-grid-mode)).
+
+## Getting started
+
+**No build step** — one script tag, and `<mono-wind>` does the rest:
+
+```html
+<script src="https://unpkg.com/monowind/dist/cdn.js"></script>
+```
+
+**With Vite** — the plugin brings Tailwind with it, so there is nothing
+to configure:
+
+```sh
+npm install -D @monowind/vite
+```
+
+**With your own Tailwind v4 build:**
+
+```sh
+npm install monowind
+```
 
 ```css
-@custom-variant hover {
-  @media (hover: hover) {
-    &:is(:hover:where(:not([data-mw-covered])), [data-mw-hover]) {
-      @slot;
-    }
-  }
-}
+@import "tailwindcss";
+@import "monowind";
 ```
 
-(`[data-mw-covered]` marks an element another box paints over: the
-browser drops its hover with its pointer events, and the `:where()`
-drops the style at once where an engine lags.)
-
-## Ascii-art banners
-
-`@monowind/ascii` adds `<mono-ascii>`: FIGlet/TOIlet banner text
-rendered on the grid, with the semantic string intact for screen
-readers; selecting over the banner selects the art itself. Fonts are
-per-module imports (or `registerAsciiFont` with your own
-`.flf`/`.tlf` data); SGR-colored fonts and the `effect` attribute
-(`rainbow`, `metal`) paint through theme-aware `--mw-ansi-*` tokens.
-
-```html
-<mono-ascii font="small" class="text-emerald-400">monowind</mono-ascii>
+```js
+import { defineMonoWind } from "monowind";
+defineMonoWind();
 ```
 
-44 clearly-licensed fonts ship with the package; see
-[packages/ascii/README.md](packages/ascii/README.md) for setup per
-integration and the full font list.
+See [packages/core/README.md](packages/core/README.md) for the engine
+and [packages/vite/README.md](packages/vite/README.md) for the plugin.
+The `pnpm --filter @monowind/example-* dev` lines under
+[Development](#development) each run one of these setups end to end.
 
-## QR codes
+## Themes
 
-`@monowind/qr-code` adds `<mono-qr>`: the element's text as a
-scannable QR code packed into the grid's cells — half blocks where a
-cell is twice as tall as wide, so a version-1 code is 21 × 11 — with
-the value kept in the light DOM for screen readers and a drag over
-the code selecting characters that paste as a working code. Padding
-is its quiet zone; `text-*` and `bg-*` set its colors; glyph sets
-restyle its modules.
-
-```html
-<mono-qr class="mx-auto px-2 py-1">https://play.monowind.benface.com</mono-qr>
-```
-
-See [packages/qr-code/README.md](packages/qr-code/README.md) for the
-attributes.
+`@monowind/themes` ships class-scoped themes modeled on real systems —
+`dos`, `dos-blue`, `c64`, `green-phosphor`, `amber`, `teletype`, `bbs`:
+authentic palettes (every Tailwind color token quantized to the
+system's colors), period fonts, and era-correct border characters
+(`border-double` renders `+=+` on a teletype and downgrades to single
+lines on a phosphor terminal). Try the theme switcher in the
+[playground](https://play.monowind.benface.com); details in
+[packages/themes/README.md](packages/themes/README.md). Anyone can
+build a theme — it's one CSS file against the core theming contract.
 
 ## Components
 
 `@monowind/ui` adds accessible components — a menu, a listbox, a
-select, a dialog, a popover, a tooltip — as
+select, a combobox, a dialog, a popover, a tooltip — as
 [Zag.js](https://zagjs.com) state machines wired to the grid: Zag runs
 the roles, the keyboard, typeahead, focus, and dismissal; the engine
 places each floating part against its trigger in cells, in the top
@@ -161,23 +154,76 @@ states, placement, and the framework path, and
 [packages/ui-vue](packages/ui-vue/README.md), and
 [packages/ui-svelte](packages/ui-svelte/README.md) for theirs.
 
-## Themes
+## Ascii-art banners
 
-`@monowind/themes` ships class-scoped themes modeled on real systems —
-`dos`, `dos-blue`, `c64`, `green-phosphor`, `amber`, `teletype`, `bbs`:
-authentic palettes (every Tailwind color token quantized to the
-system's colors), period fonts, and era-correct border characters
-(`border-double` renders `+=+` on a teletype and downgrades to single
-lines on a phosphor terminal). Try the theme switcher in the
-[playground](https://play.monowind.benface.com); details in
-[packages/themes/README.md](packages/themes/README.md). Anyone can
-build a theme — it's one CSS file against the core theming contract.
+`@monowind/ascii` adds `<mono-ascii>`: FIGlet/TOIlet banner text
+rendered on the grid, with the semantic string intact for screen
+readers; selecting over the banner selects the art itself. Fonts are
+per-module imports (or `registerAsciiFont` with your own
+`.flf`/`.tlf` data); SGR-colored fonts and the `effect` attribute
+(`rainbow`, `metal`) paint through theme-aware `--mw-ansi-*` tokens.
+
+```html
+<mono-ascii font="small" class="text-emerald-400">monowind</mono-ascii>
+```
+
+44 clearly-licensed fonts ship with the package; see
+[packages/ascii/README.md](packages/ascii/README.md) for setup per
+integration and the full font list.
+
+## QR codes
+
+`@monowind/qr-code` adds `<mono-qr>`: the element's text as a
+scannable QR code packed into the grid's cells — half blocks where a
+cell is twice as tall as wide, so a version-1 code is 21 × 11 — with
+the value kept in the light DOM for screen readers and a drag over
+the code selecting characters that paste as a working code. Padding
+is its quiet zone; `text-*` and `bg-*` set its colors; glyph sets
+restyle its modules.
+
+```html
+<mono-qr class="mx-auto px-2 py-1">https://play.monowind.benface.com</mono-qr>
+```
+
+See [packages/qr-code/README.md](packages/qr-code/README.md) for the
+attributes.
+
+## Pointer states in grid mode
+
+Under the default `select="grid"`, non-interactive elements pass
+pointer events through to the grid so drag-selection works — which
+would normally make `:hover`/`:active` dead on a plain `<div>`.
+monowind synthesizes both instead: the engine hit-tests the pointer
+against the cell layout and Tailwind's `hover:` and `active:` variants
+(plus `group-*`/`peer-*`) respond as usual, `cursor-*` included, with
+selection intact. Two things still need a real hit target: native
+`title` tooltips and your own JS click handlers on non-interactive
+elements — opt those elements in with `pointer-events-auto!` (they
+then block grid selection over their cells, like buttons do).
+
+If you redefine Tailwind's `hover:` variant yourself, your definition
+wins — include the data attribute (and Tailwind's hover-capability
+gate) to keep grid-mode hover working:
+
+```css
+@custom-variant hover {
+  @media (hover: hover) {
+    &:is(:hover:where(:not([data-mw-covered])), [data-mw-hover]) {
+      @slot;
+    }
+  }
+}
+```
+
+(`[data-mw-covered]` marks an element another box paints over: the
+browser drops its hover with its pointer events, and the `:where()`
+drops the style at once where an engine lags.)
 
 ## Structure
 
 This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):
 
-- `apps/` — applications (Storybook, example apps, docs site, …)
+- `apps/` — applications (Storybook, the playground, example apps)
 - `packages/` — the library packages (core engine, build integrations, elements, components)
 - `.agents/` — working documents for AI agents (specs, plans, architecture)
 
@@ -233,4 +279,18 @@ pnpm --filter @monowind/example-react dev      # React 19 + @monowind/vite
 pnpm --filter @monowind/example-solid dev      # Solid 2.0 (RC) + @monowind/vite
 pnpm --filter @monowind/example-svelte dev     # Svelte 5 + @monowind/vite
 pnpm --filter @monowind/example-vue dev        # Vue 3 + @monowind/vite
+
+# Styled by something other than Tailwind — the engine reads computed
+# styles, so what wrote them does not matter:
+pnpm --filter @monowind/example-unocss dev          # UnoCSS
+pnpm --filter @monowind/example-panda dev           # Panda CSS
+pnpm --filter @monowind/example-vanilla-extract dev # vanilla-extract
+pnpm --filter @monowind/example-stylex dev          # StyleX
+
+# Driven from attributes, with @monowind/ui's elements and no
+# component code of their own:
+pnpm --filter @monowind/example-htmx dev       # htmx
+pnpm --filter @monowind/example-alpine dev     # Alpine
+pnpm --filter @monowind/example-turbo dev      # Turbo (Hotwire)
+pnpm --filter @monowind/example-datastar dev   # Datastar
 ```

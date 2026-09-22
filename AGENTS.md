@@ -17,6 +17,15 @@ interfaces (TUIs) on the web. Start with
 - `.agents/architecture/` — architecture notes and decisions, including
   `performance.md`: what `pnpm bench` measures and where the numbers stand
 
+A spec's optional **`## Touch points on implementation`** is a
+present-tense map from the spec to the code that carries it: one
+bullet per source file, naming what that file holds for the feature.
+A cross-reference to another doc belongs there only as a standing
+relationship ("cell-model.md's box-model fill sentence points here"),
+never as an edit to make ("deviation 2 is removed", "the backlog item
+becomes a pointer") — that is a plan's job, and it rots in a spec the
+day it is done.
+
 ## Conventions
 
 - Use `pnpm` for all package management (never `npm` or `yarn`).

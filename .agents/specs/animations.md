@@ -135,5 +135,5 @@ through the relayout it drives.
 - paint.ts / plain-text.ts: none (the repaint path writes
   `CellStyle.color`/`opacity`/`borderColor` on the node and calls
   `paintGrid` on the last layout).
-- cell-model.md "Animation": the deviation "keyframes are not yet
-  sampled" goes; a pointer to this spec. layers.md deviation 10 goes.
+- cell-model.md "Animation" and layers.md: both defer to this spec for
+  keyframe sampling rather than listing it as a deviation.
