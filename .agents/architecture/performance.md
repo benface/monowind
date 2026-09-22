@@ -57,6 +57,25 @@ compositor. A page that is neither shape lands between them: a QR
 code's modules alternate, so its runs are short and share less than a
 shadow band's.
 
+`pnpm bench --shape prose` — paragraphs whose inline elements nest,
+which is what the run walk and the leaf-or-container question cost on
+an ordinary page. Added 2026-09-22 with block-in-inline, to measure a
+classification that reads a style per inline element that has element
+children:
+
+| build                  | interactive | style    | layout  | grid spans |
+| ---------------------- | ----------- | -------- | ------- | ---------- |
+| before block-in-inline | 309 ms      | 131.4 ms | 18.7 ms | 2400       |
+| with it                | 314 ms      | 130.9 ms | 18.9 ms | 2400       |
+
+Inside the noise, and layout — where the new walk lives — does not
+move. `hidesBlock` answers on `children.length` before reading a
+style, which nearly every inline element on a page satisfies.
+
+Read both builds back to back and check `uptime` first: a loaded
+machine read the same bundle at 226 ms and 268 ms an hour apart, so a
+number without its pair beside it says nothing.
+
 **The open one: 166 ms against 231 ms on the strokes.** Six of the
 seven themes pay none of it: dos, dos-blue, green-phosphor, amber and
 bbs draw with the VGA bitmap font and c64 with Pet Me 64, and those

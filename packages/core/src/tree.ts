@@ -37,17 +37,19 @@ export type TextareaWidths = Map<HTMLTextAreaElement, number>;
  * Rules (specs/cell-model.md "Inline detection"):
  * - Elements with computed `display: none` are skipped entirely (their
  *   text never joins a run).
- * - An element is a **leaf** when it has no IN-FLOW block-level element
- *   children: in-flow inline children (computed `inline`/`inline-*`/
- *   `contents`) are part of the text run, and out-of-flow children
- *   (absolute/fixed — blockified per CSS) hang off the leaf as layout
- *   nodes for the positioning pass. The leaf's `text` is its combined
- *   in-flow text, so text nodes interleaved with inline elements
- *   (`<div>hello <span>world</span></div>`) participate in the wrap
- *   calculation and render correctly.
- * - Elements with at least one in-flow block-level element child become
- *   **containers** and recurse; the text beside those children forms
- *   anonymous runs (`buildChildren`, specs/cell-model.md "Inline content").
+ * - An element is a **leaf** when no IN-FLOW block-level element lies
+ *   below it through inline ones: in-flow inline children (computed
+ *   `inline`/`inline-*`/`contents`) are part of the text run, and
+ *   out-of-flow children (absolute/fixed — blockified per CSS) hang
+ *   off the leaf as layout nodes for the positioning pass. The leaf's
+ *   `text` is its combined in-flow text, so text nodes interleaved
+ *   with inline elements (`<div>hello <span>world</span></div>`)
+ *   participate in the wrap calculation and render correctly.
+ * - Elements with an in-flow block-level element among their children,
+ *   or below an inline one, become **containers** and recurse; the text
+ *   beside those children forms anonymous runs, and an inline element
+ *   around a block is split there as CSS splits it (`buildChildren`,
+ *   `hidesBlock`, specs/cell-model.md "Inline content").
  * - The host follows the same rule through `buildRootLeaf`
  *   (specs/host-leaf.md).
  *
@@ -76,7 +78,10 @@ export function buildTree(
 
   // Form controls are always leaves — descending into a <select>'s
   // <option>s would leak that text into the grid.
-  if (!roles.includes("block") || isFormControlTag(root.tagName)) {
+  if (
+    isFormControlTag(root.tagName) ||
+    (!roles.includes("block") && !splitsForBlock(elementChildren, roles))
+  ) {
     return buildLeaf(root, style, elementChildren, roles, context);
   }
 
@@ -137,13 +142,27 @@ export function buildChildren(
     roles = [];
     inline = false;
   };
-  for (const node of nodes) {
+  // Walked by index, a split splicing the inline's children in where
+  // it stood: shifting each node off the front would cost the whole
+  // list on every step.
+  const queue = [...nodes];
+  for (let index = 0; index < queue.length; index++) {
+    const node = queue[index]!;
     if (node instanceof Element) {
       const role = childRole(node);
       if (role === "none") continue;
       if (role === "block") {
         flush();
         build(node);
+        continue;
+      }
+      // An inline element around a block: CSS splits the inline box
+      // there, and taking its children in its place splits it here —
+      // the block reaches this loop, and the inline content each side
+      // of it falls into the runs around it.
+      if (role === "inline" && hidesBlock(node)) {
+        queue.splice(index, 1, ...node.childNodes);
+        index--;
         continue;
       }
       roles.push(role);
@@ -195,7 +214,7 @@ export function buildRootLeaf(
   );
   const elementChildren = nodes.filter((node): node is Element => node instanceof Element);
   const roles = elementChildren.map(childRole);
-  if (roles.includes("block")) return null;
+  if (roles.includes("block") || splitsForBlock(elementChildren, roles)) return null;
   if (!hasDirectText(host) && !roles.includes("inline")) return null;
   const style = hostLeafStyle(host, rootFontSizePx, cellMetrics);
   const context = { rootFontSizePx, cellMetrics, textareaWidths };
@@ -343,17 +362,21 @@ function buildLeaf(
   // boxes come out in U+FFFC marker order (inlineBoxesOf). Direct
   // boxes interleave with out-of-flow siblings by construction; a
   // box nested in an inline ancestor is sorted into place.
+  // What the loop below places, which is not always the root's own
+  // children: an anonymous leaf takes the run's elements, and a split
+  // inline puts its children among them.
+  const placed = new Set(elementChildren);
   const directBoxes = new Map<Element, LayoutNode>();
   const nestedBoxes: LayoutNode[] = [];
   for (const box of run.boxes) {
-    if (box.source.parentElement === root) directBoxes.set(box.source, box);
+    if (placed.has(box.source)) directBoxes.set(box.source, box);
     else nestedBoxes.push(box);
   }
-  // An out-of-flow element the run met below a direct child: the loop
-  // over `elementChildren` sees only the root's own, so these join the
-  // nested boxes and sort into document order with them.
+  // An out-of-flow element the run met below one the loop places: it
+  // never reaches that loop, so it joins the nested boxes and sorts
+  // into document order with them.
   for (const box of run.positioned) {
-    if (box.source.parentElement !== root) nestedBoxes.push(box);
+    if (!placed.has(box.source)) nestedBoxes.push(box);
   }
   const children: LayoutNode[] = [];
   for (let i = 0; i < elementChildren.length; i++) {
@@ -524,6 +547,31 @@ function isAtomicInline(el: Element, display: string): boolean {
  * (plain inline AND atomic inline boxes), or in-flow block (which forces
  * container mode). */
 type ChildRole = "none" | "out-of-flow" | "inline" | "block";
+
+/** A block hiding under a run-inline element, which CSS lays out by
+ * splitting the inline box around it (CSS 2.1 block-in-inline): the
+ * engine splits by flattening that element into its parent's children,
+ * so the block becomes a node of its own and the inline content each
+ * side of it an anonymous run. An atomic inline box is its own
+ * formatting context and keeps its blocks; an inline element with no
+ * element children — nearly all of them — answers before reading a
+ * style. */
+function hidesBlock(el: Element): boolean {
+  if (el.children.length === 0) return false;
+  if (!isRunInline(el, getComputedStyle(el).display)) return false;
+  for (const child of el.children) {
+    const role = childRole(child);
+    if (role === "block") return true;
+    if (role === "inline" && hidesBlock(child)) return true;
+  }
+  return false;
+}
+
+/** Whether an element's children hold a block below an inline one,
+ * which makes their parent a container rather than a leaf. */
+function splitsForBlock(children: Element[], roles: ChildRole[]): boolean {
+  return children.some((child, index) => roles[index] === "inline" && hidesBlock(child));
+}
 
 function childRole(el: Element): ChildRole {
   const cs = getComputedStyle(el);

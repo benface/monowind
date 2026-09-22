@@ -155,12 +155,32 @@ describe("buildTree", () => {
     expect(node.children[0]!.style.display).toBe("flex");
   });
 
-  it("skips block-level elements nested inside a run", () => {
+  it("splits an inline element around a block inside it, as CSS does", () => {
+    // CSS 2.1 block-in-inline: the inline box breaks into anonymous
+    // blocks each side of it, and all three render.
     const node = buildTree(
-      el('<div>a <span>b <span style="display: block">skipped</span></span> c</div>'),
+      el('<div>a <span>b <span style="display: block">own line</span> d</span> c</div>'),
       16,
     )!;
-    expect(node.text).toBe("a b c");
+    expect(node.children.map((child) => child.text)).toEqual(["a b", "own line", "d c"]);
+    expect(node.children[0]!.anonymous).toBe(true);
+    expect(node.children[2]!.anonymous).toBe(true);
+    // The block is its own node, the element itself, not an anonymous
+    // run over it.
+    expect(node.children[1]!.anonymous).toBeFalsy();
+  });
+
+  it("splits through more than one inline, and leaves an atomic box its blocks", () => {
+    const deep = buildTree(el("<div>a <span><em>b <p>own line</p></em></span> c</div>"), 16)!;
+    expect(deep.children.map((child) => child.text)).toEqual(["a b", "own line", "c"]);
+    // An inline-block is its own formatting context: the block inside
+    // it stays inside it, and the box still rides the run.
+    const atomic = buildTree(
+      el('<div>a <span style="display: inline-block"><p>inside</p></span> c</div>'),
+      16,
+    )!;
+    expect(atomic.text).toBe("a \uFFFC c");
+    expect(atomic.children[0]!.inlineBox).toBe(true);
   });
 
   it("collects a NESTED atomic inline box as a marker too", () => {
@@ -170,6 +190,31 @@ describe("buildTree", () => {
     )!;
     expect(node.text).toBe("a b \uFFFC c");
     expect(node.children[0]!.inlineBox).toBe(true);
+  });
+
+  it("splits through `contents`, a float, and keeps an out-of-flow child of the split", () => {
+    // `contents` folds its children into the run exactly as `inline`
+    // does, so a block under it splits the same way.
+    const contents = buildTree(
+      el('<div>a <span style="display: contents">b <p>own line</p></span> c</div>'),
+      16,
+    )!;
+    expect(contents.children.map((child) => child.text)).toEqual(["a b", "own line", "c"]);
+    // A float is block-level whatever its display (specs/float.md), so
+    // it splits the inline around it too.
+    const floated = buildTree(
+      el('<div>a <span>b <span style="float: left">side</span></span> c</div>'),
+      16,
+    )!;
+    expect(floated.children.map((child) => child.text)).toEqual(["a b", "side", "c"]);
+    // The out-of-flow element the inline was carrying is still built,
+    // now as the container's own positioned child.
+    const positioned = buildTree(
+      el('<div>a <span>b <i style="position: absolute">out</i><p>own line</p></span></div>'),
+      16,
+    )!;
+    expect(positioned.children.map((child) => child.text)).toEqual(["a b", "own line"]);
+    expect(positioned.children[0]!.children.map((child) => child.source.tagName)).toEqual(["I"]);
   });
 
   it("lays out text beside block children as anonymous runs", () => {

@@ -304,14 +304,26 @@ the browser in place. Layout-affecting utilities on inline elements are
 ignored (except relative insets, rescaled to cells — see
 `positioning.md`).
 
-An element whose direct children are ALL inline (or which has no element
-children) is treated as a **leaf**, with its combined text content as the
-text to wrap. So `<div>hello <span class="text-red-500">world</span></div>`
+An element with no block-level element below it — neither among its own
+children nor under an inline one — is treated as a **leaf**, with its
+combined text content as the text to wrap. So `<div>hello <span class="text-red-500">world</span></div>`
 lays out as a single "hello world" text run — the inline `<span>` still
 renders red (browser inheritance), but doesn't get its own layout box.
 
 **Inline detection** goes by COMPUTED display: a child belongs to the
 text run iff its computed display is exactly `inline` (or `contents`).
+
+**A block inside an inline splits it**, as CSS does (CSS 2.1
+§9.2.1.1 block-in-inline): `<span>a<p>b</p>c</span>` lays out as an
+anonymous run "a", the block, and an anonymous run "c". An element
+whose inline child hides a block is a CONTAINER, not a leaf, and that
+child is flattened into its children, so the block reaches the
+container's own loop and the inline content each side of it falls
+into the runs around it. The inline element still PAINTS as the
+browser lays it out; what it loses is a layout box of its own, which
+it never had. An atomic inline box (`inline-block` and its kin) is
+its own formatting context and keeps its blocks, and an out-of-flow
+child is built whole either way.
 
 **Atomic inline boxes** (`inline-block`, `inline-flex`, `inline-grid`)
 ride the run as SINGLE UNBREAKABLE UNITS, per CSS: the run holds an

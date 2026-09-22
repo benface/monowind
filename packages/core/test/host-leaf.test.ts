@@ -75,6 +75,9 @@ describe("buildRootLeaf", () => {
 
   it("is null for a container host, an empty host, or out-of-flow children alone", () => {
     expect(buildRootLeaf(host("foo<div>block</div>"), 16)).toBeNull();
+    // A block below an inline child splits that inline, so the host is
+    // a container as surely as a block child makes it one.
+    expect(buildRootLeaf(host("foo<span>a<p>block</p></span>"), 16)).toBeNull();
     expect(buildRootLeaf(host("  \n  "), 16)).toBeNull();
     expect(buildRootLeaf(host('<div style="position: absolute">out</div>'), 16)).toBeNull();
   });

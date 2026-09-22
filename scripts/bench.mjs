@@ -8,6 +8,7 @@
  *
  *   pnpm bench                 300 bordered boxes, no throttling
  *   pnpm bench --shape blocks  a field of block glyphs instead
+ *   pnpm bench --shape prose   paragraphs of nested inline elements
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
@@ -41,15 +42,21 @@ const bundle = readFileSync(given ?? resolve(repoRoot, "packages/core/dist/cdn.j
 
 /** Bordered boxes stress the strokes; a field of blocks stresses the
  * fills, which take a different fit and a different share of the row
- * (specs/wide-characters.md). */
+ * (specs/wide-characters.md); prose stresses the run walk, its
+ * paragraphs nesting the inline elements a page really has. */
 const BANDS = ["\u2588", "\u2580", "\u2584", "\u2591", "\u2592", "\u2593"];
+const prose = (i) =>
+  `<p>Paragraph ${i} of the page, with <span>a <b>bold <i>and italic</i></b> run</span> in it, ` +
+  `<em>an <code>inline code</code> span</em>, and <a href="#">a link <strong>inside</strong></a>.</p>`;
 const body =
   shape === "blocks"
     ? `<div>${Array.from({ length: count }, (_, i) => BANDS[i % BANDS.length].repeat(40)).join("<br>")}</div>`
-    : `<div class="flex flex-wrap gap-1">${Array.from(
-        { length: count },
-        (_, i) => `<div class="border px-1 rounded-sm"><span>item ${i}</span></div>`,
-      ).join("")}</div>`;
+    : shape === "prose"
+      ? `<div>${Array.from({ length: count }, (_, i) => prose(i)).join("")}</div>`
+      : `<div class="flex flex-wrap gap-1">${Array.from(
+          { length: count },
+          (_, i) => `<div class="border px-1 rounded-sm"><span>item ${i}</span></div>`,
+        ).join("")}</div>`;
 
 const page = `<!doctype html><html><head><meta charset="utf-8">
 <style>html{background:#fff;color:#000}body{margin:0;padding:8px}</style>
@@ -105,7 +112,7 @@ const median = (of) => {
 };
 const ms = (value) => `${value.toFixed(1)} ms`;
 console.log(
-  `\n${given ?? "working tree"}: ${count} ${shape === "blocks" ? "rows of blocks" : "bordered boxes"},` +
+  `\n${given ?? "working tree"}: ${count} ${shape === "blocks" ? "rows of blocks" : shape === "prose" ? "paragraphs" : "bordered boxes"},` +
     ` ${runs} runs at ${rate}x CPU — medians\n` +
     `  interactive  ${ms(median((s) => s.interactive))}\n` +
     `  style recalc ${ms(median((s) => s.style))}\n` +
