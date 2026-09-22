@@ -88,7 +88,11 @@
         id="editor"
         class="relative min-h-0 min-w-0 flex-1 [scrollbar-gutter:stable] overflow-x-hidden overflow-y-auto bg-neutral-950"
       >
-        <div id="editor-inner" class="relative flex min-h-full flex-col">
+        <!-- 16px on a touch pointer: Safari zooms the page in when a
+             focused control's text is smaller, and the highlight
+             overlay has to match the textarea it sits under, so the
+             size is set on the parent both inherit. -->
+        <div id="editor-inner" class="relative flex min-h-full flex-col pointer-coarse:text-base">
           <pre
             id="highlight"
             aria-hidden="true"
