@@ -539,10 +539,12 @@ export const TilingGlyphs: StoryObj = {
       );
     };
     // A block stands for a cell filled, so it grows into a row taller
-    // than the font draws it; a stroke stands for a line, whose weight
-    // that growth would change, so here it keeps the font's size and
-    // takes no box at all.
-    const boxes = tiling(host).filter((box) => /^[\u2580-\u259F]$/.test(box.textContent!));
+    // than the font draws it, a run of one uniform block sharing a box;
+    // a stroke stands for a line, whose weight that growth would change,
+    // so here it keeps the font's size and takes no box at all.
+    const boxes = Array.from(gridOf(host).querySelectorAll("span")).filter((box) =>
+      /^[\u2580-\u259F]+$/.test(box.textContent ?? ""),
+    );
     expect(boxes.length).toBeGreaterThan(60);
     expect(unpinned(boxes, host)).toEqual([]);
     expect(labels(boxes.filter((box) => !(parseFloat(box.style.fontSize) > 100)))).toEqual([]);
@@ -550,7 +552,7 @@ export const TilingGlyphs: StoryObj = {
     expect(labels(strokes.filter((box) => box.dataset.box !== undefined))).toEqual([]);
     // A shade scales past the blocks, to whole device pixels of lattice,
     // and its box carries the lattice's phase from row to row.
-    const block = parseFloat(boxes.find((box) => box.textContent === "█")!.style.fontSize);
+    const block = parseFloat(boxes.find((box) => /^█+$/.test(box.textContent!))!.style.fontSize);
     const shades = boxes.filter((box) => /^[\u2591-\u2593]$/.test(box.textContent!));
     expect(shades.length).toBeGreaterThan(3);
     const unphased = shades.filter((box) => {

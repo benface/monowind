@@ -75,6 +75,16 @@ light element about three times, even when one paragraph changed.
 1–3 together took prose load from 303 to 198 ms interactive (CPU
 through ready + 1 s: 319 → 191).
 
+## Leads
+
+- **Shared block boxes on macOS**: in the TilingGlyphs story, macOS
+  Chromium leaves 14 pairs of identical neighboring uniform blocks in
+  separate `data-box="center"` spans — boxes painted with no measured
+  fit — where Linux Chromium shares one box per run (109 of 135 block
+  spans are shared runs on Linux, 31 on macOS). Likely the fit measured
+  before the font loaded; worth tracing with lever 1's font work. The
+  output looks the same, at more spans.
+
 ## Measured, and not worth doing
 
 - **Non-inherited `@property` for the per-element vars** — doubles
