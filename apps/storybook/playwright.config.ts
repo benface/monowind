@@ -14,19 +14,19 @@ export default defineConfig({
     { name: "chromium" },
     // Selection painting differs per engine (Safari draws selection ink
     // through text-fill-color) — the selection spec runs in all three,
-    // each with its own goldens. The QR decode, keyboard, pointer, and
-    // top-layer specs run in all three too, goldenless: glyph
-    // rendering, scroll physics, hit-testing, and the window's own
-    // metrics differ per engine.
+    // each with its own goldens. The QR decode, keyboard, pointer,
+    // top-layer, and agreement specs run in all three too, goldenless:
+    // glyph rendering, scroll physics, hit-testing, layout rounding, and
+    // the window's own metrics differ per engine.
     {
       name: "webkit",
       use: { browserName: "webkit" },
-      testMatch: /(selection|qr|keyboard|pointer|top-layer)\.spec\.ts/,
+      testMatch: /(selection|qr|keyboard|pointer|top-layer|agreement)\.spec\.ts/,
     },
     {
       name: "firefox",
       use: { browserName: "firefox" },
-      testMatch: /(selection|qr|keyboard|pointer|top-layer)\.spec\.ts/,
+      testMatch: /(selection|qr|keyboard|pointer|top-layer|agreement)\.spec\.ts/,
     },
   ],
   webServer: {

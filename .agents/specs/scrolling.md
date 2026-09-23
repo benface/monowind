@@ -27,9 +27,11 @@ truth.
   as "at max" and the settle parks the max cell ON the ceiling.
 - **A container is known once its box is.** The offsets the paint
   mirrors are collected from the laid-out tree, and an out-of-flow box
-  takes its size in the positioning pass, so the collection runs again
-  after it: a scroller inside a popover, a menu, or a select's content
-  is a container like any other, and the grid follows its scroll.
+  takes its size in the positioning pass, which syncs the offsets under
+  it as it places it — before the anchors inside it are read: a
+  scroller inside a popover, a menu, or a select's content is a
+  container like any other, and the grid and the boxes anchored in it
+  follow its scroll.
 - **The browser owns scroll physics; the engine mirrors on the grid.**
   Authored `overflow(-x|-y): auto | scroll` stays LIVE on the light
   element (not normalized away like `clip`/`hidden` are), so the
@@ -52,11 +54,22 @@ truth.
   PADDING box per CSS (reserved gutter cells excluded — the bar owns
   them): padding sits blank at the scroll extremes and content flows
   through it mid-scroll, under the border's own cells where the box has
-  one — a native `scrollIntoView` aligns to the scrollport, so a
-  component bringing an item into view aims at the content box instead
-  (specs/ui.md). The same rect covers `overflow: clip`. During a live grid-mode drag,
-  scroll repaints are HELD like any structural repaint
+  one. The same rect covers `overflow: clip`. During a live grid-mode
+  drag, scroll repaints are HELD like any structural repaint
   (`holdStructural`) and apply on release.
+- **A reveal stops clear of the border and the bars.** Their cells are
+  native padding, inside the scrollport, where CSS keeps a border
+  outside it and a bar beside it: the companion locks `scroll-padding`
+  to them (`--mw-b*`, and `--mw-gr`/`--mw-gb` for the reserved bars),
+  so `scrollIntoView`, focus, and Tab bring an element into the cells
+  between.
+- **Scroll containers scroll at once.** The companion locks
+  `scroll-behavior` to `auto`: the engine's own writes — a thumb drag,
+  a routed wheel tick, a position restored after a relayout — must land
+  when made, and under `smooth` each one animates, a drag's next move
+  cutting the last short and a restore scrolling back over the reader's
+  scroll. The browser's own smooth key scrolling is a user setting, not
+  this property, and stays ("Keyboard scrolling").
 - **Offsets are cell-quantized for ink; the native position settles to
   match.** The grid paints the cell it already shows while the native
   position stays within half a cell of it (a wobble never flips a
@@ -137,9 +150,17 @@ truth.
     track − max cells, at least one) — a scrollable bar always shows
     track, and each step moves the thumb while the track has room —
     no arrow caps; when both axes show bars the shared corner
-    block stays blank. Dragging the thumb is engine-routed in both
-    modes (the bar is grid ink; there is no native scrollbar to
-    grab).
+    block stays blank. Every gesture on the bar is engine-routed in
+    both modes (the bar is grid ink; there is no native scrollbar to
+    grab): a press on the THUMB drags it, proportionally, and a press
+    on the TRACK beside it pages the container toward the press —
+    again after a delay and then on a beat while it is held — until
+    the end of the range, or until the painted thumb reaches the
+    pressed cell. A page is the visible extent less one row (or
+    column), kept for context, measured in the grid's cells: the
+    native scrollport counts the glyph border as padding, and paging
+    by it would skip rows the reader never saw. A drag from the track
+    moves nothing: the reader grabbed no thumb.
 - **Scroll positions survive relayouts.** The measuring mask collapses
   container geometry (the range spacer is off) and browsers clamp native
   positions during that reflow — Chromium eagerly, Firefox lazily —
@@ -267,6 +288,13 @@ none` on EVERY element — a one-time pristine-probe detects that and
   content-anchored: scrolling repaints the scroll container's cells and the
   selection keeps its grid coordinates (terminal behavior), rather
   than following the content.
+- An authored `scroll-padding` is not read: a scroll container's is
+  its border and bar cells ("A reveal stops clear of the border and
+  the bars"). An item's own `scroll-margin` (`scroll-mt-*`) still is,
+  the way to reveal it clear of a sticky header.
+- `scroll-behavior: smooth` is not applied to a scroll container
+  ("Scroll containers scroll at once"); a script's own
+  `scrollTo({ behavior: "smooth" })` still animates.
 
 ## Resolved (were open questions)
 
@@ -307,12 +335,23 @@ none` on EVERY element — a one-time pristine-probe detects that and
 - **Keyboard scrolling**: nothing synthesized in v1 — the engine never
   adds focusability. A container the author makes focusable
   (`tabindex`) scrolls natively with keys; browsers' default
-  nearest-scrollable keyboard heuristics cover text mode. A key press
-  relayouts only for Enter and Space (the `:active` edges), and Space
-  on a focused scroll container pages it, so it passes too: a
-  scrolling key's relayout would cut short the smooth scroll it starts
-  in Firefox, and every other keyboard outcome arrives as its own
-  event.
+  nearest-scrollable keyboard heuristics cover text mode. A relayout
+  as a key's smooth scroll starts cancels it in Firefox and WebKit, so
+  none lands under one. A key press relayouts only for Enter and Space
+  (the `:active` edges) — Space on a focused scroll container pages
+  it, so it passes too — and every other keyboard outcome arrives as
+  its own event. A relayout asked for by anything else waits: a
+  trusted, unprevented scrolling key (arrows, Page Up/Down, Home/End,
+  and Space) on a focused element that does not keep the key — a
+  textarea, a select, an editable region, and an input of any other
+  kind keep every key, a radio its arrows and Space, a button-like
+  control Space — in a container with room that way (the engine's
+  range on that axis), holds relayouts — the
+  animation sampling loop's too — until that container settles after
+  scrolling, at most 500 ms past the last such key; a handler past the
+  host (a framework's root listener, the document's) that cancels the
+  key releases the hold once the key's dispatch is done. Paints still
+  follow the scroll meanwhile, a held relayout's included.
 - **CSS scroll-snap**: considered for the cell-quantization settle and
   rejected — snap positions come from snap-target BOXES
   (`scroll-snap-align` on descendants), and the scrolled content has

@@ -261,7 +261,6 @@ export const Listbox: StoryObj = {
         <p>A page with a list to choose from.</p>
         <div
           class="mt-1"
-          data-highlight-on-hover
           ${mountedOn((root) => listbox(root, { id: "branch", defaultValue: ["main"] }))}
         >
           <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
@@ -352,13 +351,6 @@ export const Listbox: StoryObj = {
     expect(by("main").getAttribute("aria-selected")).toBe("false");
     await expectRow(host, "✓ next");
     expect(showsRow(host, "✓ main")).toBe(false);
-    // The pointer moves the highlight where the root asks for it: the
-    // item it names is the active descendant, Zag keeping
-    // `data-highlighted` for the keyboard's own focus below.
-    hoverOver(by("feature"));
-    await waitFor(() =>
-      expect(content.getAttribute("aria-activedescendant")).toBe(by("feature").id),
-    );
     // The focus starts at the selection, wherever the list was left:
     // the highlight moved to the first item and the list scrolled away
     // from it, a tab back lands on the selected item and shows it
@@ -389,6 +381,45 @@ export const Listbox: StoryObj = {
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(by("release").getAttribute("aria-selected")).toBe("true"));
     await expectRow(host, "✓ release");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `data-highlight-on-hover` on
+ * the root keeps the keyboard's highlight under the pointer, so the
+ * next arrow continues from the item it is on (specs/ui.md). */
+export const ListboxHighlightOnHover: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div
+        class="p-1"
+        data-highlight-on-hover
+        ${mountedOn((root) => listbox(root, { id: "hovered", defaultValue: ["one"] }))}
+      >
+        <div data-part="content" data-test="content" class="w-16 border">
+          <div data-part="item" data-value="one" data-test="one" class=${LIST_ITEM}>
+            <span data-part="item-text">one</span>
+          </div>
+          <div data-part="item" data-value="two" data-test="two" class=${LIST_ITEM}>
+            <span data-part="item-text">two</span>
+          </div>
+          <div data-part="item" data-value="three" data-test="three" class=${LIST_ITEM}>
+            <span data-part="item-text">three</span>
+          </div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const content = by("content");
+    // Focused first: a focus starts the highlight at the selection.
+    content.focus();
+    hoverOver(by("three"));
+    await waitFor(() => expect(content.getAttribute("aria-activedescendant")).toBe(by("three").id));
+    await userEvent.keyboard("{ArrowUp}");
+    await waitFor(() => expect(by("two")).toHaveAttribute("data-highlighted"));
   },
 };
 
@@ -459,7 +490,7 @@ export const Select: StoryObj = {
     <mono-wind>
       <form class="p-1" ${mountedOn((root) => select(root, { id: "branch", name: "branch" }))}>
         <p>A page with a select.</p>
-        <div class="mt-1 flex gap-1">
+        <div class="mt-1 flex items-center gap-1">
           <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
           <span data-part="control">
             <button data-part="trigger" data-test="trigger" class="border px-1">
@@ -603,7 +634,7 @@ export const SelectMultiple: StoryObj = {
         ${mountedOn((root) => select(root, { id: "formats", multiple: true, name: "formats" }))}
       >
         <p>A page with a select taking several values.</p>
-        <div class="mt-1 flex gap-1">
+        <div class="mt-1 flex items-center gap-1">
           <span data-part="label" class="text-neutral-500">Export</span>
           <span data-part="control">
             <button data-part="trigger" data-test="trigger" class="border px-1">
@@ -613,7 +644,12 @@ export const SelectMultiple: StoryObj = {
           </span>
         </div>
         <select data-part="hidden-select" data-test="hidden"></select>
-        <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
+        <div
+          data-part="positioner"
+          data-test="positioner"
+          popover="manual"
+          class="-mt-1 w-[anchor-size(width)]"
+        >
           <div data-part="content" data-test="content" class=${MENU_CONTENT}>
             <div data-part="item" data-value="csv" data-test="csv" class=${LIST_ITEM}>
               <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
@@ -651,6 +687,10 @@ export const SelectMultiple: StoryObj = {
     await waitFor(() => expect(by("value").textContent).toBe("csv, yaml"));
     await waitFor(() => expect(chosen()).toEqual(["csv", "yaml"]));
     await expectRow(host, "csv, yaml");
+    // The menu is as wide as the trigger, which the values widened
+    // (specs/anchor-positioning.md, anchor-size()).
+    const width = (name: string) => by(name).getBoundingClientRect().width;
+    await waitFor(() => expect(width("content")).toBeCloseTo(width("trigger"), 0));
     // A press on a chosen item takes it back out; left open for the
     // golden.
     await userEvent.click(by("csv"));
@@ -663,9 +703,10 @@ export const SelectMultiple: StoryObj = {
 const BRANCHES = ["main", "next", "release", "feature/grid", "origin/main"];
 
 /** A combobox: a listbox under the input the reader types into, its
- * list anchored to the control rather than the button beside it, and
- * filtering the page's own — it hands back a narrowed collection, and
- * the items left out go. */
+ * list anchored to the control rather than the button laid over its
+ * end, and filtering the page's own — it hands back a narrowed
+ * collection, and the items left out go. A status line beside the
+ * listbox says when nothing matches. */
 export const Combobox: StoryObj = {
   render: () => {
     return html`
@@ -674,17 +715,22 @@ export const Combobox: StoryObj = {
           class="p-1"
           ${mountedOn((root) => {
             // Filtering is the page's: the callback hands the mount a
-            // narrowed collection, and the items it drops go.
+            // narrowed collection, and the items it drops go. The count
+            // is written here, not templated: lit owns what it renders.
+            const count = root.querySelector("[data-test='typed']")!;
+            count.textContent = `${BRANCHES.length}`;
             const mounted = combobox(root, {
               id: "branch",
+              // Zag names the input through a <label>; this one is a span,
+              // so the input takes its name from the span's id instead.
+              ids: { label: "branch-label" },
               collection: collection({ items: BRANCHES }),
               onInputValueChange: ({ inputValue }) => {
                 const matches = BRANCHES.filter((branch) =>
                   branch.toLowerCase().includes(inputValue.toLowerCase()),
                 );
                 mounted.updateProps({ collection: collection({ items: matches }) });
-                const count = root.querySelector("[data-test='typed']");
-                if (count) count.textContent = `${matches.length}`;
+                count.textContent = `${matches.length}`;
               },
             });
             return mounted;
@@ -692,18 +738,43 @@ export const Combobox: StoryObj = {
         >
           <p>
             A page with a combobox, matching
-            <b data-test="typed" class="text-yellow-300">${BRANCHES.length}</b> of
-            ${BRANCHES.length} branches.
+            <b data-test="typed" class="text-yellow-300"></b> of ${BRANCHES.length} branches.
           </p>
-          <div class="mt-1 flex gap-1">
-            <label data-part="label" data-test="label" class="text-neutral-500">Branch</label>
-            <span data-part="control" data-test="control" class="border px-1">
-              <input data-part="input" data-test="input" size="14" placeholder="type to filter" />
-              <button data-part="trigger" data-test="trigger" class="ml-1">▼</button>
+          <div class="mt-1 flex items-center gap-1">
+            <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
+            <span
+              data-part="control"
+              data-test="control"
+              class="relative has-[input:focus-visible]:bg-(--mw-fg) has-[input:focus-visible]:text-(--mw-bg)"
+            >
+              <input
+                data-part="input"
+                data-test="input"
+                aria-labelledby="branch-label"
+                size="14"
+                placeholder="type to filter"
+                class="border pr-4 pl-1"
+              />
+              <button
+                data-part="trigger"
+                data-test="trigger"
+                class="absolute inset-y-0 right-0 flex items-center justify-center px-2"
+              >
+                ▼
+              </button>
             </span>
           </div>
-          <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
-            <div data-part="content" data-test="content" class="${MENU_CONTENT} w-20">
+          <div
+            data-part="positioner"
+            data-test="positioner"
+            popover="manual"
+            class="w-[anchor-size(width)]"
+          >
+            <div
+              data-part="content"
+              data-test="content"
+              class="${MENU_CONTENT} peer data-empty:hidden"
+            >
               <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
                 <span data-part="item-text">main</span>
               </div>
@@ -730,6 +801,12 @@ export const Combobox: StoryObj = {
                 <span data-part="item-text">origin/main</span>
               </div>
             </div>
+            <div
+              role="status"
+              class="${MENU_CONTENT} hidden px-1 text-neutral-500 peer-data-empty:block"
+            >
+              Nothing matches
+            </div>
           </div>
           ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
         </div>
@@ -741,8 +818,9 @@ export const Combobox: StoryObj = {
     const by = testHooks(canvasElement);
     const input = by("input") as HTMLInputElement;
     expect(input.getAttribute("role")).toBe("combobox");
+    expect(input.getAttribute("aria-labelledby"), "named by the label").toBe(by("label").id);
     // The list is anchored to the control, so it lines up under the
-    // text rather than under the button beside it.
+    // whole input rather than under the button over its end.
     await userEvent.click(by("trigger"));
     await waitFor(() =>
       expect(by("content").getAttribute("data-state"), "opened by the trigger").toBe("open"),
@@ -756,6 +834,10 @@ export const Combobox: StoryObj = {
       () => by("positioner").getBoundingClientRect().left,
       () => by("control").getBoundingClientRect().left,
     );
+    // As wide as the control, the ▼ over its end included
+    // (anchor-size() on the positioner).
+    const width = (name: string) => by(name).getBoundingClientRect().width;
+    await waitFor(() => expect(width("content")).toBeCloseTo(width("control"), 0));
     await expectOnItsCells(host, by("positioner"));
     await expectRow(host, "feature/grid");
     // Typing narrows the collection, and the items it drops go — the
@@ -766,6 +848,13 @@ export const Combobox: StoryObj = {
     );
     expect(by("release").hidden, "release still listed").toBe(false);
     await waitFor(() => expect(paintedSpan(host, "feature/grid")).toBeUndefined());
+    expect(showsRow(host, "Nothing matches"), "no message while something matches").toBe(false);
+    // Nothing matches: the line beside the list says so.
+    await userEvent.type(input, "x");
+    await expectRow(host, "Nothing matches");
+    await userEvent.type(input, "{Backspace}");
+    await waitFor(() => expect(showsRow(host, "Nothing matches")).toBe(false));
+    await waitFor(() => expect(by("release").hidden).toBe(false));
     // Picking writes the value into the input; left open for the
     // golden with the list showing what the text matches.
     await userEvent.click(by("release"));
@@ -940,7 +1029,9 @@ export const Tooltip: StoryObj = {
       >
         <p>
           A page with a
-          <button data-part="trigger" data-test="trigger" class="border px-1">button</button>
+          <button data-part="trigger" data-test="trigger" class="border px-1 align-middle">
+            button
+          </button>
           that carries a tooltip.
         </p>
         <div data-part="positioner" data-test="positioner" popover="manual">
@@ -997,7 +1088,7 @@ export const Elements: StoryObj = {
     <mono-wind>
       <div class="p-1">
         <p>A page whose components are written as elements.</p>
-        <mono-menu id="edit" placement="bottom-start" gutter="1">
+        <mono-menu id="edit" placement="bottom-start">
           <p class="mt-1">
             <button data-part="trigger" data-test="trigger" class="border px-1">Edit</button>
           </p>
@@ -1008,7 +1099,7 @@ export const Elements: StoryObj = {
                 Delete…
               </div>
               <div data-part="trigger-item" data-test="share" class=${ITEM}>Share&nbsp;›</div>
-              <mono-submenu value="share" placement="right-start">
+              <mono-submenu value="share" placement="right-start" gutter="1">
                 <div data-part="positioner" data-test="sub-positioner" popover="manual">
                   <div data-part="content" data-test="sub-content" class=${MENU_CONTENT}>
                     <div data-part="item" data-value="mail" data-test="mail" class=${ITEM}>
@@ -1020,14 +1111,14 @@ export const Elements: StoryObj = {
             </div>
           </div>
         </mono-menu>
-        <p class="mt-1">
+        <p class="mt-2">
           The
           <mono-tooltip id="hint" open-delay="0" close-delay="0" placement="top">
-            <button data-part="trigger" data-test="hint-trigger" class="border px-1">
+            <button data-part="trigger" data-test="hint-trigger" class="border px-1 align-middle">
               Delete…
             </button>
             <span data-part="positioner" data-test="hint-positioner" popover="manual">
-              <span data-part="content" data-test="hint" class="border bg-clear px-1">
+              <span data-part="content" data-test="hint" class="block border bg-clear px-1">
                 Asks first
               </span>
             </span>
@@ -1088,21 +1179,26 @@ export const Elements: StoryObj = {
     expect(by("undo").getAttribute("role")).toBe("menuitem");
     expect(by("dialog-content").getAttribute("role")).toBe("dialog");
     // The attributes are the props: the menu opens where its placement
-    // says, a row below its trigger for the gutter.
+    // says, right under its trigger.
     await userEvent.click(by("trigger"));
     await waitFor(() => expect(state("content")).toBe("open"));
     await waitFor(() =>
       expect(by("positioner").getAttribute("data-mw-area")).toBe("span-right bottom"),
     );
     await expectTouching(
-      () => by("positioner").getBoundingClientRect().top - cellSize(host).height,
+      () => by("positioner").getBoundingClientRect().top,
       () => by("trigger").getBoundingClientRect().bottom,
     );
-    // The submenu is an element too, placed where its own markup says.
+    // The submenu is an element too, placed where its own markup says:
+    // a column beside the item that opens it, for its gutter.
     hoverOver(by("share"));
     await waitFor(() => expect(state("sub-content")).toBe("open"));
     await waitFor(() =>
       expect(by("sub-positioner").getAttribute("data-mw-area")).toBe("right span-bottom"),
+    );
+    await expectTouching(
+      () => by("sub-positioner").getBoundingClientRect().left - cellSize(host).width,
+      () => by("share").getBoundingClientRect().right,
     );
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(state("content")).toBe("closed"));

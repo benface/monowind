@@ -27,7 +27,8 @@ import {
 } from "./multicol.ts";
 import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
 import type { TableData } from "./table.ts";
-import { walkPositioned } from "./positioning.ts";
+import { positionOutOfFlow } from "./positioning.ts";
+import type { Remembered } from "./positioning.ts";
 import { inlineBoxesOf, scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import { bandAt, clearanceBelow, floatsBottom, placeFloat } from "./floats.ts";
@@ -56,12 +57,15 @@ import type {
 
 /**
  * Layout entry point: mutates localRect on the root and each descendant.
- * Coordinates are parent-relative (root's rect is at 0,0).
+ * Coordinates are parent-relative (root's rect is at 0,0). `remembered`
+ * carries anchored boxes' last successful placements between layouts
+ * (specs/anchor-positioning.md).
  */
 export function layoutRoot(
   root: LayoutNode,
   availableWidth: number,
-  syncScroll?: (root: LayoutNode) => void,
+  syncScroll?: (node: LayoutNode) => void,
+  remembered?: Map<Element, Remembered>,
 ): { height: number } {
   const cache = makeIntrinsicCache();
   layoutNode(root, availableWidth, undefined, 0, 0, "fill", cache);
@@ -71,11 +75,7 @@ export function layoutRoot(
   // Positioning pass (specs/positioning.md): out-of-flow boxes were skipped
   // by flow layout; place them against their containing blocks, and apply
   // relative offsets. Runs top-down so ancestor rects are final first.
-  walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], cache);
-  // Again for the containers that pass made: an out-of-flow box takes
-  // its size there, so a scroller inside one — a menu's or a select's
-  // content in the top layer — is only knowable now (specs/scrolling.md).
-  syncScroll?.(root);
+  positionOutOfFlow(root, cache, remembered, syncScroll);
   // The host keeps its in-flow height; the grid covers the INK — visible
   // overflow paints past the host like CSS paints it past any box
   // (specs/cell-model.md "Overflow"). A clipping axis keeps the box: the

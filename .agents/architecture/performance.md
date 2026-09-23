@@ -40,6 +40,9 @@ difference under about 5 ms as the harness talking.
 | v0.3.1 | 338 ms      | 107.6 ms | 37.2 ms | 7880       |
 | main   | 231 ms      | 58.3 ms  | 25.6 ms | 7880       |
 
+(`main` has moved since: "Visibility and the anchor extras" below.
+The blocks table below is the same sitting's.)
+
 `pnpm bench --shape blocks --count 40` — rows of one block glyph each,
 where a run shares a box:
 
@@ -76,13 +79,48 @@ Read both builds back to back and check `uptime` first: a loaded
 machine read the same bundle at 226 ms and 268 ms an hour apart, so a
 number without its pair beside it says nothing.
 
-**The open one: 166 ms against 231 ms on the strokes.** Six of the
+**The open one: 166 ms against 231 ms on the strokes** (2026-09-21's
+`main`; see "Visibility and the anchor extras" for where it moved). Six of the
 seven themes pay none of it: dos, dos-blue, green-phosphor, amber and
 bbs draw with the VGA bitmap font and c64 with Pet Me 64, and those
 put `│`, `─` and `█` exactly on the cell, so nothing is boxed at all
 and the grid is the size it was in v0.3.0. Teletype is the exception —
 Courier New is an ordinary outline font and boxes like the default
 stack.
+
+## Visibility and the anchor extras (2026-09-22)
+
+Before (`df75985`) against the same tree with `visibility`, the anchor
+functions, `position-try-order` and `position-visibility`, the
+keyboard-scroll hold, and scrollbar track paging — alternated, seven
+runs a row, two rounds (load average about 2–4):
+
+| shape       | build     | interactive  | style recalc     | layout         |
+| ----------- | --------- | ------------ | ---------------- | -------------- |
+| boxes (300) | before    | 235 / 236 ms | 58.8 / 59.3 ms   | 25.7 / 26.6 ms |
+| boxes (300) | with them | 228 / 218 ms | 48.7 / 48.0 ms   | 25.7 / 24.9 ms |
+| blocks (40) | before    | 91 / 93 ms   | 10.6 / 10.8 ms   | 11.2 / 11.4 ms |
+| blocks (40) | with them | 84 / 86 ms   | 6.2 / 6.4 ms     | 10.9 / 11.1 ms |
+| prose (300) | before    | 318 / 312 ms | 133.6 / 130.9 ms | 19.0 / 18.0 ms |
+| prose (300) | with them | 322 / 309 ms | 132.7 / 126.5 ms | 19.4 / 17.5 ms |
+
+Nothing got slower; grid spans are unchanged. The style-recalc drop is
+the stylesheet's alone: the build before with only the new
+`styles.css` gives it, and with only the new `[data-mw-force-hidden]`
+rule does not, which leaves the host's `visibility` while the engine
+reads — the build before kept its pre-ready `hidden` through the first
+read (visibility.md). Both builds run two layout passes, eighteen
+style recalcs, and ten layouts to interactive (CDP
+`Performance.getMetrics`); the same recalcs cost less, and which of
+them, and why, is not traced.
+
+The fixes that followed — inline boxes' give-back margin, the last
+successful placement, `anchor-center` and fallbacks for boxes placed
+by their insets, the host read as visible, the fade hold — measured
+level against the tree before them, alternated in a later sitting
+(before, then after): boxes 249 / 248 / 255 ms against 248 / 250 /
+248, style recalc 52–53 ms in both; blocks 99 / 88 against 99 / 87;
+prose 350 / 309 against 345 / 310.
 
 ## What the last round bought
 

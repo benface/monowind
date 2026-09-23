@@ -1,15 +1,26 @@
 {
   "sortTailwindcss": {
-    "stylesheet": "./apps/example-tailwind/src/styles.css"
+    "stylesheet": "./apps/storybook/.storybook/styles.css"
   },
   "ignorePatterns": [".claude/"],
   "overrides": [
     {
-      "files": ["apps/storybook/**"],
+      "files": ["apps/example-tailwind/**"],
       "options": {
         "sortTailwindcss": {
-          "stylesheet": "./apps/storybook/.storybook/styles.css"
+          "stylesheet": "./apps/example-tailwind/src/styles.css"
         }
+      }
+    },
+    {
+      "files": [
+        "apps/example-panda/**",
+        "apps/example-stylex/**",
+        "apps/example-unocss/**",
+        "apps/example-vanilla-extract/**"
+      ],
+      "options": {
+        "sortTailwindcss": false
       }
     }
   ]

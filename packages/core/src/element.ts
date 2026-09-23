@@ -1,14 +1,30 @@
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
 import { animatedProperties, animationPath, drainAnimated, nodeIndex } from "./animation.ts";
 import type { AnimationPath } from "./animation.ts";
-import { isTransparentColor, readPaintStyle } from "./style.ts";
+import { holdVisible, isTransparentColor, readPaintStyle } from "./style.ts";
 import { onGlyphRegistryChange } from "./glyphs.ts";
 import { leafRendererFor, onLeafRegistryChange } from "./leaf.ts";
 import { rendersAttribute } from "./observed.ts";
-import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "./focus.ts";
-import { hitChain, hitRect, hitStack, isInert, nearestCells, scrollStep } from "./pointer.ts";
-import { charIndexAtCell, renderPlainText, scrollbarGeometry, thumbSpan } from "./plain-text.ts";
 import {
+  arrowIsNative,
+  BUTTON_INPUTS,
+  directionOf,
+  extentOf,
+  focusableRects,
+  nextFocus,
+} from "./focus.ts";
+import type { Direction } from "./focus.ts";
+import type { Remembered } from "./positioning.ts";
+import { hitChain, hitRect, hitStack, isInert, nearestCells, scrollStep } from "./pointer.ts";
+import {
+  charIndexAtCell,
+  clipBounds,
+  renderPlainText,
+  scrollbarGeometry,
+  thumbSpan,
+} from "./plain-text.ts";
+import {
+  charVisible,
   classifySelection,
   comparePoints,
   isTextLeaf,
@@ -306,11 +322,28 @@ const SETTLE_QUIESCE_MS = 100;
  * comes: older Safari has none, WebKit fires none after a keyboard
  * scroll. */
 const SETTLE_FALLBACK_MS = 160;
-/** A scroll this soon after a key press is the key's. */
+/** A scroll this soon after a key press is the key's, and the longest
+ * a key holds relayouts (#onScrollKey). */
 const KEY_SCROLL_MS = 500;
+/** The keys that scroll a focused container natively, and which way. */
+const SCROLL_KEYS: Readonly<Record<string, readonly [dx: number, dy: number]>> = {
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  PageUp: [0, -1],
+  PageDown: [0, 1],
+  Home: [0, -1],
+  End: [0, 1],
+  " ": [0, 1],
+};
 /** The browsers' own autoscroll timer: a held gesture past its
  * scroller's edge scrolls it this often (specs/wide-characters.md). */
 const AUTOSCROLL_TICK_MS = 50;
+/** The delay before a held track press starts repeating, and the beat
+ * it repeats on, as a native scrollbar's. */
+const TRACK_PAGE_DELAY_MS = 300;
+const TRACK_PAGE_REPEAT_MS = 50;
 
 /** Whether a native scroller has room in the delta's direction. */
 function hasRoom(el: Element, dx: number, dy: number): boolean {
@@ -331,6 +364,19 @@ function containerHasRoom(node: LayoutNode, dx: number, dy: number): boolean {
   return (
     (dy !== 0 && maxY > 0 && hasRoom(el, 0, dy)) || (dx !== 0 && maxX > 0 && hasRoom(el, dx, 0))
   );
+}
+
+/** Whether a focused control keeps a scrolling key: text entry every
+ * one, a radio its arrows and Space, a button-like control Space. */
+function controlKeeps(target: Element, key: string): boolean {
+  if (target.closest("textarea, select, [contenteditable]:not([contenteditable='false'])")) {
+    return true;
+  }
+  if (target instanceof HTMLInputElement) {
+    if (target.type === "radio") return key === " " || key.startsWith("Arrow");
+    return BUTTON_INPUTS.has(target.type) ? key === " " : true;
+  }
+  return key === " " && target.matches("button, summary");
 }
 
 /** An element's padding box in client pixels. */
@@ -446,6 +492,7 @@ export class MonoWindElement extends HTMLElementBase {
    * #onWheel). */
   #wheelLatch: WheelLatch | null = null;
   #thumbDrag: ThumbDrag | null = null;
+  #trackPaging: { press: TrackPress; timer: ReturnType<typeof setTimeout> } | null = null;
   /** The last primary pointerdown's type and id: a `mousedown` counts
    * as a semantic gesture only after a mouse or pen (a tap's
    * compatibility mousedown follows a touch pointerdown), and the id is
@@ -466,8 +513,23 @@ export class MonoWindElement extends HTMLElementBase {
   /** Whether the last selectionchange found a range in this host's
    * light DOM — the next one must repaint even when it left. */
   #paintedSelection = false;
+  /** Each anchored box's last successful placement, from one layout to
+   * the next (specs/anchor-positioning.md). */
+  #placements = new Map<Element, Remembered>();
   /** When the last key went down (see #onScroll). */
   #lastKeyAt = 0;
+  /** An arrow waiting for the end of its dispatch (#onKeyDown). */
+  #pendingArrow: AbortController | null = null;
+  /** A key's scroll in flight (#onScrollKey): the key, the container it
+   * scrolls, whether that has scrolled since, whether a relayout waits
+   * on it, and the hold's deadline. */
+  #keyScroll: {
+    key: KeyboardEvent;
+    container: Element;
+    scrolled: boolean;
+    deferred: boolean;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
   #glyphs = new GlyphBoxes((glyph, scale, lineHeight) =>
     this.#baselineOf(glyph, scale, lineHeight),
   );
@@ -664,6 +726,9 @@ export class MonoWindElement extends HTMLElementBase {
     // count rides mousedown (PointerEvent.detail is 0).
     this.addEventListener("mousedown", this.#onMouseDown);
     this.addEventListener("keydown", this.#onKeyDown);
+    // An arrow that moves focus is cancelled at the window (#onKeyDown):
+    // #moveFocus releases the hold this listener takes.
+    this.addEventListener("keydown", this.#onScrollKey);
     document.addEventListener("selectionchange", this.#onSelectionChange);
     // Release on the window: a selection drag routinely ends outside
     // the host, and the press state must thaw wherever it ends.
@@ -681,6 +746,7 @@ export class MonoWindElement extends HTMLElementBase {
 
   disconnectedCallback(): void {
     window.removeEventListener("resize", this.#onWindowResize);
+    this.#pendingArrow?.abort();
     this.#resizeObserver?.disconnect();
     this.#mutationObserver?.disconnect();
     this.#ancestorObserver?.disconnect();
@@ -715,11 +781,14 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("wheel", this.#onWheel);
     this.removeEventListener("copy", this.#onCopy);
     this.removeEventListener("keydown", this.#onKeyDown);
+    this.removeEventListener("keydown", this.#onScrollKey);
+    this.#releaseKeyScroll();
     this.removeEventListener("mousedown", this.#onMouseDown);
     document.removeEventListener("selectionchange", this.#onSelectionChange);
     for (const timer of this.#settleTimers.values()) clearTimeout(timer);
     this.#settleTimers.clear();
     this.#thumbDrag = null;
+    this.#stopTrackPaging(false);
     this.#wheelLatch = null;
     this.#stopAutoscroll();
     window.removeEventListener("pointerup", this.#onPointerUp);
@@ -787,10 +856,14 @@ export class MonoWindElement extends HTMLElementBase {
   /** Per-container offsets for the paint: from the pre-mask snapshot during
    * a layout pass (native reads are clamped inside the mask; pins
    * resolve to the NEW max), from the live position on a scroll
-   * repaint, and from where it last painted for a container the pass
-   * itself brought. */
-  #syncScrollOffsets(metrics: CellMetrics, snapshot?: ScrollSnapshot): void {
-    for (const node of this.#scrollNodes) {
+   * repaint, and at zero for a scroller new to the layout, until the
+   * next paint. */
+  #syncScrollOffsets(
+    metrics: CellMetrics,
+    snapshot?: ScrollSnapshot,
+    nodes = this.#scrollNodes,
+  ): void {
+    for (const node of nodes) {
       const el = node.source as HTMLElement;
       const { maxX, maxY } = node.scrollRange!;
       const entry = snapshot?.get(el);
@@ -800,9 +873,8 @@ export class MonoWindElement extends HTMLElementBase {
           y: entry.pinY ? maxY : Math.min(entry.y, maxY),
         };
       } else if (snapshot) {
-        // An out-of-flow box's scroller, known only once the
-        // positioning pass sized it: the mask makes its native position
-        // unreadable, and the next paint syncs it live.
+        // A scroller new to this layout, which the snapshot before the
+        // mask never saw: the next paint syncs it live.
         node.scroll ??= { x: 0, y: 0 };
       } else {
         node.scroll = this.#quantize(node, metrics);
@@ -817,6 +889,11 @@ export class MonoWindElement extends HTMLElementBase {
     if (!this.#containerScrolled) return;
     this.#containerScrolled = false;
     this.#followPointer();
+  }
+
+  /** The laid-out scroll container a light element is. */
+  #scrollNodeOf(el: Element): LayoutNode | undefined {
+    return this.#scrollNodes.find((node) => node.source === el);
   }
 
   /** A container's native position in cells (see scrollCells), ties
@@ -899,6 +976,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (!(target instanceof HTMLElement) || target === this) return;
     if (!target.hasAttribute("data-mw-scroll")) return;
     this.#containerScrolled = true;
+    if (this.#keyScroll?.container === target) this.#keyScroll.scrolled = true;
     this.#schedulePaint();
     // An anchor scrolled under a box the scroll leaves: placed afresh
     // (specs/anchor-positioning.md).
@@ -932,21 +1010,21 @@ export class MonoWindElement extends HTMLElementBase {
    * native room would latch the next text-mode gesture to an invisible
    * scroll instead of chaining. */
   #settle(el: HTMLElement): void {
+    if (this.#keyScroll?.scrolled && this.#keyScroll.container === el) this.#releaseKeyScroll();
     if (this.#thumbDrag?.el === el) return; // release settles
     // Repaint unconditionally: scroll events can coalesce away under
     // load (observed in Firefox), and the settle is the gesture's
     // reliable terminal signal — a current grid makes this a no-op.
     this.#schedulePaint();
     const metrics = this.#cellMetrics;
-    const node = this.#scrollNodes.find((candidate) => candidate.source === el);
+    const node = this.#scrollNodeOf(el);
     if (!metrics || !node) return;
     const range = node.scrollRange!;
     // Quantized from the live position: a scroll since the last paint
     // (its event still to come) settles on its own cell.
     const cells = this.#quantize(node, metrics);
-    const top =
-      cells.y === range.maxY ? el.scrollHeight - el.clientHeight : cells.y * metrics.height;
-    const left = cells.x === range.maxX ? el.scrollWidth - el.clientWidth : cells.x * metrics.width;
+    const top = nativeOffset(el, "y", cells.y, range.maxY, metrics.height);
+    const left = nativeOffset(el, "x", cells.x, range.maxX, metrics.width);
     if (Math.abs(el.scrollTop - top) > 0.5 || Math.abs(el.scrollLeft - left) > 0.5) {
       el.scrollTo({ top, left, behavior: "instant" });
     }
@@ -1015,7 +1093,7 @@ export class MonoWindElement extends HTMLElementBase {
       latch.mag = mag;
       latch.at = now;
       if (!latch.el) return; // the page's gesture
-      target = this.#scrollNodes.find((node) => node.source === latch.el) ?? null;
+      target = this.#scrollNodeOf(latch.el) ?? null;
     }
     if (!target) {
       const stack = hitStack(layout, col, row);
@@ -1135,11 +1213,12 @@ export class MonoWindElement extends HTMLElementBase {
     return paintedCell(this.#grid, col, row);
   }
 
-  /** A pointerdown on a visible gutter bar begins a thumb drag —
-   * engine-routed in BOTH modes (the gutter is grid ink; there is no
-   * native scrollbar). Proportional: the draggable track maps onto
-   * the scroll range. */
-  #gutterDragAt(clientX: number, clientY: number): ThumbDrag | null {
+  /** What a pointerdown on a visible gutter bar begins — engine-routed
+   * in BOTH modes (the gutter is grid ink; there is no native
+   * scrollbar). On the thumb it is a drag, proportional: the draggable
+   * track maps onto the scroll range. Beside the thumb it is a page
+   * toward the press. */
+  #gutterPressAt(clientX: number, clientY: number): ThumbDrag | TrackPress | null {
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!layout || !metrics || this.#scrollNodes.length === 0) return null;
@@ -1149,46 +1228,86 @@ export class MonoWindElement extends HTMLElementBase {
       const { node, x, y } = stack[i]!;
       const range = node.scrollRange;
       if (!range || isInert(node.source)) continue;
-      const el = node.source as HTMLElement;
-      const { y: yBar, x: xBar } = scrollbarGeometry(node, x, y);
-      if (
-        yBar &&
-        range.maxY > 0 &&
-        col >= yBar.col &&
-        col < yBar.col + yBar.thick &&
-        row >= yBar.row &&
-        row < yBar.row + yBar.len
-      ) {
-        const thumbLen = thumbSpan(yBar.len, range.sizeY, range.maxY, 0).len;
-        const draggablePx = Math.max(1, (yBar.len - thumbLen) * metrics.height);
+      const bars = scrollbarGeometry(node, x, y);
+      for (const axis of ["y", "x"] as const) {
+        const bar = bars[axis];
+        const vertical = axis === "y";
+        const max = vertical ? range.maxY : range.maxX;
+        if (!bar || max <= 0) continue;
+        // The cell's place along the bar, and across it.
+        const [along, across] = vertical
+          ? [row - bar.row, col - bar.col]
+          : [col - bar.col, row - bar.row];
+        if (along < 0 || along >= bar.len || across < 0 || across >= bar.thick) continue;
+        const el = node.source as HTMLElement;
+        const size = vertical ? range.sizeY : range.sizeX;
+        const thumb = thumbSpan(bar.len, size, max, node.scroll?.[axis] ?? 0);
+        if (along < thumb.at || along >= thumb.at + thumb.len) {
+          const direction = along < thumb.at ? -1 : 1;
+          return { kind: "track", el, axis, direction, within: along, trackLen: bar.len };
+        }
+        const cell = vertical ? metrics.height : metrics.width;
         return {
+          kind: "thumb",
           el,
-          axis: "y",
-          startClient: clientY,
-          startPx: el.scrollTop,
-          factor: (range.maxY * metrics.height) / draggablePx,
-        };
-      }
-      if (
-        xBar &&
-        range.maxX > 0 &&
-        row >= xBar.row &&
-        row < xBar.row + xBar.thick &&
-        col >= xBar.col &&
-        col < xBar.col + xBar.len
-      ) {
-        const thumbLen = thumbSpan(xBar.len, range.sizeX, range.maxX, 0).len;
-        const draggablePx = Math.max(1, (xBar.len - thumbLen) * metrics.width);
-        return {
-          el,
-          axis: "x",
-          startClient: clientX,
-          startPx: el.scrollLeft,
-          factor: (range.maxX * metrics.width) / draggablePx,
+          axis,
+          startClient: vertical ? clientY : clientX,
+          startPx: vertical ? el.scrollTop : el.scrollLeft,
+          factor: (max * cell) / Math.max(1, (bar.len - thumb.len) * cell),
         };
       }
     }
     return null;
+  }
+
+  /** A page toward the press unless the thumb has reached it; whether it
+   * paged. Measured in the grid's cells: the native scrollport counts
+   * the glyph border as padding (specs/scrolling.md). */
+  #pageTowardPress(press: TrackPress): boolean {
+    const metrics = this.#cellMetrics;
+    const node = this.#scrollNodeOf(press.el);
+    const view = node && clipBounds(node, 0, 0);
+    if (!metrics || !node || !view) return false;
+    const range = node.scrollRange!;
+    const vertical = press.axis === "y";
+    const max = vertical ? range.maxY : range.maxX;
+    const offset = this.#quantize(node, metrics)[press.axis];
+    const thumb = thumbSpan(press.trackLen, vertical ? range.sizeY : range.sizeX, max, offset);
+    const beyond =
+      press.direction > 0 ? press.within >= thumb.at + thumb.len : press.within < thumb.at;
+    if (!beyond) return false;
+    const visible = vertical ? view.y1 - view.y0 : view.x1 - view.x0;
+    const target = Math.max(0, Math.min(max, offset + press.direction * Math.max(1, visible - 1)));
+    if (target === offset) return false;
+    const { el } = press;
+    const cellSize = vertical ? metrics.height : metrics.width;
+    // Instant: the next tick reads where this page landed.
+    el.scrollTo({
+      [vertical ? "top" : "left"]: nativeOffset(el, press.axis, target, max, cellSize),
+      behavior: "instant",
+    });
+    return true;
+  }
+
+  /** Pages once, then keeps paging while the press is held. */
+  #startTrackPaging(press: TrackPress): void {
+    this.#stopTrackPaging();
+    const page = (delay: number): void => {
+      if (!this.#pageTowardPress(press)) {
+        this.#stopTrackPaging();
+        return;
+      }
+      this.#trackPaging = { press, timer: setTimeout(() => page(TRACK_PAGE_REPEAT_MS), delay) };
+    };
+    page(TRACK_PAGE_DELAY_MS);
+  }
+
+  #stopTrackPaging(settle = true): void {
+    if (!this.#trackPaging) return;
+    clearTimeout(this.#trackPaging.timer);
+    const { el } = this.#trackPaging.press;
+    this.#trackPaging = null;
+    if (settle) this.#settle(el);
   }
 
   #onPointerMove = (event: Event): void => {
@@ -1348,7 +1467,7 @@ export class MonoWindElement extends HTMLElementBase {
     const { el, page } = auto;
     const box = page ? new DOMRectReadOnly(0, 0, el.clientWidth, el.clientHeight) : paddingBox(el);
     const step = scrollStep(box, at, metrics);
-    const node = this.#scrollNodes.find((candidate) => candidate.source === el);
+    const node = this.#scrollNodeOf(el);
     const room = (dx: number, dy: number): boolean =>
       node ? containerHasRoom(node, dx, dy) : hasRoom(el, dx, dy);
     const left = step.x * metrics.width;
@@ -1386,10 +1505,30 @@ export class MonoWindElement extends HTMLElementBase {
     if (!direction || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     // A widget that handled the arrow keeps it (specs/focus-navigation.md).
     if (e.defaultPrevented) return;
-    const layout = this.#lastLayout;
     const target = e.target;
-    if (!layout || !(target instanceof Element) || target === this) return;
+    if (!(target instanceof Element) || target === this) return;
     if (arrowIsNative(target, e.key, this.#openSelectPicker())) return;
+    // A framework's handlers sit at its root (React, Svelte, Solid), past
+    // the host: the move waits for the key to reach the window, the last
+    // stop of its dispatch, still in time to cancel the native scroll.
+    this.#pendingArrow?.abort();
+    const pending = new AbortController();
+    this.#pendingArrow = pending;
+    window.addEventListener(
+      "keydown",
+      (last) => {
+        pending.abort();
+        if (last === e && !e.defaultPrevented) this.#moveFocus(e, direction, target);
+      },
+      { signal: pending.signal },
+    );
+  };
+
+  /** Focus moved from `target` to the nearest candidate that way
+   * (specs/focus-navigation.md), the key cancelled. */
+  #moveFocus(e: KeyboardEvent, direction: Direction, target: Element): void {
+    const layout = this.#lastLayout;
+    if (!layout || !this.isConnected) return;
     const rects = focusableRects(layout);
     const current = extentOf(rects, target);
     if (!current) return;
@@ -1400,9 +1539,55 @@ export class MonoWindElement extends HTMLElementBase {
     );
     if (!next) return;
     e.preventDefault();
+    if (this.#keyScroll?.key === e) this.#releaseKeyScroll();
     (next as HTMLElement).focus({ preventScroll: true });
     next.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  /** A key that scrolls one of the host's containers holds relayouts
+   * until that scroll settles: one as its smooth scroll starts cancels
+   * it in Firefox and WebKit (specs/scrolling.md "Keyboard
+   * scrolling"). */
+  #onScrollKey = (event: Event): void => {
+    const e = event as KeyboardEvent;
+    const step = SCROLL_KEYS[e.key];
+    const target = e.target;
+    if (!step || !e.isTrusted || e.defaultPrevented || !(target instanceof Element)) return;
+    if (controlKeeps(target, e.key)) return;
+    const [dx, dy] = e.key === " " && e.shiftKey ? [0, -1] : step;
+    // The key scrolls the nearest container with room, as the browsers
+    // chain it.
+    const scrolls = (el: Element): boolean => {
+      const node = this.#scrollNodeOf(el);
+      return node !== undefined && containerHasRoom(node, dx, dy);
+    };
+    let container = target.closest("[data-mw-scroll]");
+    while (container && this.contains(container) && !scrolls(container)) {
+      container = container.parentElement?.closest("[data-mw-scroll]") ?? null;
+    }
+    if (!container || !this.contains(container)) return;
+    clearTimeout(this.#keyScroll?.timer);
+    this.#keyScroll = {
+      key: e,
+      container,
+      scrolled: false,
+      deferred: this.#keyScroll?.deferred ?? false,
+      timer: setTimeout(() => this.#releaseKeyScroll(), KEY_SCROLL_MS),
+    };
+    // A handler past the host (a framework's root, the document) may
+    // yet cancel the key, which then scrolls nothing.
+    setTimeout(() => {
+      if (e.defaultPrevented && this.#keyScroll?.key === e) this.#releaseKeyScroll();
+    });
   };
+
+  #releaseKeyScroll(): void {
+    if (!this.#keyScroll) return;
+    const { timer, deferred } = this.#keyScroll;
+    clearTimeout(timer);
+    this.#keyScroll = null;
+    if (deferred && this.isConnected) this.#scheduleLayout();
+  }
 
   /** The root as a container over its child nodes: the element
    * children as nodes, the host's own text beside them as anonymous
@@ -1691,7 +1876,8 @@ export class MonoWindElement extends HTMLElementBase {
     unit: GestureUnit,
   ): SelectionUnit | null {
     const index = charIndexAtCell(node, x, y, col, row);
-    if (index === null) return null;
+    // Hidden text takes no selection gesture, as natively.
+    if (index === null || !charVisible(node, index)) return null;
     if (unit === "character" && node.text[index] === INLINE_PAD) return null;
     if (unit === "character") {
       // The cluster's continuation units; a hard break after it is not.
@@ -1823,13 +2009,14 @@ export class MonoWindElement extends HTMLElementBase {
     // relayout before release (see #scheduleDynamicRelayout): no thumb
     // drag, no synthesized press.
     if (isTouchInProgress(e)) return;
-    const drag = this.#gutterDragAt(e.clientX, e.clientY);
-    if (drag) {
-      this.#thumbDrag = drag;
+    const press = this.#gutterPressAt(e.clientX, e.clientY);
+    if (press) {
       e.preventDefault();
       // Keep tracking past the host's edge, like a native thumb
       // (synthetic events have no pointer to capture).
       if (e.isTrusted) this.setPointerCapture(e.pointerId);
+      if (press.kind === "thumb") this.#thumbDrag = press;
+      else this.#startTrackPaging(press);
       return;
     }
     this.#hoverClient = { x: e.clientX, y: e.clientY };
@@ -1847,6 +2034,10 @@ export class MonoWindElement extends HTMLElementBase {
     this.#gridDrag = null;
     this.#pressOnGrid = false;
     this.removeAttribute("data-mw-dragging");
+    if (this.#trackPaging) {
+      this.#stopTrackPaging();
+      return;
+    }
     if (this.#thumbDrag) {
       this.#settle(this.#thumbDrag.el);
       this.#thumbDrag = null;
@@ -2227,8 +2418,10 @@ export class MonoWindElement extends HTMLElementBase {
       }
       // A relayout reads everything; live paint-only properties need
       // a repaint; a layer's transform or filter alone moves its box.
-      if (sampled) this.#performLayoutSafely();
-      else if (paths.has("paint")) this.#resampleAndPaint();
+      if (sampled) {
+        // Held under a key's scroll like any relayout (#onScrollKey).
+        if (!this.#keyScroll) this.#performLayoutSafely();
+      } else if (paths.has("paint")) this.#resampleAndPaint();
       else syncLayers(this.#layers);
       requestAnimationFrame(tick);
     };
@@ -2245,7 +2438,7 @@ export class MonoWindElement extends HTMLElementBase {
     // Only an activating key changes what the grid shows (`:active`);
     // every other keyboard outcome arrives as its own event — input,
     // change, focus, scroll — and a relayout under a scrolling key
-    // cuts short the smooth scroll it starts (Firefox). Space on a
+    // cancels the smooth scroll it starts (#onScrollKey). Space on a
     // focused scroll container pages it.
     if (event.type === "keydown" || event.type === "keyup") {
       const { key, target } = event as KeyboardEvent;
@@ -2308,7 +2501,10 @@ export class MonoWindElement extends HTMLElementBase {
    * layout or when the host has no laid-out content. */
   toPlainText(): string {
     // The already-queued rAF will re-run the layout; that's idempotent.
-    if (this.#layoutPending) this.#performLayout();
+    if (this.#layoutPending || this.#keyScroll?.deferred) {
+      this.#performLayout();
+      if (this.#keyScroll) this.#keyScroll.deferred = false;
+    }
     return this.#lastLayout ? renderPlainText(this.#lastLayout) : "";
   }
 
@@ -2362,8 +2558,54 @@ export class MonoWindElement extends HTMLElementBase {
         this.#scheduleLayout();
         return;
       }
+      // A key's scroll in flight holds it until the scroll settles
+      // (#onScrollKey); the paint it would have made follows the scroll.
+      if (this.#keyScroll) {
+        this.#keyScroll.deferred = true;
+        this.#schedulePaint();
+        return;
+      }
       this.#performLayoutSafely();
     });
+  }
+
+  /** A `visibility` fade-out under the host keeps its element visible to
+   * the read until it would have ended, and a layout then reads it
+   * hidden: the measuring mask cancels the transition, which CSS shows
+   * throughout (specs/visibility.md). Found before the mask goes on,
+   * where the author's transitions run. */
+  #holdFades(): void {
+    if (!this.hasAttribute("data-mw-ready") || typeof CSSTransition === "undefined") return;
+    const now = performance.now();
+    for (const animation of this.getAnimations({ subtree: true })) {
+      if (!(animation instanceof CSSTransition) || animation.transitionProperty !== "visibility") {
+        continue;
+      }
+      const effect = animation.effect as KeyframeEffect | null;
+      const end = effect?.getComputedTiming().endTime;
+      const target = effect?.target;
+      if (!target || effect.pseudoElement !== null || typeof end !== "number") continue;
+      // A fade-in shows from its start: its cancel changes nothing.
+      const frames = effect.getKeyframes();
+      if (frames[0]?.["visibility"] !== "visible" || frames.at(-1)?.["visibility"] === "visible") {
+        continue;
+      }
+      const until = now + end - Number(animation.currentTime ?? 0);
+      // What inherits the element's visibility fades with it.
+      for (const element of [target, ...target.querySelectorAll("*")]) {
+        if (getComputedStyle(element).visibility === "visible") holdVisible(element, until);
+      }
+      this.#layoutAfter(until);
+    }
+  }
+
+  /** A layout once the clock has passed `until`: a timer's delay is
+   * whole milliseconds, and a layout before then would still read the
+   * hold. */
+  #layoutAfter(until: number): void {
+    const left = until - performance.now();
+    if (left <= 0) this.#scheduleLayout();
+    else setTimeout(() => this.#layoutAfter(until), Math.ceil(left));
   }
 
   #performLayout(): void {
@@ -2407,6 +2649,7 @@ export class MonoWindElement extends HTMLElementBase {
     // `finally` drains exactly our own mutation records. Observation
     // resumes the moment #performLayout returns: a user mutation in the
     // same task (right after a layout) is seen normally.
+    this.#holdFades();
     this.setAttribute("measuring", "");
     // A flag per element, so a flip restyles that element alone
     // (styles.css "Typography locks and measuring gates").
@@ -2492,10 +2735,13 @@ export class MonoWindElement extends HTMLElementBase {
 
       // (4) Compute integer layout, and the top-layer stack over it.
       if (this.#visibleCells) virtualRoot.visibleCells = this.#visibleCells;
-      const { height } = layoutRoot(virtualRoot, availableCols, (root) => {
-        this.#scrollNodes = collectScrollContainers(root);
-        this.#syncScrollOffsets(metrics, scrollState);
-      });
+      const { height } = layoutRoot(
+        virtualRoot,
+        availableCols,
+        (node) => this.#syncScrollOffsets(metrics, scrollState, collectScrollContainers(node)),
+        this.#placements,
+      );
+      this.#scrollNodes = collectScrollContainers(virtualRoot);
       this.#topLayer.assign(virtualRoot);
       // A stack element the UA centers follows the cells the reader
       // sees; an anchored one follows its anchor, which the host moves.
@@ -2659,11 +2905,42 @@ interface WheelLatch {
 
 /** An in-flight scrollbar-thumb drag (specs/scrolling.md). */
 interface ThumbDrag {
+  kind: "thumb";
   el: HTMLElement;
   axis: "x" | "y";
   startClient: number;
   startPx: number;
   factor: number;
+}
+
+/** A press on the track beside the thumb: pages toward it while held,
+ * until the thumb the grid shows reaches the pressed cell
+ * (specs/scrolling.md). `within` is that cell, counted from the
+ * track's start. */
+interface TrackPress {
+  kind: "track";
+  el: HTMLElement;
+  axis: "x" | "y";
+  direction: 1 | -1;
+  within: number;
+  trackLen: number;
+}
+
+/** A container's native scroll ceiling on one axis. */
+function nativeCeiling(el: HTMLElement, axis: "x" | "y"): number {
+  return axis === "y" ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+}
+
+/** The native position of a cell offset: at max, the native ceiling,
+ * a rounding pixel either side of max cells (see quantizeScroll). */
+function nativeOffset(
+  el: HTMLElement,
+  axis: "x" | "y",
+  cells: number,
+  max: number,
+  cellSize: number,
+): number {
+  return cells === max ? nativeCeiling(el, axis) : cells * cellSize;
 }
 
 /** A container's native position on one axis, in cells (see
@@ -2676,9 +2953,7 @@ function scrollCells(
   base: number,
 ): number {
   const px = axis === "y" ? el.scrollTop : el.scrollLeft;
-  const ceiling =
-    axis === "y" ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
-  return quantizeScroll(px, ceiling, cellSize, max, base);
+  return quantizeScroll(px, nativeCeiling(el, axis), cellSize, max, base);
 }
 
 /** Native scroll position → whole-cell offset within the engine's

@@ -706,7 +706,7 @@ function walk(
   alpha = 1,
   parentClip: Clip | null = null,
 ): void {
-  if (node.tableHidden) return;
+  if (node.tableHidden || node.forceHidden) return;
   // A fixed box, a top-layer element's included, paints from the host's
   // origin, outside its ancestors' scroll and clips
   // (specs/positioning.md, specs/top-layer.md).
@@ -732,6 +732,10 @@ function walk(
   // glyphs must stay in the grid for select="grid" selection.
   const alphaPaint = (paint: CellPaint | undefined): CellPaint | undefined =>
     alpha >= 1 ? paint : { ...paint, opacity: String(Math.round(alpha * 1000) / 1000) };
+  // A hidden box (specs/visibility.md) paints none of its own ink — its
+  // shadows, fill, borders, rules, text, and bars — while its subtree
+  // walks on, a visible descendant painting.
+  const visible = style.visible;
 
   // Shadows (specs/box-shadow.md): the outer ones before the box's own
   // fill, behind it and over what painted before; the inset ones after
@@ -748,66 +752,69 @@ function walk(
       );
     }
   };
-  paintShadows(false);
-
-  // Fill the border-box with painted spaces so this element's bg
-  // wipes ancestor decoration glyphs at these cells; own borders /
-  // text / decoration paint after and layer on top. `bg-clear` wipes
-  // first, with an EXPLICIT undefined so the merge in put() strips the
-  // cell's painted background too — the wipe covers ancestor
-  // backgrounds, not just their glyphs. Gradient layers then fill a
-  // color per cell, composited over the plain color, inside the box
-  // `background-clip` names, a cell they leave clear as it was; clipped
-  // to `text`, the colors go to the glyphs instead (`tint`, below), the
-  // plain color with them.
   const layers = style.backgroundImage;
-  const textClip = style.backgroundClip === "text";
-  const cellSize = options.cell ?? DEFAULT_CELL;
-  const fill = (paint: CellPaint | undefined): void => {
-    const own: CellPaint = { gradient: undefined, ...paint };
-    for (let dy = 0; dy < node.localRect.height; dy++) {
-      for (let dx = 0; dx < node.localRect.width; dx++) put(absX + dx, absY + dy, " ", own);
-    }
-  };
-  if (style.backgroundClear) fill({ backgroundColor: undefined });
   let tint: ReturnType<typeof glyphTint> | null = null;
-  if (textClip && (layers.length > 0 || style.backgroundColor !== undefined)) {
+  if (visible) {
+    paintShadows(false);
+    // Fill the border-box with painted spaces so this element's bg
+    // wipes ancestor decoration glyphs at these cells; own borders /
+    // text / decoration paint after and layer on top. `bg-clear` wipes
+    // first, with an EXPLICIT undefined so the merge in put() strips the
+    // cell's painted background too — the wipe covers ancestor
+    // backgrounds, not just their glyphs. Gradient layers then fill a
+    // color per cell, composited over the plain color, inside the box
+    // `background-clip` names, a cell they leave clear as it was; clipped
+    // to `text`, the colors go to the glyphs instead (`tint`, below), the
+    // plain color with them.
     const { width, height } = node.localRect;
-    tint = glyphTint(
-      gradientCells(layers, style.backgroundColor, width, height, cellSize),
-      absX,
-      absY,
-    );
-  } else if (layers.length > 0) {
-    const { width, height } = node.localRect;
-    const colors = gradientCells(layers, style.backgroundColor, width, height, cellSize);
-    const clip = style.backgroundClip;
-    const inset =
-      clip === "padding-box" || clip === "content-box" ? paddingBoxInset(node, clip) : zeroInsets();
-    for (let dy = inset.top; dy < height - inset.bottom; dy++) {
-      for (let dx = inset.left; dx < width - inset.right; dx++) {
-        const color = colors[dy]![dx];
-        if (color)
-          put(absX + dx, absY + dy, " ", alphaPaint({ backgroundColor: color, gradient: "fill" }));
+    const cellSize = options.cell ?? DEFAULT_CELL;
+    const fill = (paint: CellPaint | undefined): void => {
+      const own: CellPaint = { gradient: undefined, ...paint };
+      for (let dy = 0; dy < height; dy++) {
+        for (let dx = 0; dx < width; dx++) put(absX + dx, absY + dy, " ", own);
       }
+    };
+    if (style.backgroundClear) fill({ backgroundColor: undefined });
+    if (
+      style.backgroundClip === "text" &&
+      (layers.length > 0 || style.backgroundColor !== undefined)
+    ) {
+      tint = glyphTint(
+        gradientCells(layers, style.backgroundColor, width, height, cellSize),
+        absX,
+        absY,
+      );
+    } else if (layers.length > 0) {
+      const colors = gradientCells(layers, style.backgroundColor, width, height, cellSize);
+      const clip = style.backgroundClip;
+      const inset =
+        clip === "padding-box" || clip === "content-box"
+          ? paddingBoxInset(node, clip)
+          : zeroInsets();
+      for (let dy = inset.top; dy < height - inset.bottom; dy++) {
+        for (let dx = inset.left; dx < width - inset.right; dx++) {
+          const color = colors[dy]![dx];
+          if (color)
+            put(
+              absX + dx,
+              absY + dy,
+              " ",
+              alphaPaint({ backgroundColor: color, gradient: "fill" }),
+            );
+        }
+      }
+    } else if (style.backgroundColor !== undefined) {
+      fill(alphaPaint({ backgroundColor: style.backgroundColor }));
     }
-  } else if (style.backgroundColor !== undefined) {
-    fill(alphaPaint({ backgroundColor: style.backgroundColor }));
-  }
-  paintShadows(true);
+    paintShadows(true);
 
-  const borderRuns: BorderRun[] = [];
-  collectBorderRuns(
-    style,
-    { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height },
-    borderRuns,
-  );
-  for (const run of borderRuns) {
-    const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
-    for (let i = 0; i < run.length; i++) put(run.x + i, run.y, run.glyph, paint);
-  }
-  if (node.decorationRuns) {
-    for (const run of node.decorationRuns) {
+    const borderRuns: BorderRun[] = [];
+    collectBorderRuns(style, box, borderRuns);
+    for (const run of borderRuns) {
+      const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
+      for (let i = 0; i < run.length; i++) put(run.x + i, run.y, run.glyph, paint);
+    }
+    for (const run of node.decorationRuns ?? []) {
       const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
       for (let i = 0; i < run.length; i++) put(absX + run.x + i, absY + run.y, run.glyph, paint);
     }
@@ -822,8 +829,10 @@ function walk(
     : null;
   if (node.lattice && lattice) {
     for (const part of node.lattice.handed ?? []) delete part.latticeRuns;
-    node.lattice.handed = [...lattice.parts.keys()];
-    for (const [part, own] of lattice.parts) {
+    // The lattice is the table's ink, handed only while the table shows.
+    node.lattice.handed = visible ? [...lattice.parts.keys()] : [];
+    for (const part of node.lattice.handed) {
+      const own = lattice.parts.get(part)!;
       part.latticeRuns = own.map((run) => ({ ...run, x: absX + run.x, y: absY + run.y }));
     }
   }
@@ -894,6 +903,9 @@ function walk(
       (k, length, x, y) => {
         const inlineIndex = node.charInline?.[k] ?? -1;
         const entry = inlineIndex >= 0 ? node.inlineElements![inlineIndex] : undefined;
+        // An inline element's own visibility, else the leaf's: its cells
+        // stay blank, their space kept.
+        if (!(entry ? entry.visible : visible)) return;
         let paint = entry ? inlinePaints![inlineIndex] : leafPaint;
         if (selection && k >= selection.start && k < selection.end) {
           paint = { ...paint, selected: true };
@@ -901,7 +913,9 @@ function walk(
         if (entry?.stickyShift) shifted.push([k, length, x, y, entry, paint]);
         else paintCell(k, length, x, y, entry, paint);
       },
-      (x, y) => contentPut(x, y, "…", leafPaint),
+      (x, y) => {
+        if (visible) contentPut(x, y, "…", leafPaint);
+      },
     );
     for (const args of shifted) paintCell(...args);
   }
@@ -919,7 +933,7 @@ function walk(
       contentClip,
     );
   }
-  if (lattice) {
+  if (visible && lattice) {
     for (const run of lattice.runs) {
       const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
       put(absX + run.x, absY + run.y, run.glyph, paint);
@@ -932,7 +946,7 @@ function walk(
   // overflow). The shared corner cell of two bars stays blank.
   const range = node.scrollRange;
   const gutter = node.scrollGutterCells;
-  if (range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
+  if (visible && range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
     const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
     // `scrollbar-color: auto` means the container's own color (its
     // currentColor, like borders) — not the inherited grid default.

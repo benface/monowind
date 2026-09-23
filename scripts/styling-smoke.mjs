@@ -18,57 +18,47 @@ export async function runStylingSmoke({ name, dir, chromium, createServer }) {
     timeout: 60_000,
   });
   await page.waitForSelector("mono-wind[data-mw-ready]");
-  // The host is ready once the engine has laid the page out, which it
-  // does whether or not the tool's stylesheet has landed: a dev server
-  // that re-optimizes a dependency reloads the page mid-load, and the
-  // first paint after can carry no border at all. The glyphs are the
-  // signal that the styles reached the grid.
-  // Polled rather than waited on: a cold dev server pre-bundles, then
-  // RELOADS the page when it finds a dependency mid-load, which
-  // destroys the execution context a `waitForFunction` is living in —
-  // it never re-evaluates and the wait runs out. Each read stands on
-  // its own, so a reload costs one poll.
+  // Polled until every check holds: the host is ready whether or not the
+  // tool's stylesheet has landed, and a cold dev server reloads the page
+  // when it finds a dependency mid-load, so each read stands on its own.
+  const read = () =>
+    page.evaluate(() => {
+      const host = document.querySelector("mono-wind");
+      const grid = host?.shadowRoot?.getElementById("grid");
+      const box = document.querySelector("[data-test='box']");
+      const text = grid?.textContent ?? "";
+      return {
+        // The engine measured a box the framework sized and bordered.
+        laidOut: /--mw-w: \d+/.test(box?.getAttribute("style") ?? ""),
+        // A border the framework wrote is drawn as glyphs.
+        bordered: text.includes("│"),
+        // `--mw-border-glyphs`, which Tailwind reaches through
+        // `borders-rounded`, is a custom property any tool can set.
+        roundedCorners: text.includes("╭"),
+        // The framework's own colour reached the grid's paint.
+        coloured: (
+          host?.shadowRoot?.querySelector("#grid span")?.getAttribute("style") ?? ""
+        ).includes("color"),
+        painted: text.includes("styled by"),
+      };
+    });
   const deadline = Date.now() + 60_000;
-  let painted = false;
-  while (!painted && Date.now() < deadline) {
+  let result = null;
+  for (;;) {
     try {
-      painted = await page.evaluate(() =>
-        (
-          document.querySelector("mono-wind")?.shadowRoot?.getElementById("grid")?.textContent ?? ""
-        ).includes("│"),
-      );
+      result = await read();
     } catch {
       // The reload took the context; the next read gets the new one.
     }
-    if (!painted) await page.waitForTimeout(250);
+    const passed = result !== null && Object.values(result).every(Boolean);
+    if (passed || Date.now() >= deadline) break;
+    await page.waitForTimeout(250);
   }
-
-  const result = await page.evaluate(() => {
-    const host = document.querySelector("mono-wind");
-    const grid = host?.shadowRoot?.getElementById("grid");
-    const box = document.querySelector("[data-test='box']");
-    const text = grid?.textContent ?? "";
-    return {
-      // The engine measured a box the framework sized and bordered.
-      laidOut: /--mw-w: \d+/.test(box?.getAttribute("style") ?? ""),
-      // A border the framework wrote is drawn as glyphs.
-      bordered: text.includes("│"),
-      // `--mw-border-glyphs`, which Tailwind reaches through
-      // `borders-rounded`, is a custom property any tool can set.
-      roundedCorners: text.includes("╭"),
-      // The framework's own colour reached the grid's paint.
-      coloured: (
-        host?.shadowRoot?.querySelector("#grid span")?.getAttribute("style") ?? ""
-      ).includes("color"),
-      painted: text.includes("styled by"),
-    };
-  });
 
   await browser.close();
   await server.close();
 
-  const failures = Object.entries(result).filter(([, ok]) => !ok);
-  if (failures.length > 0) {
+  if (result === null || !Object.values(result).every(Boolean)) {
     console.error(`${name} smoke test FAILED:`, JSON.stringify(result, null, 2));
     process.exit(1);
   }

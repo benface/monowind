@@ -1,6 +1,6 @@
 import { html } from "lit";
-import { expect, waitFor } from "storybook/test";
-import { readyHost, readyHosts, testHooks } from "./helpers.ts";
+import { expect } from "storybook/test";
+import { expectRow, readyHost, readyHosts, testHooks } from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
@@ -49,7 +49,7 @@ export const Arrows: StoryObj = {
             <option>y</option>
           </select>
           <div data-test="editable" contenteditable tabindex="0" class="border">edit me</div>
-          <div data-test="scroller" class="h-3 w-20 overflow-y-auto border">
+          <div data-test="scroller" class="h-3 w-20 overflow-y-auto scroll-smooth border">
             <div class="flex flex-col">
               <button data-test="s1">s1</button>
               <button data-test="s2">s2</button>
@@ -116,12 +116,20 @@ export const Arrows: StoryObj = {
     expect(press("ArrowRight", { shiftKey: true })).toBe(true);
     expect(active()).toBe("b1");
     // Down through a scroll container reaches the item past the fold
-    // and reveals it.
+    // and reveals it clear of the border, at once: the engine takes the
+    // container's scroll-behavior over (specs/scrolling.md).
     const scroller = by("scroller");
+    expect(getComputedStyle(scroller).scrollBehavior, "scroll-smooth locked off").toBe("auto");
     expect(scroller.scrollTop).toBe(0);
     expect(arrow("s1", "ArrowDown")).toEqual({ to: "s2", native: false });
     expect(arrow("s3", "ArrowDown")).toEqual({ to: "s4", native: false });
-    await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+    await expectRow(by("arrows"), "s4");
+    // The browser's own reveal stops clear of it too: from the top, the
+    // second button sits under the bottom border, in the scrollport.
+    by("s1").focus();
+    await expectRow(by("arrows"), "s1");
+    by("s2").focus();
+    await expectRow(by("arrows"), "s2");
     // The default host leaves every arrow native; Tab stays native in both.
     expect(arrow("t1", "ArrowRight")).toEqual({ to: "t1", native: true });
     expect(press("Tab")).toBe(true);
@@ -131,8 +139,10 @@ export const Arrows: StoryObj = {
   },
 };
 
-/** A widget whose handler cancels an arrow keeps it (specs/focus-navigation.md):
- * a listbox moving its own highlight, a button below it left alone. */
+/** A widget whose handler cancels an arrow keeps it (specs/focus-navigation.md),
+ * wherever the handler sits — on the element, or at the app's root past
+ * the host, where React, Svelte and Solid attach theirs: a listbox
+ * moving its own highlight, a button below it left alone. */
 export const HandledArrows: StoryObj = {
   render: () => html`
     <mono-wind focus="arrows">
@@ -149,11 +159,12 @@ export const HandledArrows: StoryObj = {
     await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const listbox = by("listbox");
-    let handled = 0;
+    let handler: "element" | "root" | null = "element";
     listbox.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowDown") return;
-      handled += 1;
-      if (handled === 1) event.preventDefault();
+      if (event.key === "ArrowDown" && handler === "element") event.preventDefault();
+    });
+    canvasElement.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" && handler === "root") event.preventDefault();
     });
     const press = () =>
       listbox.dispatchEvent(
@@ -165,9 +176,14 @@ export const HandledArrows: StoryObj = {
         }),
       );
     listbox.focus();
-    // Cancelled by the widget: focus stays; left alone: the host navigates.
+    // Cancelled by the widget, on the element or at the root: focus
+    // stays; left alone: the host navigates.
     press();
     expect(document.activeElement).toBe(listbox);
+    handler = "root";
+    press();
+    expect(document.activeElement).toBe(listbox);
+    handler = null;
     press();
     expect(document.activeElement).toBe(by("below"));
   },

@@ -79,7 +79,8 @@ on a sticky box is the scrollport's height less two rows
 Without Typed OM (Firefox before 157) an inset's used px has resolved
 the percentage already, so a percentage inset utility — a fraction,
 `full`, an arbitrary percentage or calc() — is read from the class
-list, like the sizing utilities' fallback.
+list, like the sizing utilities' fallback, negative ones too, whether
+the minus leads the utility or the value (`-top-1/2`, `top-[-50%]`).
 
 ### Rounding
 
@@ -284,10 +285,11 @@ Cancelling that gap (a negative end margin) was tried and rejected:
 browsers then disagree on where such lines break, in content-dependent
 ways that resist modeling, so no single wrap model could be exact
 everywhere. Laid-out boxes also carry one layout unit (1/32px) of
-headroom in their width: engines store lengths by flooring to 1/64px
-(Chromium, WebKit) or 1/60px (Firefox), so `n × cell` can land one unit
-below the exact advance of a line that fits exactly, and the browser
-would wrap it. (Observed with Menlo/DejaVu Sans Mono metrics, not with
+headroom in their width: engines store lengths on a fixed grid,
+truncating to 1/64px (Chromium, WebKit) or rounding to 1/60px
+(Firefox), so `n × cell` can land a unit below the exact advance of a
+line that fits exactly, and the browser would wrap it. (Observed with
+Menlo/DejaVu Sans Mono metrics, not with
 JetBrains Mono's 0.6em advance — the `SubpixelHeadroom` story test
 guards it with a self-hosted DejaVu subset.) Note: some platforms
 (Linux Chromium under default hinting) QUANTIZE glyph advances to whole
@@ -320,8 +322,10 @@ whose inline child hides a block is a CONTAINER, not a leaf, and that
 child is flattened into its children, so the block reaches the
 container's own loop and the inline content each side of it falls
 into the runs around it. The inline element still PAINTS as the
-browser lays it out; what it loses is a layout box of its own, which
-it never had. An atomic inline box (`inline-block` and its kin) is
+browser lays it out, and on the grid its text either side keeps its
+style, an entry of its own in each run; what it loses is a layout box
+of its own, which it never had. An atomic inline box (`inline-block`
+and its kin) is
 its own formatting context and keeps its blocks, and an out-of-flow
 child is built whole either way.
 
@@ -334,7 +338,12 @@ the container sizes itself to its content, the marker's advance is the
 box's width contribution, as it is for any child: a width of its own,
 clamped by its min and max, else its content's. The
 box stays IN FLOW — the engine sizes it to exactly those cells and the
-browser's own line layout places it, so the two agree by construction;
+browser's own line layout places it, so the two agree by construction
+(its right margin gives back the layout-unit headroom and tracking
+allowance its width carries, above, so its advance is its cells and a
+line holding several boxes that fits exactly fits natively too;
+`visual/agreement.spec.ts` checks every story, in all three engines,
+for such a box, a flow child, or a float off its cells);
 its interior is a normal layout subtree on the grid (`inline-flex`
 really is a flex container inside). A box taller than one row GROWS its
 line, per CSS line-box growth: the box is `vertical-align: top`, the
@@ -873,8 +882,10 @@ lines); the explicit zero `clip` rect still drops them.
 4. Border-width is a weight the glyph set draws ("Box model"), not a
    length on the spacing scale.
 5. Inline elements ignore MOST layout-affecting properties (borders,
-   sizing, margins). Horizontal padding IS honored, quantized to whole
-   cells: the run reserves the cells as blank markers glued to the
+   sizing, margins); an authored border warns, and its native width
+   is zeroed, so the browser draws none off the grid. Horizontal
+   padding IS honored, quantized to whole cells: the run reserves the
+   cells as blank markers glued to the
    element's edges (U+2060, so a wrap carries the padding with the edge
    like `box-decoration-break: slice`), and the companion stylesheet
    applies exactly those cells as real padding — any raw off-grid inline

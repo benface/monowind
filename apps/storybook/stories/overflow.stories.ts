@@ -435,9 +435,9 @@ export const TouchPan: StoryObj = {
 /** Test-only: a key press relayouts only for Enter and Space, and
  * Space on a focused scroll container pages it instead
  * (specs/scrolling.md "Keyboard scrolling") — a relayout under a
- * scrolling key would cut short the native smooth scroll it starts in
- * Firefox. The scroll itself, which only a real key starts, is
- * visual/keyboard.spec.ts. */
+ * scrolling key would cancel the native smooth scroll it starts in
+ * Firefox and WebKit. The scroll itself, which only a real key starts,
+ * is visual/keyboard.spec.ts. */
 export const Keyboard: StoryObj = {
   tags: ["!dev", "!golden"],
   render: () => html`
@@ -475,6 +475,29 @@ export const Keyboard: StoryObj = {
     await waitFor(() => expect(relayouts).toBeGreaterThan(0));
     observer.disconnect();
   },
+};
+
+/** Test-only: the keys a focused control keeps — Space on a button, the
+ * arrows in a text input — and a box at its end handing the key to the
+ * one around it (specs/scrolling.md "Keyboard scrolling";
+ * visual/keyboard.spec.ts presses them for real). */
+export const KeyboardControls: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="outer" tabindex="0" class="h-10 w-40 overflow-y-scroll border px-1">
+        <p>
+          <button data-test="button" class="border px-1">a button</button>
+          <input data-test="input" size="10" value="some text" />
+        </p>
+        <div data-test="inner" tabindex="0" class="h-4 overflow-y-scroll border">
+          ${LINES.slice(0, 6).map((line) => html`<div>inner ${line}</div>`)}
+        </div>
+        <div data-test="outer-line">outer ${LINES[0]}</div>
+        ${LINES.slice(1).map((line) => html`<div>outer ${line}</div>`)}
+      </div>
+    </mono-wind>
+  `,
 };
 
 /** Test-only (hidden from the sidebar and the visual sweep): exercises

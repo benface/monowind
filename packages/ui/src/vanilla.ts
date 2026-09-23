@@ -87,9 +87,6 @@ export function part(root: Element, name: string): HTMLElement | undefined {
 /** Zag's props onto a part, if the markup has it. */
 export type Spread = (element: Element | undefined, props: object) => void;
 
-/** What an anchored component's API gives its mount past `Anchored`:
- * the props of its triggers — a menu's each by value — and its
- * content. */
 /** What a trigger takes of its own: a menu names one of several by
  * value, a combobox says whether its one takes focus. Both are
  * optional, and a component ignores what it does not read. */
@@ -98,6 +95,9 @@ interface TriggerOptions {
   focusable?: boolean | undefined;
 }
 
+/** What an anchored component's API gives its mount past `Anchored`:
+ * the props of its triggers — a menu's each by value — and its
+ * content. */
 interface CommonApi extends Anchored {
   getTriggerProps(props?: TriggerOptions): object;
   getContentProps(): object;

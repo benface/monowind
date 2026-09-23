@@ -20,10 +20,11 @@ describe("the containers a layout reports", () => {
     return out;
   };
 
-  it("reports a scroller inside an out-of-flow box, sized by the later pass", () => {
+  it("reports a scroller inside an out-of-flow box as the positioning pass sizes it", () => {
     // A menu's content scrolls inside its positioner; the positioner is
     // out of flow, so its subtree takes its size in the positioning
-    // pass — after the first report (specs/scrolling.md).
+    // pass, which reports it with the box — before the anchors inside
+    // it are read (specs/anchor-positioning.md).
     const content = makeNode({
       style: {
         overflow: { x: "visible", y: "auto" },
@@ -36,10 +37,12 @@ describe("the containers a layout reports", () => {
       children: [content],
     });
     const root = makeNode({ children: [positioner] });
-    const reports: LayoutNode[][] = [];
-    layoutRoot(root, 20, (laidOut) => reports.push(scrollers(laidOut)));
-    expect(reports.length, "reported before and after the positioning pass").toBe(2);
-    expect(reports.at(-1)).toContain(content);
+    const reports: { node: LayoutNode; scrollers: LayoutNode[] }[] = [];
+    layoutRoot(root, 20, (node) => reports.push({ node, scrollers: scrollers(node) }));
+    expect(reports).toEqual([
+      { node: root, scrollers: [] },
+      { node: positioner, scrollers: [content] },
+    ]);
   });
 });
 

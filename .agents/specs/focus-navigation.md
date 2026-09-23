@@ -38,7 +38,8 @@ arrow-key focus as an opt-in on top of Tab.
   whose `tabIndex` is non-negative: the DOM's own answer, which covers
   `a[href]`, `button`, form controls, `summary`, `contenteditable`, and
   authored `tabindex` alike, and is `-1` for everything else — minus
-  `disabled` and `inert` ones, hidden ones (no cells), and the focused
+  `disabled` and `inert` ones, hidden ones (no cells, or `visibility:
+hidden`, visibility.md), and the focused
   element itself. Same set Tab visits; the engine invents no
   focusability. A box's rect is its painted border box; an inline
   element has one rect per line it covers — the span of its characters'
@@ -54,8 +55,9 @@ arrow-key focus as an opt-in on top of Tab.
 - **A handled arrow stays handled.** An element whose own handler
   cancels the key (`preventDefault`, the way a menu, a listbox, or a
   tab list built on ARIA moves its highlight) keeps it: the host's
-  navigation runs after the target's handlers and yields to a
-  cancelled event.
+  navigation runs as the key reaches the window, the end of its
+  dispatch — after the target's handlers and a framework's root
+  listeners (React, Svelte, Solid) — and yields to a cancelled event.
 - **Controls keep the arrows they use.** Inside an `<input>` of a
   textual type (text, search, url, tel, email, password, or no type),
   Left and Right stay the caret's; Up and Down navigate. All four
@@ -76,7 +78,9 @@ arrow-key focus as an opt-in on top of Tab.
 true })` followed by `scrollIntoView({ block: "nearest", inline:
 "nearest" })`, so a scroll container (native scrolling, mirrored on
   the grid — specs/scrolling.md) and the page bring the element into
-  view the way a terminal keeps its cursor on screen.
+  view the way a terminal keeps its cursor on screen, clear of the
+  container's border, at once whatever its `scroll-behavior`
+  (scrolling.md).
 - **Only while focus is inside the host.** The engine listens for
   `keydown` on the host: an arrow reaching it has a focused descendant.
   A navigated arrow is `preventDefault()`ed; an arrow the engine leaves
@@ -92,7 +96,9 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
   arrow, and no modifier is held. The focused element is the event's
   target (a control inside a nested shadow root arrives retargeted to
   its light host, which is the laid-out element anyway). Decide
-  "native" by that element's kind (above) before doing any geometry.
+  "native" by that element's kind (above) before doing any geometry,
+  then move the focus from a one-shot `keydown` listener added to the
+  window, which runs last and can still cancel the key.
 - Candidates and rects come from the last layout: a full walk with
   scroll offsets applied (as the paint walk descends), keeping nodes
   whose `source` is focusable per the rule above and, for every text
@@ -118,6 +124,14 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
 - **Overlapping candidates** (positioned boxes stacked on one another)
   resolve by the distance rule alone; the engine does not consult paint
   order for focus.
+- **The move waits for the window.** The arrow moves the focus as its
+  keydown reaches the window, so a handler that stops the event on its
+  way (React's `stopPropagation` stops it at the app's root) leaves
+  the arrow to the browser, which then scrolls natively — as does a
+  page-level listener that cancels arrows to stop the page scrolling;
+  a synthetic
+  keydown that is not `composed`, dispatched inside another shadow
+  root, never reaches the window and moves nothing.
 
 ## Testing
 
@@ -137,10 +151,13 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
   events on the focused element move `document.activeElement` as the
   rules say (Down from the input navigates, Right in it stays; a
   textarea keeps all four; a select closed navigates; a modifier stays
-  native; Down from the list's last visible button reaches the next one
-  and `scrollTop` grows); the default host ignores arrows, and both
+  native; Down from the list's last visible button reaches the next
+  one and the grid shows it clear of the border, a focused button's
+  own reveal too, the box's `scroll-smooth` read as `auto`); the
+  default host ignores arrows, and both
   hosts keep Tab; a widget that handles an arrow (`HandledArrows`)
-  keeps it. Runs in all three engines.
+  keeps it, its handler on the element or at the app's root. Runs in
+  all three engines.
 - Storybook toolbar: a "Focus" global beside "Select" writes `focus`
   onto every story's hosts, so any story with controls demonstrates
   arrow-key navigation.

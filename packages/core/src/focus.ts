@@ -89,24 +89,40 @@ function rank(direction: Direction, current: Rect, rect: Rect): Rank | null {
  * candidate. */
 export function focusableRects(root: LayoutNode): Focusable[] {
   const out: Focusable[] = [];
-  const walk = (node: LayoutNode, parentX: number, parentY: number, isRoot: boolean) => {
+  const walk = (
+    node: LayoutNode,
+    parentX: number,
+    parentY: number,
+    isRoot: boolean,
+    forced: boolean,
+  ) => {
     if (node.tableHidden) return;
+    // A box position-visibility hides takes its subtree with it, a
+    // top-layer element inside aside (specs/anchor-positioning.md).
+    const hidden = node.forceHidden === true || (forced && node.topLayerRank === undefined);
     const x = parentX + node.localRect.x + (node.stickyShift?.x ?? 0);
     const y = parentY + node.localRect.y + (node.stickyShift?.y ?? 0);
-    if (!isRoot && !node.anonymous && isFocusable(node.source)) {
+    // A hidden box takes no focus; a visible descendant still does
+    // (specs/visibility.md).
+    if (!hidden && !isRoot && !node.anonymous && node.style.visible && isFocusable(node.source)) {
       out.push({
         element: node.source,
         rect: { x, y, width: node.localRect.width, height: node.localRect.height },
       });
     }
-    for (const inline of inlineElementRects(node, x, y)) {
-      if (isFocusable(inline.element)) out.push(inline);
+    if (!hidden && node.inlineElements) {
+      const hidden = new Set(
+        node.inlineElements.flatMap((entry) => (entry.visible ? [] : [entry.element])),
+      );
+      for (const inline of inlineElementRects(node, x, y)) {
+        if (!hidden.has(inline.element) && isFocusable(inline.element)) out.push(inline);
+      }
     }
     const scrollX = node.scroll?.x ?? 0;
     const scrollY = node.scroll?.y ?? 0;
-    for (const child of node.children) walk(child, x - scrollX, y - scrollY, false);
+    for (const child of node.children) walk(child, x - scrollX, y - scrollY, false, hidden);
   };
-  walk(root, 0, 0, true);
+  walk(root, 0, 0, true, false);
   return out;
 }
 
@@ -139,7 +155,7 @@ function isFocusable(element: Element): boolean {
 
 const TEXTUAL_INPUTS = new Set(["text", "search", "url", "tel", "email", "password"]);
 /** Inputs whose arrows mean nothing natively: navigation takes them. */
-const BUTTON_INPUTS = new Set(["checkbox", "button", "submit", "reset", "image", "file"]);
+export const BUTTON_INPUTS = new Set(["checkbox", "button", "submit", "reset", "image", "file"]);
 
 /** Whether an arrow key pressed on `element` belongs to the control:
  * caret movement in text fields (Left/Right in a single-line input,

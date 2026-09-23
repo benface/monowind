@@ -75,12 +75,25 @@ export function anchorName(id: string, value?: string): string {
   return `--mw-ui-${ident(id)}${value === undefined ? "" : `-${ident(value)}`}`;
 }
 
-/** Zag's positioning options with `applyStyles`, `flip`, and
- * `listeners` off, so the engine alone places the box. */
+/** Zag's own placement off — `applyStyles`, `flip`, and `listeners` —
+ * so the engine alone places the box, and its size middleware with
+ * `sameWidth` and `fitViewport`, which turn it back on: its sizes are
+ * pixels, which the grid would read as cells; `anchor-size()` sizes the
+ * positioner instead (specs/ui.md). */
+const ZAG_PLACEMENT_OFF = {
+  applyStyles: false,
+  flip: false,
+  listeners: false,
+  sizeMiddleware: false,
+  sameWidth: false,
+  fitViewport: false,
+} as const;
+
+/** Zag's positioning options with its own placement off. */
 export function positioning<T extends object>(
   options: T | undefined,
-): T & { applyStyles: false; flip: false; listeners: false } {
-  return { ...(options ?? ({} as T)), applyStyles: false, flip: false, listeners: false };
+): T & typeof ZAG_PLACEMENT_OFF {
+  return { ...(options ?? ({} as T)), ...ZAG_PLACEMENT_OFF };
 }
 
 /** Zag's props as the machine's schema types them: Zag's props type

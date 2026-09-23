@@ -257,9 +257,10 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   marker is replaced by the box's own serialization; a custom leaf is
   all-or-nothing) — and assemble them with the `innerText` required
   line breaks (2 for a `<p>`, 1 for any other block-level box, per
-  `style.display` and the source tag; `\t` between cells of a table
-  row; runs of required breaks collapse to the maximum, none at the
-  ends), set `text/plain`, `preventDefault()`. No `text/html` is
+  `style.display` and the source tag, none for an anonymous run or a
+  hidden box, visibility.md; `\t` after each visible cell of a table
+  row but the last; runs of required breaks collapse to the maximum,
+  none at the ends), set `text/plain`, `preventDefault()`. No `text/html` is
   written: a TUI copy is plain text.
 - **Lift, then select.** Attribute first, one forced style resolution,
   then the range — so the range is only ever set into selectable

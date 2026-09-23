@@ -244,7 +244,7 @@ export function selectedRanges(
   range.setEnd(points.endContainer, points.endOffset);
   const ranges = new Map<LayoutNode, { start: number; end: number }>();
   const visit = (node: LayoutNode): void => {
-    if (node.tableHidden || !rangeMeets(node, range)) return;
+    if (node.tableHidden || node.forceHidden || !rangeMeets(node, range)) return;
     if (isTextLeaf(node)) {
       const { text } = node;
       let start = 0;
@@ -266,6 +266,13 @@ export function selectedRanges(
 }
 
 /* === Copy serialization ============================================== */
+
+/** Whether a leaf's character paints (specs/visibility.md): its inline
+ * element's `visibility`, else the leaf's own. */
+export function charVisible(leaf: LayoutNode, index: number): boolean {
+  const inline = leaf.charInline?.[index] ?? -1;
+  return inline >= 0 ? leaf.inlineElements![inline]!.visible : leaf.style.visible;
+}
 
 /** A required line break count (collapses with neighbors, dropped at
  * the ends) or literal text (a leaf's slice, a table's tab or row
@@ -292,8 +299,10 @@ export function serializeSelection(root: LayoutNode, points: BoundaryPoints): st
 }
 
 function collectItems(node: LayoutNode, range: Range, items: TextItem[]): void {
-  if (node.tableHidden || !rangeMeets(node, range)) return;
-  const breaks = requiredBreaks(node);
+  if (node.tableHidden || node.forceHidden || !rangeMeets(node, range)) return;
+  // A hidden box gives up its own breaks, its subtree's items kept, as
+  // innerText does (specs/visibility.md).
+  const breaks = node.style.visible ? requiredBreaks(node) : 0;
   if (breaks) items.push({ breaks });
   if (node.style.tableRole === "row") {
     collectRow(node, range, items);
@@ -303,14 +312,14 @@ function collectItems(node: LayoutNode, range: Range, items: TextItem[]): void {
       if (child.style.tableRole === "row" || isRowGroup(child)) continue;
       collectItems(child, range, items); // captions
     }
-    // Separators only between rows the range reaches, like the
-    // browsers' own partial-table copies.
-    let emitted = false;
+    // A visible row's newline, before the next row the range reaches,
+    // like the browsers' own partial-table copies.
+    let separated = false;
     for (const row of rows) {
       if (!range.intersectsNode(row.source)) continue;
-      if (emitted) items.push({ text: "\n" });
+      if (separated) items.push({ text: "\n" });
       collectItems(row, range, items);
-      emitted = true;
+      separated = row.style.visible;
     }
   } else {
     if (isTextLeaf(node)) items.push({ text: leafSlice(node, range) });
@@ -321,14 +330,16 @@ function collectItems(node: LayoutNode, range: Range, items: TextItem[]): void {
   if (breaks) items.push({ breaks });
 }
 
+/** A row's cells, a visible one's tab before the next, as innerText
+ * puts it after every visible cell but the last. */
 function collectRow(row: LayoutNode, range: Range, items: TextItem[]): void {
-  let emitted = false;
+  let separated = false;
   for (const cell of row.children) {
     if (cell.style.tableRole !== "cell" || cell.tableHidden) continue;
     if (!range.intersectsNode(cell.source)) continue;
-    if (emitted) items.push({ text: "\t" });
+    if (separated) items.push({ text: "\t" });
     collectItems(cell, range, items);
-    emitted = true;
+    separated = cell.style.visible;
   }
 }
 
@@ -351,12 +362,13 @@ function tableRows(table: LayoutNode): LayoutNode[] {
 /** `innerText`: a `<p>` gets two required breaks, any other block-level
  * box (a caption included) one; inline boxes and table internals none. */
 function requiredBreaks(node: LayoutNode): number {
-  if (node.inlineBox) return 0;
+  // An anonymous run is no element: innerText gives it no breaks of its
+  // own, the blocks beside it theirs — none where they are hidden.
+  if (node.inlineBox || node.anonymous) return 0;
   const role = node.style.tableRole;
   if (role === "row" || role === "cell" || isRowGroup(node)) return 0;
   if (role === "column" || role === "column-group") return 0;
-  // A run in a <p> is an anonymous block: one break, as innerText gives.
-  return node.source.tagName === "P" && !node.anonymous ? 2 : 1;
+  return node.source.tagName === "P" ? 2 : 1;
 }
 
 interface Point {
@@ -448,8 +460,13 @@ function leafSlice(leaf: LayoutNode, range: Range): string {
       end = charIndexAt(leaf, range.endContainer, range.endOffset);
     }
   }
-  let slice = text.slice(start, end);
-  if (end === text.length && slice.endsWith("\n")) slice = slice.slice(0, -1);
+  // Hidden text is no rendered text (specs/visibility.md).
+  const last = end === text.length && text.endsWith("\n") ? end - 1 : end;
+  let slice = "";
+  for (let k = start; k < last; k++) {
+    const char = text[k]!;
+    if (char === OBJECT_REPLACEMENT || charVisible(leaf, k)) slice += char;
+  }
   const boxes = inlineBoxesOf(leaf);
   let boxIndex = text.slice(0, start).split(OBJECT_REPLACEMENT).length - 1;
   slice = slice.replaceAll(OBJECT_REPLACEMENT, () => {

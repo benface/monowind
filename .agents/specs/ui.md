@@ -94,10 +94,10 @@ props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   (scrolling.md): `overflow-y-auto` with a `max-h-*` on the content
   scrolls natively, a select's list the same, and Zag scrolling the
   highlighted item into view repaints the grid on the cells it moved
-  to. That scroll targets the content box, not the scrollport
-  (`scrollToIndexFn` in the machine's props, an author's own over it):
-  the engine reserves a box's border cells as padding, so a scroll into
-  the scrollport would stop with the item under the border.
+  to. That scroll moves the list alone, never the page, and brings the
+  item into its content box, clear of the list's padding as well as
+  its border (`scrollToIndexFn` in the machine's props, an author's
+  own over it).
 - **A list's focus starts at its selection.** The content taking focus
   highlights the selected item, or the first where nothing is selected,
   as ARIA's listbox pattern has it, and brings that row into view. A
@@ -151,9 +151,9 @@ flip-block, flip-inline, flip-block flip-inline`; the gutter
   the anchor (`offset.crossAxis`) are margins in cells on the anchor's
   side and the aligned edge's, which the engine mirrors with a flip
   (anchor-positioning.md). Zag's positioning runs with `applyStyles`, `flip`,
-  and `listeners` off, its pixel result unused and its `data-placement`
-  the placement asked for; the engine's flip shows as `data-mw-area`
-  (anchor-positioning.md).
+  and `listeners` off, and its size middleware (below), its pixel result
+  unused and its `data-placement` the placement asked for; the
+  engine's flip shows as `data-mw-area` (anchor-positioning.md).
 - **Floating parts live in the top layer.** The positioner carries
   `popover="manual"`; `syncTopLayer` shows it as the machine opens
   and hides it once the exit completes, so it paints last and unclipped
@@ -161,6 +161,18 @@ flip-block, flip-inline, flip-block flip-inline`; the gutter
   `hidden` Zag puts on the closed content is dropped, a closed
   popover being the UA's to hide. Zag keeps its own dismissal, focus,
   and inertness (`manual` gives the popover none of the UA's).
+- **A part is sized against its anchor in CSS.** `anchor-size()` on
+  the positioner (`w-[anchor-size(width)]`, anchor-positioning.md)
+  follows the anchor through every layout, the positioner's own inline
+  `min-width: max-content` letting wider items widen it — and taking
+  the place of an authored `min-width`. Zag's positioning variables are not
+  set: `--x`, `--y` and `--z-index` go with its own placement,
+  `--reference-*` and `--available-*` with its size middleware — its
+  values are the anchor's px, which the grid would read on its spacing
+  scale; `sameWidth` and `fitViewport`, which turn it back on, go with
+  it — and `--arrow-*` with the arrow part. A `--transform-origin`
+  Zag's middleware writes comes from its own placement, which knows
+  nothing of the engine's flips.
 - **A dialog's backdrop is the `::backdrop`.** The dialog's positioner
   is the top-layer element and styles its backdrop with Tailwind's
   `backdrop:` variant; the engine tints the page under it
@@ -365,10 +377,12 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   select's hidden control among them; the show and hide of the
   positioner around the exit's transitions; the React hooks and Vue
   composables rendered through their frameworks (`hooks.test.tsx`,
-  `composables.test.ts`), a component with no floating part included.
+  `composables.test.ts`), a component with no floating part
+  included.
 - Storybook, per component, in every engine: the listbox's roles, its
   value selected by press and by Enter with the indicator following it
-  on the grid, the pointer highlight its root asks for, and the list
+  on the grid, the pointer highlight its root asks for
+  (`ListboxHighlightOnHover`), and the list
   scrolled to the item the keyboard highlights; the select's list
   anchored under its trigger, the value it puts on the trigger and in
   its form control, and that control left out of the layout; per
@@ -382,7 +396,10 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   typeahead, and a submenu for the menu; the focus trap
   and the tinted page for the dialog; an exit transition on
   `data-state` holding the positioner in the top layer to its end; a
-  grid drag over the popover's text selecting it. The
+  grid drag over the popover's text selecting it; a select's list as
+  wide as its trigger through `anchor-size()`, following the trigger
+  as its values widen it (`SelectMultiple`); a combobox's "nothing
+  matches" line beside its list. The
   flip at the host's edge and the escape from a scroller are the
   engine's, tested in the positioning stories, one of them on a box the
   browser would have flipped itself.

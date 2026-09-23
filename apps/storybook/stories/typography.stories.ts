@@ -150,6 +150,59 @@ export const InlineElements: StoryObj = {
   },
 };
 
+/** Test-only: a border on an inline element draws nothing (specs/cell-model.md,
+ * deviation 5): the grid has no glyphs for it, and the browser's own is
+ * zeroed, so the line's native text stays under its glyphs. */
+export const InlineBorder: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p>
+        a <span class="border px-1" data-test="bordered">word</span> <b data-test="after">in</b> a
+        line
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const style = getComputedStyle(by("bordered"));
+    expect([style.borderTopWidth, style.borderLeftWidth]).toEqual(["0px", "0px"]);
+    expect(gridOf(host).textContent).toContain("a  word  in a line");
+    // The word after it sits on the cell the grid draws it on: "a ",
+    // the padded word, and a space before it.
+    const { width } = cellSize(host);
+    const after =
+      by("after").getBoundingClientRect().left - gridOf(host).getBoundingClientRect().left;
+    expect(Math.abs(after - 9 * width)).toBeLessThan(0.5);
+  },
+};
+
+/** Test-only: tracked atomic inline boxes filling their line exactly,
+ * which the browser keeps on one line as the grid does
+ * (visual/agreement.spec.ts checks each on its cells in every engine). */
+export const TrackedInlineBoxes: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex">
+        <span data-test="line" class="border">
+          <button class="tracking-[0.25rem]">ab</button>
+          <button class="tracking-[0.25rem]">cd</button>
+          <button class="tracking-[0.25rem]">ef</button>
+        </span>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const tops = [...testHooks(canvasElement)("line").querySelectorAll("button")].map(
+      (button) => button.getBoundingClientRect().top,
+    );
+    expect(new Set(tops).size, "one line").toBe(1);
+  },
+};
+
 export const InlineDisplay: StoryObj = {
   render: () => html`
     <mono-wind>

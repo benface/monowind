@@ -98,6 +98,29 @@ addons.getChannel().on(STORY_RENDERED, () => {
 // paints the canvas), so dark-system users otherwise start half-themed.
 applyTheme(systemTheme);
 
+// A play's userEvent patches every input it sees focused, for good, and
+// its value setter puts the caret at the end on any write — an identical
+// one included, which a browser ignores. A person's first edit (trusted,
+// where userEvent's are not) gets the native input back.
+const USER_EVENT_PATCHES = [
+  "value",
+  "setSelectionRange",
+  "selectionStart",
+  "selectionEnd",
+  "select",
+  "setRangeText",
+];
+document.addEventListener(
+  "beforeinput",
+  (event) => {
+    const input = event.target;
+    if (!event.isTrusted) return;
+    if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return;
+    for (const key of USER_EVENT_PATCHES) Reflect.deleteProperty(input, key);
+  },
+  { capture: true },
+);
+
 const preview: Preview = {
   // Every story is a golden of the visual sweep (visual/stories.spec.ts)
   // unless it opts out with `!golden`.

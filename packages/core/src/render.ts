@@ -59,6 +59,7 @@ function walk(
   isRoot: boolean,
   inlineInsetElements: Set<Element>,
   ground?: string,
+  forced = false,
 ): void {
   if (node.inlineElements) {
     for (const { element, tracking, padLeft, padRight, insets, sticky } of node.inlineElements) {
@@ -81,10 +82,20 @@ function walk(
   }
 
   if (isRoot) markRoot(node);
-  else if (!node.anonymous) positionElement(node);
+  else if (!node.anonymous) {
+    positionElement(node);
+    // A top-layer element's box is the viewport's, so a box
+    // position-visibility hides around it leaves it shown (styles.css).
+    const escapes = forced && node.topLayerRank !== undefined && node.style.visible;
+    setFlag(node.source, "data-mw-top-shown", escapes);
+  }
+  const forcedBelow = node.forceHidden === true || (forced && node.topLayerRank === undefined);
   // The ground the grid paints under this box: its own fill, else the
   // nearest above, `bg-clear` cutting through to the theme's.
-  const own = node.style.backgroundColor ?? (node.style.backgroundClear ? undefined : ground);
+  // A hidden box paints no fill: the ground stays the one above it.
+  const own = node.style.visible
+    ? (node.style.backgroundColor ?? (node.style.backgroundClear ? undefined : ground))
+    : ground;
   if (!isRoot && !node.anonymous) syncEditableColors(node.source as HTMLElement, node, own);
   // A hidden table box (misparented content, <col>) hides its whole
   // subtree browser-side; nothing to recurse into.
@@ -101,7 +112,7 @@ function walk(
         setVar(el, "--mw-z", String(child.style.zIndex));
       else clearVar(el, "--mw-z");
     }
-    walk(child, false, inlineInsetElements, own);
+    walk(child, false, inlineInsetElements, own, forcedBelow);
   }
 }
 
@@ -339,9 +350,14 @@ function positionElement(node: LayoutNode): void {
     const { maxX, maxY } = node.scrollRange;
     setVar(el, "--mw-se-x", String(maxX > 0 ? maxX + node.localRect.width : 1));
     setVar(el, "--mw-se-y", String(maxY > 0 ? maxY + node.localRect.height : 1));
+    // The bars' cells, which --mw-pr/--mw-pb include, for scroll-padding.
+    setVar(el, "--mw-gr", String(node.scrollGutterCells?.right ?? 0));
+    setVar(el, "--mw-gb", String(node.scrollGutterCells?.bottom ?? 0));
   } else {
     clearVar(el, "--mw-se-x");
     clearVar(el, "--mw-se-y");
+    clearVar(el, "--mw-gr");
+    clearVar(el, "--mw-gb");
   }
   // The browser insets content by border + padding; the engine has already
   // allocated cells for both. We expose them separately so the companion CSS
@@ -363,6 +379,8 @@ function positionElement(node: LayoutNode): void {
   setVar(el, "--mw-ti", String(node.style.textIndent));
   setFlag(el, "data-mw-text-align-blocked", textAlignBlocked);
   setFlag(el, "data-mw-table-hidden", Boolean(node.tableHidden));
+  setFlag(el, "data-mw-force-hidden", Boolean(node.forceHidden));
+  setFlag(el, "data-mw-invisible", !node.style.visible);
   // A hidden run has no element of its own: its container hides its
   // text and its laid-out children show through (styles.css).
   setFlag(

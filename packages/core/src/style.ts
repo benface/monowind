@@ -6,7 +6,7 @@ import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
-import { autoTrack, zeroInsets } from "./types.ts";
+import { autoTrack, SIDES, zeroInsets } from "./types.ts";
 import { leafRendererFor } from "./leaf.ts";
 import { warnOnce } from "./warn.ts";
 import type {
@@ -36,6 +36,7 @@ import type {
   JustifyContent,
   Layer,
   PerSide,
+  Side,
   Position,
   Size,
   SizeLimit,
@@ -44,6 +45,12 @@ import type {
   TrackSize,
   Backdrop,
   AnchorFallback,
+  Flip,
+  AnchorInset,
+  AnchorInsets,
+  AnchorSize,
+  AnchorSizeProperty,
+  AnchorSizes,
   AreaSide,
   PositionArea,
 } from "./types.ts";
@@ -204,6 +211,8 @@ export function readCellStyle(
   const topLayer = isTopLayer(el);
   const hoisted = topLayer || el.hasAttribute("popover");
   const outOfFlow = hoisted || cs.position === "absolute" || cs.position === "fixed";
+  const anchorSizes = outOfFlow ? readAnchorSizes(classAttr, inlineStyle, rootFontSizePx) : {};
+  const anchorInsets = outOfFlow ? readAnchorInsets(classAttr, inlineStyle, rootFontSizePx) : {};
   const style: CellStyle = {
     display,
     tableRole,
@@ -307,7 +316,10 @@ export function readCellStyle(
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
     layer: readLayer(el, cs),
+    visible: readVisible(cs, el),
     ...readAnchoring(el, cs, outOfFlow),
+    anchorSizes,
+    anchorInsets,
     topLayer,
     backdrop: hoisted ? readBackdrop(el) : null,
     glyphSet,
@@ -341,6 +353,12 @@ export function readCellStyle(
     breakAfterColumn: cs.breakAfter === "column",
     breakInsideAvoid: cs.breakInside === "avoid" || cs.breakInside === "avoid-column",
   };
+  // The browser's px for an anchor function is the pre-grid anchor's:
+  // the property reads unset until the box is placed (positioning.ts).
+  for (const property of Object.keys(anchorSizes) as AnchorSizeProperty[]) {
+    setAnchorSize(style, property, undefined);
+  }
+  for (const side of Object.keys(anchorInsets) as Side[]) style.insets[side] = null;
   applyBorderCollapse(style, cs);
   if (hoisted) {
     applyTopLayerGeometry(style, classAttr, inlineStyle);
@@ -351,6 +369,224 @@ export function readCellStyle(
   return style;
 }
 
+/** The size properties an `anchor-size()` can take: the reader's key,
+ * the CSS property, its utilities' stems, and its axis. */
+const ANCHOR_SIZE_PROPERTIES = [
+  ["width", "width", "w|size", "width"],
+  ["height", "height", "h|size", "height"],
+  ["minWidth", "min-width", "min-w", "width"],
+  ["minHeight", "min-height", "min-h", "height"],
+  ["maxWidth", "max-width", "max-w", "width"],
+  ["maxHeight", "max-height", "max-h", "height"],
+] as const;
+
+/** An anchor function authored as a whole property, its arguments: from
+ * the inline style, else an arbitrary-value utility of one of the stems
+ * (`min-w-[anchor-size(width)]`), its underscores spaces. The browser
+ * resolves one against the anchor's pre-grid box, so the function itself
+ * is read, for the engine to resolve against the anchor's cells. */
+function authoredAnchorFunction(
+  name: "anchor" | "anchor-size",
+  property: string,
+  stems: string,
+  classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
+): string | undefined {
+  const inline = inlineStyle.getPropertyValue(property).trim();
+  if (inline) return new RegExp(`^${name}\\((.*)\\)$`).exec(inline)?.[1];
+  if (!classAttr.includes(`[${name}(`)) return undefined;
+  return new RegExp(`(?:^|[\\s:.[!])(?:${stems})-\\[${name}\\(([^\\s\\]]*)\\)\\]`)
+    .exec(classAttr)?.[1]
+    ?.replaceAll("_", " ");
+}
+
+/** The sizes an out-of-flow box authors as `anchor-size()`
+ * (specs/anchor-positioning.md). */
+function readAnchorSizes(
+  classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
+  rootFontSizePx: number,
+): AnchorSizes {
+  const sizes: AnchorSizes = {};
+  for (const [key, property, stems, axis] of ANCHOR_SIZE_PROPERTIES) {
+    const authored = authoredAnchorFunction("anchor-size", property, stems, classAttr, inlineStyle);
+    const size = authored === undefined ? null : parseAnchorSize(authored, axis, rootFontSizePx);
+    if (size) sizes[key] = size;
+  }
+  return sizes;
+}
+
+/** `anchor-size()`'s arguments: an anchor name and a dimension, each
+ * optional — the property's own axis by default, the logical keywords
+ * those of a horizontal host — and a fallback length after a comma. */
+function parseAnchorSize(
+  args: string,
+  axis: "width" | "height",
+  rootFontSizePx: number,
+): AnchorSize | null {
+  let anchor: string | null = null;
+  let dimension: AnchorSize["dimension"] = axis;
+  for (const token of anchorTokens(args)) {
+    if (token.startsWith("--")) anchor = token;
+    else if (token === "width" || token.endsWith("inline")) dimension = "width";
+    else if (token === "height" || token.endsWith("block")) dimension = "height";
+    else return null;
+  }
+  const fallback = anchorFallback(args, axis, rootFontSizePx);
+  return fallback === undefined ? { anchor, dimension } : { anchor, dimension, fallback };
+}
+
+/** An anchor function's words before its fallback's comma. */
+function anchorTokens(args: string): string[] {
+  return args.split(",")[0]!.trim().split(/\s+/).filter(Boolean);
+}
+
+/** An anchor function's fallback, after its comma, in cells: a length,
+ * a percentage, or a calc() of them; undefined where none is read. */
+function anchorFallback(
+  args: string,
+  axis: "width" | "height",
+  rootFontSizePx: number,
+): CellLength | undefined {
+  const comma = args.indexOf(",");
+  if (comma < 0) return undefined;
+  const value = evaluateCalc(args.slice(comma + 1).trim(), axis, undefined, rootFontSizePx);
+  // A unitless zero is the one number a length takes.
+  if (!value || (value.unitless && value.cells !== 0)) return undefined;
+  const cells = roundHalfAwayFromZero(value.cells);
+  if (value.percent === 0) return cells;
+  return cells === 0 ? { percent: value.percent } : { percent: value.percent, cells };
+}
+
+/** The insets an out-of-flow box authors as `anchor()`
+ * (specs/anchor-positioning.md), read like `anchor-size()`
+ * (`top-[anchor(bottom)]`). */
+function readAnchorInsets(
+  classAttr: string,
+  inlineStyle: CSSStyleDeclaration,
+  rootFontSizePx: number,
+): AnchorInsets {
+  const insets: AnchorInsets = {};
+  for (const side of SIDES) {
+    const authored = authoredAnchorFunction(
+      "anchor",
+      side,
+      SIDE_STEMS[side],
+      classAttr,
+      inlineStyle,
+    );
+    const inset = authored === undefined ? null : parseAnchorInset(authored, side, rootFontSizePx);
+    if (inset) insets[side] = inset;
+  }
+  return insets;
+}
+
+/** `anchor()`'s arguments: an optional anchor name and the side — the
+ * inset's axis's own, `center`, a logical side of a horizontal
+ * left-to-right host, `inside` (the inset's own side), `outside` (the
+ * opposite one), or a percentage from the start; another axis's side
+ * takes the fallback alone, as in CSS — and a fallback length after a
+ * comma. */
+function parseAnchorInset(args: string, inset: Side, rootFontSizePx: number): AnchorInset | null {
+  const vertical = inset === "top" || inset === "bottom";
+  const [start, end] = vertical ? ["top", "bottom"] : ["left", "right"];
+  const own = inset === start ? 0 : 1;
+  const fractions: Record<string, number | null> = {
+    [vertical ? "left" : "top"]: null,
+    [vertical ? "right" : "bottom"]: null,
+    [start!]: 0,
+    [end!]: 1,
+    center: 0.5,
+    start: 0,
+    end: 1,
+    "self-start": 0,
+    "self-end": 1,
+    inside: own,
+    outside: 1 - own,
+  };
+  let anchor: string | null = null;
+  let fraction: number | null | undefined;
+  for (const token of anchorTokens(args)) {
+    if (token.startsWith("--")) anchor = token;
+    else if (Object.hasOwn(fractions, token)) fraction = fractions[token];
+    else if (/^-?\d+(?:\.\d+)?%$/.test(token)) fraction = parseFloat(token) / 100;
+    else return null;
+  }
+  if (fraction === undefined) return null;
+  const fallback = anchorFallback(args, vertical ? "height" : "width", rootFontSizePx);
+  return fallback === undefined ? { anchor, fraction } : { anchor, fraction, fallback };
+}
+
+/** An `anchor-size()` property as cells, or its initial value where no
+ * anchor resolves it (CSS: invalid at computed-value time). */
+export function setAnchorSize(
+  style: CellStyle,
+  property: AnchorSizeProperty,
+  cells: number | undefined,
+  fallback?: CellLength,
+): void {
+  const length = cells ?? fallback;
+  switch (property) {
+    case "width":
+    case "height":
+      // A size takes whole cells or a plain percentage.
+      style[property] =
+        typeof length === "number"
+          ? { kind: "cells", value: length }
+          : length !== undefined && length.cells === undefined
+            ? { kind: "percent", value: length.percent }
+            : { kind: "auto" };
+      return;
+    case "minWidth":
+    case "minHeight":
+      style[property] = length ?? "auto";
+      return;
+    case "maxWidth":
+    case "maxHeight":
+      style[property] = length;
+  }
+}
+
+/** The elements a `visibility` fade holds visible, until when
+ * (`performance.now()` time): CSS shows an element throughout a fade
+ * between `visible` and `hidden`, which the measuring mask cancels. */
+const fades = new WeakMap<Element, number>();
+
+/** Holds an element visible to the read until `until`. */
+export function holdVisible(el: Element, until: number): void {
+  fades.set(el, until);
+}
+
+/** Whether a computed `visibility` paints (specs/visibility.md):
+ * `hidden` and `collapse` do not, unless a fade holds the element; a
+ * DOM without the property does. */
+export function readVisible(cs: CSSStyleDeclaration, el?: Element): boolean {
+  if (cs.visibility !== "hidden" && cs.visibility !== "collapse") return true;
+  return el !== undefined && (fades.get(el) ?? 0) > performance.now();
+}
+
+/** `position-visibility`'s conditions: `always` none, the initial value
+ * (and a DOM without the property) `anchors-visible`; the draft's
+ * singular spellings and the browsers' plural ones alike. */
+export function parsePositionVisibility(value: string): CellStyle["positionVisibility"] {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return { anchorValid: false, anchorVisible: true, noOverflow: false };
+  return {
+    anchorValid: words.some((word) => /^anchors?-valid$/.test(word)),
+    anchorVisible: words.some((word) => /^anchors?-visible$/.test(word)),
+    noOverflow: words.includes("no-overflow"),
+  };
+}
+
+/** `position-try-order`'s keywords, the logical ones for a horizontal
+ * host. */
+const TRY_ORDER: Record<string, CellStyle["positionTryOrder"]> = {
+  "most-width": "most-width",
+  "most-inline-size": "most-width",
+  "most-height": "most-height",
+  "most-block-size": "most-height",
+};
+
 /** The anchor positioning properties (specs/anchor-positioning.md):
  * any element's names, and the anchoring of an out-of-flow box. */
 function readAnchoring(
@@ -359,7 +595,13 @@ function readAnchoring(
   outOfFlow: boolean,
 ): Pick<
   CellStyle,
-  "anchorNames" | "positionAnchor" | "positionArea" | "positionTryFallbacks" | "anchorCenter"
+  | "anchorNames"
+  | "positionAnchor"
+  | "positionArea"
+  | "positionTryFallbacks"
+  | "positionTryOrder"
+  | "positionVisibility"
+  | "anchorCenter"
 > {
   const anchorNames = readAnchorNames(el, cs);
   if (!outOfFlow) {
@@ -368,32 +610,40 @@ function readAnchoring(
       positionAnchor: null,
       positionArea: null,
       positionTryFallbacks: [],
+      positionTryOrder: "normal",
+      positionVisibility: { anchorValid: false, anchorVisible: false, noOverflow: false },
       anchorCenter: { x: false, y: false },
     };
   }
+  const positionArea = parsePositionArea(cs.getPropertyValue("position-area"));
+  const tryOrder = cs.getPropertyValue("position-try-order").trim();
   return {
     anchorNames,
-    positionAnchor: readPositionAnchor(el, cs),
-    positionArea: parsePositionArea(cs.getPropertyValue("position-area")),
+    positionAnchor: readPositionAnchor(el, cs, positionArea !== null),
+    positionArea,
     positionTryFallbacks: parsePositionTryFallbacks(cs.getPropertyValue("position-try-fallbacks")),
+    positionTryOrder: Object.hasOwn(TRY_ORDER, tryOrder) ? TRY_ORDER[tryOrder]! : "normal",
+    positionVisibility: parsePositionVisibility(cs.getPropertyValue("position-visibility")),
     anchorCenter: { x: cs.justifySelf === "anchor-center", y: cs.alignSelf === "anchor-center" },
   };
 }
 
 /** An element's `position-anchor`: a name; `match-parent` its parent's;
- * `normal` (the initial) and `auto` its implicit anchor — a popover's,
- * synthesized from its id; a DOM without the property reads "". */
-function readPositionAnchor(el: Element, cs: CSSStyleDeclaration): string | null {
+ * `auto` its implicit anchor — a popover's, synthesized from its id —
+ * and `normal` (the initial) too where it has a `position-area`, as in
+ * CSS; a DOM without the property reads "". */
+function readPositionAnchor(el: Element, cs: CSSStyleDeclaration, hasArea: boolean): string | null {
   const anchor = cs.getPropertyValue("position-anchor").trim();
   if (anchor.startsWith("--")) return anchor;
   if (anchor === "match-parent") {
     const parent = el.parentElement;
-    return parent ? readPositionAnchor(parent, getComputedStyle(parent)) : null;
+    if (!parent) return null;
+    const parentStyle = getComputedStyle(parent);
+    const parentArea = parsePositionArea(parentStyle.getPropertyValue("position-area"));
+    return readPositionAnchor(parent, parentStyle, parentArea !== null);
   }
-  if (["", "auto", "normal"].includes(anchor) && el.hasAttribute("popover") && el.id !== "") {
-    return `--mw:${el.id}`;
-  }
-  return null;
+  const implicit = anchor === "auto" || ((anchor === "normal" || anchor === "") && hasArea);
+  return implicit && el.hasAttribute("popover") && el.id !== "" ? `--mw:${el.id}` : null;
 }
 
 /** An element's `anchor-name`s; an invoker of a popover
@@ -472,11 +722,11 @@ export function parsePositionArea(value: string): PositionArea | null {
   const words = value.trim().split(/\s+/);
   if (words[0] === "" || words[0] === "none") return null;
   const kind = (word: string): ["x" | "y" | "both", AreaSide] | null =>
-    word in AREA_X
+    Object.hasOwn(AREA_X, word)
       ? ["x", AREA_X[word]!]
-      : word in AREA_Y
+      : Object.hasOwn(AREA_Y, word)
         ? ["y", AREA_Y[word]!]
-        : word in AREA_BOTH
+        : Object.hasOwn(AREA_BOTH, word)
           ? ["both", AREA_BOTH[word]!]
           : null;
   const first = kind(words[0]!);
@@ -493,20 +743,26 @@ export function parsePositionArea(value: string): PositionArea | null {
   return { x: first[1], y: second[1] };
 }
 
-/** A computed `position-try-fallbacks`: a list of tactics, each the flip
- * keywords applied together, or an area of its own. */
+/** Each try-tactic keyword's flip, `flip-x` and `flip-y` those of a
+ * horizontal left-to-right host. */
+const FLIPS: Record<string, Flip> = {
+  "flip-block": "block",
+  "flip-inline": "inline",
+  "flip-start": "start",
+  "flip-x": "inline",
+  "flip-y": "block",
+};
+
+/** A computed `position-try-fallbacks`: a list of tactics, each its
+ * flips in their written order, or an area of its own. */
 export function parsePositionTryFallbacks(value: string): AnchorFallback[] {
   const list = value.trim();
   if (list === "" || list === "none") return [];
   const fallbacks: AnchorFallback[] = [];
   for (const entry of list.split(",")) {
     const words = entry.trim().split(/\s+/);
-    if (words.every((word) => word.startsWith("flip-"))) {
-      fallbacks.push({
-        flipBlock: words.includes("flip-block"),
-        flipInline: words.includes("flip-inline"),
-        flipStart: words.includes("flip-start"),
-      });
+    if (words.every((word) => Object.hasOwn(FLIPS, word))) {
+      fallbacks.push({ flips: words.map((word) => FLIPS[word]!) });
     } else {
       const area = parsePositionArea(entry);
       if (area) fallbacks.push(area);
@@ -526,7 +782,7 @@ function applyTopLayerGeometry(
   inlineStyle: CSSStyleDeclaration,
 ): void {
   style.position = "fixed";
-  for (const side of ["top", "right", "bottom", "left"] as const) {
+  for (const side of SIDES) {
     style.insets[side] ??= 0;
   }
   if (style.width === undefined || style.width.kind === "auto")
@@ -549,6 +805,7 @@ function applyTopLayerGeometry(
 function readBackdrop(el: Element): Backdrop | null {
   try {
     const cs = getComputedStyle(el, "::backdrop");
+    if (!readVisible(cs, el)) return null;
     const backgroundColor = cs.backgroundColor;
     const backgroundImage = cs.backgroundImage || "none";
     const backdropFilter = cs.backdropFilter || "none";
@@ -1058,6 +1315,19 @@ function readClear(value: string): Clear {
   }
 }
 
+/** The `inset` stem that authors every side (`inset-0`), apart from the
+ * axis, logical-side, shadow, and ring utilities sharing its prefix. */
+const EVERY_SIDE = "inset(?!-(?:[xyse]|b[se]|shadow|ring)\\b)";
+
+/** Each side's inset utility stems: its own, `inset`, its axis's, and
+ * its logical side's, left-to-right. */
+const SIDE_STEMS = {
+  top: `top|${EVERY_SIDE}|inset-y|inset-bs`,
+  right: `right|end|${EVERY_SIDE}|inset-x|inset-e`,
+  bottom: `bottom|${EVERY_SIDE}|inset-y|inset-be`,
+  left: `left|start|${EVERY_SIDE}|inset-x|inset-s`,
+} as const;
+
 /**
  * Read insets, preserving `auto` as `null`.
  *
@@ -1078,7 +1348,8 @@ function readInsets(
   inlineStyle: CSSStyleDeclaration,
   rootFontSizePx: number,
 ): PerSide<CellLength | null> {
-  const side = (prop: "top" | "right" | "bottom" | "left", stems: string): CellLength | null => {
+  const side = (prop: Side): CellLength | null => {
+    const stems = SIDE_STEMS[prop];
     if (csm) {
       const value = csm.get(prop)?.toString().trim();
       if (!value || value === "auto") return null;
@@ -1096,12 +1367,10 @@ function readInsets(
     return value ? readSpacing(value, rootFontSizePx) : null;
   };
   return {
-    // `inset` takes no axis: `inset-y-0` authors neither side of the
-    // x axis, and its own sides come from the `inset-y` stem.
-    top: side("top", "top|inset(?!-[xy])|inset-y"),
-    right: side("right", "right|end|inset(?!-[xy])|inset-x"),
-    bottom: side("bottom", "bottom|inset(?!-[xy])|inset-y"),
-    left: side("left", "left|start|inset(?!-[xy])|inset-x"),
+    top: side("top"),
+    right: side("right"),
+    bottom: side("bottom"),
+    left: side("left"),
   };
 }
 
@@ -1127,7 +1396,7 @@ function authoredPercentInset(
   }
   const full = new RegExp(`${lead}full(?![\\w-])`).exec(classAttr);
   if (full) return signed(full[1]!, { percent: 100 });
-  const arbitrary = new RegExp(`${lead}\\[(calc\\([^\\]]*\\)|\\d+(?:\\.\\d+)?%)\\]`).exec(
+  const arbitrary = new RegExp(`${lead}\\[(calc\\([^\\]]*\\)|-?\\d+(?:\\.\\d+)?%)\\]`).exec(
     classAttr,
   );
   if (arbitrary) {
@@ -2224,7 +2493,7 @@ function readBorder(
     bottom: "solid",
     left: "solid",
   };
-  for (const side of ["top", "right", "bottom", "left"] as const) {
+  for (const side of SIDES) {
     const style = cs.getPropertyValue(`border-${side}-style`);
     const weight =
       style === "none" || style === "hidden"

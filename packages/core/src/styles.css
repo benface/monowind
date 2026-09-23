@@ -322,6 +322,15 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
 @layer theme {
   mono-wind [data-mw-scroll]:not([data-mw-measuring]) {
     scrollbar-width: none !important;
+    /* The engine's own writes — a thumb drag, a position restored after
+     * a relayout, a routed wheel tick — land at once. */
+    scroll-behavior: auto !important;
+    /* The border and bar cells are native padding, inside the scrollport:
+     * a reveal (focus, scrollIntoView) stops clear of them. */
+    scroll-padding: calc(var(--mw-bt, 0) * var(--mw-ch, 1px))
+      calc((var(--mw-br, 0) + var(--mw-gr, 0)) * var(--mw-cw, 1px))
+      calc((var(--mw-bb, 0) + var(--mw-gb, 0)) * var(--mw-ch, 1px))
+      calc(var(--mw-bl, 0) * var(--mw-cw, 1px)) !important;
   }
   mono-wind [data-mw-scroll]:not([data-mw-measuring])::-webkit-scrollbar {
     display: none !important;
@@ -371,10 +380,17 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
 /* Hide the host until the first layout completes to avoid the flash of raw
  * browser-rendered content (flex without our decorations, elements at their
  * natural sizes). `visibility: hidden` preserves layout & measurability so
- * cell metrics can still be probed while invisible. */
+ * cell metrics can still be probed while invisible. While the engine
+ * reads, the host is visible instead: `visibility` inherits, and the
+ * subtree reads as if the host were shown, the host's own visibility the
+ * grid's natively (specs/visibility.md). A nested host never lays out —
+ * its content is the outer host's to paint — so the rules skip it. */
 @layer theme {
-  mono-wind:not([data-mw-ready]) {
+  mono-wind:not([data-mw-ready]):not([measuring]):not(mono-wind *) {
     visibility: hidden !important;
+  }
+  mono-wind[measuring]:not(mono-wind *) {
+    visibility: visible !important;
   }
 }
 
@@ -521,6 +537,10 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     /* Shadows paint in the grid as shades (specs/box-shadow.md), read
      * during [measuring] like backgrounds. */
     box-shadow: none !important;
+    /* Borders are glyphs the grid draws on boxes (specs/cell-model.md):
+     * a native one would draw off the grid, and an inline element's, which
+     * the engine ignores, would shift its line's native text. */
+    border-width: 0 !important;
     /* Inline-element horizontal padding, quantized: the engine writes
      * `--mw-ipl`/`--mw-ipr` (whole cells) on inline elements whose authored
      * padding it reserved in the run; everything else gets 0, so raw
@@ -613,8 +633,8 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * Geometry: position/box-sizing/left/top/width/height + min/max — set from
    * the engine-owned --mw-x/y/w/h custom properties.
    *
-   * Neutralized: border-width (painted as glyphs by the shadow grid),
-   * margin (position:absolute + margin still nudges the element off-grid).
+   * Neutralized: margin (position:absolute + margin still nudges the
+   * element off-grid); border-width goes with every element's, above.
    *
    * Owned via `--mw-p{t,r,b,l}` (padding) and `--mw-b{t,r,b,l}` (border cells):
    * both must land on whole cells. The browser applies the sum as native
@@ -687,12 +707,12 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
      * only when those are fewer than the gap does the element box itself
      * widen (invisibly — the decorated border stays where the engine put it).
      * The extra 1/32px is one layout unit of headroom: engines store lengths
-     * on a fixed grid by flooring (1/64px in Chromium and WebKit, 1/60px in
-     * Firefox), so `cells × cw` can land one unit BELOW the shaped advance of
-     * a line that fits exactly, and the browser would wrap it. Adding at
-     * least one unit before the floor guarantees the stored width is ≥ the
-     * exact product; 1/32px covers every engine's unit and is far below a
-     * cell (and below a device pixel), so it changes neither cell math nor
+     * on a fixed grid (truncating to 1/64px in Chromium and WebKit, rounding
+     * to 1/60px in Firefox), so `cells × cw` can land a unit BELOW the shaped
+     * advance of a line that fits exactly, and the browser would wrap it.
+     * Adding at least one unit guarantees the stored width is ≥ the exact
+     * product; 1/32px covers every engine's unit and is far below a cell
+     * (and below a device pixel), so it changes neither cell math nor
      * paint. */
     width: calc(
       (var(--mw-w, 0) + max(0, var(--mw-ls, 0) - var(--mw-pr, 0) - var(--mw-br, 0))) *
@@ -703,7 +723,6 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     min-height: 0 !important;
     max-width: none !important;
     max-height: none !important;
-    border-width: 0 !important;
     /* Gap rules are engine-painted glyphs (specs/gap-decorations.md);
      * css-gaps browsers must not also paint their native (fractional)
      * rules — e.g. between an emptied grid's explicit tracks. */
@@ -745,6 +764,15 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     top: calc((var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
     left: calc(var(--mw-sx, 0) * var(--mw-cw, 1px)) !important;
     vertical-align: top !important;
+    /* Its advance in the line is its cells: the right margin gives back
+     * the shared rule's widening, else two boxes on an exactly full line
+     * outgrow the line's one unit of headroom and the browser wraps the
+     * second where the grid does not — and one Firefox unit more, the
+     * width and the margin each rounding there to the nearest 1/60px. */
+    margin-right: calc(
+      -1 * max(0, var(--mw-ls, 0) - var(--mw-pr, 0) - var(--mw-br, 0)) * var(--mw-cw, 1px) -
+        0.03125px - 0.0166667px
+    ) !important;
   }
 
   /* Authored `vertical-align: bottom` on an atomic inline box: grid-exact
@@ -819,7 +847,6 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     min-height: 0 !important;
     max-width: none !important;
     max-height: none !important;
-    border-width: 0 !important;
     margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
     margin-right: calc(var(--mw-mr, 0) * var(--mw-cw, 1px)) !important;
     margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
@@ -952,14 +979,38 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     display: none !important;
   }
 
+  /* An anchored box `position-visibility` hides (specs/anchor-positioning.md):
+   * its subtree with it, whatever their own `visibility`, as the
+   * browsers' force-hidden — a top-layer element inside it aside, whose
+   * box is the viewport's: shown as authored, over the hidden it would
+   * inherit (`data-mw-top-shown`), its subtree its own. */
+  mono-wind [data-mw-force-hidden]:not([data-mw-measuring]),
+  mono-wind
+    [data-mw-force-hidden]
+    *:not(
+      [data-mw-measuring],
+      [data-mw-force-hidden] [data-mw-top],
+      [data-mw-force-hidden] [data-mw-top] *
+    ) {
+    visibility: hidden !important;
+  }
+  mono-wind [data-mw-top-shown]:not([data-mw-measuring]) {
+    visibility: visible !important;
+  }
+
   /* A container whose anonymous runs are misparented table content
    * (stray text in a div-table, specs/table.md): the runs have no element
    * to hide, so the container hides its text, and its laid-out children
-   * — the rows or cells — show through the inherited value. */
+   * — the rows or cells — show through where they read visible
+   * (specs/visibility.md), under force-hidden's specificity. */
   mono-wind [data-mw-hidden-runs]:not([data-mw-measuring]) {
     visibility: hidden !important;
   }
-  mono-wind [data-mw-hidden-runs] > [data-mw-laid-out]:not([data-mw-measuring]) {
+  mono-wind
+    :where([data-mw-hidden-runs] > [data-mw-laid-out]):not(
+      [data-mw-measuring],
+      [data-mw-invisible]
+    ) {
     visibility: visible !important;
   }
 

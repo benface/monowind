@@ -31,10 +31,7 @@ export const Important: StoryObj = {
       }
     </style>
     <mono-wind data-test="host" class="border border-neutral-500 p-1">
-      <div
-        data-test="utility"
-        class="mt-3! w-[90px]! bg-[#f97316]! pl-[20px]! text-2xl! text-[#fafafa]!"
-      >
+      <div data-test="utility" class="mt-3! w-22.5! bg-[#f97316]! pl-5! text-2xl! text-[#fafafa]!">
         Utility
       </div>
       <div data-test="ruled" class="cascade-ruled">Ruled</div>

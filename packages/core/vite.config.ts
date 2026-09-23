@@ -13,6 +13,9 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
+    // One happy-dom per worker rather than per file, each file still in
+    // its own context: the environment was most of the run.
+    pool: "vmThreads",
     globals: true,
   },
 });

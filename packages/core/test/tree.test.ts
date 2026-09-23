@@ -292,6 +292,32 @@ describe("inline padding", () => {
     expect(node.text).toBe(`${INLINE_PAD}${INLINE_PAD}x`);
   });
 
+  it("keeps an inline element's style on its text where it splits around a block", () => {
+    const node = buildTree(el('<div><span style="color: red">a <div>b</div> c</span></div>'), 16)!;
+    const runs = node.children.filter((child) => child.anonymous);
+    expect(runs).toHaveLength(2);
+    for (const run of runs) {
+      expect(run.inlineElements?.[0]?.color).toBe("red");
+      expect(run.charInline?.every((index) => index === 0)).toBe(true);
+    }
+  });
+
+  it("warns once on an inline element's border, which draws nothing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const bordered = el('<div>a <span style="border: 1px solid">b</span> c</div>');
+      buildTree(bordered, 16);
+      buildTree(bordered, 16);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(String(warn.mock.calls[0]![0])).toContain("border on an inline element");
+      warn.mockClear();
+      buildTree(el('<div>a <span style="border: 0 solid">b</span> c</div>'), 16);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("collapses spaces through pad markers, per CSS", () => {
     const node = buildTree(el('<div>a <span style="padding-left: 4px"> b</span></div>'), 16)!;
     // The space inside the span follows the outer space (padding between

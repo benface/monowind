@@ -1,5 +1,6 @@
 import { paintOrderedChildren } from "./borders.ts";
-import { clipBounds, leafLineCovers } from "./plain-text.ts";
+import { charIndexAtCell, clipBounds, leafLineCovers } from "./plain-text.ts";
+import { charVisible } from "./selection.ts";
 import type { LayoutNode, Rect } from "./types.ts";
 
 /**
@@ -47,6 +48,7 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
   const top = root.topLayer ?? [];
   for (let i = top.length - 1; i >= 0; i--) {
     const { node, ancestors } = top[i]!;
+    if (node.forceHidden) continue;
     const { x, y } = node.hostRect!;
     if (!covers(hitRect(node, x, y), col, row)) continue;
     const stack: HitEntry[] = [];
@@ -60,8 +62,7 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
       ay -= ancestor.scroll?.y ?? 0;
     }
     stack.push({ node, x, y });
-    descend(node, x, y, col, row, stack);
-    return stack;
+    if (descend(node, x, y, col, row, stack) || shows(node, x, y, col, row)) return stack;
   }
   const stack: HitEntry[] = [];
   descend(root, root.localRect.x, root.localRect.y, col, row, stack);
@@ -70,7 +71,9 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
 
 /** The hit entries under `node`, painted at `x`, `y`, onto `stack`:
  * the topmost covering child and its own descent, a fixed child from
- * the host's origin, the stack's elements left to the stack. */
+ * the host's origin; whether something that shows took the cell. A
+ * hidden box stays on the stack only under what shows of it, else the
+ * cell falls to what is beneath it (specs/visibility.md). */
 function descend(
   node: LayoutNode,
   x: number,
@@ -78,7 +81,7 @@ function descend(
   col: number,
   row: number,
   stack: HitEntry[],
-): void {
+): boolean {
   const clip = clipBounds(node, x, y);
   const past =
     clip !== null && (col < clip.x0 || col >= clip.x1 || row < clip.y0 || row >= clip.y1);
@@ -89,7 +92,7 @@ function descend(
   const children = paintOrderedChildren(node);
   for (let i = children.length - 1; i >= 0; i--) {
     const child = children[i]!;
-    if (child.tableHidden || child.topLayerRank !== undefined) continue;
+    if (child.tableHidden || child.forceHidden || child.topLayerRank !== undefined) continue;
     const hoisted = child.hostRect;
     if (past && !hoisted) continue;
     const cx = hoisted ? hoisted.x : childX + child.localRect.x + (child.stickyShift?.x ?? 0);
@@ -101,9 +104,20 @@ function descend(
       : covers(hitRect(child, cx, cy), col, row);
     if (!inside) continue;
     stack.push({ node: child, x: cx, y: cy });
-    descend(child, cx, cy, col, row, stack);
-    return;
+    if (descend(child, cx, cy, col, row, stack) || shows(child, cx, cy, col, row)) return true;
+    stack.pop();
   }
+  return false;
+}
+
+/** Whether a box, painted at `x`, `y`, shows at a cell for the hit: a
+ * visible one anywhere in its rect, a hidden leaf where a visible
+ * inline element's character paints. */
+function shows(node: LayoutNode, x: number, y: number, col: number, row: number): boolean {
+  if (node.style.visible) return true;
+  if (!node.inlineElements?.some((entry) => entry.visible)) return false;
+  const index = charIndexAtCell(node, x, y, col, row);
+  return index !== null && charVisible(node, index);
 }
 
 function covers(rect: Rect, col: number, row: number): boolean {

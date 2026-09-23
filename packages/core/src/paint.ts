@@ -180,7 +180,12 @@ export function layerAt(container: HTMLElement, x: number, y: number): CellHit |
       col < box.x - layer.x + box.width &&
       row >= box.y - layer.y &&
       row < box.y - layer.y + box.height;
-    if (!inBox && (paintedCell(nodes.grid, col, row) ?? " ") === " ") continue;
+    // A hidden root's box is no ink of its own, its visible
+    // descendants' fills still are (specs/visibility.md).
+    const own =
+      inBox &&
+      (layer.node.style.visible || layer.paints[row]?.[col]?.backgroundColor !== undefined);
+    if (!own && (paintedCell(nodes.grid, col, row) ?? " ") === " ") continue;
     return { col: layer.x + col, row: layer.y + row, grid: nodes.grid, x: layer.x, y: layer.y };
   }
   return null;
@@ -361,7 +366,7 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   const rotate = cs.rotate || "none";
   const scale = cs.scale || "none";
   const filter = cs.filter || "none";
-  const { backdropFilter } = layer.node.style.layer!;
+  const backdropFilter = layer.node.style.visible ? layer.node.style.layer!.backdropFilter : "none";
   const origin = layer.parent ?? { x: 0, y: 0 };
   nodes.left = (layer.x - origin.x) * cell.width;
   nodes.top = (layer.y - origin.y) * cell.height;

@@ -12,15 +12,25 @@ import {
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
 import { alignCrossOffset, effectiveAlign, effectiveJustify, mainAxisOffsets } from "./flex.ts";
-import { inlineElementRects } from "./plain-text.ts";
+import { roundHalfAwayFromZero } from "./metrics.ts";
+import { clipBounds, inlineElementRects } from "./plain-text.ts";
+import type { Clip } from "./plain-text.ts";
+import { setAnchorSize } from "./style.ts";
+import { SIDES } from "./types.ts";
 import type {
+  AnchorInset,
+  AnchorSize,
+  AnchorSizeProperty,
   AreaSide,
   CellLength,
   CellStyle,
+  Flip,
   LayoutNode,
   NullableInsets,
+  PerSide,
   PositionArea,
   Rect,
+  Side,
 } from "./types.ts";
 
 /**
@@ -47,21 +57,68 @@ interface Frame {
   absY: number;
 }
 
+/** A box that clips, with its clip in unscrolled cells. */
+interface ClipFrame {
+  node: LayoutNode;
+  bounds: Clip;
+}
+
 /** An anchor as the boxes after it see it: its border box in the
  * host's cells as laid out, and the scroll containers above it, whose
  * offsets move it (specs/anchor-positioning.md). */
 interface Anchor {
   rect: Rect;
   scrollers: LayoutNode[];
+  /** The boxes above it that clip, outermost first (for
+   * `position-visibility`). */
+  clips: ClipFrame[];
+  /** Whether it paints nothing of its own: `visibility`, or a
+   * `position-visibility` hiding it or a box above. */
+  hidden: boolean;
 }
 
-export function walkPositioned(
+/** A box's last successful placement (specs/anchor-positioning.md):
+ * its index among the box's placements, the base 0, and the styles it
+ * fit under, whose change forgets it. */
+export interface Remembered {
+  key: string;
+  option: number;
+}
+
+/** What a positioning pass carries down the tree. */
+interface Pass {
+  cache: IntrinsicCache;
+  anchors: Map<string, Anchor>;
+  remembered: Map<Element, Remembered>;
+  /** The boxes with placements to remember, the rest forgotten. */
+  placed: Set<Element>;
+  /** The scroll offsets under a box, synced as the pass sizes it. */
+  syncScroll: ((node: LayoutNode) => void) | undefined;
+}
+
+/** Places the out-of-flow boxes under `root`; `remembered` keeps each
+ * anchored box's last successful placement from one pass to the next,
+ * a box no pass places again forgotten. A placed box's scroll offsets
+ * are synced before the anchors inside it are read (`syncScroll`). */
+export function positionOutOfFlow(
+  root: LayoutNode,
+  cache: IntrinsicCache,
+  remembered: Map<Element, Remembered> = new Map(),
+  syncScroll?: (node: LayoutNode) => void,
+): void {
+  const pass: Pass = { cache, anchors: new Map(), remembered, placed: new Set(), syncScroll };
+  walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], pass);
+  for (const element of remembered.keys()) {
+    if (!pass.placed.has(element)) remembered.delete(element);
+  }
+}
+
+function walkPositioned(
   node: LayoutNode,
   absX: number,
   absY: number,
   ancestors: Frame[],
-  cache: IntrinsicCache,
-  anchors: Map<string, Anchor> = new Map(),
+  pass: Pass,
 ): void {
   for (const child of node.children) {
     const effective = effectivePosition(child.style);
@@ -91,20 +148,13 @@ export function walkPositioned(
         contentH,
       );
     } else if (effective === "absolute") {
-      placeAbsolute(child, node, absX, absY, ancestors, cache, anchors);
+      placeAbsolute(child, node, absX, absY, ancestors, pass);
+      pass.syncScroll?.(child);
     }
-    recordAnchors(child, absX + child.localRect.x, absY + child.localRect.y, ancestors, anchors);
-    walkPositioned(
-      child,
-      absX + child.localRect.x,
-      absY + child.localRect.y,
-      [
-        ...ancestors,
-        { node: child, absX: absX + child.localRect.x, absY: absY + child.localRect.y },
-      ],
-      cache,
-      anchors,
-    );
+    const x = absX + child.localRect.x;
+    const y = absY + child.localRect.y;
+    recordAnchors(child, x, y, ancestors, pass.anchors);
+    walkPositioned(child, x, y, [...ancestors, { node: child, absX: x, absY: y }], pass);
   }
 }
 
@@ -127,30 +177,86 @@ function recordAnchors(
 ): void {
   const inline = child.inlineElements?.some((entry) => entry.anchorNames.length > 0) ?? false;
   if (child.style.anchorNames.length === 0 && !inline) return;
-  const scrollers = scrollersOf(ancestors);
-  const { width, height } = child.localRect;
-  for (const name of child.style.anchorNames) {
-    anchors.set(name, { rect: { x: absX, y: absY, width, height }, scrollers });
-  }
+  // A fixed box paints from the host, outside the scrolls and clips above.
+  const frames = child.style.position === "fixed" ? [] : ancestors;
+  const scrollers = scrollersOf(frames);
+  const clips = clipsOf(frames);
+  const hiddenAbove =
+    child.forceHidden === true || ancestors.some((frame) => frame.node.forceHidden === true);
+  const rect = { x: absX, y: absY, width: child.localRect.width, height: child.localRect.height };
+  const hidden = hiddenAbove || !child.style.visible;
+  for (const name of child.style.anchorNames) anchors.set(name, { rect, scrollers, clips, hidden });
   if (!inline) return;
-  const named = new Map<Element, string[]>();
+  const named = new Map<Element, { names: string[]; hidden: boolean }>();
   for (const entry of child.inlineElements!) {
     if (entry.anchorNames.length > 0 && !named.has(entry.element)) {
-      named.set(entry.element, entry.anchorNames);
+      named.set(entry.element, { names: entry.anchorNames, hidden: hiddenAbove || !entry.visible });
     }
   }
   for (const { element, rect } of inlineElementRects(child, absX, absY)) {
-    const names = named.get(element);
-    if (names === undefined) continue;
-    for (const name of names) anchors.set(name, { rect, scrollers });
+    const entry = named.get(element);
+    if (entry === undefined) continue;
+    for (const name of entry.names) {
+      anchors.set(name, { rect, scrollers, clips, hidden: entry.hidden });
+    }
     named.delete(element);
   }
+}
+
+/** The frames whose scroll and clip reach a box: from its nearest fixed
+ * ancestor on, which paints from the host outside those above it
+ * (specs/positioning.md). */
+function reachingFrames(ancestors: Frame[]): Frame[] {
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    if (ancestors[i]!.node.style.position === "fixed") return ancestors.slice(i);
+  }
+  return ancestors;
+}
+
+/** The boxes among a box's ancestors that clip it, with their clips. */
+function clipsOf(ancestors: Frame[]): ClipFrame[] {
+  const out: ClipFrame[] = [];
+  for (const { node, absX, absY } of reachingFrames(ancestors)) {
+    const bounds = clipBounds(node, absX, absY);
+    if (bounds) out.push({ node, bounds });
+  }
+  return out;
+}
+
+/** Whether an anchor is clipped out of view by a box that clips it and
+ * not the positioned box (specs/anchor-positioning.md): the anchor as
+ * that box shows it — moved by the scroll of the clipping boxes inside
+ * it — meets none of its window, the clip moved by its own scroll. */
+function anchorClipped(anchor: Anchor, boxClips: LayoutNode[]): boolean {
+  const { rect, clips } = anchor;
+  // Overlap on an axis; a zero-size anchor needs its edge inside.
+  const meets = (start: number, size: number, from: number, to: number): boolean =>
+    size > 0 ? start + size > from && start < to : start >= from && start <= to;
+  // Inside out, the scroll of the clips passed accumulating.
+  let dx = 0;
+  let dy = 0;
+  for (let i = clips.length - 1; i >= 0; i--) {
+    const { node, bounds } = clips[i]!;
+    const scrollX = node.scroll?.x ?? 0;
+    const scrollY = node.scroll?.y ?? 0;
+    if (!boxClips.includes(node)) {
+      const shown =
+        meets(rect.x - dx, rect.width, bounds.x0 + scrollX, bounds.x1 + scrollX) &&
+        meets(rect.y - dy, rect.height, bounds.y0 + scrollY, bounds.y1 + scrollY);
+      if (!shown) return true;
+    }
+    dx += scrollX;
+    dy += scrollY;
+  }
+  return false;
 }
 
 /** The scroll containers among a box's ancestors, whose offsets move
  * it (specs/scrolling.md). */
 function scrollersOf(ancestors: Frame[]): LayoutNode[] {
-  return ancestors.map((frame) => frame.node).filter((box) => box.scroll);
+  return reachingFrames(ancestors)
+    .map((frame) => frame.node)
+    .filter((box) => box.scroll);
 }
 
 /** The containing block's padding box, in absolute cells: the nearest
@@ -196,8 +302,7 @@ function placeAbsolute(
   parentAbsX: number,
   parentAbsY: number,
   ancestors: Frame[],
-  cache: IntrinsicCache,
-  anchors: Map<string, Anchor>,
+  pass: Pass,
 ): void {
   const style = child.style;
   const fixed = style.position === "fixed";
@@ -213,19 +318,43 @@ function placeAbsolute(
           height: slot.area.height,
         }
       : containingBlock(ancestors, fixed, style.topLayer);
-  const anchor = style.positionAnchor === null ? undefined : anchors.get(style.positionAnchor);
-  if (style.positionArea && anchor) {
+  // Read before the anchor sizes resolve into the styles it keys.
+  const key = style.positionTryFallbacks.length > 0 ? fallbackKey(style) : "";
+  resolveAnchorSizes(style, pass.anchors);
+  const root = ancestors[0]!.node;
+  let boxScrollers: LayoutNode[] | undefined;
+  /** An anchor's rect as this box sees it, the scrollers moving it under
+   * the box noted for their scroll's relayout. */
+  const seen = (name: string | null): Rect | undefined => {
+    const anchor = name === null ? undefined : pass.anchors.get(name);
+    if (!anchor) return undefined;
     // A fixed box, painted from the host, escapes every scroll.
-    const { rect, movers } = anchorRectFor(anchor, fixed ? [] : scrollersOf(ancestors));
-    if (movers.length > 0) {
-      const root = ancestors[0]!.node;
-      root.anchorScrollers ??= new Set();
-      for (const scroller of movers) root.anchorScrollers.add(scroller.source);
-    }
-    placeAnchored(child, parentAbsX, parentAbsY, cb, rect, style.positionArea, cache);
-  } else {
-    placeByInsets(child, parent, parentAbsX, parentAbsY, cb, cache);
+    boxScrollers ??= fixed ? [] : scrollersOf(ancestors);
+    const { rect, movers } = anchorRectFor(anchor, boxScrollers);
+    noteAnchorScrollers(root, movers);
+    return rect;
+  };
+  const fits = placeTrying(child, parent, parentAbsX, parentAbsY, cb, seen, key, pass);
+  // `position-visibility` (specs/anchor-positioning.md), its scroll
+  // relaying out a box whose anchor scrolled out of view.
+  const conditions = style.positionVisibility;
+  const name = style.positionAnchor;
+  const anchor = name === null ? undefined : pass.anchors.get(name);
+  let invisible = false;
+  if (conditions.anchorVisible && anchor) {
+    const boxClips = fixed ? [] : clipsOf(ancestors).map((clip) => clip.node);
+    invisible = anchor.hidden || anchorClipped(anchor, boxClips);
+    noteAnchorScrollers(
+      root,
+      anchor.clips
+        .filter((clip) => clip.node.scroll && !boxClips.includes(clip.node))
+        .map((clip) => clip.node),
+    );
   }
+  child.forceHidden =
+    (conditions.anchorValid && !anchor && needsDefaultAnchor(style)) ||
+    invisible ||
+    (conditions.noOverflow && !fits);
   // The walks paint and hit a fixed box from the host's origin
   // (specs/positioning.md).
   if (fixed) {
@@ -233,24 +362,175 @@ function placeAbsolute(
   }
 }
 
+/** The styles a box's last successful placement was found under
+ * (specs/anchor-positioning.md "The placement that fit is kept"). */
+function fallbackKey(style: CellStyle): string {
+  return JSON.stringify([
+    style.position,
+    style.positionAnchor,
+    style.positionArea,
+    style.positionTryFallbacks,
+    style.positionTryOrder,
+    style.insets,
+    style.anchorInsets,
+    style.margin,
+    style.width,
+    style.height,
+    style.minWidth,
+    style.minHeight,
+    style.maxWidth,
+    style.maxHeight,
+    style.anchorSizes,
+    style.justifySelf,
+    style.alignSelf,
+    style.anchorCenter,
+  ]);
+}
+
+/** A box's `anchor-size()`s in cells, from the anchors placed before it
+ * — the one it names, else its own — each property's initial value
+ * where none resolves (specs/anchor-positioning.md). */
+function resolveAnchorSizes(style: CellStyle, anchors: Map<string, Anchor>): void {
+  const sizes = Object.entries(style.anchorSizes) as [AnchorSizeProperty, AnchorSize][];
+  for (const [property, size] of sizes) {
+    const name = size.anchor ?? style.positionAnchor;
+    const rect = name === null ? undefined : anchors.get(name)?.rect;
+    setAnchorSize(style, property, rect?.[size.dimension], size.fallback);
+  }
+}
+
+/** Whether a box refers to its default anchor: by an area,
+ * `anchor-center`, or an anchor function naming none. */
+function needsDefaultAnchor(style: CellStyle): boolean {
+  return (
+    style.positionArea !== null ||
+    style.anchorCenter.x ||
+    style.anchorCenter.y ||
+    Object.values(style.anchorInsets).some((inset) => inset.anchor === null) ||
+    Object.values(style.anchorSizes).some((size) => size.anchor === null)
+  );
+}
+
+/** Notes on the root the scroll containers whose scroll moves an anchor
+ * under a box, for their scroll's relayout. */
+function noteAnchorScrollers(root: LayoutNode, scrollers: LayoutNode[]): void {
+  if (scrollers.length === 0) return;
+  root.anchorScrollers ??= new Set();
+  for (const scroller of scrollers) root.anchorScrollers.add(scroller.source);
+}
+
+/** A box's insets under a tactic's flips, its `anchor()`s resolved in
+ * cells from the containing block's edge (specs/anchor-positioning.md
+ * "`anchor()` is a point of the anchor"), the fallback where no anchor
+ * resolves one. */
+function resolvedInsets(
+  style: CellStyle,
+  cb: Rect,
+  seen: (name: string | null) => Rect | undefined,
+  flips: Flip[],
+): PerSide<CellLength | null> {
+  const insets = flips.length > 0 ? flipSides(style.insets, flips) : { ...style.insets };
+  const authored = Object.entries(style.anchorInsets) as [Side, AnchorInset][];
+  for (const [authoredSide, { anchor, fraction, fallback }] of authored) {
+    const { side, mirrored } = flipSide(authoredSide, flips);
+    const rect = fraction === null ? undefined : seen(anchor ?? style.positionAnchor);
+    if (rect === undefined || fraction === null) {
+      insets[side] = fallback ?? null;
+      continue;
+    }
+    const vertical = side === "top" || side === "bottom";
+    const start = vertical ? rect.y : rect.x;
+    const size = vertical ? rect.height : rect.width;
+    // Rounded from the edge it is measured from, the far one mirrored,
+    // so a flip mirrors the cell too.
+    const cells = roundHalfAwayFromZero(fraction * size);
+    const at = mirrored ? start + size - cells : start + cells;
+    insets[side] = {
+      top: at - cb.y,
+      right: cb.x + cb.width - at,
+      bottom: cb.y + cb.height - at,
+      left: at - cb.x,
+    }[side];
+  }
+  return insets;
+}
+
+/** The block a box's insets leave in its containing block, an auto
+ * inset as zero; negative where they cross. */
+function insetBlock(cb: Rect, insets: PerSide<CellLength | null>): Rect {
+  const inset = (side: Side, basis: number): number => {
+    const length = insets[side];
+    return length === null ? 0 : resolveLength(length, basis);
+  };
+  const left = inset("left", cb.width);
+  const top = inset("top", cb.height);
+  return {
+    x: cb.x + left,
+    y: cb.y + top,
+    width: cb.width - left - inset("right", cb.width),
+    height: cb.height - top - inset("bottom", cb.height),
+  };
+}
+
+/** Whether a placed box's margin box lies inside a block, one crossed
+ * into a negative size holding none (specs/anchor-positioning.md). */
+function fitsIn(
+  child: LayoutNode,
+  parentAbsX: number,
+  parentAbsY: number,
+  block: Rect,
+  margin: NullableInsets,
+): boolean {
+  if (block.width < 0 || block.height < 0) return false;
+  const x = parentAbsX + child.localRect.x;
+  const y = parentAbsY + child.localRect.y;
+  return (
+    x - (margin.left ?? 0) >= block.x &&
+    y - (margin.top ?? 0) >= block.y &&
+    x + child.localRect.width + (margin.right ?? 0) <= block.x + block.width &&
+    y + child.localRect.height + (margin.bottom ?? 0) <= block.y + block.height
+  );
+}
+
 /** An absolute box placed by its insets and margins in its containing
- * block, its static position where both an axis's insets are auto. */
+ * block, its static position where both an axis's insets are auto, or
+ * under `anchor-center` centered on its anchor in the block its insets
+ * leave, auto insets and margins as zero; its margins, resolved. */
 function placeByInsets(
   child: LayoutNode,
   parent: LayoutNode,
   parentAbsX: number,
   parentAbsY: number,
   cb: Rect,
+  insets: PerSide<CellLength | null>,
+  margins: PerSide<CellLength | null>,
+  anchor: Rect | undefined,
+  flips: Flip[],
   cache: IntrinsicCache,
-): void {
+): NullableInsets {
   const style = child.style;
   delete child.anchorArea;
-  const left = style.insets.left === null ? null : resolveLength(style.insets.left, cb.width);
-  const right = style.insets.right === null ? null : resolveLength(style.insets.right, cb.width);
-  const top = style.insets.top === null ? null : resolveLength(style.insets.top, cb.height);
-  const bottom =
-    style.insets.bottom === null ? null : resolveLength(style.insets.bottom, cb.height);
-  const margin = resolveMargin(style.margin, cb.width);
+  const self = flipSelf(style, flips);
+  const centerX = self.x === "anchor-center" && anchor !== undefined;
+  const centerY = self.y === "anchor-center" && anchor !== undefined;
+  const margin = resolveMargin(margins, cb.width);
+  if (centerX) {
+    margin.left ??= 0;
+    margin.right ??= 0;
+  }
+  if (centerY) {
+    margin.top ??= 0;
+    margin.bottom ??= 0;
+  }
+  const inset = (side: Side, basis: number, centered: boolean): number | null => {
+    const length = insets[side];
+    if (length === null) return centered ? 0 : null;
+    return resolveLength(length, basis);
+  };
+  const left = inset("left", cb.width, centerX);
+  const right = inset("right", cb.width, centerX);
+  const top = inset("top", cb.height, centerY);
+  const bottom = inset("bottom", cb.height, centerY);
   const marginLeft = margin.left ?? 0;
   const marginRight = margin.right ?? 0;
   const marginTop = margin.top ?? 0;
@@ -260,12 +540,16 @@ function placeByInsets(
   // against the CONTAINING BLOCK (percent included); opposing insets with
   // an auto width stretch the box between them; otherwise shrink-to-fit
   // (fit-content) within the space the insets and margins leave. All
-  // clamped by the element's min/max against the containing block.
+  // clamped by the element's min/max against the containing block. A
+  // centered box shrinks to fit the block its insets leave.
   const heightAuto = style.height === undefined || style.height.kind === "auto";
+  const across = marginLeft + marginRight;
   const forced: { width?: number; height?: number } = {
-    width: absoluteWidth(child, cb.width, left, right, marginLeft + marginRight, cache),
+    width: centerX
+      ? absoluteWidth(child, cb.width, null, null, across + left! + right!, cache)
+      : absoluteWidth(child, cb.width, left, right, across, cache),
   };
-  if (top !== null && bottom !== null && heightAuto) {
+  if (top !== null && bottom !== null && heightAuto && !centerY) {
     forced.height = clampSize(
       Math.max(0, cb.height - top - bottom - marginTop - marginBottom),
       resolveLimit(style.minHeight, cb.height) ?? 0,
@@ -279,7 +563,20 @@ function placeByInsets(
   // Horizontal placement. Both insets + auto margins center (`inset-0
   // m-auto` idiom); a single auto margin absorbs the slack on its side.
   let x: number;
-  if (left !== null && right !== null) {
+  if (centerX) {
+    const blockWidth = cb.width - left! - right!;
+    x = alignInArea(
+      "center",
+      cb.x + left!,
+      blockWidth,
+      anchor!.x,
+      anchor!.width,
+      width,
+      marginLeft,
+      marginRight,
+      "anchor-center",
+    );
+  } else if (left !== null && right !== null) {
     const slack = Math.max(0, cb.width - left - right - width - marginLeft - marginRight);
     const bothAuto = margin.left === null && margin.right === null;
     x =
@@ -295,7 +592,20 @@ function placeByInsets(
     x = staticPositionX(child, parent, parentAbsX, width);
   }
   let y: number;
-  if (top !== null && bottom !== null) {
+  if (centerY) {
+    const blockHeight = cb.height - top! - bottom!;
+    y = alignInArea(
+      "center",
+      cb.y + top!,
+      blockHeight,
+      anchor!.y,
+      anchor!.height,
+      height,
+      marginTop,
+      marginBottom,
+      "anchor-center",
+    );
+  } else if (top !== null && bottom !== null) {
     const slack = Math.max(0, cb.height - top - bottom - height - marginTop - marginBottom);
     const bothAuto = margin.top === null && margin.bottom === null;
     y =
@@ -309,6 +619,7 @@ function placeByInsets(
   }
 
   child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
+  return margin;
 }
 
 /** An anchor's rect as a box sees it: moved by the scroll of the
@@ -368,87 +679,218 @@ function absoluteWidth(
   );
 }
 
-/** An anchored box (specs/anchor-positioning.md): laid out with its
- * area — a cell of the anchor's 3×3 grid over the containing block —
- * as its containing block and aligned toward the anchor, the fallbacks
- * tried in order until one fits, the first standing when none does. */
-function placeAnchored(
+/** One of a box's placements (specs/anchor-positioning.md): in an area
+ * of its default anchor, or by its insets, under a tactic's flips;
+ * `option` its index among them, the base 0. */
+interface Attempt {
+  option: number;
+  area: PositionArea | null;
+  flips: Flip[];
+}
+
+/** An absolute box placed, and whether its margin box fits the block it
+ * is placed in: a plain one by its insets, one with fallbacks as CSS
+ * tries them (specs/anchor-positioning.md "Fallbacks flip" and "The
+ * placement that fit is kept"). */
+function placeTrying(
   child: LayoutNode,
+  parent: LayoutNode,
   parentAbsX: number,
   parentAbsY: number,
   cb: Rect,
-  anchor: Rect,
-  first: PositionArea,
-  cache: IntrinsicCache,
-): void {
+  seen: (name: string | null) => Rect | undefined,
+  key: string,
+  pass: Pass,
+): boolean {
   const style = child.style;
-  const tries: { area: PositionArea; tactic?: Tactic }[] = [
-    { area: first },
-    ...style.positionTryFallbacks.map((fallback) =>
-      "flipBlock" in fallback
-        ? { area: flipArea(first, fallback), tactic: fallback }
-        : { area: fallback },
-    ),
-  ];
-  const place = ({ area, tactic }: (typeof tries)[number]): boolean => {
-    const [x0, width0] = areaSpan(area.x, cb.x, cb.width, anchor.x, anchor.width);
-    const [y0, height0] = areaSpan(area.y, cb.y, cb.height, anchor.y, anchor.height);
-    const region: Rect = { x: x0, y: y0, width: width0, height: height0 };
-    const authored = resolveMargin(style.margin, region.width);
-    const margin = tactic ? flipMargins(authored, tactic) : authored;
-    const across = (margin.left ?? 0) + (margin.right ?? 0);
-    const down = (margin.top ?? 0) + (margin.bottom ?? 0);
-    layoutNode(child, region.width, region.height, 0, 0, "shrink", cache, {
-      width: absoluteWidth(child, region.width, null, null, across, cache),
-    });
-    const { width, height } = child.localRect;
-    const x = alignInArea(
-      area.x,
-      region.x,
-      region.width,
-      anchor.x,
-      anchor.width,
-      width,
-      margin.left ?? 0,
-      margin.right ?? 0,
-      style.anchorCenter.x ? "anchor-center" : style.justifySelf,
-    );
-    const y = alignInArea(
-      area.y,
-      region.y,
-      region.height,
-      anchor.y,
-      anchor.height,
-      height,
-      margin.top ?? 0,
-      margin.bottom ?? 0,
-      style.anchorCenter.y ? "anchor-center" : style.alignSelf,
-    );
-    child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
-    child.anchorArea = area;
-    return width + across <= region.width && height + down <= region.height;
+  const fallbacks = style.positionTryFallbacks;
+  const centered = style.anchorCenter.x || style.anchorCenter.y;
+  const areas = style.positionArea !== null || fallbacks.some((fallback) => !("flips" in fallback));
+  const anchor = areas || centered ? seen(style.positionAnchor) : undefined;
+  const base: Attempt = { option: 0, area: anchor ? style.positionArea : null, flips: [] };
+  const options = [base];
+  fallbacks.forEach((fallback, i) => {
+    if ("flips" in fallback) {
+      const area = base.area && flipArea(base.area, fallback.flips);
+      options.push({ option: i + 1, area, flips: fallback.flips });
+    } else if (anchor) {
+      options.push({ option: i + 1, area: fallback, flips: [] });
+    }
+  });
+  const blocks = new Map<Attempt, { block: Rect; insets: PerSide<CellLength | null> }>();
+  /** The block an attempt places the box in — its area, or what its
+   * insets leave — with those insets. */
+  const blockOf = (attempt: Attempt): { block: Rect; insets: PerSide<CellLength | null> } => {
+    let entry = blocks.get(attempt);
+    if (!entry) {
+      if (attempt.area) {
+        entry = { block: areaBlock(attempt.area, cb, anchor!), insets: style.insets };
+      } else {
+        const insets = resolvedInsets(style, cb, seen, attempt.flips);
+        entry = { block: insetBlock(cb, insets), insets };
+      }
+      blocks.set(attempt, entry);
+    }
+    return entry;
   };
-  for (const attempt of tries) if (place(attempt)) return;
-  place(tries[0]!);
+  const place = (attempt: Attempt): boolean => {
+    const { block, insets } = blockOf(attempt);
+    const margins = flipSides(style.margin, attempt.flips);
+    const margin = attempt.area
+      ? placeInArea(
+          child,
+          parentAbsX,
+          parentAbsY,
+          block,
+          anchor!,
+          attempt.area,
+          attempt.flips,
+          margins,
+          pass.cache,
+        )
+      : placeByInsets(
+          child,
+          parent,
+          parentAbsX,
+          parentAbsY,
+          cb,
+          insets,
+          margins,
+          anchor,
+          attempt.flips,
+          pass.cache,
+        );
+    return fitsIn(child, parentAbsX, parentAbsY, block, margin);
+  };
+  if (options.length === 1) return place(base);
+  if (style.positionTryOrder !== "normal") {
+    const axis = style.positionTryOrder === "most-width" ? "width" : "height";
+    options.sort((a, b) => blockOf(b).block[axis] - blockOf(a).block[axis]);
+  }
+  pass.placed.add(child.source);
+  const remembered = pass.remembered.get(child.source);
+  const current =
+    remembered?.key === key
+      ? options.find((attempt) => attempt.option === remembered.option)
+      : undefined;
+  if (current && place(current)) return true;
+  for (const attempt of options) {
+    if (attempt === current || !place(attempt)) continue;
+    pass.remembered.set(child.source, { key, option: attempt.option });
+    return true;
+  }
+  const standing = current ?? base;
+  place(standing);
+  pass.remembered.set(child.source, { key, option: standing.option });
+  return false;
 }
 
-/** A fallback's flips: the block axis mirrored, the inline one, the
- * two swapped. */
-interface Tactic {
-  flipBlock: boolean;
-  flipInline: boolean;
-  flipStart: boolean;
+/** An area's block: a cell of the anchor's 3×3 grid over the
+ * containing block. */
+function areaBlock(area: PositionArea, cb: Rect, anchor: Rect): Rect {
+  const [x, width] = areaSpan(area.x, cb.x, cb.width, anchor.x, anchor.width);
+  const [y, height] = areaSpan(area.y, cb.y, cb.height, anchor.y, anchor.height);
+  return { x, y, width, height };
 }
 
-/** The margins under a fallback's tactics, mirrored with the area as
- * CSS mirrors them, so a gap or a shift set on the anchor's side
- * follows the box. */
-function flipMargins(margin: NullableInsets, tactic: Tactic): NullableInsets {
-  let { top, right, bottom, left } = margin;
-  if (tactic.flipBlock) [top, bottom] = [bottom, top];
-  if (tactic.flipInline) [left, right] = [right, left];
-  if (tactic.flipStart) [top, right, bottom, left] = [left, bottom, right, top];
-  return { top, right, bottom, left };
+/** A box laid out with an area as its containing block and aligned
+ * toward the anchor, its self-alignment under the tactic's flips; its
+ * margins, resolved. */
+function placeInArea(
+  child: LayoutNode,
+  parentAbsX: number,
+  parentAbsY: number,
+  region: Rect,
+  anchor: Rect,
+  area: PositionArea,
+  flips: Flip[],
+  margins: PerSide<CellLength | null>,
+  cache: IntrinsicCache,
+): NullableInsets {
+  const margin = resolveMargin(margins, region.width);
+  const across = (margin.left ?? 0) + (margin.right ?? 0);
+  layoutNode(child, region.width, region.height, 0, 0, "shrink", cache, {
+    width: absoluteWidth(child, region.width, null, null, across, cache),
+  });
+  const { width, height } = child.localRect;
+  const self = flipSelf(child.style, flips);
+  const x = alignInArea(
+    area.x,
+    region.x,
+    region.width,
+    anchor.x,
+    anchor.width,
+    width,
+    margin.left ?? 0,
+    margin.right ?? 0,
+    self.x,
+  );
+  const y = alignInArea(
+    area.y,
+    region.y,
+    region.height,
+    anchor.y,
+    anchor.height,
+    height,
+    margin.top ?? 0,
+    margin.bottom ?? 0,
+    self.y,
+  );
+  child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
+  child.anchorArea = area;
+  return margin;
+}
+
+type SelfAlign = CellStyle["alignSelf"] | "anchor-center";
+
+/** A box's self-alignment on each axis under a tactic's flips, as CSS
+ * flips it: `start` and `end` trade on a mirrored axis, the two axes
+ * under `flip-start`. */
+function flipSelf(style: CellStyle, flips: Flip[]): { x: SelfAlign; y: SelfAlign } {
+  return flipAxes<SelfAlign>(
+    style.anchorCenter.x ? "anchor-center" : style.justifySelf,
+    style.anchorCenter.y ? "anchor-center" : style.alignSelf,
+    flips,
+    (self) => (self === "start" ? "end" : self === "end" ? "start" : self),
+  );
+}
+
+/** A value per axis under a tactic's flips, in their order: `block`
+ * mirrors y, `inline` x, and `start` swaps the two. */
+function flipAxes<T>(x: T, y: T, flips: Flip[], mirror: (value: T) => T): { x: T; y: T } {
+  for (const flip of flips) {
+    if (flip === "block") y = mirror(y);
+    else if (flip === "inline") x = mirror(x);
+    else [x, y] = [y, x];
+  }
+  return { x, y };
+}
+
+/** Where a side lands under a tactic's flips, in their order, and
+ * whether its axis was mirrored on the way. */
+function flipSide(side: Side, flips: Flip[]): { side: Side; mirrored: boolean } {
+  let at = side;
+  let mirrored = false;
+  for (const flip of flips) {
+    const vertical = at === "top" || at === "bottom";
+    if (flip === "start") {
+      at = ({ top: "left", left: "top", bottom: "right", right: "bottom" } as const)[at];
+    } else if ((flip === "block") === vertical) {
+      at = ({ top: "bottom", bottom: "top", left: "right", right: "left" } as const)[at];
+      mirrored = !mirrored;
+    }
+  }
+  return { side: at, mirrored };
+}
+
+/** Per-side values — margins, insets — under a tactic's flips, each
+ * moved to its mirrored side as CSS moves them, so a gap or a shift set
+ * on the anchor's side follows the box. */
+function flipSides<T>(sides: PerSide<T>, flips: Flip[]): PerSide<T> {
+  if (flips.length === 0) return sides;
+  const flipped = { ...sides };
+  for (const side of SIDES) flipped[flipSide(side, flips).side] = sides[side];
+  return flipped;
 }
 
 /** One axis of an area, as its start and size: the span the side
@@ -491,7 +933,7 @@ function alignInArea(
   size: number,
   before: number,
   after: number,
-  self: CellStyle["alignSelf"] | "anchor-center",
+  self: SelfAlign,
 ): number {
   const atStart = regionStart + before;
   const atEnd = regionStart + regionSize - after - size;
@@ -518,14 +960,9 @@ const MIRRORED: Record<AreaSide, AreaSide> = {
   "span-all": "span-all",
 };
 
-/** An area under a fallback's tactics: the block axis mirrored, the
- * inline one, the two swapped. */
-function flipArea(area: PositionArea, tactic: Tactic): PositionArea {
-  let { x, y } = area;
-  if (tactic.flipBlock) y = MIRRORED[y];
-  if (tactic.flipInline) x = MIRRORED[x];
-  if (tactic.flipStart) [x, y] = [y, x];
-  return { x, y };
+/** An area under a tactic's flips (`flipAxes`). */
+function flipArea(area: PositionArea, flips: Flip[]): PositionArea {
+  return flipAxes(area.x, area.y, flips, (side) => MIRRORED[side]);
 }
 
 /** The sole-item static position along the main axis is exactly where a

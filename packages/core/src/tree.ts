@@ -6,6 +6,7 @@ import {
   isTransparentColor,
   lineGapRows,
   readAnchorNames,
+  readVisible,
   readCellStyle,
   readOverflow,
   readTextStyle,
@@ -246,6 +247,7 @@ function leafStyleOf(el: Element, rootFontSizePx: number, metrics?: CellMetrics)
     color: cs.color,
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
+    visible: readVisible(cs, el),
   };
   // Truncation needs the clip; any other overflow stays the root's.
   if (readOverflow(cs).x === "clip") style.overflow = { ...style.overflow, x: "clip" };
@@ -472,6 +474,7 @@ function buildRendererLeaf(
       fontWeight: run.paint.fontWeight ?? "",
       fontStyle: run.paint.fontStyle ?? "",
       textDecorationLine: run.paint.textDecorationLine ?? "",
+      visible: node.style.visible,
     }));
     runs.forEach((run, index) => {
       const line = lines[run.line];
@@ -653,7 +656,7 @@ function extractLeafRun(
     boxes: [],
     positioned: [],
   };
-  if (nodes) collectNodes(nodes, tracking, ctx, run);
+  if (nodes) collectRunNodes(el, nodes, tracking, ctx, run);
   else collectRun(el, tracking, ctx, run);
   if (ctx.preserve) {
     // A final newline gets no line box of its own — the wrap layer's
@@ -662,6 +665,75 @@ function extractLeafRun(
     return run;
   }
   return normalizeRun(run);
+}
+
+/** An anonymous run's nodes, those an inline element split around a
+ * block left in it (specs/cell-model.md "Inline content") under an
+ * entry of that element's, so they keep its style. */
+function collectRunNodes(
+  container: Element,
+  nodes: ChildNode[],
+  tracking: number,
+  ctx: RunContext,
+  run: LeafRun,
+): void {
+  for (let i = 0; i < nodes.length;) {
+    const owner = nodes[i]!.parentElement;
+    let end = i + 1;
+    while (end < nodes.length && nodes[end]!.parentElement === owner) end++;
+    const group = nodes.slice(i, end);
+    if (!owner || owner === container) {
+      collectNodes(group, tracking, ctx, run);
+    } else {
+      const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx);
+      collectOwned(run, entry, () => collectNodes(group, entry.tracking, ctx, run));
+    }
+    i = end;
+  }
+}
+
+/** An inline element's entry, and the characters it collects: those a
+ * deeper element has not claimed are the entry's. */
+function collectOwned(
+  run: LeafRun,
+  entry: LeafRun["inlineElements"][number],
+  collect: () => void,
+): void {
+  const inlineIndex = run.inlineElements.push(entry) - 1;
+  const start = run.chars.length;
+  collect();
+  for (let i = start; i < run.chars.length; i++) {
+    if (run.inlineIndex[i] === undefined) run.inlineIndex[i] = inlineIndex;
+  }
+}
+
+/** An inline element's entry in its run, from its computed style. */
+function inlineEntry(
+  element: Element,
+  cs: CSSStyleDeclaration,
+  padLeft: number,
+  padRight: number,
+  ctx: RunContext,
+): LeafRun["inlineElements"][number] {
+  return {
+    element,
+    tracking: trackingCells(
+      cs.letterSpacing,
+      parseFloat(cs.fontSize) || ctx.rootFontSizePx,
+      ctx.rootLetterSpacingPx,
+    ),
+    padLeft,
+    padRight,
+    insets: cs.position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
+    ...(cs.position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
+    anchorNames: readAnchorNames(element, cs),
+    color: cs.color,
+    backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
+    fontWeight: cs.fontWeight,
+    fontStyle: cs.fontStyle,
+    textDecorationLine: cs.textDecorationLine,
+    visible: readVisible(cs, element),
+  };
 }
 
 function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun): void {
@@ -754,11 +826,6 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
         warnSkippedRunContent(child);
         continue;
       }
-      const childTracking = trackingCells(
-        cs.letterSpacing,
-        parseFloat(cs.fontSize) || ctx.rootFontSizePx,
-        ctx.rootLetterSpacingPx,
-      );
       // Horizontal padding on an inline element (`px-1` badges), quantized
       // to cells: the run reserves the cells as 1-cell INLINE_PAD markers
       // glued to the element's edges, and the renderer writes the same
@@ -767,36 +834,14 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
       // and passes through untouched).
       const padLeft = inlinePadCells(cs.paddingLeft, ctx.rootFontSizePx);
       const padRight = inlinePadCells(cs.paddingRight, ctx.rootFontSizePx);
-      run.inlineElements.push({
-        element: child,
-        tracking: childTracking,
-        padLeft,
-        padRight,
-        insets: cs.position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
-        ...(cs.position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
-        anchorNames: readAnchorNames(child, cs),
-        color: cs.color,
-        backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
-        fontWeight: cs.fontWeight,
-        fontStyle: cs.fontStyle,
-        textDecorationLine: cs.textDecorationLine,
-      });
-      const inlineIndex = run.inlineElements.length - 1;
+      warnInlineBorder(child, cs);
+      const entry = inlineEntry(child, cs, padLeft, padRight, ctx);
       // Pad cells belong to the element too (its bg must fill them).
-      for (let i = 0; i < padLeft; i++) {
-        run.inlineIndex[run.chars.length] = inlineIndex;
-        pushChar(run, INLINE_PAD, 1, null, -1);
-      }
-      const start = run.chars.length;
-      collectRun(child, childTracking, ctx, run);
-      // Chars the recursion added belong to this element unless a deeper
-      // one claimed them first.
-      for (let i = start; i < run.chars.length; i++)
-        if (run.inlineIndex[i] === undefined) run.inlineIndex[i] = inlineIndex;
-      for (let i = 0; i < padRight; i++) {
-        run.inlineIndex[run.chars.length] = inlineIndex;
-        pushChar(run, INLINE_PAD, 1, null, -1);
-      }
+      collectOwned(run, entry, () => {
+        for (let i = 0; i < padLeft; i++) pushChar(run, INLINE_PAD, 1, null, -1);
+        collectRun(child, entry.tracking, ctx, run);
+        for (let i = 0; i < padRight; i++) pushChar(run, INLINE_PAD, 1, null, -1);
+      });
     }
   }
 }
@@ -945,6 +990,22 @@ function longestLineAdvance(text: string, advances: number[], tracking: number):
 
 function countHardLines(text: string): number {
   return hardLineSpans(text).length;
+}
+
+/** The inline elements whose border was checked, each once. */
+const borderChecked = new WeakSet<Element>();
+
+/** Warns once about an inline element's border, which draws nothing. */
+function warnInlineBorder(el: Element, cs: CSSStyleDeclaration): void {
+  if (borderChecked.has(el)) return;
+  borderChecked.add(el);
+  const widths = [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth];
+  if (!widths.some((width) => parseFloat(width) > 0)) return;
+  warnOnce(
+    el,
+    "A border on an inline element is ignored — the grid draws borders around boxes. " +
+      "Give it a box of its own (inline-block, or block) instead.",
+  );
 }
 
 function warnSkippedRunContent(el: Element): void {

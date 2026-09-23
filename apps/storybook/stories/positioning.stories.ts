@@ -535,7 +535,8 @@ export const AnchorFallbacks: StoryObj = {
       );
     }
     // The button low in the list: the menu flips above it; scrolled up
-    // the list, it has room below and returns there.
+    // the list, with room below again, it keeps to the placement that
+    // last fit while that still fits, as CSS does.
     by("open").click();
     await waitFor(() => expect(by("menu").getAttribute("data-mw-area")).toBe("span-right top"));
     await expectTouching(
@@ -544,13 +545,17 @@ export const AnchorFallbacks: StoryObj = {
     );
     const cellHeight = cellSize(host).height;
     by("list").scrollTop = 5 * cellHeight;
-    await waitFor(() => expect(by("menu").getAttribute("data-mw-area")).toBe("span-right bottom"));
     await expectTouching(
-      () => box("menu").top,
-      () => box("open").bottom,
+      () => box("menu").bottom,
+      () => box("open").top,
     );
+    expect(by("menu").getAttribute("data-mw-area")).toBe("span-right top");
+    // Scrolled back, the menu follows the button down, above it still.
     by("list").scrollTop = 0;
-    await waitFor(() => expect(by("menu").getAttribute("data-mw-area")).toBe("span-right top"));
+    await expectTouching(
+      () => box("menu").bottom,
+      () => box("open").top,
+    );
   },
 };
 
@@ -641,5 +646,143 @@ export const AnchorFallbackIsTheEngines: StoryObj = {
       () => by("note").getBoundingClientRect().bottom,
       () => by("word").getBoundingClientRect().top,
     );
+  },
+};
+
+/** Test-only (hidden from the sidebar): the anchor functions in cells
+ * — `anchor-size()` sizing a box and `anchor()` insetting one, each from
+ * a utility and from the inline style — where the browser's own px is
+ * the pre-grid anchor's (specs/anchor-positioning.md). */
+export const AnchorFunctions: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        ${Array.from({ length: 4 }, (_, i) => html`<p>Line ${i + 1} above the button.</p>`)}
+        <button data-test="anchor" class="ml-4 border px-1 [anchor-name:--sized]">
+          a wide button
+        </button>
+        ${Array.from({ length: 4 }, (_, i) => html`<p>Line ${i + 1} below the button.</p>`)}
+        <div
+          data-test="sized"
+          class="absolute min-w-[anchor-size(width)] border [position-anchor:--sized] [position-area:bottom_span-right]"
+        >
+          x
+        </div>
+        <div
+          data-test="sized-inline"
+          class="absolute border"
+          style="position-anchor: --sized; position-area: top span-right; width: anchor-size(width)"
+        >
+          y
+        </div>
+        <div
+          data-test="inset"
+          class="absolute top-[anchor(bottom)] left-[anchor(right)] [position-anchor:--sized]"
+        >
+          z
+        </div>
+        <div
+          data-test="inset-inline"
+          class="absolute"
+          style="position-anchor: --sized; bottom: anchor(top); right: anchor(left)"
+        >
+          w
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const rect = (name: string) => by(name).getBoundingClientRect();
+    const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(1);
+    await waitFor(() => {
+      near(rect("sized").width, rect("anchor").width);
+      near(rect("sized-inline").width, rect("anchor").width);
+      // Under the button's right edge, and above its left one.
+      near(rect("inset").top, rect("anchor").bottom);
+      near(rect("inset").left, rect("anchor").right);
+      near(rect("inset-inline").bottom, rect("anchor").top);
+      near(rect("inset-inline").right, rect("anchor").left);
+    });
+  },
+};
+
+/** Test-only (hidden from the sidebar): `position-try-order` read from
+ * the computed style — the same too-wide box takes the first fallback
+ * that fits, or under `most-height` the roomier one, below the word
+ * (specs/anchor-positioning.md). */
+export const AnchorTryOrder: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="relative h-12 w-40">
+        <span data-test="word" class="absolute top-3 left-1 [anchor-name:--ordered]">word</span>
+        <div
+          data-test="normal"
+          class="absolute w-38 [position-anchor:--ordered] [position-area:right] [position-try-fallbacks:top,bottom]"
+        >
+          in order
+        </div>
+        <div
+          data-test="roomiest"
+          class="absolute w-38 [position-anchor:--ordered] [position-area:right] [position-try-fallbacks:top,bottom] [position-try-order:most-height]"
+        >
+          roomiest
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    await waitFor(() => {
+      expect(by("normal").getAttribute("data-mw-area")).toBe("span-all top");
+      expect(by("roomiest").getAttribute("data-mw-area")).toBe("span-all bottom");
+    });
+  },
+};
+
+/** Test-only (hidden from the sidebar): the initial `position-visibility`,
+ * `anchors-visible`, hides a fixed menu whose anchor scrolled out of its
+ * list — on the grid and in the light DOM — and shows it as the anchor
+ * scrolls back (specs/anchor-positioning.md). */
+export const AnchorVisibility: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        <div data-test="list" class="h-6 w-20 overflow-y-auto border">
+          <p>Row 1</p>
+          <p>Row 2</p>
+          <button data-test="anchor" class="[anchor-name:--listed]">anchor</button>
+          ${Array.from({ length: 10 }, (_, i) => html`<p>Row ${i + 3}</p>`)}
+        </div>
+        <div
+          data-test="menu"
+          class="fixed border bg-clear px-1 [position-anchor:--listed] [position-area:right]"
+        >
+          menu
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const shows = () => rowsOf(host).some((row) => row.includes("menu"));
+    await waitFor(() => expect(shows()).toBe(true));
+    const cell = cellSize(host).height;
+    by("list").scrollTop = 6 * cell;
+    await waitFor(() => {
+      expect(shows()).toBe(false);
+      expect(getComputedStyle(by("menu")).visibility).toBe("hidden");
+    });
+    by("list").scrollTop = 0;
+    await waitFor(() => {
+      expect(shows()).toBe(true);
+      expect(getComputedStyle(by("menu")).visibility).toBe("visible");
+    });
   },
 };

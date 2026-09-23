@@ -706,6 +706,28 @@ describe("layer nodes (paint.ts)", () => {
     expect(layerGridAt(layers, 2, 1)).toMatchObject({ x: 1, y: 1 });
   });
 
+  it("hits a hidden layer root's visible fill, not its own blank box", () => {
+    const layers = document.createElement("div");
+    const fill = makeNode({
+      style: { width: cells(2), height: cells(1), backgroundColor: "red", visible: true },
+    });
+    const root = makeNode({
+      style: { width: cells(8), height: cells(4) },
+      children: [
+        makeNode({
+          style: { width: cells(4), height: cells(2), layer: layered(), visible: false },
+          children: [fill],
+          source: effects("rotate: 0.01deg"),
+        }),
+      ],
+    });
+    layoutRoot(root, 8);
+    paint(root, layers);
+    // The fill's cells are blank glyphs, yet ink; the root's are neither.
+    expect(layerAt(layers, 5, 10)).toMatchObject({ col: 0, row: 0 });
+    expect(layerAt(layers, 35, 10)).toBeNull();
+  });
+
   it("falls through a layer's covered cell to the ink over it", () => {
     const layers = document.createElement("div");
     const badge = makeNode({

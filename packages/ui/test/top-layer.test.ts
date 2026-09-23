@@ -13,59 +13,59 @@ const positioner = () => {
 const tick = () => new Promise((resolve) => setTimeout(resolve));
 
 it("shows the popover as the machine opens and hides it as it closes", () => {
-  const p = positioner();
-  syncTopLayer(p.element, true);
-  expect(p.isOpen()).toBe(true);
-  syncTopLayer(p.element, true);
-  syncTopLayer(p.element, false);
-  expect(p.isOpen()).toBe(false);
+  const popover = positioner();
+  syncTopLayer(popover.element, true);
+  expect(popover.isOpen()).toBe(true);
+  syncTopLayer(popover.element, true);
+  syncTopLayer(popover.element, false);
+  expect(popover.isOpen()).toBe(false);
 });
 
 it("waits for the exit's animations, unless a reopen supersedes the hide", async () => {
-  const p = positioner();
-  syncTopLayer(p.element, true);
-  p.animate();
-  syncTopLayer(p.element, false);
-  expect(p.isOpen()).toBe(true);
-  p.end();
+  const popover = positioner();
+  syncTopLayer(popover.element, true);
+  popover.animate();
+  syncTopLayer(popover.element, false);
+  expect(popover.isOpen()).toBe(true);
+  popover.end();
   await tick();
-  expect(p.isOpen()).toBe(false);
-  syncTopLayer(p.element, true);
-  p.animate();
-  syncTopLayer(p.element, false);
-  syncTopLayer(p.element, true);
-  p.end();
+  expect(popover.isOpen()).toBe(false);
+  syncTopLayer(popover.element, true);
+  popover.animate();
+  syncTopLayer(popover.element, false);
+  syncTopLayer(popover.element, true);
+  popover.end();
   await tick();
-  expect(p.isOpen()).toBe(true);
+  expect(popover.isOpen()).toBe(true);
 });
 
 it("hides at once past an animation that never ends, or is paused", async () => {
-  const p = positioner();
-  syncTopLayer(p.element, true);
-  p.animate({ endTime: Infinity });
-  syncTopLayer(p.element, false);
+  const popover = positioner();
+  syncTopLayer(popover.element, true);
+  popover.animate({ endTime: Infinity });
+  syncTopLayer(popover.element, false);
   await tick();
-  expect(p.isOpen()).toBe(false);
-  p.end();
-  syncTopLayer(p.element, true);
-  p.animate({ playState: "paused" });
-  syncTopLayer(p.element, false);
+  expect(popover.isOpen()).toBe(false);
+  popover.end();
+  syncTopLayer(popover.element, true);
+  popover.animate({ playState: "paused" });
+  syncTopLayer(popover.element, false);
   await tick();
-  expect(p.isOpen()).toBe(false);
+  expect(popover.isOpen()).toBe(false);
 });
 
 it("takes the focus out of the positioner as it closes, before the exit ends", () => {
-  const p = positioner();
+  const popover = positioner();
   const button = document.createElement("button");
-  p.element.append(button);
-  syncTopLayer(p.element, true);
+  popover.element.append(button);
+  syncTopLayer(popover.element, true);
   button.focus();
   expect(document.activeElement).toBe(button);
-  p.animate();
-  syncTopLayer(p.element, false);
+  popover.animate();
+  syncTopLayer(popover.element, false);
   expect(document.activeElement).not.toBe(button);
-  expect(p.isOpen()).toBe(true);
-  p.end();
+  expect(popover.isOpen()).toBe(true);
+  popover.end();
 });
 
 it("does nothing for no element, one not yet connected, or a DOM without popovers", () => {

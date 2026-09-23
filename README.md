@@ -43,7 +43,8 @@ wrap, and gap decorations (`rule-*` separators with junction glyphs).
 **Paint** — rounded corners (`rounded-*` picks a theme's corner
 glyphs), box shadows (`shadow-*` as shade glyphs), gradients
 (`bg-linear-*`, `bg-radial-*`, `bg-conic-*`, `bg-clip-text`), opacity,
-and transforms and filters (`rotate-*`, `scale-*`, `translate-*`,
+visibility (`invisible`, a box keeping its space), and transforms and
+filters (`rotate-*`, `scale-*`, `translate-*`,
 `blur-*`, `grayscale`, `backdrop-blur-*`, … — the element's cells in a
 layer of their own, which the browser transforms).
 
@@ -52,10 +53,11 @@ layer of their own, which the browser transforms).
 
 **Scrolling and position** — scroll containers
 (`overflow-auto`/`-scroll`) with native physics and engine-drawn TUI
-scrollbars, sticky positioning (table headers and columns included),
-and anchor positioning (`anchor-name`, `position-area`,
-`position-try-fallbacks`) that places a menu under its button in
-cells.
+scrollbars (drag the thumb, or press the track to page), sticky
+positioning (table headers and columns included), and anchor
+positioning (`anchor-name`, `position-area`, `anchor()`,
+`anchor-size()`, `position-try-fallbacks`, `position-try-order`,
+`position-visibility`) that places a menu under its button in cells.
 
 **Top layer** — popovers and modal dialogs (`popover`, `showModal()`)
 paint above everything, their `backdrop:` drawn beneath.
@@ -243,10 +245,10 @@ pnpm install
 # Storybook (the main showcase / dev environment), port 6006
 pnpm dev
 
-# lint + format check + typecheck
+# lint + format check + canonical Tailwind classes + typecheck
 pnpm check
 
-# same, but auto-fixes lint/format issues
+# same, but auto-fixes lint, format, and non-canonical class issues
 pnpm check:fix
 
 # tests (unit + golden + story tests + example smoke tests), one package

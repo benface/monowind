@@ -55,7 +55,8 @@ fallbacks for environments that don't map hints (happy-dom).
   `inline-grid`).
 
 Out of scope for now (see Deviations): anonymous table-box generation,
-`empty-cells`, `visibility: collapse`.
+`empty-cells`, and `visibility: collapse`'s own geometry — a collapsed
+row hides as `hidden` does (visibility.md), a collapsed column paints.
 
 ## Structure
 
@@ -273,7 +274,8 @@ are ignored.
    rule, and exact under the single-font-size model (see Cells).
 5. **Extra table height is distributed equally to the non-percent
    rows** (undefined in CSS; browsers vary).
-6. **`empty-cells` and `visibility: collapse`** on rows/columns are not
-   supported.
+6. **`empty-cells`** is not supported, and **`visibility: collapse`**
+   on a row hides as `hidden`, its space kept, and on a column is not
+   read (visibility.md deviation 1).
 7. Everything in `cell-model.md` (rounding, integer distribution ties)
    applies.

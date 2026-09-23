@@ -314,6 +314,13 @@ describe("calc() spacing lengths", () => {
     expect(read({ class: "relative -left-1/4" }).insets.left).toEqual({ percent: -25 });
     expect(read({ class: "absolute inset-x-full" }).insets.right).toEqual({ percent: 100 });
     expect(read({ class: "absolute top-[10%]" }).insets.top).toEqual({ percent: 10 });
+    // The canonical negative keeps its sign inside the brackets.
+    expect(read({ class: "absolute top-[-50%]" }).insets.top).toEqual({ percent: -50 });
+    // Logical sides, horizontal and left-to-right.
+    expect(read({ class: "absolute inset-s-[10%]" }).insets.left).toEqual({ percent: 10 });
+    expect(read({ class: "absolute -inset-e-1/2" }).insets.right).toEqual({ percent: -50 });
+    expect(read({ class: "absolute inset-bs-full" }).insets.top).toEqual({ percent: 100 });
+    expect(read({ class: "absolute inset-be-[25%]" }).insets.bottom).toEqual({ percent: 25 });
   });
 
   it("reads an axis inset utility on its own axis alone", () => {
@@ -327,6 +334,11 @@ describe("calc() spacing lengths", () => {
     document.head.appendChild(sheet);
     expect(read({ class: "absolute inset-y-0 left-0 used" }).insets.right).toBeNull();
     expect(read({ class: "absolute inset-x-0 top-0 used" }).insets.bottom).toBeNull();
+    // A logical side utility authors its own side alone.
+    expect(read({ class: "absolute inset-s-0 top-0 used" }).insets.right).toBeNull();
+    expect(read({ class: "absolute inset-s-0 top-0 used" }).insets.bottom).toBeNull();
+    expect(read({ class: "absolute inset-bs-0 left-0 used" }).insets.bottom).toBeNull();
+    expect(read({ class: "absolute inset-bs-0 left-0 used" }).insets.right).toBeNull();
     // `inset` itself authors every side.
     expect(read({ class: "absolute inset-0 used" }).insets.right).not.toBeNull();
     expect(read({ class: "absolute inset-0 used" }).insets.bottom).not.toBeNull();

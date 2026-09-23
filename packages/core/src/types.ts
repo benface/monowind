@@ -117,6 +117,39 @@ export type CellLength = number | { percent: number; cells?: number };
  * width limits and behave as "no constraint" on height limits (content
  * height already is the intrinsic height). */
 export type SizeLimit = CellLength | "min-content" | "max-content" | "fit-content";
+
+/** A size property an `anchor-size()` can take. */
+export type AnchorSizeProperty =
+  | "width"
+  | "height"
+  | "minWidth"
+  | "minHeight"
+  | "maxWidth"
+  | "maxHeight";
+
+/** An `anchor-size()` (specs/anchor-positioning.md): the anchor it
+ * names, the box's own when null, and the anchor's dimension it reads. */
+export interface AnchorSize {
+  anchor: string | null;
+  dimension: "width" | "height";
+  /** The length where no anchor resolves it. */
+  fallback?: CellLength;
+}
+
+export type AnchorSizes = Partial<Record<AnchorSizeProperty, AnchorSize>>;
+
+/** An inset's `anchor()` (specs/anchor-positioning.md): the anchor it
+ * names, the box's own when null, and the point of the anchor on the
+ * inset's axis it lands on, from the start edge (0) to the end (1) —
+ * null for another axis's side, which only the fallback resolves. */
+export interface AnchorInset {
+  anchor: string | null;
+  fraction: number | null;
+  /** The length where no anchor resolves it. */
+  fallback?: CellLength;
+}
+
+export type AnchorInsets = Partial<Record<Side, AnchorInset>>;
 /** A box's corners, top-left through bottom-right. */
 export type CornerRole = "tl" | "tr" | "bl" | "br";
 
@@ -278,11 +311,6 @@ export interface GridAutoFlow {
   dense: boolean;
 }
 
-/** Tracks a subgrid inherits from its parent grid in a subgridded axis
- * (specs/grid.md), projected into the subgrid's CONTENT-box coordinates:
- * the first and last tracks are shrunk by the subgrid's own margin,
- * border, and padding on that side, so its items still land on the
- * parent's lines. `gap` is the parent's gutter. */
 /** One run of a leaf's character → source map (see `LayoutNode.charSource`). */
 export interface CharSourceRun {
   index: number;
@@ -291,6 +319,11 @@ export interface CharSourceRun {
   offset: number;
 }
 
+/** Tracks a subgrid inherits from its parent grid in a subgridded axis
+ * (specs/grid.md), projected into the subgrid's CONTENT-box coordinates:
+ * the first and last tracks are shrunk by the subgrid's own margin,
+ * border, and padding on that side, so its items still land on the
+ * parent's lines. `gap` is the parent's gutter. */
 export interface InheritedTracks {
   positions: number[];
   sizes: number[];
@@ -415,6 +448,8 @@ export interface LatticeBorder {
 }
 
 export type Side = "top" | "right" | "bottom" | "left";
+
+export const SIDES: readonly Side[] = ["top", "right", "bottom", "left"];
 
 /** One value per box edge (border style, border color, …). */
 export interface PerSide<T> {
@@ -601,6 +636,10 @@ export interface CellStyle {
    * page — translucency blends with what's behind the host, never with
    * covered cells (deviation; front paint wins a cell as always). */
   opacity: number;
+  /** `visibility: visible` (specs/visibility.md): a hidden box — `hidden`,
+   * or `collapse` — keeps its space and paints none of its own ink, and
+   * a visible descendant still paints. */
+  visible: boolean;
   /** Set on a layer root — an element with a transform or a filter —
    * whose subtree paints into its own node (specs/layers.md). */
   layer: Layer | null;
@@ -613,7 +652,22 @@ export interface CellStyle {
   positionAnchor: string | null;
   positionArea: PositionArea | null;
   positionTryFallbacks: AnchorFallback[];
+  /** `position-try-order`: the placements, the base among them, tried
+   * roomiest first on an axis, the logical keywords those of a
+   * horizontal host. */
+  positionTryOrder: "normal" | "most-width" | "most-height";
+  /** `position-visibility`'s conditions for hiding the box, none under
+   * `always`: its default anchor missing, clipped out of view, or the
+   * box overflowing after the fallbacks. */
+  positionVisibility: { anchorValid: boolean; anchorVisible: boolean; noOverflow: boolean };
   anchorCenter: { x: boolean; y: boolean };
+  /** The sizes authored as `anchor-size()`, written in the anchor's
+   * cells as the box is placed; each reads `auto` (`none` for a
+   * maximum) until then. */
+  anchorSizes: AnchorSizes;
+  /** The insets authored as `anchor()`, resolved against the anchor's
+   * cells as the box is placed, over whatever the side reads. */
+  anchorInsets: AnchorInsets;
   /** In the platform's top layer — an open popover, a modal dialog —
    * for the host's stack (specs/top-layer.md). */
   topLayer: boolean;
@@ -673,11 +727,13 @@ export interface PositionArea {
   y: AreaSide;
 }
 
-/** One entry of `position-try-fallbacks`: the flip tactics applied
- * together, or an area of its own. */
-export type AnchorFallback =
-  | { flipBlock: boolean; flipInline: boolean; flipStart: boolean }
-  | PositionArea;
+/** A try tactic's flip (specs/anchor-positioning.md): the block axis
+ * mirrored, the inline one, or the two swapped. */
+export type Flip = "block" | "inline" | "start";
+
+/** One entry of `position-try-fallbacks`: a tactic's flips, in their
+ * written order, or an area of its own. */
+export type AnchorFallback = { flips: Flip[] } | PositionArea;
 
 /** A `::backdrop`'s computed look, as the backdrop box copies it. */
 export interface Backdrop {
@@ -757,6 +813,9 @@ export interface LayoutNode {
     fontWeight: string;
     fontStyle: string;
     textDecorationLine: string;
+    /** Its computed `visibility` is `visible`: a hidden one's cells stay
+     * blank, their space kept. */
+    visible: boolean;
   }[];
   /** Per-character index into `inlineElements` (-1 = direct leaf text);
    * present only when the run contains inline elements. Plain-text
@@ -811,6 +870,9 @@ export interface LayoutNode {
    * table content (no anonymous boxes — specs/table.md) and `<col>`/
    * `<colgroup>` boxes (width carriers, never rendered). */
   tableHidden?: boolean;
+  /** True on an anchored box `position-visibility` hides, its subtree
+   * with it, whatever their own `visibility` (specs/anchor-positioning.md). */
+  forceHidden?: boolean;
   /** Outer height before min/max clamping — written by layoutNode; the
    * column flex algorithm's base main size (CSS distributes from unclamped
    * bases; limits apply via its freeze loop). */
@@ -1037,12 +1099,17 @@ export function defaultCellStyle(): CellStyle {
     glyphSet: null,
     boxShadow: [],
     opacity: 1,
+    visible: true,
     layer: null,
     anchorNames: [],
     positionAnchor: null,
     positionArea: null,
     positionTryFallbacks: [],
+    positionTryOrder: "normal",
+    positionVisibility: { anchorValid: false, anchorVisible: true, noOverflow: false },
     anchorCenter: { x: false, y: false },
+    anchorSizes: {},
+    anchorInsets: {},
     topLayer: false,
     backdrop: null,
     zIndex: null,

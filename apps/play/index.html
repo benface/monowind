@@ -86,7 +86,7 @@
     <main class="flex min-h-0 flex-1 flex-col md:flex-row">
       <div
         id="editor"
-        class="relative min-h-0 min-w-0 flex-1 [scrollbar-gutter:stable] overflow-x-hidden overflow-y-auto bg-neutral-950"
+        class="relative min-h-0 min-w-0 flex-1 scrollbar-gutter-stable overflow-x-hidden overflow-y-auto bg-neutral-950"
       >
         <!-- 16px on a touch pointer: Safari zooms the page in when a
              focused control's text is smaller, and the highlight
@@ -102,7 +102,7 @@
             id="source"
             spellcheck="false"
             aria-label="HTML source"
-            class="relative m-0 block w-full grow resize-none overflow-hidden border-none bg-transparent p-4 font-[inherit] leading-normal break-words whitespace-pre-wrap text-transparent caret-neutral-200 outline-none"
+            class="relative m-0 block w-full grow resize-none overflow-hidden border-none bg-transparent p-4 font-[inherit] leading-normal wrap-break-word whitespace-pre-wrap text-transparent caret-neutral-200 outline-none"
           ></textarea>
         </div>
         <div id="editor-actions" class="sticky bottom-3 z-10 ms-auto me-3 flex w-max gap-2">
@@ -121,7 +121,7 @@
         aria-label="resize panes"
         aria-valuenow="50"
         tabindex="0"
-        class="shrink-0 grow-0 basis-[6px] cursor-row-resize touch-none border-y border-neutral-700 bg-neutral-800 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-300 md:cursor-col-resize md:border-x md:border-y-0"
+        class="shrink-0 grow-0 basis-1.5 cursor-row-resize touch-none border-y border-neutral-700 bg-neutral-800 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-300 md:cursor-col-resize md:border-x md:border-y-0"
       ></div>
       <!-- Mobile-only home for the theme select and the options button:
            no room in the header on narrow screens, so play.js reparents

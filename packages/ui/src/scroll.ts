@@ -21,11 +21,9 @@ const pixels = (value: string): number => parseFloat(value) || 0;
 const inset = (style: CSSStyleDeclaration, side: "Top" | "Bottom"): number =>
   pixels(style[`border${side}Width`]) + pixels(style[`padding${side}`]);
 
-/** The highlighted item scrolled into its scroller's content box: the
- * engine reserves a box's border cells as padding, so a scroll into
- * the scrollport would stop with the item under the border
- * (specs/ui.md). The first item takes the list to its top, a group's
- * label above it included. */
+/** The highlighted item scrolled into its scroller's content box, the
+ * page left alone (specs/ui.md). The first item takes the list to its
+ * top, a group's label above it included. */
 export function scrollToItem(details: ScrollDetails): void {
   const item = details.getElement();
   const scroller = item && scrollerOf(item);

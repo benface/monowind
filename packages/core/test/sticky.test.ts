@@ -267,6 +267,28 @@ describe("sticky table parts", () => {
     expect(first5(6)).toEqual(["┌─┬─┐", "│h│i│", "├─┼─┤", "│a│b│", "└─┴─┘"]);
   });
 
+  it("paints a stuck thead's lines as the table's ink, whatever the thead's visibility", () => {
+    const table = (tableStyle: string, headStyle: string) => {
+      const rows = Array.from({ length: 4 }, () => `<tr>${cell("td", "a")}${cell("td", "b")}</tr>`);
+      const { root, box } = build(
+        `<div><div style="overflow-y: auto; width: 80px; height: 20px">` +
+          `<table style="border-collapse: collapse; ${tableStyle}">` +
+          `<thead style="position: sticky; top: 0px; ${headStyle}"><tr>${cell("th", "h")}${cell("th", "i")}</tr></thead>` +
+          `<tbody>${rows.join("")}</tbody></table></div></div>`,
+        20,
+      );
+      return rowsAt(root, box, 3)
+        .slice(0, 3)
+        .map((row) => row.slice(0, 5));
+    };
+    // A hidden thead's cells go blank, the table's lines over them stay.
+    expect(table("", "visibility: hidden")).toEqual(["┌─┬─┐", "│ │ │", "├─┼─┤"]);
+    // A hidden table's lines go, a visible thead's text stays.
+    const hiddenTable = table("visibility: hidden", "visibility: visible").join("\n");
+    expect(hiddenTable).not.toMatch(/[┌┬┐│├┼┤]/);
+    expect(hiddenTable).toContain("h");
+  });
+
   it("keeps a stuck first column's lines with it", () => {
     const row = (tag: string) =>
       `<tr>${cell(tag, "aa", "position: sticky; left: 0px")}${cell(tag, "bb")}${cell(tag, "cc")}</tr>`;

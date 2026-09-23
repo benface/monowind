@@ -43,6 +43,10 @@ day it is done.
 - Test hooks in stories and DOM-based tests use `data-test="<name>"`
   (queried as `[data-test="name"]`) — never ad-hoc attributes like
   `data-pane` or `data-inner`, and `id` only for label/control wiring.
+- Tailwind classes in `class` and `className` attributes take their
+  canonical form (`scrollbar-gutter-stable`, not `[scrollbar-gutter:stable]`):
+  `pnpm check` reports any other form and `pnpm check:fix` rewrites it,
+  against the stylesheet `.oxfmtrc.json` maps each file to.
 - Keep comments terse. A comment earns its lines only by stating a
   non-obvious constraint or decision; one tight sentence usually suffices.
   No restating what the code does, no narrating history, no multi-sentence

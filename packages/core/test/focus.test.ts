@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "../src/focus.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
+import { makeNode } from "./helpers.ts";
 import type { Focusable } from "../src/focus.ts";
 import type { Rect } from "../src/types.ts";
 
@@ -107,6 +108,22 @@ describe("focusableRects", () => {
     // The wrapped link's own extent is the union of its lines.
     const wrapped = host.querySelectorAll("a")[2]!;
     expect(extentOf(focusableRects(root), wrapped)).toEqual({ x: 0, y: 2, width: 17, height: 2 });
+  });
+
+  it("skips a box position-visibility hides, a top-layer element inside it aside", () => {
+    const button = (name: string) => {
+      const element = document.createElement("button");
+      element.textContent = name;
+      return makeNode({ text: name, source: element });
+    };
+    const popover = makeNode({ children: [button("in the popover")] });
+    popover.topLayerRank = 0;
+    const menu = makeNode({ children: [button("in the menu"), popover] });
+    menu.forceHidden = true;
+    const root = makeNode({ children: [menu] });
+    layoutRoot(root, 20);
+    const names = focusableRects(root).map(({ element }) => element.textContent);
+    expect(names).toEqual(["in the popover"]);
   });
 });
 

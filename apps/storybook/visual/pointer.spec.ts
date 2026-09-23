@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { engineQuiet, openStory } from "./helpers.ts";
 
 /**
  * Pointer routing end to end (specs/cell-model.md "Pointer states"):
@@ -13,16 +14,12 @@ import type { Page } from "@playwright/test";
  */
 
 /** The Button story, with its covered button, links and overlay. */
-async function openStory(page: Page): Promise<{
+async function openButtonStory(page: Page): Promise<{
   rect: (selector: string) => Promise<DOMRect>;
   clicks: (selector: string) => Promise<number>;
 }> {
-  await page.goto("/iframe.html?id=features-interactive--button&viewMode=story");
-  await page.waitForFunction(() =>
-    document.querySelector("mono-wind")?.hasAttribute("data-mw-ready"),
-  );
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(150);
+  await openStory(page, "features-interactive--button");
+  await engineQuiet(page);
   return {
     rect: (selector) =>
       page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().toJSON(), selector),
@@ -35,7 +32,7 @@ async function openStory(page: Page): Promise<{
 }
 
 test("a box painted over an element takes the pointer", async ({ page }) => {
-  const { rect, clicks } = await openStory(page);
+  const { rect, clicks } = await openButtonStory(page);
   const button = await rect("#btn-covered");
   const overlay = await rect('[data-test="overlay"]');
   expect(overlay.right, "the overlay covers part of the button").toBeLessThan(button.right);
@@ -117,7 +114,7 @@ test.describe("a tap on covered cells", () => {
   test.skip(({ browserName }) => browserName === "firefox", "no touch emulation in Firefox");
 
   test("goes to the cell, not the element underneath", async ({ page }) => {
-    const { rect, clicks } = await openStory(page);
+    const { rect, clicks } = await openButtonStory(page);
     const button = await rect("#btn-covered");
     const overlay = await rect('[data-test="overlay"]');
     await page.touchscreen.tap(overlay.left + overlay.width / 2, button.top + button.height / 2);
@@ -142,12 +139,10 @@ test.describe("a tap on covered cells", () => {
 test("a press on a scroll container's border misses the item clipped under it", async ({
   page,
 }) => {
-  await page.goto("/iframe.html?id=packages-ui--listbox&viewMode=story");
-  await page.waitForFunction(() =>
-    document.querySelector("mono-wind")?.hasAttribute("data-mw-ready"),
-  );
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(200);
+  // The story's play clicks items and ends by selecting one; the press
+  // below must come after it.
+  await openStory(page, "packages-ui--listbox");
+  await engineQuiet(page);
   const selected = (): Promise<string> =>
     page.evaluate(() =>
       [...document.querySelectorAll('[data-test="content"] [role="option"]')]
@@ -175,4 +170,250 @@ test("a press on a scroll container's border misses the item clipped under it", 
   await page.mouse.click(geometry.x, geometry.topBorder);
   await page.waitForTimeout(200);
   expect(await selected(), "a press on the border selects nothing new").toBe(before);
+});
+
+/**
+ * A press lands on the element the grid shows at its cell: the
+ * combobox's ▼ is a button laid over its input's end, so a press on the
+ * glyph reaches the button above the input.
+ */
+test("a press on a button laid over an input reaches the button", async ({ page }) => {
+  await openStory(page, "packages-ui--combobox");
+  await engineQuiet(page);
+  const state = () =>
+    page.evaluate(() =>
+      document.querySelector('[data-test="content"]')!.getAttribute("data-state"),
+    );
+  await page.keyboard.press("Escape");
+  await expect.poll(state).toBe("closed");
+  const geometry = await page.evaluate(() => {
+    const host = document.querySelector("mono-wind")!;
+    const rows = host.shadowRoot!.getElementById("grid")!.textContent!.split("\n");
+    const row = rows.findIndex((text) => text.includes("▼"));
+    const col = [...rows[row]!].indexOf("▼");
+    const style = getComputedStyle(host);
+    const box = host.getBoundingClientRect();
+    return {
+      x: box.left + (col + 0.5) * parseFloat(style.getPropertyValue("--mw-cw")),
+      y: box.top + (row + 0.5) * parseFloat(style.getPropertyValue("--mw-ch")),
+    };
+  });
+  await page.mouse.move(geometry.x, geometry.y);
+  await page.mouse.click(geometry.x, geometry.y);
+  await expect.poll(state, { message: "a press on the ▼ opens the list" }).toBe("open");
+});
+
+/**
+ * The gutter bar is grid ink, so every gesture on it is the engine's
+ * (specs/scrolling.md): a press beside the thumb pages toward it and
+ * keeps paging while held, stopping where the thumb reaches the
+ * pointer, and a press ON the thumb drags instead.
+ */
+test.describe("a press on the scrollbar track", () => {
+  // Narrow enough that the story's text wraps past its six rows: at a
+  // wide viewport it fits and there is no range to page through.
+  test.use({ viewport: { width: 420, height: 800 } });
+
+  /** Long enough for the repeat to have fired several times. */
+  const HELD = 900;
+
+  async function openOverflow(page: Page) {
+    await openStory(page, "features-overflow--overflow");
+    await engineQuiet(page);
+    const box = await page.evaluate(() => {
+      const host = document.querySelector("mono-wind")!;
+      const element = document.querySelector('[data-test="scroll"]') as HTMLElement;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(host);
+      return {
+        right: rect.right,
+        top: rect.top,
+        cellWidth: parseFloat(style.getPropertyValue("--mw-cw")),
+        cellHeight: parseFloat(style.getPropertyValue("--mw-ch")),
+        max: element.scrollHeight - element.clientHeight,
+      };
+    });
+    expect(box.max, "the story's box overflows at this width").toBeGreaterThan(0);
+    const scrollTop = (): Promise<number> =>
+      page.evaluate(
+        () => (document.querySelector('[data-test="scroll"]') as HTMLElement).scrollTop,
+      );
+    /** The box's rows inside its border as the grid paints them: each
+     * one's text and its gutter glyph. */
+    const painted = (): Promise<{ lines: string[]; gutter: string[] }> =>
+      page.evaluate(() => {
+        const host = document.querySelector("mono-wind")!;
+        const rect = document.querySelector('[data-test="scroll"]')!.getBoundingClientRect();
+        const cell = parseFloat(getComputedStyle(host).getPropertyValue("--mw-ch"));
+        const top = host.getBoundingClientRect().top;
+        const rows = host
+          .shadowRoot!.getElementById("grid")!
+          .textContent!.split("\n")
+          .slice(
+            Math.round((rect.top - top) / cell) + 1,
+            Math.round((rect.bottom - top) / cell) - 1,
+          );
+        return {
+          lines: rows.map((row) => row.slice(1, -2).trim()),
+          gutter: rows.map((row) => row.at(-2)!),
+        };
+      });
+    // The bar is the last column INSIDE the border, which the engine
+    // draws in a cell of its own; `row` counts the track from 0.
+    const trackRow = (row: number) => ({
+      x: box.right - box.cellWidth * 1.5,
+      y: box.top + box.cellHeight * (row + 1.5),
+    });
+    const press = async (row: number, hold: number) => {
+      const at = trackRow(row);
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await page.waitForTimeout(hold);
+      await page.mouse.up();
+      await engineQuiet(page);
+    };
+    return { box, scrollTop, painted, press, trackRow };
+  }
+
+  test("pages a visible extent less one row, skipping nothing", async ({ page }) => {
+    const { scrollTop, painted, press } = await openOverflow(page);
+    const before = await painted();
+    expect(before.gutter[0], "the thumb sits at the track's start").toBe("█");
+    // The row just below the thumb: one page brings the thumb under it,
+    // so the press pages exactly once however long it is held.
+    await press(1, HELD);
+    const after = await painted();
+    expect(await scrollTop(), "it paged").toBeGreaterThan(0);
+    expect(after.lines[0], "the last row seen stays, for context").toBe(before.lines.at(-1));
+  });
+
+  test("keeps paging while held, on to the end", async ({ page }) => {
+    const { box, scrollTop, painted, press } = await openOverflow(page);
+    await press((await painted()).lines.length - 1, HELD);
+    expect(await scrollTop()).toBe(box.max);
+  });
+
+  test("stops with the thumb under the pointer, paging down", async ({ page }) => {
+    const { box, scrollTop, painted, press } = await openOverflow(page);
+    // Two rows below the thumb: more than one page, short of the end.
+    await press(2, HELD);
+    expect(await scrollTop(), "it paged").toBeGreaterThan(0);
+    expect(await scrollTop(), "it stopped short of the end").toBeLessThan(box.max);
+    expect((await painted()).gutter[2], "the thumb under the pressed row").toBe("█");
+  });
+
+  test("stops with the thumb under the pointer, paging up", async ({ page }) => {
+    const { box, scrollTop, painted, press } = await openOverflow(page);
+    await page.evaluate(() => {
+      const element = document.querySelector('[data-test="scroll"]') as HTMLElement;
+      element.scrollTop = element.scrollHeight;
+    });
+    await engineQuiet(page);
+    expect(await scrollTop()).toBe(box.max);
+    await press(1, HELD);
+    expect(await scrollTop(), "it paged up").toBeLessThan(box.max);
+    expect(await scrollTop(), "it stopped short of the start").toBeGreaterThan(0);
+    expect((await painted()).gutter[1], "the thumb under the pressed row").toBe("█");
+  });
+
+  test("pages once for a quick press, and not again after the release", async ({ page }) => {
+    const { box, scrollTop, painted, press } = await openOverflow(page);
+    const before = await painted();
+    // The track's last row, far past the thumb: a press shorter than
+    // the repeat's delay pages once.
+    await press(before.lines.length - 1, 30);
+    const after = await painted();
+    expect(after.lines[0], "exactly one page").toBe(before.lines.at(-1));
+    const paged = await scrollTop();
+    expect(paged).toBeLessThan(box.max);
+    await page.waitForTimeout(500);
+    expect(await scrollTop(), "nothing pages after the release").toBe(paged);
+  });
+
+  test("stops paging when released mid-repeat", async ({ page }) => {
+    const { box, scrollTop, painted, trackRow } = await openOverflow(page);
+    // Released from the page as the repeat's first page lands, before
+    // its next beat 50 ms on: a release timed from outside would race it.
+    await page.evaluate(() => {
+      const scroller = document.querySelector('[data-test="scroll"]') as HTMLElement;
+      const scrollTo = scroller.scrollTo.bind(scroller) as (options: ScrollToOptions) => void;
+      let pages = 0;
+      scroller.scrollTo = ((options: ScrollToOptions) => {
+        scrollTo(options);
+        if (++pages !== 2) return;
+        queueMicrotask(() => {
+          window.dispatchEvent(new PointerEvent("pointerup", { isPrimary: true }));
+          (window as { released?: boolean }).released = true;
+        });
+      }) as HTMLElement["scrollTo"];
+    });
+    const at = trackRow((await painted()).lines.length - 1);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.waitForFunction(() => (window as { released?: boolean }).released === true);
+    const paged = await scrollTop();
+    expect(paged, "released before the end").toBeLessThan(box.max);
+    await page.waitForTimeout(500);
+    expect(await scrollTop(), "no page after the release").toBe(paged);
+    await page.mouse.up();
+  });
+
+  test("pages a horizontal bar toward the press", async ({ page }) => {
+    await openStory(page, "features-overflow--styled");
+    // The box sits below the fold of this narrow page.
+    await page.locator('[data-test="xtrack"]').scrollIntoViewIfNeeded();
+    await engineQuiet(page);
+    const at = await page.evaluate(() => {
+      const host = document.querySelector("mono-wind")!;
+      const rect = document.querySelector('[data-test="xtrack"]')!.getBoundingClientRect();
+      const style = getComputedStyle(host);
+      const cellWidth = parseFloat(style.getPropertyValue("--mw-cw"));
+      const cellHeight = parseFloat(style.getPropertyValue("--mw-ch"));
+      // The bar's row inside the bottom border, near the track's end.
+      return { x: rect.right - cellWidth * 2.5, y: rect.bottom - cellHeight * 1.5 };
+    });
+    const scrollLeft = () =>
+      page.evaluate(
+        () => (document.querySelector('[data-test="xtrack"]') as HTMLElement).scrollLeft,
+      );
+    expect(await scrollLeft()).toBe(0);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.waitForTimeout(100);
+    await page.mouse.up();
+    await engineQuiet(page);
+    expect(await scrollLeft(), "it paged right").toBeGreaterThan(0);
+  });
+
+  test("on the thumb a press drags instead of paging", async ({ page }) => {
+    const { scrollTop, trackRow } = await openOverflow(page);
+    // At rest the thumb sits at the track's start.
+    const from = trackRow(0);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.waitForTimeout(HELD);
+    expect(await scrollTop(), "a held press on the thumb pages nothing").toBe(0);
+    const to = trackRow(3);
+    await page.mouse.move(to.x, to.y, { steps: 5 });
+    await page.mouse.up();
+    await engineQuiet(page);
+    expect(await scrollTop(), "the content followed the thumb").toBeGreaterThan(0);
+  });
+
+  test("a drag from the track moves nothing", async ({ page }) => {
+    const { scrollTop, trackRow } = await openOverflow(page);
+    // The row just below the thumb: one page brings the thumb under it.
+    const from = trackRow(1);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.waitForTimeout(HELD);
+    const paged = await scrollTop();
+    expect(paged, "the press paged").toBeGreaterThan(0);
+    const to = trackRow(4);
+    await page.mouse.move(to.x, to.y, { steps: 5 });
+    await page.waitForTimeout(HELD);
+    await page.mouse.up();
+    await engineQuiet(page);
+    expect(await scrollTop(), "the drag moved nothing").toBe(paged);
+  });
 });

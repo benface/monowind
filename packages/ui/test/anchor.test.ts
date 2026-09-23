@@ -75,15 +75,21 @@ describe("the placement", () => {
     ).toBe("0.5rem");
   });
 
-  it("turns Zag's own positioning off", () => {
-    expect(positioning({ placement: "top", gutter: 4 })).toEqual({
-      placement: "top",
-      gutter: 4,
+  it("turns Zag's own positioning off, its px sizes with it", () => {
+    const off = {
       applyStyles: false,
       flip: false,
       listeners: false,
+      sizeMiddleware: false,
+      sameWidth: false,
+      fitViewport: false,
+    };
+    expect(positioning({ placement: "top", gutter: 4, sameWidth: true })).toEqual({
+      placement: "top",
+      gutter: 4,
+      ...off,
     });
-    expect(positioning(undefined)).toEqual({ applyStyles: false, flip: false, listeners: false });
+    expect(positioning(undefined)).toEqual(off);
   });
 });
 

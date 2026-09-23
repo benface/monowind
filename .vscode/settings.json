@@ -4,5 +4,27 @@
   "editor.codeActionsOnSave": {
     "source.fixAll.oxlint": "explicit"
   },
-  "oxc.enable": true
+  "oxc.enable": true,
+
+  // Tailwind IntelliSense finds no design system here on its own —
+  // tailwindcss is unhoisted, and the CDN and plugin apps import none —
+  // so storybook's entry, the fullest, stands in for monowind's classes.
+  "tailwindCSS.experimental.configFile": {
+    "apps/example-tailwind/src/styles.css": "apps/example-tailwind/**",
+    "apps/storybook/.storybook/styles.css": [
+      "apps/example-alpine/**",
+      "apps/example-datastar/**",
+      "apps/example-html/**",
+      "apps/example-htmx/**",
+      "apps/example-react/**",
+      "apps/example-solid/**",
+      "apps/example-svelte/**",
+      "apps/example-turbo/**",
+      "apps/example-vite/**",
+      "apps/example-vue/**",
+      "apps/play/**",
+      "apps/storybook/**",
+      "packages/**"
+    ]
+  }
 }

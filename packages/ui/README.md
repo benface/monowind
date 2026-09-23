@@ -287,6 +287,16 @@ inline, then both), and the engine writes the area taken as
 for. Zag's own pixel positioning is off; the light element sits on the
 cells the grid shows it on, so native clicks and focus land there.
 
+Sizing a part against its anchor is CSS's: `w-[anchor-size(width)]`
+on the positioner makes a menu at least as wide as its trigger, the
+positioner's own `min-width: max-content` letting wider items widen
+it (a `min-w-*` of yours loses to that inline style). Zag's positioning
+variables (`--reference-width`, `--available-height`, `--arrow-*`, …)
+are not set, and its `sameWidth` and `fitViewport` are off: their
+pixels are no size the grid can use. A `--transform-origin` Zag still
+writes comes from its own placement, which knows nothing of the
+engine's flips.
+
 `positioning.gutter` (or `offset.mainAxis`), the gap to the trigger,
 and `positioning.offset.crossAxis`, the shift along it from the edge
 the part aligns to (from its center for a placement without `-start`

@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { engineQuiet, openStory } from "./helpers.ts";
 
 /**
  * Keyboard scrolling end to end (specs/scrolling.md "Keyboard
@@ -7,38 +8,202 @@ import { expect, test } from "@playwright/test";
  * three engines, each scrolling a key its own distance, smoothly or not.
  */
 test("an arrow key scrolls a focused container, settled on a cell", async ({ page }) => {
-  await page.goto("/iframe.html?id=features-overflow--keyboard&viewMode=story");
-  await page.waitForFunction(() =>
-    document.querySelector("mono-wind")?.hasAttribute("data-mw-ready"),
-  );
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(150);
+  // The story's own play dispatches keys on this box and provokes a
+  // relayout of its own; the real keys below come after it.
+  await openStory(page, "features-overflow--keyboard");
   const box = page.locator('[data-test="box"]');
   const cell = await page.evaluate(() =>
     parseFloat(getComputedStyle(document.querySelector("mono-wind")!).getPropertyValue("--mw-ch")),
   );
-  // The position once the scroll has gone quiet.
-  const settled = async (): Promise<number> => {
-    let last = -1;
-    for (let i = 0; i < 20; i++) {
-      const now = await box.evaluate((el) => el.scrollTop);
-      if (now === last) return now;
-      last = now;
-      await page.waitForTimeout(300);
-    }
-    throw new Error("the scroll never settled");
+  /** One press and the position it settles on. */
+  const pressAndSettle = async (): Promise<number> => {
+    const from = await box.evaluate((el) => el.scrollTop);
+    await page.keyboard.press("ArrowDown");
+    return settledPast(box, from);
   };
   await box.focus();
-  // The focus's own relayout, a frame away, runs before the key.
-  await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-  );
-  await page.keyboard.press("ArrowDown");
-  const first = await settled();
+  const first = await pressAndSettle();
   expect(first).toBeGreaterThan(0);
   expect(Math.abs(first - Math.round(first / cell) * cell)).toBeLessThanOrEqual(0.5);
+  expect(await pressAndSettle()).toBe(2 * first);
+});
+
+/**
+ * A relayout never lands under a key's scroll (specs/scrolling.md
+ * "Keyboard scrolling"): here the key's own listener restyles a line,
+ * which asks for one in the key's frame, and the scroll still goes its
+ * whole step — run then, the relayout would cancel it in Firefox and
+ * WebKit — while the grid follows it.
+ */
+test("a relayout asked for at a scrolling key waits for its scroll", async ({ page }) => {
+  await openStory(page, "features-overflow--keyboard");
+  const box = page.locator('[data-test="box"]');
+  await box.focus();
+  await engineQuiet(page);
+  // A plain press first, for the whole step the key takes here.
+  const step = await keyStep(box, () => page.keyboard.press("ArrowDown"));
+  await box.evaluate((el) => el.scrollTo({ top: 0, behavior: "instant" }));
+  await engineQuiet(page);
+  await page.evaluate(() => {
+    const host = document.querySelector("mono-wind")!;
+    const box = host.querySelector('[data-test="box"]')!;
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    const state = window as { relayouts?: number; followed?: boolean };
+    state.relayouts = 0;
+    state.followed = false;
+    new MutationObserver(() => state.relayouts!++).observe(host, {
+      attributes: true,
+      attributeFilter: ["measuring"],
+    });
+    box.addEventListener(
+      "keydown",
+      () => {
+        box.firstElementChild!.classList.toggle("underline");
+        // The grid follows the scroll while the relayout waits.
+        const before = grid.textContent;
+        const watch = () => {
+          if (state.relayouts! > 0) return;
+          if (grid.textContent !== before) state.followed = true;
+          else requestAnimationFrame(watch);
+        };
+        requestAnimationFrame(watch);
+      },
+      { once: true },
+    );
+  });
+  expect(await keyStep(box, () => page.keyboard.press("ArrowDown")), "the whole step").toBe(step);
+  const state = () =>
+    page.evaluate(() => {
+      const { relayouts, followed } = window as { relayouts?: number; followed?: boolean };
+      return { relayouts, followed };
+    });
+  // Held, not dropped: the relayout still runs.
+  await expect.poll(async () => (await state()).relayouts).toBeGreaterThan(0);
+  expect((await state()).followed, "the grid painted the scroll before the relayout").toBe(true);
+});
+
+/**
+ * A key a handler past the host cancels — a framework's root listener,
+ * the document's — scrolls nothing, and holds no relayout.
+ */
+test("a scrolling key a later handler cancels holds no relayout", async ({ page }) => {
+  await openStory(page, "features-overflow--keyboard");
+  const box = page.locator('[data-test="box"]');
+  await box.focus();
+  await engineQuiet(page);
+  await page.evaluate(() => {
+    const host = document.querySelector("mono-wind")!;
+    const box = host.querySelector('[data-test="box"]')!;
+    const state = window as { pressedAt?: number; relaidAt?: number };
+    new MutationObserver(() => {
+      if (state.pressedAt !== undefined) state.relaidAt ??= performance.now();
+    }).observe(host, {
+      attributes: true,
+      attributeFilter: ["measuring"],
+    });
+    box.addEventListener(
+      "keydown",
+      () => {
+        state.pressedAt = performance.now();
+        box.firstElementChild!.classList.toggle("underline");
+      },
+      { once: true },
+    );
+    document.addEventListener("keydown", (event) => event.preventDefault(), { once: true });
+  });
   await page.keyboard.press("ArrowDown");
-  expect(await settled()).toBe(2 * first);
+  const state = () =>
+    page.evaluate(() => {
+      const { pressedAt, relaidAt } = window as { pressedAt?: number; relaidAt?: number };
+      return { pressedAt, relaidAt };
+    });
+  await expect.poll(async () => (await state()).relaidAt).toBeDefined();
+  const { pressedAt, relaidAt } = await state();
+  // The hold would last its whole 500 ms.
+  expect(relaidAt! - pressedAt!).toBeLessThan(250);
+  expect(await box.evaluate((el) => el.scrollTop)).toBe(0);
+});
+
+/** The time from a key in a story's control to the relayout its own
+ * keydown listener asks for, and how far the box around it scrolled. */
+async function relayoutAfter(
+  page: Page,
+  name: string,
+  key: string,
+): Promise<{ delay: number; scrolled: number }> {
+  await openStory(page, "features-overflow--keyboard-controls");
+  await page.locator(`[data-test="${name}"]`).focus();
+  await engineQuiet(page);
+  await page.evaluate((name) => {
+    const host = document.querySelector("mono-wind")!;
+    const state = window as { pressedAt?: number; relaidAt?: number };
+    new MutationObserver(() => {
+      if (state.pressedAt !== undefined) state.relaidAt ??= performance.now();
+    }).observe(host, {
+      attributes: true,
+      attributeFilter: ["measuring"],
+    });
+    host.querySelector(`[data-test="${name}"]`)!.addEventListener(
+      "keydown",
+      () => {
+        state.pressedAt = performance.now();
+        host.querySelector('[data-test="outer-line"]')!.classList.toggle("underline");
+      },
+      { once: true },
+    );
+  }, name);
+  await page.keyboard.press(key);
+  const state = () =>
+    page.evaluate(() => {
+      const { pressedAt, relaidAt } = window as { pressedAt?: number; relaidAt?: number };
+      return { pressedAt, relaidAt };
+    });
+  await expect.poll(async () => (await state()).relaidAt).toBeDefined();
+  const { pressedAt, relaidAt } = await state();
+  const scrolled = await page.evaluate(
+    () => (document.querySelector('[data-test="outer"]') as HTMLElement).scrollTop,
+  );
+  return { delay: relaidAt! - pressedAt!, scrolled };
+}
+
+/** A key a focused control keeps scrolls nothing, and holds no relayout
+ * (a hold lasts up to 500 ms). */
+test("Space on a button and an arrow in a text input hold no relayout", async ({ page }) => {
+  const space = await relayoutAfter(page, "button", " ");
+  expect(space.scrolled, "Space activates the button").toBe(0);
+  expect(space.delay).toBeLessThan(250);
+  const arrow = await relayoutAfter(page, "input", "ArrowDown");
+  expect(arrow.scrolled, "the arrow is the input's").toBe(0);
+  expect(arrow.delay).toBeLessThan(250);
+});
+
+/** A box at its end hands the key to the box around it, as the
+ * browsers chain it, and the hold follows: a relayout asked for at the
+ * key waits for the outer box, which goes its whole step. */
+test("a key on a box at its end scrolls the box around it, the relayout waiting", async ({
+  page,
+}) => {
+  await openStory(page, "features-overflow--keyboard-controls");
+  const outer = page.locator('[data-test="outer"]');
+  const inner = page.locator('[data-test="inner"]');
+  await outer.focus();
+  await engineQuiet(page);
+  const step = await keyStep(outer, () => page.keyboard.press("ArrowDown"));
+  await outer.evaluate((el) => el.scrollTo({ top: 0, behavior: "instant" }));
+  await inner.evaluate((el) => el.scrollTo({ top: el.scrollHeight, behavior: "instant" }));
+  await inner.focus();
+  await engineQuiet(page);
+  await inner.evaluate((el) =>
+    el.addEventListener(
+      "keydown",
+      () => document.querySelector('[data-test="outer-line"]')!.classList.toggle("underline"),
+      { once: true },
+    ),
+  );
+  expect(
+    await keyStep(outer, () => page.keyboard.press("ArrowDown")),
+    "the outer box's whole step",
+  ).toBe(step);
 });
 
 /**
@@ -48,20 +213,9 @@ test("an arrow key scrolls a focused container, settled on a cell", async ({ pag
  * three engines.
  */
 test("a focus-visible outline utility draws around the focused control", async ({ page }) => {
-  await page.goto("/iframe.html?id=features-effects--outline&viewMode=story");
-  await page.waitForFunction(() =>
-    document.querySelector("mono-wind")?.hasAttribute("data-mw-ready"),
-  );
-  // The story's own play focuses and blurs the button; let it finish.
-  await page.waitForFunction(() => {
-    const preview = (window as { __STORYBOOK_PREVIEW__?: { storyRenders: { phase: string }[] } })
-      .__STORYBOOK_PREVIEW__;
-    return preview?.storyRenders.every((render) =>
-      ["finished", "errored", "aborted"].includes(render.phase),
-    );
-  });
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(150);
+  // The story's own play focuses and blurs the button.
+  await openStory(page, "features-effects--outline");
+  await engineQuiet(page);
   const button = page.locator('[data-test="button"]');
   // The band of pixels around the box, four px wide.
   const box = (await button.boundingBox())!;
@@ -98,3 +252,52 @@ test("a focus-visible outline utility draws around the focused control", async (
   await page.waitForTimeout(150);
   expect(await amber()).toBeGreaterThan(rest + 200);
 });
+
+/** The position once the scroll has gone quiet, having MOVED off `from`
+ * first: a scroll that has not begun reads as still, and settling on
+ * that would take "not yet" for "done". */
+async function settledPast(box: Locator, from: number): Promise<number> {
+  let last = from;
+  let still = 0;
+  for (let i = 0; i < 25; i++) {
+    const now = await box.evaluate((el) => el.scrollTop);
+    if (now !== last) still = 0;
+    else if (now !== from && ++still === 2) return now;
+    last = now;
+    await box.page().waitForTimeout(150);
+  }
+  throw new Error(`the scroll never moved off ${from}`);
+}
+
+/**
+ * How far a key scrolls `box`: where its native scroll came to rest,
+ * read as the engine's settle moves it onto a cell. A rest on a half
+ * cell settles on either neighbour, by the cell last painted
+ * (specs/scrolling.md), so two whole steps compare by their rests; a
+ * relayout cutting the scroll short rests it early.
+ */
+async function keyStep(box: Locator, press: () => Promise<void>): Promise<number> {
+  const from = await box.evaluate((el) => {
+    const recorded = el as HTMLElement & { rest?: number };
+    delete recorded.rest;
+    const scrollTo = HTMLElement.prototype.scrollTo as (
+      this: HTMLElement,
+      options?: ScrollToOptions,
+    ) => void;
+    recorded.scrollTo = function (this: HTMLElement, options?: ScrollToOptions) {
+      recorded.rest ??= this.scrollTop;
+      scrollTo.call(this, options);
+    } as HTMLElement["scrollTo"];
+    return el.scrollTop;
+  });
+  await press();
+  const settled = await settledPast(box, from);
+  return box.evaluate(
+    (el, { from, settled }) => {
+      const recorded = el as HTMLElement & { rest?: number };
+      Reflect.deleteProperty(recorded, "scrollTo");
+      return (recorded.rest ?? settled) - from;
+    },
+    { from, settled },
+  );
+}

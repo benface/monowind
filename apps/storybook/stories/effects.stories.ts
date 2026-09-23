@@ -4,11 +4,13 @@ import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   cellSize,
   dragTo,
+  gridOf,
   paintedSpan,
   pressAt,
   readyGrid,
   readyHost,
   release,
+  rowsOf,
   testHooks,
 } from "./helpers.ts";
 import type { Point } from "./helpers.ts";
@@ -67,6 +69,103 @@ export const Opacity: StoryObj = {
       expect(line?.dataset.box).toBeDefined();
       expect(line && getComputedStyle(line).overflow).toBe("clip");
     });
+  },
+};
+
+/** `invisible` (`visibility: hidden`) keeps a box's rows and paints
+ * nothing of its own — no text, fill, or border — while a `visible`
+ * descendant still paints, and an invisible word leaves its cells
+ * blank in its line (specs/visibility.md). */
+export const Visibility: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <div class="border border-cyan-400 px-1">shown above</div>
+        <div class="invisible border border-cyan-400 bg-cyan-900 px-1">hidden, its rows kept</div>
+        <div class="invisible border border-fuchsia-400 px-1">
+          <div>hidden parent</div>
+          <div class="visible">a visible child shows</div>
+        </div>
+        <p>a <span class="invisible">secret</span> word kept blank</p>
+        <div class="border border-cyan-400 px-1">shown below</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const rowOf = (text: string) => rowsOf(host).findIndex((row) => row.includes(text));
+    await waitFor(() => {
+      const art = rowsOf(host).join("\n");
+      expect(art).toContain("a visible child shows");
+      expect(art).not.toContain("hidden");
+      expect(art).not.toContain("secret");
+    });
+    // The hidden box keeps its three rows and its gap: the next box's
+    // visible child sits nine rows under the first box's text.
+    expect(rowOf("a visible child shows") - rowOf("shown above")).toBe(9);
+    // The invisible word's cells stay blank, the words after it where
+    // they were.
+    expect(rowsOf(host)[rowOf("word kept blank")]).toContain("a        word kept blank");
+  },
+};
+
+/** Test-only: a fade-out paired with `invisible` keeps its text on the
+ * grid until the fade ends, what inherits its visibility included, as
+ * CSS shows an element throughout a `visibility` transition; a fade-in
+ * closed early with nothing transitioning the close hides at once
+ * (specs/visibility.md). */
+export const VisibilityFade: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="fading" class="transition-[opacity,visibility] duration-1000">
+        fading <b>out</b>
+        <p>with its child</p>
+      </div>
+      <p
+        data-test="entering"
+        class="invisible data-open:visible data-open:transition-[visibility] data-open:duration-1000"
+      >
+        entering
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const grid = gridOf(host);
+    const by = testHooks(canvasElement);
+    by("fading").classList.add("invisible", "opacity-0");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(grid.textContent, "mid-fade").toContain("fading out");
+    expect(grid.textContent, "its child mid-fade").toContain("with its child");
+    await waitFor(() => expect(grid.textContent).not.toContain("fading"), { timeout: 3000 });
+    by("entering").setAttribute("data-open", "");
+    await waitFor(() => expect(grid.textContent).toContain("entering"));
+    by("entering").removeAttribute("data-open");
+    await waitFor(() => expect(grid.textContent).not.toContain("entering"), { timeout: 400 });
+  },
+};
+
+/** Test-only: a host takes its visibility from the page natively
+ * (specs/visibility.md): hidden by an ancestor, it lays its subtree out
+ * as if shown, so it shows at once however the ancestor changes — no
+ * relayout needed. */
+export const HiddenAncestor: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <div data-test="ancestor" class="invisible">
+      <mono-wind><p>shown with its host</p></mono-wind>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const grid = gridOf(host);
+    await waitFor(() => expect(grid.textContent).toContain("shown with its host"));
+    expect(getComputedStyle(grid).visibility).toBe("hidden");
+    // Shown within the same task, before any relayout could run.
+    testHooks(canvasElement)("ancestor").classList.remove("invisible");
+    expect(getComputedStyle(grid).visibility).toBe("visible");
+    expect(grid.textContent).toContain("shown with its host");
   },
 };
 

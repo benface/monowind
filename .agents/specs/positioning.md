@@ -60,8 +60,9 @@ browser expands to longhands before we read them) are read as
   a side counts only where an inline style or a utility for THAT side
   authors it (style.ts `readInsets`). The axis shorthands author their
   own axis alone: `inset-y-*` leaves left and right `auto`, as
-  `inset-x-*` leaves top and bottom — `inset-*` itself authors all
-  four.
+  `inset-x-*` leaves top and bottom, and a logical side (`inset-s-*`,
+  `inset-e-*`, `inset-bs-*`, `inset-be-*`, left-to-right) its own side
+  alone — `inset-*` itself authors all four.
 
 ## Containing block (per CSS)
 

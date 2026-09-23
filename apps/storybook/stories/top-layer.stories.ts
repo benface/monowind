@@ -81,12 +81,6 @@ export const Popover: StoryObj = {
 };
 
 /**
- * A modal dialog: centered in the host, its backdrop a box the browser
- * draws under it — `backdrop:bg-black/50` dims the page, a
- * `backdrop:backdrop-blur-*` would blur it — with focus inside and the
- * page inert until it closes.
- */
-/**
  * A dialog in a page taller than the window (specs/top-layer.md): the
  * UA's placement resolves in the cells the window SHOWS, so the dialog
  * opens above the middle of this page — where the reader is looking.
@@ -130,6 +124,12 @@ export const DialogInATallPage: StoryObj = {
   },
 };
 
+/**
+ * A modal dialog: centered in the host, its backdrop a box the browser
+ * draws under it — `backdrop:bg-black/50` dims the page, a
+ * `backdrop:backdrop-blur-*` would blur it — with focus inside and the
+ * page inert until it closes.
+ */
 export const Dialog: StoryObj = {
   render: () => html`
     <mono-wind>
