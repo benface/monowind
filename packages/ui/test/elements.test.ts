@@ -7,10 +7,10 @@ import { props as popoverProps } from "@zag-js/popover";
 import { props as selectProps } from "@zag-js/select";
 import { props as tooltipProps } from "@zag-js/tooltip";
 import type { MonoElement } from "../src/elements/element.ts";
-import { defineMonoUi } from "../src/elements/index.ts";
+import { defineElement, defineMonoUi, MonoListbox } from "../src/elements/index.ts";
 import { collection as listboxCollection } from "../src/listbox.ts";
 import type { Api as MenuApi } from "../src/menu.ts";
-import { by, settle } from "./helpers.ts";
+import { by, posted, settle } from "./helpers.ts";
 
 /** The elements for markup (specs/ui.md "Component layer"): attributes
  * as the machine's props by kind, callbacks as events, `open` the
@@ -105,6 +105,30 @@ describe("attributes as props", () => {
     element.remove();
   });
 
+  it("drops a prop whose attribute goes, the machine back at its default", async () => {
+    const element = render(MENU);
+    await settle();
+    element.removeAttribute("placement");
+    await settle();
+    // The menu's own placement, back once the markup's is taken away.
+    const positioner = by(element, "positioner");
+    expect(positioner.style.getPropertyValue("position-area")).toBe("bottom span-right");
+    element.setAttribute("close-on-select", "false");
+    await settle();
+    const api = (element as HTMLElement & { api: { setOpen(open: boolean): void } }).api;
+    api.setOpen(true);
+    await settle();
+    by(element, "item", "cut").click();
+    await settle();
+    expect(by(element, "content").getAttribute("data-state"), "kept open").toBe("open");
+    element.removeAttribute("close-on-select");
+    await settle();
+    by(element, "item", "cut").click();
+    await settle();
+    expect(by(element, "content").getAttribute("data-state"), "closed again").toBe("closed");
+    element.remove();
+  });
+
   it("takes a prop no attribute carries as a property, and does no work twice", async () => {
     const element = document.createElement("mono-menu") as HTMLElement & { ids?: object };
     element.id = "named";
@@ -123,6 +147,25 @@ describe("attributes as props", () => {
     const api = (element as HTMLElement & { api: MenuApi }).api;
     element.ids = ids;
     expect((element as HTMLElement & { api: MenuApi }).api).toBe(api);
+    element.remove();
+  });
+
+  it("takes a fresh array or object alike the last as no change, as a render hands one", async () => {
+    const element = render<HTMLElement & { value: string[]; ids: object; api: unknown }>(`
+      <mono-listbox id="fresh">
+        <div data-part="content">
+          <div data-part="item" data-value="main"><span data-part="item-text">main</span></div>
+        </div>
+      </mono-listbox>`);
+    element.value = ["main"];
+    element.ids = { content: "list" };
+    await settle();
+    const api = element.api;
+    element.value = ["main"];
+    element.ids = { content: "list" };
+    expect(element.api, "the mount left alone").toBe(api);
+    element.value = [];
+    expect(element.api).not.toBe(api);
     element.remove();
   });
 
@@ -232,6 +275,25 @@ describe("a submenu", () => {
     );
     element.remove();
   });
+
+  it("drops a behavior its menu shares with it when the menu's attribute goes", async () => {
+    const element = render(MENU.replace(' id="m"', ' id="shared" close-on-select="false"'));
+    const submenu = element.querySelector("mono-submenu")!;
+    await settle();
+    element.removeAttribute("close-on-select");
+    await settle();
+    (element as HTMLElement & { api: MenuApi }).api.setOpen(true);
+    await settle();
+    by(element, "trigger-item").click();
+    await settle();
+    expect(submenu.hasAttribute("open")).toBe(true);
+    by(submenu, "item", "mail").click();
+    await settle();
+    // Zag's default, as a menu never given the attribute has it.
+    expect(submenu.hasAttribute("open"), "the submenu closed").toBe(false);
+    expect(element.hasAttribute("open"), "its menu too").toBe(false);
+    element.remove();
+  });
 });
 
 describe("a select", () => {
@@ -292,6 +354,191 @@ describe("a select", () => {
   });
 });
 
+describe("a selection", () => {
+  it("starts at the items the markup marks selected", async () => {
+    const element = render(`
+      <mono-select id="picked" name="branch">
+        <div data-part="control"><button data-part="trigger">
+          <span data-part="value-text">branch…</span>
+        </button></div>
+        <div data-part="positioner"><div data-part="content">
+          <div data-part="item" data-value="main"><span data-part="item-text">main</span></div>
+          <div data-part="item" data-value="next" data-selected>
+            <span data-part="item-text">next</span>
+          </div>
+        </div></div>
+        <select data-part="hidden-select"></select>
+      </mono-select>`);
+    await settle();
+    expect((element as HTMLElement & { api: { value: string[] } }).api.value).toEqual(["next"]);
+    expect(by(element, "value-text").textContent).toBe("next");
+    element.remove();
+  });
+
+  it("takes a value set as a property, whole, as a framework sets it", async () => {
+    const element = render(`
+      <mono-listbox id="controlled">
+        <div data-part="content">
+          <div data-part="item" data-value="main"><span data-part="item-text">main</span></div>
+          <div data-part="item" data-value="next"><span data-part="item-text">next</span></div>
+        </div>
+      </mono-listbox>`);
+    const listbox = element as HTMLElement & { value: string[]; api: { value: string[] } };
+    listbox.value = ["next"];
+    await settle();
+    expect(listbox.api.value).toEqual(["next"]);
+    expect(by(element, "item", "next").getAttribute("aria-selected")).toBe("true");
+    listbox.value = ["main"];
+    await settle();
+    expect(listbox.api.value).toEqual(["main"]);
+    // Controlled: a press asks, and the page's listener answers.
+    by(element, "item", "next").click();
+    await settle();
+    expect(listbox.api.value).toEqual(["main"]);
+    element.addEventListener("valuechange", (event) => {
+      listbox.value = (event as CustomEvent<{ value: string[] }>).detail.value;
+    });
+    by(element, "item", "next").click();
+    await settle();
+    expect(listbox.api.value).toEqual(["next"]);
+    element.remove();
+  });
+
+  const LIST = `
+    <div data-part="content">
+      <div data-part="item" data-value="main"><span data-part="item-text">main</span></div>
+      <div data-part="item" data-value="next"><span data-part="item-text">next</span></div>
+    </div>`;
+
+  it("starts at a default set as a property, a mount again reading the reader's choice", async () => {
+    const element = document.createElement("mono-listbox") as HTMLElement & {
+      defaultValue: string[];
+      api: { value: string[] };
+    };
+    element.id = "defaulted";
+    element.defaultValue = ["main"];
+    element.innerHTML = LIST;
+    document.body.append(element);
+    await settle();
+    expect(element.api.value).toEqual(["main"]);
+    by(element, "item", "next").click();
+    await settle();
+    expect(element.api.value).toEqual(["next"]);
+    // An item arriving mounts again, which starts from the reader's
+    // choice.
+    by(element, "content").insertAdjacentHTML(
+      "beforeend",
+      `<div data-part="item" data-value="release"><span data-part="item-text">release</span></div>`,
+    );
+    await settle();
+    expect(element.api.value).toEqual(["next"]);
+    element.remove();
+  });
+
+  /** A `<mono-select>` in a form, the items named, and a default set as
+   * a property where one is given. */
+  function selectInForm(id: string, items: string[], defaultValue?: string[]) {
+    const form = document.createElement("form");
+    const element = document.createElement("mono-select") as HTMLElement & {
+      defaultValue: string[];
+      api: { value: string[]; setValue(value: string[]): void };
+    };
+    element.id = id;
+    element.setAttribute("name", "branch");
+    if (defaultValue) element.defaultValue = defaultValue;
+    element.innerHTML = `
+      <button data-part="trigger"><span data-part="value-text">branch…</span></button>
+      <div data-part="positioner"><div data-part="content">
+        ${items.map((value) => itemMarkup(value)).join("")}
+      </div></div>
+      <select data-part="hidden-select"></select>`;
+    form.append(element);
+    document.body.append(form);
+    return { form, element };
+  }
+
+  const itemMarkup = (value: string): string =>
+    `<div data-part="item" data-value="${value}"><span data-part="item-text">${value}</span></div>`;
+
+  it("keeps a default whose item arrives after it, and posts it once the item does", async () => {
+    const { form, element } = selectInForm("arriving", ["main"], ["release"]);
+    await settle();
+    expect(posted(form), "no option chosen in its place").toEqual([]);
+    by(element, "content").insertAdjacentHTML("beforeend", itemMarkup("release"));
+    await settle();
+    expect(element.api.value).toEqual(["release"]);
+    expect(posted(form)).toEqual(["release"]);
+    form.remove();
+  });
+
+  it("goes back to the page's default at a reset after a mount again, the reader's choice kept till then", async () => {
+    const { form, element } = selectInForm("remounted", ["main", "next"], ["main"]);
+    await settle();
+    element.api.setValue(["next"]);
+    await settle();
+    const changes = vi.fn();
+    element.addEventListener("valuechange", changes);
+    by(element, "content").insertAdjacentHTML("beforeend", itemMarkup("release"));
+    await settle();
+    expect(element.api.value).toEqual(["next"]);
+    expect(posted(form)).toEqual(["next"]);
+    expect(changes, "no change of the reader's to announce").not.toHaveBeenCalled();
+    form.reset();
+    await settle();
+    expect(element.api.value).toEqual(["main"]);
+    expect(posted(form)).toEqual(["main"]);
+    expect(changes).toHaveBeenCalledTimes(1);
+    form.remove();
+  });
+
+  it("takes items that arrive marked as its selection and its default, as a page loading them sends", async () => {
+    const { form, element } = selectInForm("loaded", []);
+    await settle();
+    by(element, "content").innerHTML =
+      itemMarkup("main") +
+      itemMarkup("next").replace('data-part="item"', "data-part='item' data-selected");
+    await settle();
+    expect(element.api.value).toEqual(["next"]);
+    element.api.setValue(["main"]);
+    await settle();
+    form.reset();
+    await settle();
+    expect(element.api.value).toEqual(["next"]);
+    form.remove();
+  });
+
+  it("keeps the reader's choice through a move, and the page's default for a reset", async () => {
+    const { form, element } = selectInForm("moved", ["main", "next"], ["main"]);
+    await settle();
+    element.api.setValue(["next"]);
+    await settle();
+    const elsewhere = document.createElement("div");
+    form.append(elsewhere);
+    elsewhere.append(element);
+    await settle();
+    expect(element.api.value).toEqual(["next"]);
+    form.reset();
+    await settle();
+    expect(element.api.value).toEqual(["main"]);
+    form.remove();
+  });
+
+  it("takes a property set before the element was defined", async () => {
+    const tag = "mono-late-listbox";
+    const element = document.createElement(tag) as HTMLElement & {
+      defaultValue?: string[];
+      api?: { value: string[] };
+    };
+    element.defaultValue = ["next"];
+    element.innerHTML = LIST;
+    document.body.append(element);
+    customElements.define(tag, defineElement(MonoListbox.definition));
+    await settle();
+    expect(element.api?.value).toEqual(["next"]);
+    element.remove();
+  });
+});
+
 describe("a combobox", () => {
   it("mounts on its markup and anchors its list under the control", async () => {
     const element = render(`
@@ -321,9 +568,6 @@ describe("every element", () => {
   /** Handled off the definition: the id and `open` attributes, the
    * flattened `positioning`, and `getRootNode`, which the DOM owns. */
   const BASE = ["id", "open", "defaultOpen", "positioning", "getRootNode"];
-  /** An initial selection has no attribute: Zag types these `string[]`
-   * and markup has no agreed way to spell a list of values. */
-  const UNSUPPORTED = ["value", "defaultValue"];
   /** Where the floating part goes, which an anchored element flattens
    * into `positioning`. */
   const POSITIONING = ["placement", "gutter", "offsetMainAxis", "offsetCrossAxis"];
@@ -361,7 +605,7 @@ describe("every element", () => {
   }
 
   it.each(ELEMENTS)("takes every prop its machine has: %s", (tag, machineProps) => {
-    const declared = new Set([...BASE, ...UNSUPPORTED, ...declaredBy(tag)]);
+    const declared = new Set([...BASE, ...declaredBy(tag)]);
     expect(machineProps.filter((prop) => !declared.has(prop))).toEqual([]);
   });
 

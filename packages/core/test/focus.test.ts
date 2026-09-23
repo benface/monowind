@@ -110,6 +110,23 @@ describe("focusableRects", () => {
     expect(extentOf(focusableRects(root), wrapped)).toEqual({ x: 0, y: 2, width: 17, height: 2 });
   });
 
+  it("places a fixed box where it paints, at the host's cells, out of its ancestors' scroll", () => {
+    const button = (name: string) => {
+      const element = document.createElement("button");
+      element.textContent = name;
+      return makeNode({ text: name, source: element });
+    };
+    const inner = button("inside");
+    const fixed = makeNode({ children: [inner] });
+    const scroller = makeNode({ children: [makeNode({ text: "row" }), fixed] });
+    const root = makeNode({ children: [makeNode({ text: "above" }), scroller] });
+    layoutRoot(root, 20);
+    scroller.scroll = { x: 0, y: 2 };
+    fixed.hostRect = { x: 10, y: 0 };
+    const rects = focusableRects(root).map(({ rect }) => [rect.x, rect.y]);
+    expect(rects).toEqual([[10 + inner.localRect.x, inner.localRect.y]]);
+  });
+
   it("skips a box position-visibility hides, a top-layer element inside it aside", () => {
     const button = (name: string) => {
       const element = document.createElement("button");

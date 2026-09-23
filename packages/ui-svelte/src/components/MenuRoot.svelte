@@ -20,9 +20,6 @@
 
   const parent = menuContext.useOptional();
   const generated = $props.id();
-  // What Zag does not name has nowhere to go: this root renders no
-  // element of its own.
-  $effect(() => warnStray("MenuRoot", Object.keys(splitProps(props, propNames)[1])));
   // A `bind:` follows the machine: each bound prop is given only
   // when the author names it, and written back when it changes.
   const own = $derived({
@@ -41,6 +38,9 @@
     parent ? asSubmenuOf(parent.props ?? { id: own.id }, own) : own,
   );
   const menuCreated = createMenu(() => machineProps);
+  // What Zag does not name has nowhere to go: this root renders no
+  // element of its own.
+  $effect(() => warnStray("MenuRoot", Object.keys(splitProps(props, propNames)[1]), menuCreated));
 
   menuContext.set({
     menu: menuCreated,

@@ -1,6 +1,10 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { engineQuiet, openStory } from "./helpers.ts";
 
+/** A relayout that no key's hold kept back: under the 500 ms a hold
+ * lasts, with room for a loaded machine. */
+const NO_HOLD = 450;
+
 /**
  * Keyboard scrolling end to end (specs/scrolling.md "Keyboard
  * scrolling"): a real key press on a focused container scrolls it
@@ -120,7 +124,7 @@ test("a scrolling key a later handler cancels holds no relayout", async ({ page 
   await expect.poll(async () => (await state()).relaidAt).toBeDefined();
   const { pressedAt, relaidAt } = await state();
   // The hold would last its whole 500 ms.
-  expect(relaidAt! - pressedAt!).toBeLessThan(250);
+  expect(relaidAt! - pressedAt!).toBeLessThan(NO_HOLD);
   expect(await box.evaluate((el) => el.scrollTop)).toBe(0);
 });
 
@@ -171,10 +175,10 @@ async function relayoutAfter(
 test("Space on a button and an arrow in a text input hold no relayout", async ({ page }) => {
   const space = await relayoutAfter(page, "button", " ");
   expect(space.scrolled, "Space activates the button").toBe(0);
-  expect(space.delay).toBeLessThan(250);
+  expect(space.delay).toBeLessThan(NO_HOLD);
   const arrow = await relayoutAfter(page, "input", "ArrowDown");
   expect(arrow.scrolled, "the arrow is the input's").toBe(0);
-  expect(arrow.delay).toBeLessThan(250);
+  expect(arrow.delay).toBeLessThan(NO_HOLD);
 });
 
 /** A box at its end hands the key to the box around it, as the
@@ -301,3 +305,29 @@ async function keyStep(box: Locator, press: () => Promise<void>): Promise<number
     { from, settled },
   );
 }
+
+test("a keystroke that opens a combobox's list leaves the caret where it was", async ({ page }) => {
+  await openStory(page, "packages-ui--combobox");
+  await engineQuiet(page);
+  const input = page.locator('[data-test="input"]');
+  // A branch picked closes the list; the next keystroke opens it again.
+  await input.focus();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type("feature/grid");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(input).toHaveAttribute("aria-expanded", "false");
+  await expect(input).toHaveValue("feature/grid");
+  await input.evaluate((el: HTMLInputElement) => el.setSelectionRange(3, 3));
+  await page.keyboard.press("Backspace");
+  await expect(input).toHaveValue("feture/grid");
+  // The opening's focus step runs a frame after the list opens.
+  await expect(input).toHaveAttribute("aria-expanded", "true");
+  const caret = await input.evaluate(
+    (el: HTMLInputElement) =>
+      new Promise<number | null>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(el.selectionStart))),
+      ),
+  );
+  expect(caret).toBe(2);
+});

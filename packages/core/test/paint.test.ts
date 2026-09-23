@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { gridOffsetAt, paintGrid } from "../src/paint.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { buildTree } from "../src/tree.ts";
 import { makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -206,6 +207,43 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     expect(target.querySelector("span")).toBe(span);
     expect(span.dataset.shade).toBeUndefined();
     expect(span.style.lineHeight).toBe("");
+  });
+
+  it("clears the paint of a boxed span whose run goes bare", () => {
+    const target = document.createElement("pre");
+    const glyphs = {
+      box: () => ({ scale: 1.2, lineHeight: 9, advance: 9.6 }),
+      shift: () => 0,
+      generation: 0,
+    };
+    const tree = (style: { color?: string }) => {
+      const root = makeNode({ children: [makeNode({ style, text: "\u2502", intrinsicWidth: 1 })] });
+      layoutRoot(root, 1);
+      return root;
+    };
+    paintGrid(tree({ color: "red" }), target, { glyphs });
+    const span = target.querySelector("span")!;
+    expect(span.style.color).toBe("red");
+    paintGrid(tree({}), target, { glyphs });
+    expect(target.querySelector("span"), "patched in place").toBe(span);
+    expect(span.style.color).toBe("");
+  });
+
+  it("boxes a line glyph an inline element's opacity fades, as a translucent box's", () => {
+    // Its color is mixed toward transparent: unboxed, its overshoot
+    // composites twice where the rows join (specs/cell-model.md "Opacity").
+    const host = document.createElement("div");
+    host.innerHTML = '<div><p>\u2502<span style="opacity: 0.5">\u2502</span></p></div>';
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 4);
+    host.remove();
+    const target = document.createElement("pre");
+    paintGrid(node, target, { glyphs: { box: () => null, shift: () => 0, generation: 0 } });
+    const spans = Array.from(target.querySelectorAll("span"));
+    expect(spans.map((span) => [span.textContent, span.dataset.box !== undefined])).toEqual([
+      ["\u2502", true],
+    ]);
   });
 
   it("maps cells to flat offsets across rows", () => {

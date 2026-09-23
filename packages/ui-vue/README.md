@@ -53,7 +53,8 @@ is a listener, so `onSelect` is `@select` and `onOpenChange` is
   `SelectControl`, `SelectTrigger`, `SelectValueText`,
   `SelectIndicator`, `SelectClearTrigger`, `SelectPositioner`,
   `SelectList` and `SelectHiddenSelect`, the native control a form
-  submits.
+  submits — its options in the server's render too, so a form sent
+  before hydration posts the initial value.
 - Combobox — `ComboboxRoot` (an element of its own),
   `ComboboxLabel`, `ComboboxControl`, `ComboboxInput`,
   `ComboboxTrigger`, `ComboboxClearTrigger`, `ComboboxPositioner`,

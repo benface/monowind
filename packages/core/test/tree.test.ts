@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { charIndexAt, positionOf } from "../src/selection.ts";
-import { buildTree } from "../src/tree.ts";
+import { buildTree, hostLeafStyle } from "../src/tree.ts";
 import { INLINE_PAD } from "../src/wrap.ts";
 import { inlineBoxesOf } from "../src/types.ts";
 import type { PerSide } from "../src/types.ts";
@@ -514,5 +514,16 @@ describe("atomic inline boxes in marker order", () => {
     expect(inlineBoxesOf(node).map((box) => box.text)).toEqual(["NESTED", "YY"]);
     layoutRoot(node, 40);
     expect(renderPlainText(node)).toBe("a NESTED b YY c");
+  });
+});
+
+describe("the host's own text", () => {
+  it("takes pointer events whatever the host reads", () => {
+    // As the host's top-level elements read them (element.ts): a value
+    // on the host, or one a lock above it hands down (a modal's, on the
+    // body), is the page's.
+    const host = el('<div style="pointer-events: none">foo<div>bar</div></div>');
+    expect(getComputedStyle(host).pointerEvents).toBe("none");
+    expect(hostLeafStyle(host, 16).pointerEvents).toBe(true);
   });
 });

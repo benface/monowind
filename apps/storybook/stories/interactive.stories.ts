@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { cellSize, pressAt, readyHost, release } from "./helpers.ts";
+import { cellSize, gridOf, hoverOver, pressAt, readyHost, release, testHooks } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Interactive",
@@ -276,7 +276,7 @@ export const Select: StoryObj = {
     const gridBackgroundAt = (el: HTMLElement) => {
       const rect = el.getBoundingClientRect();
       const [x, y] = [rect.left + rect.width / 2, rect.top + rect.height / 2];
-      const spans = host.shadowRoot!.getElementById("grid")!.querySelectorAll("span");
+      const spans = gridOf(host).querySelectorAll("span");
       const span = Array.from(spans).find((span) => {
         const r = span.getBoundingClientRect();
         return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
@@ -290,7 +290,7 @@ export const Select: StoryObj = {
     dropdown.focus();
     expect(dropdown.matches(":focus-visible")).toBe(true);
     await waitFor(() => expect(gridBackgroundAt(dropdown)).not.toBe(""));
-    const gridEl = host.shadowRoot!.getElementById("grid")!;
+    const gridEl = gridOf(host);
     const gridText = document.createTreeWalker(gridEl, NodeFilter.SHOW_TEXT).nextNode()!;
     document.getSelection()!.setBaseAndExtent(gridText, 0, gridText, 0);
     pressAt(fruit, center(fruit), 1);
@@ -364,7 +364,7 @@ export const Link: StoryObj = {
     reference.className = "bg-fuchsia-500";
     canvasElement.appendChild(reference);
     const expected = getComputedStyle(reference).backgroundColor;
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     await waitFor(() => {
       const spans = Array.from(grid.querySelectorAll("span"));
       expect(spans.some((span) => getComputedStyle(span).backgroundColor === expected)).toBe(true);
@@ -453,7 +453,7 @@ export const Button: StoryObj = {
     // The `transition` class must not leak animation frames into the
     // engine's style reads (the measuring gate snaps transitions) — a
     // mid-fade read once painted this whole button transparent.
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const invisible = Array.from(grid.querySelectorAll("span")).filter(
       (span) => span.textContent!.includes("full-width") && span.style.color === "rgba(0, 0, 0, 0)",
     );
@@ -468,5 +468,151 @@ export const Button: StoryObj = {
       .find((row) => row.includes("part of me is covered"))!;
     expect(border.trimStart(), "the overlay stands over the border").not.toMatch(/^[│|]/);
     expect(border, "the label still shows").toContain("part of me is covered");
+  },
+};
+
+/** `pointer-events: none` passes the pointer through, as natively: a
+ * badge laid over a button's corner leaves the press, the hover and the
+ * cursor there to the button, and a link it disables (`aria-disabled`,
+ * no `href`) takes none of them (specs/cell-model.md "Pointer states"). */
+export const ClickThrough: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <div class="relative w-max">
+          <button
+            data-test="button"
+            class="cursor-pointer border px-1 hover:text-emerald-400"
+            @click=${bumpCount}
+          >
+            inbox
+          </button>
+          <span
+            data-test="badge"
+            class="pointer-events-none absolute top-0 -right-1 bg-red-600 px-1 text-white"
+            >3</span
+          >
+        </div>
+        <p>
+          <a
+            data-test="enabled"
+            href="#enabled"
+            class="underline hover:text-emerald-400"
+            @click=${countClicks}
+            >a link</a
+          >
+          and
+          <a
+            data-test="disabled"
+            role="link"
+            aria-disabled="true"
+            class="pointer-events-none cursor-pointer underline opacity-50"
+            @click=${countClicks}
+            >a disabled one</a
+          >
+        </p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    hoverOver(by("badge"));
+    // Over the badge's cells the button beneath hovers, uncovered.
+    await waitFor(() => expect(by("button")).toHaveAttribute("data-mw-hover"));
+    expect(by("button")).not.toHaveAttribute("data-mw-covered");
+    expect(by("badge")).not.toHaveAttribute("data-mw-hover");
+    // The disabled link keeps its own value in grid mode, where links
+    // otherwise take the pointer back; what a real press does is
+    // visual/pointer.spec.ts's.
+    expect(getComputedStyle(by("disabled")).pointerEvents).toBe("none");
+    // A lock the page sets above the host — a modal's, on the body — is
+    // the page's own: the button laid out under it stays the grid's.
+    document.body.style.pointerEvents = "none";
+    try {
+      by("badge").textContent = "4";
+      await waitFor(() => expect(host.toPlainText()).toContain("4"));
+      expect(by("button")).not.toHaveAttribute("data-mw-pointer-none");
+    } finally {
+      document.body.style.pointerEvents = "";
+      by("badge").textContent = "3";
+    }
+    host.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse", isPrimary: true }));
+    await waitFor(() => expect(by("button")).not.toHaveAttribute("data-mw-hover"));
+    await waitFor(() => expect(host.toPlainText()).toContain("3"));
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): what
+ * addresses an element with no pointer over it — a key's activation of
+ * the focused button, a label's click forwarded to its control —
+ * reaches it in grid mode (visual/pointer.spec.ts, which needs trusted
+ * input). Full screen, so the viewport's origin, where Chromium and
+ * Firefox report a key's click, is a cell the paragraph shows. */
+export const Activation: StoryObj = {
+  tags: ["!dev", "!golden"],
+  parameters: { layout: "fullscreen" },
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <p>A paragraph on the first row.</p>
+        <button data-test="button" class="w-max border px-1" @click=${countClicks}>press</button>
+        <label data-test="wrapping">Wrapping <input data-test="wrapped" type="checkbox" /></label>
+        <p>
+          <label data-test="pointing" for="pointed">Pointing</label>
+          <input id="pointed" data-test="pointed" type="checkbox" />
+        </p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): what takes
+ * no pointer events passes the pointer where it is drawn — a tip
+ * translated over a button, a paragraph over a drop zone whose link
+ * takes the pointer again — a button whose centre another box covers,
+ * for a key's activation, and a box drawn 4px off its laid-out cells,
+ * for the hover at its edge (visual/pointer-events.spec.ts). */
+export const PassThrough: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <div class="relative w-30">
+          <button data-test="under" class="w-12 border" @click=${countClicks}>under</button>
+          <span
+            data-test="tip"
+            class="pointer-events-none absolute top-0 left-14 -translate-x-14 bg-red-600 text-white"
+            >tip</span
+          >
+        </div>
+        <div class="relative">
+          <div data-test="zone" class="h-3 bg-gray-800"></div>
+          <p class="pointer-events-none absolute top-1 left-1">
+            Drop files or
+            <a
+              data-test="link"
+              href="#browse"
+              class="pointer-events-auto underline"
+              @click=${countClicks}
+              >browse</a
+            >
+          </p>
+        </div>
+        <div class="relative w-max">
+          <button data-test="covered" class="w-20 border" @click=${countClicks}>
+            press me please
+          </button>
+          <div class="absolute top-0 left-6 h-3 w-8 bg-red-600"></div>
+        </div>
+        <div data-test="edge" class="w-10 translate-x-1 hover:bg-emerald-800">edge</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
   },
 };

@@ -89,8 +89,11 @@ describe("anonymous runs", () => {
       start: { node: foo, offset: 0 },
       end: { node: x, offset: 1 },
     });
-    expect(hitChain(root, 1, 0)).toEqual([container.source]);
-    expect(hitChain(root, 1, 1)).toEqual([container.source, container.source.querySelector("div")]);
+    expect(hitChain(root, 1, 0, null)).toEqual([container.source]);
+    expect(hitChain(root, 1, 1, null)).toEqual([
+      container.source,
+      container.source.querySelector("div"),
+    ]);
   });
 
   it("keeps an out-of-flow element the run met below a direct child", () => {

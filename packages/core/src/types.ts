@@ -640,6 +640,9 @@ export interface CellStyle {
    * or `collapse` — keeps its space and paints none of its own ink, and
    * a visible descendant still paints. */
   visible: boolean;
+  /** Its computed `pointer-events` is other than `none`: the engine's
+   * hit test takes it (specs/cell-model.md "Pointer states"). */
+  pointerEvents: boolean;
   /** Set on a layer root — an element with a transform or a filter —
    * whose subtree paints into its own node (specs/layers.md). */
   layer: Layer | null;
@@ -816,6 +819,11 @@ export interface LayoutNode {
     /** Its computed `visibility` is `visible`: a hidden one's cells stay
      * blank, their space kept. */
     visible: boolean;
+    /** Its computed `pointer-events` is other than `none`. */
+    pointerEvents: boolean;
+    /** Its opacity times its inline ancestors' (CSS nests it); the
+     * leaf's own rides the paint walk. */
+    opacity: number;
   }[];
   /** Per-character index into `inlineElements` (-1 = direct leaf text);
    * present only when the run contains inline elements. Plain-text
@@ -837,6 +845,10 @@ export interface LayoutNode {
    * engine and browser agree because both treat it as an atomic unit of
    * the same width (specs/cell-model.md). */
   inlineBox?: boolean;
+  /** The product of the opacities of the inline elements between the box
+   * and its leaf or container, which the paint walk multiplies into the
+   * box's own (specs/cell-model.md "Opacity"); absent at 1. */
+  inlineOpacity?: number;
   /** Set by a grid parent on a child whose template is `subgrid` in at
    * least one axis: the child's span in each axis (its explicit track
    * count there — placement clamps to it) and, once the parent has sized
@@ -877,11 +889,12 @@ export interface LayoutNode {
    * column flex algorithm's base main size (CSS distributes from unclamped
    * bases; limits apply via its freeze loop). */
   unclampedHeight: number;
-  /** Content-derived outer height, before explicit-height/min-height
-   * flooring — written by layoutNode. Table cells align their content
-   * against this: an explicit cell height tallens the box (and floors
-   * the row), but `vertical-align` centers the CONTENT, per CSS. */
-  naturalContentHeight?: number;
+  /** Content-derived outer height, whatever height or min-height floor
+   * the box has (a flex/grid text leaf's alignment padding left out) —
+   * written by layoutNode. A flex column sizes an item's intrinsic basis
+   * and automatic minimum from it; a table cell's `vertical-align`
+   * centers it, per CSS. */
+  naturalContentHeight: number;
   /** A text leaf's ink extent in content cells (widest line, rows) —
    * written by the leaf pass; scrollable-overflow accounting reads it
    * instead of re-wrapping. */
@@ -1017,6 +1030,10 @@ export interface CellMetrics {
    * inline box with a bottom-edge baseline is lowered from it (the
    * host's `--mw-base`). */
   baseline?: number;
+  /** How Typed OM reads an out-of-flow box's `auto` minimum, the
+   * probe's: `auto`, or in WebKit `0px`, which a `min-*-0` reads as too
+   * (specs/anchor-positioning.md deviation 1). */
+  autoMinimum?: string;
 }
 
 export function defaultCellStyle(): CellStyle {
@@ -1100,6 +1117,7 @@ export function defaultCellStyle(): CellStyle {
     boxShadow: [],
     opacity: 1,
     visible: true,
+    pointerEvents: true,
     layer: null,
     anchorNames: [],
     positionAnchor: null,

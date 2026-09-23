@@ -2,7 +2,14 @@ import { propNames } from "@monowind/ui/dialog";
 import type * as dialog from "@monowind/ui/dialog";
 import type { PropTypes } from "@zag-js/vue";
 import { useDialog, type Composed } from "../composables.ts";
-import { defineContext, definePart, defineRoot, defineRootProvider, partsOf } from "./part.ts";
+import {
+  defineContext,
+  definePart,
+  defineRoot,
+  defineRootProvider,
+  partsOf,
+  triggerPart,
+} from "./part.ts";
 
 /** Zag's dialog as a compound component (specs/ui.md "Component
  * layer"). */
@@ -34,7 +41,7 @@ export const DialogPositioner = definePart<Api>("DialogPositioner", context, (va
   ref: value.positioner,
 }));
 
-export const DialogTrigger = part("Trigger", (api) => api.getTriggerProps(), "button");
+export const DialogTrigger = triggerPart<dialog.Api<PropTypes>, Api>("Dialog", context);
 export const DialogContent = part("Content", (api) => api.getContentProps());
 export const DialogTitle = part("Title", (api) => api.getTitleProps(), "h2");
 export const DialogDescription = part("Description", (api) => api.getDescriptionProps(), "p");

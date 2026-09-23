@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ascii",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "FIGlet/TOIlet ascii-art banner text for monowind: the <mono-ascii> element and a font library",
   "keywords": [
     "ascii-art",
@@ -53,7 +53,7 @@
     }
   },
   "scripts": {
-    "build": "node scripts/generate-fonts.mjs && vite build && vite build -c vite.cdn.config.ts && tsc -p tsconfig.build.json && node -e \"fs.readdirSync('dist/fonts').filter(f=>f.endsWith('.map')).forEach(f=>fs.rmSync('dist/fonts/'+f))\"",
+    "build": "node scripts/generate-fonts.mjs && vite build && vite build -c vite.cdn.config.ts && tsc -p tsconfig.build.json && node scripts/strip-font-maps.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -49,7 +49,10 @@ async function fetchFont(slug: string): Promise<unknown> {
     for (const extension of ["flf", "tlf"]) {
       try {
         const response = await fetch(`${base}${slug}.${extension}`);
-        if (response.ok) return registerAsciiFont(slug, await response.text());
+        const text = response.ok ? await response.text() : "";
+        // A font file by its signature: a single-page app answers a
+        // missing path with its own page, and a 200.
+        if (/^[ft]lf2/.test(text)) return registerAsciiFont(slug, text);
       } catch {
         // Network/origin errors: try the next candidate.
       }

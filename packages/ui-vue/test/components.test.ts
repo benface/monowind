@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vitest";
-import { createApp, h, nextTick, reactive } from "vue";
+import { createApp, createSSRApp, h, nextTick, reactive, shallowRef } from "vue";
+import { renderToString } from "vue/server-renderer";
 import { collection } from "@monowind/ui/listbox";
+import { posted, resetByClick } from "../../ui/test/helpers.ts";
 import {
   ComboboxContent,
   ComboboxControl,
@@ -11,6 +13,10 @@ import {
   ComboboxPositioner,
   ComboboxRoot,
   ComboboxTrigger,
+  DialogContent,
+  DialogPositioner,
+  DialogRoot,
+  DialogTrigger,
   ListboxContent,
   ListboxItem,
   ListboxItemIndicator,
@@ -202,6 +208,141 @@ it("renders a select's parts, the hidden control out of the grid", async () => {
   tree.unmount();
 });
 
+it("selects every option a multiple select's value holds in its hidden control", async () => {
+  const items = collection({ items: ["main", "next", "old"] });
+  const state = reactive({ name: "branches" });
+  const tree = mount(() =>
+    h(
+      SelectRoot,
+      { collection: items, multiple: true, defaultValue: ["main", "old"], name: state.name },
+      () => [h(SelectHiddenSelect)],
+    ),
+  );
+  await nextTick();
+  const hidden = tree.container.querySelector<HTMLSelectElement>("select")!;
+  expect([...hidden.selectedOptions].map((option) => option.value)).toEqual(["main", "old"]);
+  // A render that leaves the value alone leaves the selection alone.
+  state.name = "targets";
+  await nextTick();
+  await nextTick();
+  expect(hidden.name).toBe("targets");
+  expect([...hidden.selectedOptions].map((option) => option.value)).toEqual(["main", "old"]);
+  tree.unmount();
+});
+
+it("selects the hidden option of a value that arrived before it, and none until then", async () => {
+  const items = shallowRef(collection({ items: ["main"] }));
+  const tree = mount(() =>
+    h(SelectRoot, { collection: items.value, defaultValue: ["release"] }, () => [
+      h(SelectHiddenSelect),
+    ]),
+  );
+  await nextTick();
+  const hidden = tree.container.querySelector<HTMLSelectElement>("select")!;
+  expect(posted(hidden), "no option chosen in its place").toEqual([]);
+  items.value = collection({ items: ["main", "release"] });
+  await nextTick();
+  await nextTick();
+  expect(posted(hidden)).toEqual(["release"]);
+  tree.unmount();
+});
+
+/** A select over a composable the test drives, its hidden control in a
+ * form. */
+function mountReset(id: string, defaultValue?: string[]) {
+  let api!: ReturnType<typeof useSelect>;
+  const tree = mountSetup(() => {
+    api = useSelect({
+      id,
+      collection: collection({ items: ["main", "next"] }),
+      name: "branch",
+      ...(defaultValue ? { defaultValue } : {}),
+    });
+    return () => h("form", [h(SelectRootProvider, { value: api }, () => [h(SelectHiddenSelect)])]);
+  });
+  return { tree, api };
+}
+
+it("server-renders its hidden control's options, a form posting the default before hydration", async () => {
+  const items = collection({ items: ["main", "next"] });
+  const page = (defaultValue?: string[]) =>
+    createSSRApp({
+      render: () =>
+        h("form", [
+          h(
+            SelectRoot,
+            {
+              id: "served",
+              collection: items,
+              name: "branch",
+              ...(defaultValue ? { defaultValue } : {}),
+            },
+            () => [h(SelectHiddenSelect)],
+          ),
+        ]),
+    });
+  const container = document.createElement("div");
+  container.innerHTML = await renderToString(page(["next"]));
+  document.body.append(container);
+  const hidden = container.querySelector("select")!;
+  expect(posted(hidden), "before the script runs").toEqual(["next"]);
+  expect(hidden.getAttribute("size"), "no first option picked in the default's absence").toBe("2");
+  const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  const app = page(["next"]);
+  app.mount(container);
+  await nextTick();
+  expect(warned, "a clean hydration").not.toHaveBeenCalled();
+  expect(errors).not.toHaveBeenCalled();
+  warned.mockRestore();
+  errors.mockRestore();
+  expect(container.querySelector("select")).toBe(hidden);
+  expect(posted(hidden)).toEqual(["next"]);
+  app.unmount();
+  container.remove();
+  expect(await renderToString(page())).not.toContain("selected");
+});
+
+it("goes back to its default at a reset the reader clicks, or to no option", async () => {
+  const withDefault = mountReset("clicked", ["next"]);
+  await nextTick();
+  const hidden = withDefault.tree.container.querySelector<HTMLSelectElement>("select")!;
+  await resetByClick(hidden.form!);
+  expect(posted(hidden)).toEqual(["next"]);
+  withDefault.tree.unmount();
+  const { tree, api } = mountReset("clicked-empty");
+  await nextTick();
+  const control = tree.container.querySelector<HTMLSelectElement>("select")!;
+  api.api.value.setValue(["main"]);
+  await nextTick();
+  await nextTick();
+  await resetByClick(control.form!);
+  expect(api.api.value.value).toEqual([]);
+  expect(posted(control), "no option chosen in its place").toEqual([]);
+  tree.unmount();
+});
+
+it("goes back to its default at a form's reset, the machine and the form alike", async () => {
+  const { tree, api } = mountReset("reset", ["next"]);
+  await nextTick();
+  const hidden = tree.container.querySelector<HTMLSelectElement>("select")!;
+  // A reset the machine sees as no change: the form's own reset alone
+  // puts the default back.
+  hidden.form!.reset();
+  await nextTick();
+  expect(posted(hidden)).toEqual(["next"]);
+  api.api.value.setValue(["main"]);
+  await nextTick();
+  await nextTick();
+  expect(posted(hidden)).toEqual(["main"]);
+  hidden.form!.reset();
+  await nextTick();
+  await nextTick();
+  expect(api.api.value.value).toEqual(["next"]);
+  expect(posted(hidden)).toEqual(["next"]);
+  tree.unmount();
+});
+
 it("selects through a listbox's parts, the choice reaching the page", async () => {
   const items = collection({ items: ["main", "next"] });
   const chosen: string[][] = [];
@@ -299,6 +440,77 @@ it("follows a v-model through the update events a root emits", async () => {
   await nextTick();
   expect(state.value).toEqual(["next"]);
   expect(state.open).toBe(false);
+  // The selection marked as a listbox's items and the mount's are.
+  expect(tree.by("item", "next").hasAttribute("data-selected")).toBe(true);
+  expect(tree.by("item", "main").hasAttribute("data-selected")).toBe(false);
+  tree.unmount();
+});
+
+it("follows a v-model on a bound prop the callback's detail names otherwise", async () => {
+  // `v-model:triggerValue`: the trigger callbacks carry it as `value`.
+  const menu = reactive({ triggerValue: undefined as string | undefined });
+  const menuTree = mount(() =>
+    h(
+      MenuRoot,
+      {
+        triggerValue: menu.triggerValue,
+        "onUpdate:triggerValue": (value: string) => (menu.triggerValue = value),
+      },
+      () => [
+        h(MenuTrigger, { value: "a" }, () => "a"),
+        h(MenuTrigger, { value: "b" }, () => "b"),
+        h(MenuPositioner, () => [h(MenuContent, () => [h(MenuItem, { value: "x" }, () => "x")])]),
+      ],
+    ),
+  );
+  await nextTick();
+  menuTree.container.querySelectorAll<HTMLElement>("[data-part='trigger']")[1]!.click();
+  await nextTick();
+  expect(menu.triggerValue).toBe("b");
+  menuTree.unmount();
+  // A dialog's triggers carry values as a menu's do.
+  const dialog = reactive({ triggerValue: undefined as string | undefined });
+  const dialogTree = mount(() =>
+    h(
+      DialogRoot,
+      {
+        triggerValue: dialog.triggerValue,
+        "onUpdate:triggerValue": (value: string) => (dialog.triggerValue = value),
+      },
+      () => [
+        h(DialogTrigger, { value: "a" }, () => "a"),
+        h(DialogTrigger, { value: "b" }, () => "b"),
+        h(DialogPositioner, () => [h(DialogContent, () => "shared")]),
+      ],
+    ),
+  );
+  await nextTick();
+  dialogTree.container.querySelectorAll<HTMLElement>("[data-part='trigger']")[1]!.click();
+  await nextTick();
+  expect(dialog.triggerValue).toBe("b");
+  dialogTree.unmount();
+  // `v-model:inputValue`: what the reader types.
+  const items = collection({ items: ["main", "next"] });
+  const combobox = reactive({ inputValue: "" });
+  const tree = mount(() =>
+    h(
+      ComboboxRoot,
+      {
+        collection: items,
+        inputValue: combobox.inputValue,
+        "onUpdate:inputValue": (value: string) => (combobox.inputValue = value),
+      },
+      () => [h(ComboboxControl, () => [h(ComboboxInput)])],
+    ),
+  );
+  await nextTick();
+  const input = tree.by("input") as HTMLInputElement;
+  // An idle combobox takes typing only once its input has focus.
+  input.focus();
+  input.value = "ne";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await nextTick();
+  expect(combobox.inputValue).toBe("ne");
   tree.unmount();
 });
 

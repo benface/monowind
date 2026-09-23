@@ -94,6 +94,38 @@ describe("the mount", () => {
     root.remove();
   });
 
+  it("starts at the items the markup marks selected, the first alone in one-value mode", async () => {
+    const root = markup();
+    by(root, "item", "main").setAttribute("data-selected", "");
+    by(root, "item", "next").setAttribute("data-selected", "");
+    const single = listbox(root, { id: "m" });
+    await settle();
+    expect(single.api.value).toEqual(["main"]);
+    // The marker follows the selection, so a mount after it reads what
+    // the reader chose: the one it left is cleared on the first spread.
+    expect(by(root, "item", "next").hasAttribute("data-selected")).toBe(false);
+    by(root, "item", "next").click();
+    await settle();
+    expect(by(root, "item", "main").hasAttribute("data-selected")).toBe(false);
+    expect(by(root, "item", "next").hasAttribute("data-selected")).toBe(true);
+    single.destroy();
+    const again = listbox(root, { id: "m" });
+    await settle();
+    expect(again.api.value).toEqual(["next"]);
+    again.destroy();
+    by(root, "item", "main").setAttribute("data-selected", "");
+    const several = listbox(root, { id: "m", selectionMode: "multiple" });
+    await settle();
+    expect(several.api.value).toEqual(["main", "next"]);
+    several.destroy();
+    // A props' own selection wins over the markup's.
+    const own = listbox(root, { id: "m", defaultValue: ["stale"] });
+    await settle();
+    expect(own.api.value).toEqual(["stale"]);
+    own.destroy();
+    root.remove();
+  });
+
   it("walks the items with the arrows, past the disabled one", async () => {
     const root = markup();
     const mounted = listbox(root, { id: "k" });

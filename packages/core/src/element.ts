@@ -15,7 +15,18 @@ import {
 } from "./focus.ts";
 import type { Direction } from "./focus.ts";
 import type { Remembered } from "./positioning.ts";
-import { hitChain, hitRect, hitStack, isInert, nearestCells, scrollStep } from "./pointer.ts";
+import {
+  cellAtPoint,
+  chainOf,
+  hitRect,
+  hitStack,
+  isInert,
+  nearestCells,
+  pointKey,
+  scrollStep,
+  stackAt,
+} from "./pointer.ts";
+import type { PointerHit } from "./pointer.ts";
 import {
   charIndexAtCell,
   clipBounds,
@@ -40,9 +51,8 @@ import {
 import type { BoundaryPoints } from "./selection.ts";
 import { GlyphBoxes } from "./glyph-box.ts";
 import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
-import { gridOffsetAt, layerAt, layerGridAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
-import type { CellHit } from "./paint.ts";
-import { getRootFontSizePx, measureCellMetrics } from "./metrics.ts";
+import { gridOffsetAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
+import { getRootFontSizePx, measureCellMetrics, sameMetrics } from "./metrics.ts";
 import { layoutRoot } from "./layout.ts";
 import { render, syncStickyVars } from "./render.ts";
 import { applyStickyShifts, collectStickyBoxes } from "./sticky.ts";
@@ -123,6 +133,12 @@ const SHADOW_TEMPLATE = `
    * supports it (specs/layers.md, deviations 3 and 8). */
   :host([select="grid"]) .layer > .grid { user-select: contain; -webkit-user-select: contain; }
   :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
+  /* A read under measuring sees the pointer-events written inside the
+   * host, over a page's lock above it (specs/cell-model.md "Pointer
+   * states"); only the slot rule keys on measuring, as a slotted one
+   * restyles the shadow tree at each flip (architecture/performance.md). */
+  :host([select="grid"]) ::slotted(*) { pointer-events: auto; }
+  :host([measuring]:not([select="grid"])) slot { pointer-events: auto; }
   /* A live semantic selection (specs/semantic-selection.md) lifts the
    * lock so the element selection copies; pointer events stay off. */
   :host([select="grid"][data-mw-semantic-selection]) slot { user-select: text; -webkit-user-select: text; }
@@ -235,6 +251,12 @@ export const INTERACTIVE = [
  * the host holding it. */
 const behind = (el: Element): Element | null =>
   el.parentElement ?? (el.parentNode instanceof ShadowRoot ? el.parentNode.host : null);
+
+/** Whether a client point lies in an element's own border box. */
+function inBox(el: Element, x: number, y: number): boolean {
+  const box = el.getBoundingClientRect();
+  return x >= box.left && x < box.right && y >= box.top && y < box.bottom;
+}
 
 /** The events a covered element must not take (see #onCoveredEvent):
  * the press, whose default moves the focus, and the activations. A
@@ -379,6 +401,13 @@ function controlKeeps(target: Element, key: string): boolean {
   return key === " " && target.matches("button, summary");
 }
 
+/** The sum of a computed style's lengths, in px. */
+const pxSum = (style: CSSStyleDeclaration, ...properties: string[]): number =>
+  properties.reduce(
+    (sum, property) => sum + (parseFloat(style.getPropertyValue(property)) || 0),
+    0,
+  );
+
 /** An element's padding box in client pixels. */
 function paddingBox(el: Element): DOMRectReadOnly {
   const rect = el.getBoundingClientRect();
@@ -447,7 +476,6 @@ export class MonoWindElement extends HTMLElementBase {
     }
   }
 
-  #shadow: ShadowRoot;
   /** The shadow's `:host {}` rule the engine writes into — the theme
    * tokens and the grid's origin, inherited by the light DOM, never a
    * light-DOM mutation — seeded with the system colors, so a token is
@@ -564,12 +592,12 @@ export class MonoWindElement extends HTMLElementBase {
 
   constructor() {
     super();
-    this.#shadow = this.attachShadow({ mode: "open" });
-    this.#shadow.innerHTML = SHADOW_TEMPLATE;
+    const shadow = this.attachShadow({ mode: "open" });
+    shadow.innerHTML = SHADOW_TEMPLATE;
     this.#hostSheet.replaceSync(":host { --mw-fg: canvastext; --mw-bg: canvas }");
-    this.#shadow.adoptedStyleSheets = [this.#hostSheet];
-    this.#grid = this.#shadow.getElementById("grid") as HTMLElement;
-    this.#layers = this.#shadow.getElementById("layers") as HTMLElement;
+    shadow.adoptedStyleSheets = [this.#hostSheet];
+    this.#grid = shadow.getElementById("grid") as HTMLElement;
+    this.#layers = shadow.getElementById("layers") as HTMLElement;
     // Cell-metrics probe (see measureCellMetrics): persistent, hidden but
     // measurable, inheriting the host's font/line-height/letter-spacing.
     // It lives in the LIGHT DOM so it is font-matched in exactly the same
@@ -585,7 +613,7 @@ export class MonoWindElement extends HTMLElementBase {
       "position:absolute!important;top:0!important;left:0!important;" +
       "visibility:hidden!important;pointer-events:none!important;user-select:none!important;" +
       "white-space:pre!important;overflow-wrap:normal!important;" +
-      "padding:0!important;margin:0!important;border:0!important;";
+      "padding:0!important;margin:0!important;border:0!important;min-width:auto!important;";
     this.#probe.textContent = "M".repeat(100);
     // An empty inline-block at the probe's baseline marks it for the
     // metrics (specs/cell-model.md "Typography").
@@ -616,7 +644,7 @@ export class MonoWindElement extends HTMLElementBase {
   connectedCallback(): void {
     // A host inside another is unsupported: it stays plain content of
     // the outer one, laid out and painted like any element of it.
-    this.#nested = this.parentElement?.closest("mono-wind") !== null;
+    this.#nested = (this.parentElement?.closest("mono-wind") ?? null) !== null;
     if (this.#nested) {
       warnOnce(
         this,
@@ -771,6 +799,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.removeEventListener("animationcancel", this.#onAnimationDone);
     this.removeEventListener("toggle", this.#onToggle, true);
     this.#activeTransitions = 0;
+    this.#activeLayerTransitions = 0;
     this.#animated.clear();
     this.removeEventListener("pointermove", this.#onPointerMove);
     this.removeEventListener("pointerleave", this.#onPointerLeave);
@@ -817,8 +846,9 @@ export class MonoWindElement extends HTMLElementBase {
   #pressing = false;
   #paintHeld = false;
   #hoverClient: { x: number; y: number } | null = null;
-  #hoverCol = NaN;
-  #hoverRow = NaN;
+  /** The pointer's cells at the last update (pointKey); null where it
+   * synthesized nothing. */
+  #hoverKey: unknown[] | null = null;
   #gridOrigin: { left: number; top: number } | null = null;
   static #hoverCapable = typeof matchMedia === "undefined" ? null : matchMedia("(hover: hover)");
 
@@ -964,17 +994,32 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** Arm (or re-arm) a pane's settle for after `delay` of quiet. */
   #settleAfter(el: HTMLElement, delay: number): void {
-    clearTimeout(this.#settleTimers.get(el));
+    this.#cancelSettle(el);
     this.#settleTimers.set(
       el,
-      setTimeout(() => this.#settle(el), delay),
+      setTimeout(() => {
+        this.#settleTimers.delete(el);
+        this.#settle(el);
+      }, delay),
     );
   }
 
-  #onScroll = (event: Event): void => {
+  #cancelSettle(el: Element): void {
+    clearTimeout(this.#settleTimers.get(el));
+    this.#settleTimers.delete(el);
+  }
+
+  /** The scroll container an event is from, one the engine drives. */
+  #scrollTarget(event: Event): HTMLElement | null {
     const target = event.target;
-    if (!(target instanceof HTMLElement) || target === this) return;
-    if (!target.hasAttribute("data-mw-scroll")) return;
+    return target instanceof HTMLElement && target !== this && target.hasAttribute("data-mw-scroll")
+      ? target
+      : null;
+  }
+
+  #onScroll = (event: Event): void => {
+    const target = this.#scrollTarget(event);
+    if (!target) return;
     this.#containerScrolled = true;
     if (this.#keyScroll?.container === target) this.#keyScroll.scrolled = true;
     this.#schedulePaint();
@@ -989,14 +1034,13 @@ export class MonoWindElement extends HTMLElementBase {
     if (!("onscrollend" in window) || Date.now() - this.#lastKeyAt < KEY_SCROLL_MS) {
       this.#settleAfter(target, SETTLE_FALLBACK_MS);
     } else {
-      clearTimeout(this.#settleTimers.get(target));
+      this.#cancelSettle(target);
     }
   };
 
   #onScrollEnd = (event: Event): void => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement) || target === this) return;
-    if (!target.hasAttribute("data-mw-scroll")) return;
+    const target = this.#scrollTarget(event);
+    if (!target) return;
     // Mid-gesture scrollends: routed scrolls and thumb drags settle on
     // quiesce/release instead (see #routedScrollAt).
     if (Date.now() - (this.#routedScrollAt.get(target) ?? 0) < WHEEL_QUIESCE_MS) return;
@@ -1049,7 +1093,6 @@ export class MonoWindElement extends HTMLElementBase {
     // gesture — unless nothing outside the host can scroll that way,
     // where routing is the only thing the tick can usefully do.
     if (!e.cancelable && this.#outsideCanScroll(dx, dy)) return;
-    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
     const now = Date.now();
     const mag = Math.abs(dx) + Math.abs(dy);
     // Zero-delta ticks mark gesture phases (Safari's, and Chromium's
@@ -1096,7 +1139,7 @@ export class MonoWindElement extends HTMLElementBase {
       target = this.#scrollNodeOf(latch.el) ?? null;
     }
     if (!target) {
-      const stack = hitStack(layout, col, row);
+      const stack = stackAt(layout, this.#cellAt(e.clientX, e.clientY, metrics));
       for (let i = stack.length - 1; i >= 0; i--) {
         const node = stack[i]!.node;
         if (!node.scrollRange || isInert(node.source)) continue;
@@ -1180,37 +1223,29 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   /** The grid cell under a client point — through a layer's transform
-   * where one shows there (specs/layers.md) — with the grid it is
-   * painted in: a layer's, with the layer's origin, or the main one.
-   * The origin is cached until the next layout or page scroll
-   * invalidates it. */
-  #cellAt(clientX: number, clientY: number, metrics: CellMetrics): CellHit {
+   * where one shows there and takes the pointer (cellAtPoint) — with
+   * the grid it is painted in: a layer's, with the layer's origin, or
+   * the main one. */
+  #cellAt(clientX: number, clientY: number, metrics: CellMetrics): PointerHit {
+    const { x, y } = this.#gridPoint(clientX, clientY);
+    return cellAtPoint(this.#lastLayout, this.#layers, this.#grid, x, y, metrics);
+  }
+
+  /** A client point in px from the grid's origin, which is cached until
+   * the next layout or page scroll invalidates it. */
+  #gridPoint(clientX: number, clientY: number): { x: number; y: number } {
     if (!this.#gridOrigin) {
       const rect = this.#grid.getBoundingClientRect();
       this.#gridOrigin = { left: rect.left, top: rect.top };
     }
-    const x = clientX - this.#gridOrigin.left;
-    const y = clientY - this.#gridOrigin.top;
-    return (
-      layerAt(this.#layers, x, y) ?? {
-        col: Math.floor(x / metrics.width),
-        row: Math.floor(y / metrics.height),
-        grid: this.#grid,
-        x: 0,
-        y: 0,
-      }
-    );
+    return { x: clientX - this.#gridOrigin.left, y: clientY - this.#gridOrigin.top };
   }
 
-  /** The glyph painted at a cell: the layer painted last over it, or
-   * the main grid's. */
-  #glyphAt(col: number, row: number): string | undefined {
-    const layer = layerGridAt(this.#layers, col, row);
-    if (layer) {
-      const glyph = paintedCell(layer.grid, col - layer.x, row - layer.y);
-      if (glyph !== undefined && glyph !== " ") return glyph;
-    }
-    return paintedCell(this.#grid, col, row);
+  /** What the pointer's hit at a client point is a function of
+   * (pointKey). */
+  #pointKey(clientX: number, clientY: number, metrics: CellMetrics): unknown[] {
+    const { x, y } = this.#gridPoint(clientX, clientY);
+    return pointKey(this.#layers, x, y, metrics);
   }
 
   /** What a pointerdown on a visible gutter bar begins — engine-routed
@@ -1222,8 +1257,9 @@ export class MonoWindElement extends HTMLElementBase {
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!layout || !metrics || this.#scrollNodes.length === 0) return null;
-    const { col, row } = this.#cellAt(clientX, clientY, metrics);
-    const stack = hitStack(layout, col, row);
+    const at = this.#cellAt(clientX, clientY, metrics);
+    const { col, row } = at;
+    const stack = stackAt(layout, at);
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
       const range = node.scrollRange;
@@ -1330,12 +1366,13 @@ export class MonoWindElement extends HTMLElementBase {
     this.#hoverClient = { x: clientX, y: clientY };
     this.#hoverTarget = event.target instanceof Element ? event.target : null;
     // High-frequency path: skip the update while the pointer stays in
-    // the same cell (state can only change with the cell — relayouts
-    // and scrolls have their own refresh calls).
+    // the same cells (state can only change with them — relayouts and
+    // scrolls have their own refresh calls).
     const metrics = this.#cellMetrics;
-    if (metrics) {
-      const { col, row } = this.#cellAt(clientX, clientY, metrics);
-      if (col === this.#hoverCol && row === this.#hoverRow) return;
+    const key = this.#hoverKey;
+    if (metrics && key) {
+      const next = this.#pointKey(clientX, clientY, metrics);
+      if (next.length === key.length && next.every((part, i) => part === key[i])) return;
     }
     this.#updatePointerStates();
   };
@@ -1394,7 +1431,7 @@ export class MonoWindElement extends HTMLElementBase {
       // through the engine.
       const metrics = this.#cellMetrics;
       const at = metrics ? this.#cellAt(e.clientX, e.clientY, metrics) : null;
-      const target = at ? this.#focusTargetAt(at.col, at.row) : null;
+      const target = at ? this.#focusTargetAt(at) : null;
       if (!onGrid || target || this.#focusedInside()) this.#startGridDrag(e, target);
       return;
     }
@@ -1404,8 +1441,8 @@ export class MonoWindElement extends HTMLElementBase {
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!selection || !layout || !metrics) return;
-    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
-    const target = this.#unitUnder(layout, col, row, unit);
+    const at = this.#cellAt(e.clientX, e.clientY, metrics);
+    const target = this.#unitUnder(layout, at.col, at.row, unit, at.layerRoot);
     if (!target) {
       // No word or paragraph under the cell (a gap, a border, a blank):
       // the browser's own gesture on the grid — a run of glyphs, or the
@@ -1417,7 +1454,7 @@ export class MonoWindElement extends HTMLElementBase {
     // Ours from here: no native word/whole-grid selection, no native
     // drag.
     e.preventDefault();
-    this.#focusAsPress(col, row);
+    this.#focusAs(this.#focusTargetAt(at));
     this.#liftLock(target);
     // Shift extends the existing element selection from its anchor.
     const anchor: SelectionUnit =
@@ -1440,8 +1477,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (!this.#gesture || !layout || !metrics) return;
     this.#stopAutoscroll();
     if (e.isTrusted) this.setPointerCapture(this.#lastPointerId);
-    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
-    const stack = hitStack(layout, col, row);
+    const stack = stackAt(layout, this.#cellAt(e.clientX, e.clientY, metrics));
     let container: HTMLElement | null = null;
     for (let i = stack.length - 1; i >= 0 && !container; i--) {
       const { node } = stack[i]!;
@@ -1610,6 +1646,7 @@ export class MonoWindElement extends HTMLElementBase {
       intrinsicHeight: 0,
       localRect: { x: 0, y: 0, width: 0, height: 0 },
       unclampedHeight: 0,
+      naturalContentHeight: 0,
       resolvedPadding: zeroInsets(),
     };
   }
@@ -1618,10 +1655,10 @@ export class MonoWindElement extends HTMLElementBase {
    * above the element under it — a dialog's content, a menu's, a scroll
    * region. From the cell, since a grid press targets the shadow's
    * grid, retargeted to the host. */
-  #focusTargetAt(col: number, row: number): HTMLElement | null {
+  #focusTargetAt(at: PointerHit): HTMLElement | null {
     const layout = this.#lastLayout;
     const target = layout
-      ? hitChain(layout, col, row).at(-1)?.closest<HTMLElement>("[tabindex]")
+      ? chainOf(stackAt(layout, at)).at(-1)?.closest<HTMLElement>("[tabindex]")
       : null;
     return target && this.contains(target) ? target : null;
   }
@@ -1633,10 +1670,6 @@ export class MonoWindElement extends HTMLElementBase {
   #focusAs(target: HTMLElement | null): void {
     target?.focus({ preventScroll: true });
     if (document.activeElement !== target) this.#focusedInside()?.blur();
-  }
-
-  #focusAsPress(col: number, row: number): void {
-    this.#focusAs(this.#focusTargetAt(col, row));
   }
 
   /** The focused element, when it is inside the host. */
@@ -1671,21 +1704,22 @@ export class MonoWindElement extends HTMLElementBase {
    * (specs/cell-model.md "Pointer states"): in grid mode that box is
    * `pointer-events: none`, so the browser's hit test saw through it
    * and found the element underneath — the event belongs to the cell,
-   * as a phantom target's does. Only a real pointer hit is corrected:
-   * a script's `click()` addresses the element itself, as it does
-   * natively; a modal dialog's subtree is the light DOM's
-   * (specs/top-layer.md deviation 7). */
+   * as a phantom target's does. Only a real pointer hit inside the
+   * target's own box is corrected: a script's, a key's (`detail` 0) and
+   * a label's click address the element itself, as natively, and a
+   * modal dialog's subtree is the light DOM's (specs/top-layer.md
+   * deviation 7). */
   #isCoveredTarget(event: Event): boolean {
     const e = event as MouseEvent;
     const target = e.target;
-    if (!e.isTrusted || this.getAttribute("select") !== "grid") return false;
+    if (!e.isTrusted || e.detail === 0 || this.getAttribute("select") !== "grid") return false;
     if (!(target instanceof Element) || target === this || !this.contains(target)) return false;
+    if (!inBox(target, e.clientX, e.clientY)) return false;
     if (target.closest("dialog:modal")) return false;
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!layout || !metrics) return false;
-    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
-    const cell = hitChain(layout, col, row).at(-1);
+    const cell = chainOf(stackAt(layout, this.#cellAt(e.clientX, e.clientY, metrics))).at(-1);
     return cell !== undefined && !showsElement(cell, target, this.#hasBox);
   }
 
@@ -1736,8 +1770,7 @@ export class MonoWindElement extends HTMLElementBase {
     const metrics = this.#cellMetrics;
     const selection = document.getSelection();
     if (!metrics || !selection) return;
-    const { col, row } = this.#cellAt(clientX, clientY, metrics);
-    const current = this.#unitAt(col, row, gesture.unit);
+    const current = this.#unitAt(this.#cellAt(clientX, clientY, metrics), gesture.unit);
     if (!current || (gesture.extent && sameUnit(gesture.extent, current))) return;
     gesture.extent = current;
     this.#selectThrough(selection, gesture.anchor, current);
@@ -1773,11 +1806,11 @@ export class MonoWindElement extends HTMLElementBase {
     const selection = document.getSelection();
     const metrics = this.#cellMetrics;
     if (!selection || !metrics) return;
-    const { col, row } = this.#cellAt(e.clientX, e.clientY, metrics);
-    const target = this.#unitAt(col, row, "character");
+    const at = this.#cellAt(e.clientX, e.clientY, metrics);
+    const target = this.#unitAt(at, "character");
     if (!target) return;
     e.preventDefault();
-    this.#focusAsPress(col, row);
+    this.#focusAs(this.#focusTargetAt(at));
     const anchor: SelectionUnit =
       e.shiftKey && selection.anchorNode && this.#elementSelection()
         ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
@@ -1801,14 +1834,16 @@ export class MonoWindElement extends HTMLElementBase {
    * nearest word or paragraph whole (the browser's reach over a gap).
    * The innermost box under the cell bounds the search first — a gap
    * between stacked paragraphs reaches them, not a column beside, as
-   * a point resolves inside its containing block — then the grid. */
-  #unitAt(col: number, row: number, unit: GestureUnit): SelectionUnit | null {
+   * a point resolves inside its containing block — then the grid. The
+   * search stays in the grid the press is in, a layer's or the main
+   * one's (specs/layers.md). */
+  #unitAt(at: PointerHit, unit: GestureUnit): SelectionUnit | null {
     const layout = this.#lastLayout;
     if (!layout) return null;
     const grid = { x: 0, y: 0, width: layout.localRect.width, height: layout.localRect.height };
-    const c = Math.max(0, Math.min(col, grid.width - 1));
-    const r = Math.max(0, Math.min(row, grid.height - 1));
-    const inner = hitStack(layout, c, r).at(-1);
+    const c = Math.max(0, Math.min(at.col, grid.width - 1));
+    const r = Math.max(0, Math.min(at.row, grid.height - 1));
+    const inner = hitStack(layout, c, r, at.layerRoot).at(-1);
     // An inert element's cells are nobody's (the browser ignores the
     // press there too).
     if (inner && isInert(inner.node.source)) return null;
@@ -1822,9 +1857,16 @@ export class MonoWindElement extends HTMLElementBase {
         // not a hit test (a wide cluster's continuation cell is its
         // cluster's, not blank). The pressed cell itself is always hit
         // tested — a space in a text run is a character.
-        const painted = this.#glyphAt(x, y);
+        const painted = paintedCell(at.grid, x - at.x, y - at.y);
         if (painted === undefined || (painted === " " && edge !== "self")) continue;
-        const found = this.#unitUnder(layout, x, y, unit, box === grid ? null : inner!.node);
+        const found = this.#unitUnder(
+          layout,
+          x,
+          y,
+          unit,
+          at.layerRoot,
+          box === grid ? null : inner!.node,
+        );
         if (!found) continue;
         if (edge === "self" || unit !== "character") return found;
         return pointUnit(edge === "start" ? found.start : found.end);
@@ -1846,9 +1888,10 @@ export class MonoWindElement extends HTMLElementBase {
     col: number,
     row: number,
     unit: GestureUnit,
+    through: LayoutNode | null,
     within: LayoutNode | null = null,
   ): SelectionUnit | null {
-    const stack = hitStack(layout, col, row);
+    const stack = hitStack(layout, col, row, through);
     if (within && !stack.some((entry) => entry.node === within)) return null;
     for (let i = stack.length - 1; i >= 0; i--) {
       const { node, x, y } = stack[i]!;
@@ -2039,8 +2082,10 @@ export class MonoWindElement extends HTMLElementBase {
       return;
     }
     if (this.#thumbDrag) {
-      this.#settle(this.#thumbDrag.el);
+      // Cleared first: #settle skips the pane of a live drag.
+      const { el } = this.#thumbDrag;
       this.#thumbDrag = null;
+      this.#settle(el);
       return;
     }
     if (!this.#pressing && !this.#pressTarget) return;
@@ -2102,9 +2147,7 @@ export class MonoWindElement extends HTMLElementBase {
    * element's cover is judged, the browser hitting it no more. */
   #underPointer(el: Element): boolean {
     const at = this.#hoverClient;
-    if (!at) return false;
-    const box = el.getBoundingClientRect();
-    return at.x >= box.left && at.x < box.right && at.y >= box.top && at.y < box.bottom;
+    return at !== null && inBox(el, at.x, at.y);
   }
 
   /** Recompute both synthesized chains from the stored pointer
@@ -2124,13 +2167,11 @@ export class MonoWindElement extends HTMLElementBase {
       this.getAttribute("select") === "grid" &&
       (this.#pressing || MonoWindElement.#hoverCapable?.matches)
     ) {
-      const { col, row } = this.#cellAt(this.#hoverClient.x, this.#hoverClient.y, metrics);
-      this.#hoverCol = col;
-      this.#hoverRow = row;
-      chain = hitChain(layout, col, row);
+      const { x, y } = this.#hoverClient;
+      this.#hoverKey = this.#pointKey(x, y, metrics);
+      chain = chainOf(stackAt(layout, this.#cellAt(x, y, metrics)));
     } else {
-      this.#hoverCol = NaN;
-      this.#hoverRow = NaN;
+      this.#hoverKey = null;
     }
     const innermost = chain.at(-1) ?? null;
     this.#applyChain("data-mw-covered", this.#covered, this.#coveredElements(innermost));
@@ -2612,8 +2653,9 @@ export class MonoWindElement extends HTMLElementBase {
     // A queued frame can outlive the host's removal (story/app teardown,
     // SPA navigation): computed styles on a detached tree read as empty
     // strings, which would misclassify every element and misfire author
-    // warnings. Reconnection schedules a fresh layout.
-    if (!this.isConnected) return;
+    // warnings. Reconnection schedules a fresh layout. A nested host
+    // drops the frame an attribute queued before it connected.
+    if (!this.isConnected || this.#nested) return;
     // Container positions are read before the mask and written back after
     // it (specs/scrolling.md); bottom-stick resolves in between.
     const scrollState = this.#captureScrollState();
@@ -2631,10 +2673,7 @@ export class MonoWindElement extends HTMLElementBase {
     if (Number.isFinite(cellWidthPx) && cellWidthPx > 0) {
       for (const ta of this.querySelectorAll<HTMLTextAreaElement>("textarea")) {
         const style = getComputedStyle(ta);
-        const contentPx =
-          ta.clientWidth -
-          (parseFloat(style.paddingLeft) || 0) -
-          (parseFloat(style.paddingRight) || 0);
+        const contentPx = ta.clientWidth - pxSum(style, "padding-left", "padding-right");
         // `round` (not `floor`) so subpixel remainders don't chop one
         // cell off the width — the browser rarely wraps a character
         // that fits within half a cell of the edge.
@@ -2668,19 +2707,11 @@ export class MonoWindElement extends HTMLElementBase {
       if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
       const metrics = measureCellMetrics(this, this.#probe);
       const previous = this.#cellMetrics;
-      if (
-        previous === null ||
-        previous.width !== metrics.width ||
-        previous.height !== metrics.height ||
-        previous.letterSpacing !== metrics.letterSpacing ||
-        previous.gridLetterSpacing !== metrics.gridLetterSpacing ||
-        previous.inkOverhang !== metrics.inkOverhang ||
-        previous.backgroundGap !== metrics.backgroundGap
-      ) {
+      if (previous === null || !sameMetrics(previous, metrics)) {
         this.style.setProperty("--mw-cw", `${metrics.width}px`);
         this.style.setProperty("--mw-ch", `${metrics.height}px`);
         this.style.setProperty("--mw-rls", `${metrics.letterSpacing}px`);
-        this.style.setProperty("--mw-ink", `${metrics.inkOverhang ?? 0}px`);
+        this.style.setProperty("--mw-overhang", `${metrics.inkOverhang ?? 0}px`);
         // A whole pixel: Chromium snaps an inline box's fractional padding
         // and drags its text a pixel with it.
         const bgpad = Math.ceil((metrics.backgroundGap ?? 0) / 2);
@@ -2715,8 +2746,7 @@ export class MonoWindElement extends HTMLElementBase {
       // on the host stays outside the grid (the shadow slot box, which
       // laid-out children position against, already sits inside it).
       // clientWidth excludes the border; subtract the padding ourselves.
-      const cs = getComputedStyle(this);
-      const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const padX = pxSum(hostStyle, "padding-left", "padding-right");
       const availableCols = Math.max(0, Math.floor((this.clientWidth - padX) / metrics.width));
       if (availableCols === 0) return;
       // The cells the reader can see, where the top layer's UA
@@ -2778,19 +2808,22 @@ export class MonoWindElement extends HTMLElementBase {
       // Under border-box (Tailwind's preflight default) the height must
       // also cover the host's own padding and border.
       const chrome =
-        cs.boxSizing === "border-box"
-          ? (parseFloat(cs.paddingTop) || 0) +
-            (parseFloat(cs.paddingBottom) || 0) +
-            (parseFloat(cs.borderTopWidth) || 0) +
-            (parseFloat(cs.borderBottomWidth) || 0)
+        hostStyle.boxSizing === "border-box"
+          ? pxSum(
+              hostStyle,
+              "padding-top",
+              "padding-bottom",
+              "border-top-width",
+              "border-bottom-width",
+            )
           : 0;
       const hostHeight = `${height * metrics.height + chrome}px`;
       if (this.style.height !== hostHeight) this.style.height = hostHeight;
       // Cap the width to the columns laid out (specs/cell-model.md "Host
       // sizing"); the companion applies it outside measuring.
       const chromeX =
-        cs.boxSizing === "border-box"
-          ? padX + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0)
+        hostStyle.boxSizing === "border-box"
+          ? padX + pxSum(hostStyle, "border-left-width", "border-right-width")
           : 0;
       const hostWidth = `${availableCols * metrics.width + chromeX}px`;
       if (this.style.getPropertyValue("--mw-host-w") !== hostWidth)

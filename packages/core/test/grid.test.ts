@@ -3,7 +3,14 @@ import { layoutRoot } from "../src/layout.ts";
 import { placeItems, resolveAxisPlacement } from "../src/grid.ts";
 import type { AxisLines } from "../src/grid.ts";
 import { parseGridLine, parseGridTemplateAreas, parseTrackTemplate } from "../src/style.ts";
-import type { GridLine, GridTemplate, TrackBreadth, TrackSize } from "../src/types.ts";
+import type {
+  CellStyle,
+  GridLine,
+  GridTemplate,
+  LayoutNode,
+  TrackBreadth,
+  TrackSize,
+} from "../src/types.ts";
 import { makeNode } from "./helpers.ts";
 
 // --- track/template shorthands -------------------------------------------
@@ -135,6 +142,40 @@ describe("grid track sizing via layout", () => {
     layoutRoot(root, 32);
     expect([a.localRect.width, b.localRect.width, c.localRect.width]).toEqual([10, 10, 10]);
     expect([a.localRect.x, b.localRect.x, c.localRect.x]).toEqual([0, 11, 22]);
+  });
+
+  it("floors a stretched item at min-w-max past its minmax(0, 1fr) track", () => {
+    const item = makeNode({ text: "wide unwrapped line", style: { minWidth: "max-content" } });
+    const root = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(twFr()) },
+      children: [item],
+    });
+    layoutRoot(root, 5);
+    expect(item.localRect.width).toBe(19);
+  });
+
+  it("caps a stretched item's automatic minimum at its max-width", () => {
+    const item = makeNode({ text: "abcdef", style: { maxWidth: 3 } });
+    const root = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(fr()) },
+      children: [item],
+    });
+    layoutRoot(root, 5);
+    // The word overflows, as all three engines lay it out.
+    expect(item.localRect.width).toBe(3);
+  });
+
+  it("caps a stretched item's automatic minimum at its max-height", () => {
+    const item = makeNode({ text: "1\n2\n3\n4\n5", style: { maxHeight: { percent: 20 } } });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateRows: tracks({ min: { kind: "auto" }, max: cellsB(10) }),
+      },
+      children: [item],
+    });
+    layoutRoot(root, 5);
+    expect(item.localRect.height).toBe(2);
   });
 
   it("floors bare fr tracks at their items' min-content (automatic minimum)", () => {
@@ -430,6 +471,289 @@ describe("grid intrinsic sizing", () => {
     });
     layoutRoot(root, 40);
     expect(root.localRect.width).toBe(5); // longest word
+  });
+});
+
+describe("the automatic minimum over the spanned tracks (css-grid §6.6)", () => {
+  // Content-based only over a track whose min is `auto`, never over
+  // several tracks with a flexible one among them, and capped at the
+  // area's fixed maximum; all three engines agree.
+  const word = (width: number, style: Partial<CellStyle> = {}) =>
+    makeNode({ text: "w".repeat(width), style });
+  const spanning = (width: number) => word(width, { gridColumnStart: span(2) });
+  const minmax = (min: TrackBreadth, max: TrackBreadth): TrackSize => ({ min, max });
+  /** Each item's [x, width] in a grid of `list` columns `width` wide. */
+  const columns = (
+    list: TrackSize[],
+    items: LayoutNode[],
+    width: number,
+    style: Partial<CellStyle> = {},
+  ) => {
+    const grid = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(...list), ...style },
+      children: items,
+    });
+    layoutRoot(grid, width);
+    return items.map((item) => [item.localRect.x, item.localRect.width]);
+  };
+  /** Each item's [y, height] in a grid of `list` rows `height` tall. */
+  const rows = (
+    list: TrackSize[],
+    items: LayoutNode[],
+    height: number,
+    style: Partial<CellStyle> = {},
+  ) => {
+    const grid = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateRows: tracks(...list),
+        height: { kind: "cells", value: height },
+        ...style,
+      },
+      children: items,
+    });
+    layoutRoot(makeNode({ children: [grid] }), 10);
+    return items.map((item) => [item.localRect.y, item.localRect.height]);
+  };
+  const lines = (count: number, style: Partial<CellStyle> = {}) =>
+    makeNode({ text: Array.from({ length: count }, (_, i) => i).join("\n"), style });
+
+  it("keeps an item in its minmax(0, 1fr) column, the word overflowing", () => {
+    expect(columns([twFr(), twFr()], [word(6), makeNode({})], 10)).toEqual([
+      [0, 5],
+      [5, 5],
+    ]);
+  });
+
+  it("keeps an item in its fixed column", () => {
+    expect(columns([fixed(5), fixed(5)], [word(6), makeNode({})], 10)).toEqual([
+      [0, 5],
+      [5, 5],
+    ]);
+  });
+
+  it("keeps an item in a minmax(0, auto) column narrower than its word", () => {
+    expect(columns([minmax(cellsB(0), { kind: "auto" })], [word(6)], 5)).toEqual([[0, 5]]);
+  });
+
+  it("floors an item at its word in an auto column", () => {
+    expect(columns([auto()], [word(6)], 5)).toEqual([[0, 6]]);
+  });
+
+  it("caps the minimum at a fixed maximum, margins inside", () => {
+    const item = word(6, { margin: { top: 0, right: 0, bottom: 0, left: 1 } });
+    expect(
+      columns([minmax({ kind: "auto" }, cellsB(5))], [item], 10, { justifyContent: "start" }),
+    ).toEqual([[1, 4]]);
+  });
+
+  it("grows a minmax(min-content, <fixed>) column past its maximum", () => {
+    const track = minmax({ kind: "min-content" }, cellsB(5));
+    expect(columns([track], [word(6), makeNode({})], 10)).toEqual([
+      [0, 6],
+      [0, 6],
+    ]);
+  });
+
+  it("keeps an item spanning two fr columns at their shares", () => {
+    expect(columns([fr(), fr()], [spanning(15), makeNode({}), makeNode({})], 10)).toEqual([
+      [0, 10],
+      [0, 5],
+      [5, 5],
+    ]);
+    expect(
+      columns([fr(), fr()], [spanning(15), makeNode({}), makeNode({})], 11, { gapX: 1 }),
+    ).toEqual([
+      [0, 11],
+      [0, 5],
+      [6, 5],
+    ]);
+  });
+
+  it("keeps an item spanning an auto and an fr column in their area", () => {
+    expect(columns([auto(), fr()], [spanning(15), makeNode({}), makeNode({})], 10)).toEqual([
+      [0, 10],
+      [0, 0],
+      [0, 10],
+    ]);
+  });
+
+  it("floors an item spanning two auto columns at its word", () => {
+    const [item] = columns([auto(), auto()], [spanning(15), makeNode({}), makeNode({})], 10);
+    expect(item).toEqual([0, 15]);
+  });
+
+  it("caps an item spanning fixed-maximum columns at their sum", () => {
+    const track = minmax({ kind: "auto" }, cellsB(5));
+    expect(
+      columns([track, track], [spanning(15), makeNode({}), makeNode({})], 20, {
+        justifyContent: "start",
+      }),
+    ).toEqual([
+      [0, 10],
+      [0, 5],
+      [5, 5],
+    ]);
+  });
+
+  it("leaves fr columns even beside a scroll container or a min-w-0 item", () => {
+    const hidden = word(6, { overflow: { x: "clip", y: "clip" } });
+    expect(columns([fr(), fr()], [hidden, makeNode({})], 10)).toEqual([
+      [0, 5],
+      [5, 5],
+    ]);
+    expect(columns([fr(), fr()], [word(6, { minWidth: 0 }), makeNode({})], 10)).toEqual([
+      [0, 5],
+      [5, 5],
+    ]);
+  });
+
+  it("gives a scroll container's auto column only the space left", () => {
+    const hidden = word(6, { overflow: { x: "clip", y: "clip" } });
+    expect(columns([auto(), auto()], [hidden, word(8)], 10)).toEqual([
+      [0, 2],
+      [2, 8],
+    ]);
+  });
+
+  it("leaves a min-content grid's fr columns at their items' minimum contributions", () => {
+    const minContent = (list: TrackSize[], items: LayoutNode[]) => {
+      const grid = makeNode({
+        style: {
+          display: "grid",
+          width: { kind: "min-content" },
+          gridTemplateColumns: tracks(...list),
+        },
+        children: items,
+      });
+      layoutRoot(makeNode({ children: [grid] }), 40);
+      return grid.localRect.width;
+    };
+    expect(minContent([fr()], [word(6)])).toBe(6);
+    expect(minContent([fr()], [word(6, { overflow: { x: "clip", y: "clip" } })])).toBe(0);
+    expect(minContent([fr(), fr()], [spanning(15)])).toBe(0);
+  });
+
+  it("keeps an item in its minmax(0, 1fr) row, the lines overflowing", () => {
+    expect(rows([twFr()], [lines(7)], 5)).toEqual([[0, 5]]);
+  });
+
+  it("keeps an item spanning two fr rows at their shares", () => {
+    const tall = lines(15, { gridRowStart: span(2) });
+    expect(
+      rows([fr(), fr()], [tall, makeNode({}), makeNode({})], 10, {
+        gridAutoFlow: { direction: "column", dense: false },
+      }),
+    ).toEqual([
+      [0, 10],
+      [0, 5],
+      [5, 5],
+    ]);
+  });
+
+  it("leaves fr rows even beside a min-h-0 item", () => {
+    expect(rows([fr(), fr()], [lines(6, { minHeight: 0 }), makeNode({})], 10)).toEqual([
+      [0, 5],
+      [5, 5],
+    ]);
+  });
+
+  it("sizes fr rows to a scroll container's specified height", () => {
+    const scroller = lines(9, {
+      height: { kind: "cells", value: 7 },
+      overflow: { x: "auto", y: "auto" },
+    });
+    expect(rows([fr(), fr()], [scroller, makeNode({})], 10)).toEqual([
+      [0, 7],
+      [7, 3],
+    ]);
+  });
+
+  it("grows a minmax(min-content, <fixed>) row past its maximum", () => {
+    const track = minmax({ kind: "min-content" }, cellsB(5));
+    expect(
+      rows([track], [lines(6), makeNode({})], 10, {
+        gridTemplateColumns: tracks(twFr(), twFr()),
+        alignContent: "start",
+      }),
+    ).toEqual([
+      [0, 6],
+      [0, 6],
+    ]);
+  });
+
+  // Probed in Chromium, Firefox and WebKit alike.
+  const paddedX = { top: 0, right: 3, bottom: 0, left: 3 };
+  const paddedY = { top: 3, right: 0, bottom: 3, left: 0 };
+
+  it("floors a min-w-0 item's minimum contribution at its border and padding", () => {
+    expect(
+      columns([fr(), fr()], [word(1, { minWidth: 0, padding: paddedX }), makeNode({})], 5),
+    ).toEqual([
+      [0, 6],
+      [6, 0],
+    ]);
+    const bordered = word(1, { minWidth: 0, border: { top: 0, right: 3, bottom: 0, left: 3 } });
+    expect(columns([fr(), fr()], [bordered, makeNode({})], 5)).toEqual([
+      [0, 6],
+      [6, 0],
+    ]);
+  });
+
+  it("floors a min-h-0 item's minimum contribution at its border and padding", () => {
+    expect(
+      rows([fr(), fr()], [lines(1, { minHeight: 0, padding: paddedY }), makeNode({})], 5),
+    ).toEqual([
+      [0, 6],
+      [6, 0],
+    ]);
+  });
+
+  it("floors a fixed width below its padding at the padding", () => {
+    const narrow = makeNode({ style: { width: { kind: "cells", value: 2 }, padding: paddedX } });
+    expect(columns([auto(), fr()], [narrow, makeNode({})], 10)).toEqual([
+      [0, 6],
+      [6, 4],
+    ]);
+  });
+
+  it("floors a content-based minimum capped by a fixed maximum at the padding", () => {
+    const track = minmax({ kind: "auto" }, cellsB(2));
+    expect(columns([track, fr()], [word(1, { padding: paddedX }), makeNode({})], 10)).toEqual([
+      [0, 6],
+      [6, 4],
+    ]);
+  });
+
+  it("grows a minmax(auto, <fixed>) column to an item's min-width or width", () => {
+    const track = minmax({ kind: "auto" }, cellsB(12));
+    const layout = { justifyContent: "start" } as const;
+    expect(
+      columns([track, fixed(5)], [word(1, { minWidth: 20 }), makeNode({})], 50, layout),
+    ).toEqual([
+      [0, 20],
+      [20, 5],
+    ]);
+    const wide = word(1, { width: { kind: "cells", value: 20 } });
+    expect(columns([track, fixed(5)], [wide, makeNode({})], 50, layout)).toEqual([
+      [0, 20],
+      [20, 5],
+    ]);
+  });
+
+  it("shares a spanning item's min-width over minmax(auto, <fixed>) columns", () => {
+    const track = minmax({ kind: "auto" }, cellsB(12));
+    const wide = word(1, { gridColumnStart: span(2), minWidth: 30 });
+    const [, , first, second] = columns(
+      [track, track, fixed(5)],
+      [wide, makeNode({}), makeNode({}), makeNode({})],
+      80,
+      { justifyContent: "start" },
+    );
+    expect([first, second]).toEqual([
+      [0, 15],
+      [15, 15],
+    ]);
   });
 });
 
@@ -1173,6 +1497,97 @@ describe("named-line edge cases", () => {
     expect(
       resolveAxisPlacement(named("edge", -2), named("edge", -1), axis(2, { 1: ["edge"] })),
     ).toEqual({ start: -1, span: 2 });
+  });
+});
+
+describe("a min-height floor on the container", () => {
+  // CSS §11.7.1 sizes the fr rows as if the height were indefinite and
+  // re-sizes them against the floor only if they come out smaller; all
+  // three engines agree.
+  const floored = (rows: TrackSize[], texts: string[], limits: { maxHeight?: number } = {}) => {
+    const items = texts.map((text) => makeNode({ text }));
+    const grid = makeNode({
+      style: { display: "grid", gridTemplateRows: tracks(...rows), minHeight: 10, ...limits },
+      children: items,
+    });
+    layoutRoot(makeNode({ children: [grid] }), 20);
+    return { grid, items };
+  };
+
+  it("sizes fr rows to their content past the floor", () => {
+    const { grid, items } = floored([fr(), fr()], ["a", "1\n2\n3\n4\n5\n6\n7"]);
+    expect(items[0]!.localRect).toMatchObject({ y: 0, height: 7 });
+    expect(items[1]!.localRect).toMatchObject({ y: 7, height: 7 });
+    expect(grid.localRect.height).toBe(14);
+  });
+
+  it("stretches fr rows to a floor above their content", () => {
+    const { grid, items } = floored([fr(), fr()], ["a", "1\n2\n3"]);
+    expect(items[0]!.localRect).toMatchObject({ y: 0, height: 5 });
+    expect(items[1]!.localRect).toMatchObject({ y: 5, height: 5 });
+    expect(grid.localRect.height).toBe(10);
+  });
+
+  it("stretches auto rows to the floor", () => {
+    const { grid, items } = floored([auto(), auto()], ["a", "1\n2\n3\n4\n5\n6\n7"]);
+    expect(items[0]!.localRect).toMatchObject({ y: 0, height: 2 });
+    expect(items[1]!.localRect).toMatchObject({ y: 2, height: 8 });
+    expect(grid.localRect.height).toBe(10);
+  });
+
+  it("re-sizes fr rows against a max-height their content passes", () => {
+    const { grid, items } = floored([fr(), fr()], ["a", "1\n2\n3\n4\n5\n6\n7"], {
+      maxHeight: 12,
+    });
+    expect(items[0]!.localRect).toMatchObject({ y: 0, height: 5 });
+    expect(items[1]!.localRect).toMatchObject({ y: 5, height: 7 });
+    expect(grid.localRect.height).toBe(12);
+  });
+});
+
+describe("percent rows under an indefinite height", () => {
+  // css-grid §7.2.1: a percent row sizes as `auto` for the container's
+  // height, then resolves against it — all three engines, the items
+  // overflowing rows smaller than they are.
+  const percent = (value: number): TrackSize => ({
+    min: { kind: "percent", value },
+    max: { kind: "percent", value },
+  });
+  const layout = (rows: TrackSize[], texts: string[], style: Partial<CellStyle> = {}) => {
+    const items = texts.map((text) => makeNode({ text }));
+    const grid = makeNode({
+      style: { display: "grid", gridTemplateRows: tracks(...rows), ...style },
+      children: items,
+    });
+    layoutRoot(makeNode({ children: [grid] }), 20);
+    return [
+      grid.localRect.height,
+      ...items.map((item) => [item.localRect.y, item.localRect.height]),
+    ];
+  };
+  const five = "1\n2\n3\n4\n5";
+  const seven = "1\n2\n3\n4\n5\n6\n7";
+
+  it("resolves percent rows against an auto height", () => {
+    expect(layout([percent(20), percent(20)], [five, five])).toEqual([10, [0, 2], [2, 2]]);
+    expect(layout([percent(50), auto()], ["1\n2", "1\n2\n3\n4\n5\n6"])).toEqual([
+      8,
+      [0, 4],
+      [4, 6],
+    ]);
+  });
+
+  it("resolves percent rows against the height past a min-height floor", () => {
+    expect(layout([percent(20), percent(20)], [seven, seven], { minHeight: 10 })).toEqual([
+      14,
+      [0, 3],
+      [3, 3],
+    ]);
+    expect(layout([percent(20), percent(20)], ["a", "b"], { minHeight: 10 })).toEqual([
+      10,
+      [0, 2],
+      [2, 2],
+    ]);
   });
 });
 

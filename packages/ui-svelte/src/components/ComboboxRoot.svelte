@@ -4,7 +4,7 @@
   import type * as combobox from "@monowind/ui/combobox";
   import { createCombobox } from "../index.svelte.ts";
   import Part from "./Part.svelte";
-  import { bound, comboboxContext, splitProps, warnStray } from "./context.ts";
+  import { bound, comboboxContext, splitProps } from "./context.ts";
 
   /** A combobox over its own machine, an id generated where the
    * markup gives none. Zag gives it a root part, so the root is an

@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { propNames } from "@monowind/ui/select";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { hiddenSelectOptions, propNames, syncHiddenSelect } from "@monowind/ui/select";
 import type * as select from "@monowind/ui/select";
 import type { PropTypes } from "@zag-js/react";
 import { useSelect, type Connected, type Positioned } from "../hooks.ts";
@@ -73,20 +73,30 @@ export const {
   ItemGroupLabel,
 } = defineItemParts("Select", context);
 
-/** The native select a form submits, an option per item: out of the
- * grid, a `display: none` control being one the layout skips and a
- * form still posts (Zag hides it visually, which would take cells). */
+/** The native select a form submits, `display: none` so the layout
+ * skips it and a form still posts it. Its first options are markup
+ * React writes once, for a server's page; after each commit
+ * `syncHiddenSelect` owns them, the selection and Zag's `defaultValue`
+ * (specs/ui.md "A select is a listbox on a trigger"). */
 export function HiddenSelect(props: PartProps): ReactNode {
   const api = context.use();
-  const values = api.collection.getValues();
+  const element = useRef<HTMLSelectElement>(null);
+  const [options] = useState(() => ({ __html: hiddenSelectOptions(api, api.service) }));
+  useLayoutEffect(() => {
+    if (element.current) syncHiddenSelect(element.current, api, api.service);
+  });
+  const { defaultValue: _defaultValue, ...hiddenProps } = api.getHiddenSelectProps();
   return renderPart(
     "Select.HiddenSelect",
     "select",
-    { ...api.getHiddenSelectProps(), style: { display: "none" } },
     {
-      ...props,
-      children: values.map((value: string) => <option key={value} value={value} />),
+      ...hiddenProps,
+      ref: element,
+      size: 2,
+      style: { display: "none" },
+      dangerouslySetInnerHTML: options,
     },
+    { ...props, children: undefined },
   );
 }
 HiddenSelect.displayName = "Select.HiddenSelect";

@@ -10,14 +10,13 @@
   let {
     open = $bindable(),
     onOpenChange,
+    triggerValue = $bindable(),
+    onTriggerValueChange,
     children,
     ...props
   }: Omit<popover.Props, "id"> & { id?: string; children?: Snippet } = $props();
 
   const generated = $props.id();
-  // What Zag does not name has nowhere to go: this root renders no
-  // element of its own.
-  $effect(() => warnStray("PopoverRoot", Object.keys(splitProps(props, propNames)[1])));
   // A `bind:` follows the machine: each bound prop is given only
   // when the author names it, and written back when it changes.
   const machineProps = $derived({
@@ -25,8 +24,18 @@
     id: props.id ?? generated,
     ...(open === undefined ? {} : { open }),
     onOpenChange: bound("open", (next) => (open = next), onOpenChange),
+    ...(triggerValue === undefined ? {} : { triggerValue }),
+    onTriggerValueChange: bound(
+      "triggerValue",
+      (next) => (triggerValue = next),
+      onTriggerValueChange,
+    ),
   } as unknown as popover.Props);
-  popoverContext.set(createPopover(() => machineProps));
+  const created = createPopover(() => machineProps);
+  popoverContext.set(created);
+  // What Zag does not name has nowhere to go: this root renders no
+  // element of its own.
+  $effect(() => warnStray("PopoverRoot", Object.keys(splitProps(props, propNames)[1]), created));
 </script>
 
 {@render children?.()}

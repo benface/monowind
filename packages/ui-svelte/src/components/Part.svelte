@@ -1,5 +1,6 @@
 <script lang="ts">
   import { mergeProps } from "@zag-js/svelte";
+  import type { PartProps } from "./context.ts";
 
   /**
    * A part's element, with the API's props under the author's — merged
@@ -16,10 +17,11 @@
     ...rest
   }: PartProps & {
     tag?: string;
-    props: Record<string, unknown>;
+    /** The API's props for the part, whatever the getter types them as. */
+    props: object;
   } = $props();
 
-  const merged = $derived(mergeProps(props, rest) as Record<string, unknown>);
+  const merged = $derived(mergeProps(props as Record<string, unknown>, rest) as Record<string, unknown>);
 </script>
 
 {#if child}

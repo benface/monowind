@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { multicolLines } from "monowind";
-import { cellSize, expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
+import { cellSize, expectBrowserRowsToMatchEngine, readyHost, testHooks } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Multicol",
@@ -563,6 +563,29 @@ export const FixedHeight: StoryObj = {
         [...charColumns(underfill, children[5]!, cellWidth)],
         "the sixth child starts the second column",
       ).toEqual([1]);
+    });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a text
+ * leaf's native columns take the engine's height inside an editable
+ * too, where the engine writes the selection's colors on every element
+ * (specs/wide-characters.md). */
+export const InEditable: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p class="max-w-40 columns-2" data-test="plain">${PROSE}</p>
+      <div contenteditable="true">
+        <p class="max-w-40 columns-2" data-test="editable">${PROSE}</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    await waitFor(() => {
+      expect(getComputedStyle(by("editable")).height).toBe(getComputedStyle(by("plain")).height);
     });
   },
 };

@@ -39,6 +39,32 @@ describe("leaf renderers", () => {
     expect(rows[1]![0]).toMatchObject({ text: "A", backgroundColor: "var(--x)" });
   });
 
+  it("paints a run with what it leaves unset from the leaf's own style", () => {
+    registerLeafRenderer({
+      tag: "test-styled",
+      render: () => ({
+        lines: ["AB"],
+        runs: [{ line: 0, start: 1, end: 2, paint: { backgroundColor: "blue" } }],
+      }),
+    });
+    const el = document.createElement("test-styled");
+    el.style.cssText = "color: red; font-weight: 700; font-style: italic";
+    document.body.appendChild(el);
+    const node = buildTree(el, 16)!;
+    el.remove();
+    const root = makeNode({ children: [node] });
+    layoutRoot(root, 10);
+    const [bare, run] = renderCellSegments(root)[0]!;
+    expect(bare).toMatchObject({ text: "A", color: "red", fontWeight: "700", fontStyle: "italic" });
+    expect(run).toMatchObject({
+      text: "B",
+      color: "red",
+      fontWeight: "700",
+      fontStyle: "italic",
+      backgroundColor: "blue",
+    });
+  });
+
   it("applies tracking uniformly to art cells (columns stay aligned)", () => {
     registerLeafRenderer({
       tag: "test-tracked",

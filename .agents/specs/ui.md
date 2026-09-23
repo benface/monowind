@@ -31,10 +31,17 @@ the engine places and layers the parts, Zag runs them.
   wherever they are listed; `tabs` and the rest follow the same
   shape. A combobox anchors to its `control` rather than its trigger,
   so its list lines up under the input, and it hides the items its
-  collection leaves out, filtering being what a collection narrows. Versioned in lockstep with `monowind`.
+  collection leaves out, filtering being what a collection narrows.
+  Its machine is Zag's with one action changed: a list the reader's
+  keystroke opens leaves their caret where it was, where Zag's focus
+  on opening puts it at the input's end — opened by the keystroke
+  itself, or by a controlled `open` the keystroke asked for (Zag's
+  `CONTROLLED.OPEN`, the keystroke its previous event). Versioned in lockstep with
+  `monowind`.
 - **A core that touches no DOM**: per component, `props(p)`, the
-  machine's props with Zag's own positioning off, Zag's `machine`
-  re-exported, `connect(service, normalizeProps, p)` — Zag's connect
+  machine's props with Zag's own positioning off, `machine` — Zag's,
+  re-exported, but for the combobox's with its one action changed
+  (above) — `connect(service, normalizeProps, p)` — Zag's connect
   with the grid's props, so the framework path needs this package's
   entry alone — and `api(zagApi, normalizeProps, p)` for an API
   connected elsewhere, Zag's connected API with monowind's part props
@@ -114,8 +121,18 @@ props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   marked items make one — the `data-value` each carries, the words of
   its `item-text`, and `data-disabled` — so a list of static items is
   markup alone, and an item the author's own collection leaves out
-  stays plain markup. The mount's own element is the `root`, its id the
-  markup's so the page still finds it, and `data-highlight-on-hover` on
+  stays plain markup. `data-selected` on an item selects it at the
+  mount where the props name no `value` or `defaultValue`, the first
+  alone where the component takes one value; the mount keeps it on the
+  selected items — Zag's listbox writes it, a select's and a
+  combobox's have it added, the framework packages' items too
+  (`itemProps`, off the `data-state` Zag writes on all three) — so a
+  vanilla mount again reads the reader's selection (an element carries
+  it across its own mounts, "Attributes are the props"), a
+  `data-selected:` style holds on every path, and the mount clears a
+  marker on an item the machine left out. The mount's own
+  element is the `root`, its id the markup's so the page still finds
+  it, and `data-highlight-on-hover` on
   it passes Zag's `highlightOnHover` for every item: it moves the
   highlight, Zag keeping `data-highlighted` for the keyboard's focus
   and leaving the pointer's feedback to `hover:`.
@@ -127,11 +144,29 @@ props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   render them with: the `value-text`, whose markup text is its
   placeholder and whose content the mount writes from the API; and an
   optional `hidden-select`, the native control a form posts under the
-  machine's `name`, filled with an option per item and set to
-  `display: none`, which the layout skips while a form still submits
-  it; where the select takes several values, the options carry the
-  selection, the adapter's one assignment of `value` being a single
-  control's.
+  machine's `name`, set to `display: none`, which the layout skips
+  while a form still submits it. One function, `syncHiddenSelect`,
+  writes that control after every render on every path — the mount,
+  and each framework's `HiddenSelect`: an option per item; the
+  machine's initial value, Zag's reset target, as the options'
+  `selected` attributes, which a form's reset restores; the value
+  selected, and no option where none holds it; and a display size of
+  two rows, a single control one row high choosing its first option on
+  its own at an insertion, a deselection and a reset (probed in
+  Chromium, Firefox and WebKit, 2026-09-23). A framework's
+  `HiddenSelect` renders the two rows and, once, at its first render,
+  those options as markup (`hiddenSelectOptions`) — React's
+  `dangerouslySetInnerHTML`, Vue's `innerHTML`, Svelte's `{@html}`,
+  none of which the framework writes again — so a server's page posts
+  the initial value before its script runs, in all three engines, and
+  hydrates unchanged; `syncHiddenSelect` owns the options from then
+  on. Svelte's selects again a microtask after each write: from 5.20
+  until 5.56.8, Svelte selects a spread `<select>`'s own `value` —
+  none here — a microtask after its options change (probed on 5.20.0
+  and 5.55.10 in all three engines, 2026-09-23). The mount gives the
+  control Zag's id and its `form`, as Zag's own props name them,
+  before the machine starts, which looks it up then to follow a reset
+  of its form and a disabled fieldset around it.
 - **States are attributes**: `data-state`, `data-highlighted`,
   `data-disabled`, `data-placement`, as Zag sets them, so an author
   styles them with Tailwind's data variants
@@ -262,22 +297,43 @@ to, and additively.
   parses, a string stays a string (so a `highlighted-value` matches
   its item's `data-value` as written). Props without an attribute form
   — `ids`, `translations`, a menu's `navigate` and `anchorPoint`, a
-  listbox's and a select's `collection`, a dialog's `initialFocusEl`
-  — are accessors
+  list's (a listbox's, a select's, a combobox's) `collection`, `value`
+  and `defaultValue`, a dialog's `initialFocusEl` — are accessors
   on the class, so a framework that sets a property it finds (React
-  does) hands the value over whole; setting the same value again does
-  nothing, React setting one on every render. A name the DOM already
+  does) hands the value over whole; setting the same value again —
+  or an array or plain object whose entries are the same — does
+  nothing, React setting one on every render, often fresh. One set before the
+  element is defined is the instance's own and hides the accessor, so
+  the element hands it over at its connection, the custom-element
+  upgrade idiom. A name the DOM already
   carries is left alone and takes `setProp` instead — `getRootNode`
   is a method on every node, and an accessor would shadow it. `id`
   is the element's own, generated when it has none, and bound at the
   mount: a change to it mounts again. An attribute changed after the
   mount reaches the running machine (Zag's `updateProps`, through a
   `Mounted.updateProps` the vanilla mount gains) and the grid's props
-  alike, the mount reading its props per render rather than once; a
-  menu hands the behavior props it shares down to its submenus. Every
+  alike, the mount reading its props per render rather than once, and
+  one removed drops its prop, the machine back at its default; a
+  menu hands the behavior props it shares down to its submenus, a
+  removal included. Every
   element covers its machine's whole prop list, which a test checks
-  against Zag's own `props`; an initial `value` is the exception, Zag
-  typing it `string[]` where markup has no agreed way to spell one.
+  against Zag's own `props`. A list's `value` and `defaultValue`,
+  which Zag types `string[]`, are properties: markup selects an item
+  by marking it (`data-selected`, "The markup is a listbox's
+  collection"). `value` controls the selection as Zag's does — a press
+  changes it only where a `valuechange` listener writes it back —
+  and the default — `defaultValue`, or the marked items where it is
+  unset — is the element's first mount's, as a form control's default
+  is its page load's. A later mount (items added, a move, a new id)
+  starts at that value, which a value whose item arrives only then
+  keeps, and which Zag, reading its reset target off a machine's
+  start, puts back at a form's reset; the element then sets the
+  reader's selection the last mount left (`api.setValue`), and the
+  callbacks Zag fires for it, a microtask on, dispatch nothing — no
+  change of the reader's. The element clears the markers its mount
+  wrote as it stops, so items that arrive marked are the page's: they
+  become the default and the selection, as an inserted
+  `<option selected>` does.
 - **`open` is the state, reflected.** The machine stays uncontrolled:
   the attribute at the mount is the initial state, a later change
   opens or closes through `api.setOpen`, and the element writes the
@@ -334,7 +390,10 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   the rest are its element's. An `Item` names one of the collection's
   items, by `item` or by the `value` that finds it there, and holds it
   for the `ItemText` and `ItemIndicator` inside; the select's
-  `HiddenSelect` carries `display: none` over Zag's visually-hidden
+  `HiddenSelect` renders its control with its first options as markup,
+  once, for `syncHiddenSelect` to own after each render ("A select is
+  a listbox on a trigger"), and
+  carries `display: none` over Zag's visually-hidden
   style, as the mount does and for the same reason: Zag's arrives with
   the first spread, a microtask late, and an in-flow `<select>` is a
   box as wide as its longest option, so the grid would jump. Either
@@ -379,7 +438,8 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   composables rendered through their frameworks (`hooks.test.tsx`,
   `composables.test.ts`), a component with no floating part
   included.
-- Storybook, per component, in every engine: the listbox's roles, its
+- Storybook, per component on its `<mono-*>` element — the menu's on
+  the vanilla mount — in every engine: the listbox's roles, its
   value selected by press and by Enter with the indicator following it
   on the grid, the pointer highlight its root asks for
   (`ListboxHighlightOnHover`), and the list
@@ -421,28 +481,33 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   fallback never reaches the values read.
 - `packages/ui-react`, `packages/ui-vue`, `packages/ui-svelte`: one
   entry each, a function per component over `@monowind/ui` and the
-  adapter; the React and Vue ones tested in node through their
-  renderers, the Svelte one through the Svelte example's smoke test
-  (its runes compile in the consumer's Svelte plugin; the package
-  ships `.svelte.ts` source, as Svelte libraries do).
+  adapter, each tested in node through its renderer, the Svelte one
+  besides through the Svelte example's smoke test (its runes compile
+  in the consumer's Svelte plugin; the package ships `.svelte.ts`
+  source, as Svelte libraries do).
 - `packages/ui`: `anchor.ts` (the placement table, the anchor name,
   the props and their merge, `anchoredApi`), `top-layer.ts`
   (`syncTopLayer`, its own `./top-layer` subpath for the framework
   packages), `vanilla.ts` (the parts, the mount, and the anchored mount
   over it), `items.ts` (the markup's collection and the item parts a
-  listbox and a select share), `scroll.ts` (the highlight scrolled into
-  the content box), and `menu.ts`, `listbox.ts`, `select.ts`,
-  `dialog.ts`, `popover.ts`, `tooltip.ts` (each `props`, `api`, the
-  mount); `@zag-js/vanilla` and the machines as dependencies;
-  `dist/cdn.js` for classic scripts, `monowind.ui`.
+  listbox, a select and a combobox share), `scroll.ts` (the highlight
+  scrolled into the content box), `menu.ts`, `listbox.ts`,
+  `select.ts`, `combobox.ts`, `dialog.ts`, `popover.ts`, `tooltip.ts`
+  (each `props`, `api`, the mount; `select.ts` also `syncHiddenSelect`
+  and `hiddenSelectOptions`, `combobox.ts` its machine), and
+  `framework.ts` (what the framework packages share: the item API's
+  shape, the trigger options, the props bound both ways, the item,
+  split and defined-prop helpers, the stray-prop and unmarked-item
+  warnings); `@zag-js/vanilla` and the machines as
+  dependencies; `dist/cdn.js` for classic scripts, `monowind.ui`.
 - storybook: `ui.stories.ts` under `Packages / ui`, beside
-  the other packages' elements, a story per component, the vanilla
-  path wired from each story's render.
+  the other packages' elements, a story per component on its element,
+  the menu's on the vanilla mount (`menu(root, props)`).
 - examples: the React, Vue, and Svelte ones carry a menu and a dialog
-  through their packages; the playground's sample carries a menu and a
-  dialog, mounted on roots marked `data-component`.
+  through their packages; the playground's sample carries a
+  `<mono-menu>` and a `<mono-dialog>`.
 - README: the components section; the package's own README.
-- Proposed: `packages/ui/src/elements/` (a base element over the
+- `packages/ui/src/elements/` (a base element over the
   vanilla mount: attribute parsing, `open` reflection, events, the
   lifecycle; one subclass per component; `defineMonoUi`), the
   `./elements` subpath and the CDN bundle; `components/` in each

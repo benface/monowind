@@ -386,6 +386,43 @@ describe("containing block and constraint edge cases", () => {
     expect(box.localRect.x).toBe(16);
   });
 
+  it("solves a single auto margin on an over-wide box, negative included", () => {
+    // CSS 2 §10.3.7 / §10.6.4, probed in all three engines: a
+    // 10-wide containing block and a 20-wide box end at the right inset,
+    // x = -10 (-11 with a 1-cell right margin); two auto margins start
+    // it at the left, and center it vertically (y = -5).
+    const place = (margin: {
+      top: number | null;
+      right: number | null;
+      bottom: number | null;
+      left: number | null;
+    }) => {
+      const box = makeNode({
+        style: {
+          position: "absolute",
+          width: { kind: "cells", value: 20 },
+          height: { kind: "cells", value: 20 },
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin,
+        },
+      });
+      const anchor = makeNode({
+        style: {
+          position: "relative",
+          width: { kind: "cells", value: 10 },
+          height: { kind: "cells", value: 10 },
+        },
+        children: [box],
+      });
+      layoutRoot(makeNode({ children: [anchor] }), 30);
+      return [box.localRect.x, box.localRect.y];
+    };
+    expect(place({ top: null, right: 0, bottom: 0, left: null })).toEqual([-10, -10]);
+    expect(place({ top: null, right: 1, bottom: 1, left: null })).toEqual([-11, -11]);
+    expect(place({ top: 0, right: null, bottom: null, left: 1 })).toEqual([1, 0]);
+    expect(place({ top: null, right: null, bottom: null, left: null })).toEqual([0, -5]);
+  });
+
   it("column flex static position uses justify on the vertical main axis", () => {
     const abs = makeNode({
       text: "a",

@@ -36,6 +36,8 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm check
       - run: pnpm test
+      # The guards on built output (types' imports, source maps) read dist.
+      - run: pnpm -r --filter "./packages/*" build && node scripts/check-workspace.mjs --built
 
   visual:
     name: Visual regression

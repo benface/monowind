@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui-vue",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "@monowind/ui as Vue composables: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid",
   "keywords": [
     "accessibility",

@@ -9,7 +9,7 @@
  */
 
 import { partExtent } from "./lattice.ts";
-import { resolveLength } from "./layout.ts";
+import { edges, resolveLength } from "./layout.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
 import type { CellLength, LayoutNode, TableLattice } from "./types.ts";
 
@@ -227,8 +227,8 @@ function contentBox(
   const padding = node.resolvedPadding;
   const x0 = origin.x + border.left + padding.left;
   const y0 = origin.y + border.top + padding.top;
-  let width = node.localRect.width - border.left - border.right - padding.left - padding.right;
-  let height = node.localRect.height - border.top - border.bottom - padding.top - padding.bottom;
+  let width = node.localRect.width - edges(border, padding, "x");
+  let height = node.localRect.height - edges(border, padding, "y");
   if (node === scroller && node.scrollRange) {
     width = Math.max(width, node.scrollRange.sizeX);
     height = Math.max(height, node.scrollRange.sizeY);

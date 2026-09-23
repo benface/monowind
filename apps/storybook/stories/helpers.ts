@@ -7,6 +7,23 @@ import { wrapLines, type MonoWindElement } from "monowind";
  * hyphen-sensitive assertions gate on this. */
 export const isFirefox = navigator.userAgent.includes("Firefox");
 
+/** Chromium, where a check leans on what only its engine does. */
+export const isChromium = navigator.userAgent.includes("Chrome/");
+
+/** Typed OM, which tells the engine the cascade's pick (Firefox before 157
+ * has none). */
+export const hasTypedOM = typeof Element.prototype.computedStyleMap === "function";
+
+/** Whether Typed OM reads an unset minimum as `auto` (WebKit reads 0px). */
+export const readsAutoMinimum = ((): boolean => {
+  if (!hasTypedOM) return false;
+  const probe = document.createElement("div");
+  document.documentElement.append(probe);
+  const value = String(probe.computedStyleMap().get("min-width"));
+  probe.remove();
+  return value === "auto";
+})();
+
 /** What a copy of the current selection puts on the clipboard as
  * text/plain — via a synthetic copy event on the host. Read the
  * EVENT's clipboardData: Firefox gives a dispatched event a
@@ -60,8 +77,8 @@ export function release(): void {
   window.dispatchEvent(new PointerEvent("pointerup", { pointerType: "mouse", isPrimary: true }));
 }
 
-/** A primary-button drag to `at`, dispatched on `target`. */
-export function dragTo(target: Element, at: Point): void {
+/** A mouse move to `at` with `buttons` held, dispatched on `target`. */
+export function moveTo(target: Element, at: Point, buttons = 0): void {
   target.dispatchEvent(
     new PointerEvent("pointermove", {
       bubbles: true,
@@ -70,9 +87,14 @@ export function dragTo(target: Element, at: Point): void {
       clientY: at.y,
       pointerType: "mouse",
       isPrimary: true,
-      buttons: 1,
+      buttons,
     }),
   );
+}
+
+/** A primary-button drag to `at`, dispatched on `target`. */
+export function dragTo(target: Element, at: Point): void {
+  moveTo(target, at, 1);
 }
 
 /** A component mounted on the directive's element and destroyed when
@@ -99,15 +121,7 @@ export function mountedOn(mount: (root: Element) => { destroy(): void }): Return
 /** A pointer move onto an element's middle, as a mouse makes it. */
 export function hoverOver(element: Element): void {
   const rect = element.getBoundingClientRect();
-  element.dispatchEvent(
-    new PointerEvent("pointermove", {
-      bubbles: true,
-      composed: true,
-      pointerType: "mouse",
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2,
-    }),
-  );
+  moveTo(element, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
 }
 
 /** The host's cell, in px, as the engine measured it. */

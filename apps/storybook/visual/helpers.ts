@@ -10,7 +10,14 @@ import type { Page } from "@playwright/test";
 export async function openStory(page: Page, id: string, globals?: string): Promise<void> {
   await page.goto(`/iframe.html?id=${id}&viewMode=story${globals ? `&globals=${globals}` : ""}`);
   await page.waitForFunction(() => {
-    const hosts = [...document.querySelectorAll("mono-wind:not(mono-wind *)")];
+    // Open shadow roots too: the agreement sweep opens InShadowRoot.
+    const roots: (Document | ShadowRoot)[] = [document];
+    for (let i = 0; i < roots.length; i++) {
+      for (const el of roots[i]!.querySelectorAll("*")) {
+        if (el.shadowRoot && el.localName !== "mono-wind") roots.push(el.shadowRoot);
+      }
+    }
+    const hosts = roots.flatMap((root) => [...root.querySelectorAll("mono-wind:not(mono-wind *)")]);
     return hosts.length > 0 && hosts.every((host) => host.hasAttribute("data-mw-ready"));
   });
   await page.waitForFunction(() => {
@@ -53,6 +60,23 @@ export async function engineQuiet(page: Page, quiet = 150, limit = 10_000): Prom
     [quiet, limit] as const,
   );
 }
+
+/** The selector of a `data-test` hook. */
+export const hook = (name: string): string => `[data-test="${name}"]`;
+
+/** A hooked element's box. */
+export const rectOf = (page: Page, name: string): Promise<DOMRect> =>
+  page.evaluate(
+    (selector) => document.querySelector(selector)!.getBoundingClientRect().toJSON(),
+    hook(name),
+  );
+
+/** A hooked element's `data-*` value. */
+export const datasetOf = (page: Page, name: string, key: string): Promise<string | undefined> =>
+  page.evaluate(
+    ({ selector, entry }) => (document.querySelector(selector) as HTMLElement).dataset[entry],
+    { selector: hook(name), entry: key },
+  );
 
 /** The built Storybook's stories, from its index.json. */
 export function storyIndex(): { id: string; tags: string[] }[] {

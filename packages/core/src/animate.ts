@@ -18,18 +18,13 @@
  */
 
 import { animatesBackground } from "./animation.ts";
-
-interface Rgba {
-  r: number; // 0..1, sRGB
-  g: number;
-  b: number;
-  a: number;
-  legacy: boolean; // rgb()/transparent — pairs of these lerp in sRGB
-}
+import { mixColors, parseColor, prepareColor, serializeColor, splitCommas } from "./color.ts";
+import type { Prepared, Rgba } from "./color.ts";
 
 interface SynthesizedTransition {
-  from: Rgba;
-  to: Rgba;
+  from: Prepared;
+  to: Prepared;
+  space: "srgb" | "oklab";
   toValue: string;
   start: number; // performance.now() + delay
   duration: number;
@@ -111,12 +106,14 @@ export function resolvePendingTransitions(host: Element): boolean {
     pending.splice(i, 1);
     hadPending = true;
     const config = transitionConfigFor(getComputedStyle(el), "background-color");
-    const fromColor = parseColor(from);
-    const toColor = parseColor(to);
+    const fromColor = readColor(from);
+    const toColor = readColor(to);
     if (!config || !fromColor || !toColor) continue;
+    const space = isLegacy(from) && isLegacy(to) ? "srgb" : "oklab";
     active.set(el, {
-      from: fromColor,
-      to: toColor,
+      from: prepareColor(fromColor, space),
+      to: prepareColor(toColor, space),
+      space,
       toValue: to,
       start: performance.now() + config.delay,
       duration: config.duration,
@@ -141,7 +138,7 @@ function sampleColor(transition: SynthesizedTransition): string {
   const t = (performance.now() - transition.start) / transition.duration;
   if (t >= 1) return transition.toValue;
   const eased = t <= 0 ? 0 : transition.easing(t);
-  return serialize(mix(transition.from, transition.to, eased));
+  return serializeColor(mixColors(transition.from, transition.to, eased, transition.space));
 }
 
 /* === Transition config ================================================ */
@@ -166,7 +163,7 @@ function transitionConfigFor(
   }
   if (index < 0) return null;
   const nth = (list: string): string => {
-    const values = list.split(",").map((v) => v.trim());
+    const values = splitCommas(list).map((v) => v.trim());
     return values[index % values.length] ?? "";
   };
   const duration = parseSeconds(nth(cs.transitionDuration));
@@ -184,20 +181,54 @@ function parseSeconds(value: string): number {
   return value.endsWith("ms") ? parsed / 1000 : parsed;
 }
 
+/** An easing as the computed value serializes it: every browser writes
+ * `step-start`/`step-end` as steps() and each linear() point with its
+ * position. */
 function parseEasing(value: string): (t: number) => number {
-  if (value === "linear") return (t) => t;
   const keyword = KEYWORD_EASINGS[value];
   if (keyword) return cubicBezier(...keyword);
-  const bezier = value.match(/^cubic-bezier\(([^)]+)\)$/);
-  if (bezier) {
-    const [x1, y1, x2, y2] = bezier[1]!.split(",").map((n) => parseFloat(n));
+  const [, name, list = ""] = /^([\w-]+)\((.+)\)$/.exec(value) ?? [];
+  const args = list.split(",").map((arg) => arg.trim());
+  if (name === "cubic-bezier") {
+    const [x1, y1, x2, y2] = args.map((n) => parseFloat(n));
     if ([x1, y1, x2, y2].every((n) => Number.isFinite(n))) {
       return cubicBezier(x1!, y1!, x2!, y2!);
     }
   }
-  // steps() and anything unrecognized: linear is the closest snap-free
-  // stand-in.
+  if (name === "steps") return steps(parseInt(args[0]!, 10), args[1] ?? "end");
+  if (name === "linear") return linearPoints(args);
   return (t) => t;
+}
+
+/** CSS steps(): the output holds at each level, jumping at the start,
+ * the end, both, or neither of the interval. */
+function steps(count: number, term: string): (t: number) => number {
+  const jumps = term === "jump-none" ? count - 1 : term === "jump-both" ? count + 1 : count;
+  const early = term === "start" || term === "jump-start" || term === "jump-both";
+  if (!(jumps > 0)) return (t) => t;
+  return (t) => Math.min(jumps, Math.floor(t * count) + (early ? 1 : 0)) / jumps;
+}
+
+/** CSS linear(): straight segments through the points, a position below
+ * an earlier one raised to it, the first and last segments extended. */
+function linearPoints(args: string[]): (t: number) => number {
+  let floor = -Infinity;
+  const points = args.map((arg) => {
+    const [output = "", position = ""] = arg.split(/\s+/);
+    floor = Math.max(floor, parseFloat(position) / 100);
+    return { at: floor, output: parseFloat(output) };
+  });
+  if (points.length < 2 || points.some(({ at, output }) => !Number.isFinite(at + output))) {
+    return (t) => t;
+  }
+  return (t) => {
+    let i = 0;
+    while (i < points.length - 2 && points[i + 1]!.at <= t) i++;
+    const [a, b] = [points[i]!, points[i + 1]!];
+    return b.at === a.at
+      ? b.output
+      : a.output + ((t - a.at) / (b.at - a.at)) * (b.output - a.output);
+  };
 }
 
 /** Standard cubic-bezier easing: solve x(u) = t for u by bisection,
@@ -217,97 +248,15 @@ function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number
   };
 }
 
-/* === Color math ======================================================= */
+/* === Color ============================================================ */
 
-function parseColor(value: string): Rgba | null {
-  if (value === "" || value === "transparent") return { r: 0, g: 0, b: 0, a: 0, legacy: true };
-  let match = value.match(/^rgba?\(([^)]+)\)$/);
-  if (match) {
-    const parts = match[1]!.split(/[\s,/]+/).map((n) => parseFloat(n));
-    if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-    return {
-      r: parts[0]! / 255,
-      g: parts[1]! / 255,
-      b: parts[2]! / 255,
-      a: parts[3] ?? 1,
-      legacy: true,
-    };
-  }
-  match = value.match(/^color\(srgb ([^)]+)\)$/);
-  if (match) {
-    const parts = match[1]!.split(/[\s/]+/).map((n) => parseFloat(n));
-    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return null;
-    return { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: parts[3] ?? 1, legacy: false };
-  }
-  match = value.match(/^okl(ch|ab)\(([^)]+)\)$/);
-  if (match) {
-    const polar = match[1] === "ch";
-    const parts = match[2]!
-      .replaceAll("none", "0")
-      .split(/[\s/]+/)
-      .map((n) => parseFloat(n));
-    if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-    const [l, c1, c2] = parts as [number, number, number];
-    const a = polar ? c1 * Math.cos((c2 * Math.PI) / 180) : c1;
-    const b = polar ? c1 * Math.sin((c2 * Math.PI) / 180) : c2;
-    return { ...oklabToSrgb(l, a, b), a: parts[3] ?? 1, legacy: false };
-  }
-  return null;
+/** A read background as a color: unset is transparent. */
+function readColor(value: string): Rgba | null {
+  return value === "" ? { r: 0, g: 0, b: 0, a: 0 } : parseColor(value);
 }
 
-function mix(from: Rgba, to: Rgba, t: number): Rgba {
-  // Premultiplied-alpha interpolation (a transparent endpoint keeps the
-  // other's chromaticity), in OKLAB unless both endpoints are legacy
-  // sRGB (css-color-4 interpolation rules).
-  const a = from.a + (to.a - from.a) * t;
-  const lerp = (x: number, y: number): number => {
-    const premixed = x * from.a + (y * to.a - x * from.a) * t;
-    return a === 0 ? 0 : premixed / a;
-  };
-  if (from.legacy && to.legacy) {
-    return { r: lerp(from.r, to.r), g: lerp(from.g, to.g), b: lerp(from.b, to.b), a, legacy: true };
-  }
-  const f = srgbToOklab(from.r, from.g, from.b);
-  const o = srgbToOklab(to.r, to.g, to.b);
-  const rgb = oklabToSrgb(lerp(f.l, o.l), lerp(f.a, o.a), lerp(f.b, o.b));
-  return { ...rgb, a, legacy: false };
-}
-
-function serialize(color: Rgba): string {
-  const channel = (c: number): number => Math.round(Math.min(1, Math.max(0, c)) * 255);
-  const alpha = Math.round(Math.min(1, Math.max(0, color.a)) * 1000) / 1000;
-  return `rgba(${channel(color.r)}, ${channel(color.g)}, ${channel(color.b)}, ${alpha})`;
-}
-
-function linearize(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
-function delinearize(c: number): number {
-  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
-}
-
-function srgbToOklab(r: number, g: number, b: number): { l: number; a: number; b: number } {
-  const lr = linearize(r);
-  const lg = linearize(g);
-  const lb = linearize(b);
-  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
-  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
-  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
-  return {
-    l: 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-    a: 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
-    b: 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
-  };
-}
-
-function oklabToSrgb(l: number, a: number, b: number): { r: number; g: number; b: number } {
-  const l3 = Math.pow(l + 0.3963377774 * a + 0.2158037573 * b, 3);
-  const m3 = Math.pow(l - 0.1055613458 * a - 0.0638541728 * b, 3);
-  const s3 = Math.pow(l - 0.0894841775 * a - 1.291485548 * b, 3);
-  return {
-    r: delinearize(4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3),
-    g: delinearize(-1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3),
-    b: delinearize(-0.0041960863 * l3 - 0.7034186147 * m3 + 1.707614701 * s3),
-  };
+/** An `rgb()` or `transparent` value (unset too): a pair of these
+ * mixes in sRGB, any other pair in OKLab (css-color-4). */
+function isLegacy(value: string): boolean {
+  return value === "" || value === "transparent" || value.startsWith("rgb");
 }

@@ -31,7 +31,8 @@ marks a shadow drawn inside the padding box.
 - **A shadow is the box's silhouette in a shade.** The border box
   moved by `x` and `y` and grown by `spread` on every side is the
   shadow's core; blur adds `round(blur / 2)` rings around it (CSS
-  blurs half the radius outward), each ring lighter than the one
+  blurs with a standard deviation of half the radius, and the rings
+  stop there, short of its faint tail), each ring lighter than the one
   inside it.
 - **The shades come from the owner's glyph set**: the set's `shadow`
   ramp lists glyphs from densest to lightest, `█ ▓ ▒ ░` by default

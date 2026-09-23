@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { engineQuiet, openStory } from "./helpers.ts";
+import { datasetOf, engineQuiet, hook, openStory, rectOf } from "./helpers.ts";
 
 /**
  * Pointer routing end to end (specs/cell-model.md "Pointer states"):
@@ -101,6 +101,46 @@ test("a box painted over an element takes the pointer", async ({ page }) => {
   // A script addresses the element itself, covered or not.
   await page.evaluate(() => (document.querySelector("#btn-covered") as HTMLElement).click());
   expect(await clicks("#btn-covered"), "a script's own click").toBe(2);
+});
+
+test("a key's activation and a label's click reach the element they address", async ({ page }) => {
+  await openStory(page, "features-interactive--activation");
+  await engineQuiet(page);
+  // Chromium and Firefox report a key's click at the viewport's origin,
+  // the paragraph's cell: no pointer hit to correct.
+  await page.focus(hook("button"));
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Space");
+  expect(await datasetOf(page, "button", "clicks"), "both keys activate").toBe("2");
+  // A label forwards its click to the control at the label's own cells.
+  for (const label of ["wrapping", "pointing"]) {
+    const box = await rectOf(page, label);
+    await page.mouse.click(box.left + 2, box.top + box.height / 2);
+  }
+  expect(
+    await page.evaluate(
+      (selectors) =>
+        selectors.map((selector) => (document.querySelector(selector) as HTMLInputElement).checked),
+      [hook("wrapped"), hook("pointed")],
+    ),
+    "each label checks its box",
+  ).toEqual([true, true]);
+});
+
+test("a press passes through what takes no pointer events", async ({ page }) => {
+  await openStory(page, "features-interactive--click-through");
+  await engineQuiet(page);
+  // Through the badge laid over its corner, the button takes the press.
+  const badge = await rectOf(page, "badge");
+  await page.mouse.click(badge.left + badge.width / 2, badge.top + badge.height / 2);
+  expect(await datasetOf(page, "button", "count"), "the button beneath").toBe("1");
+  // The disabled link takes none; the enabled one beside it does.
+  for (const name of ["disabled", "enabled"]) {
+    const link = await rectOf(page, name);
+    await page.mouse.click(link.left + 2, link.top + link.height / 2);
+  }
+  expect(await datasetOf(page, "disabled", "clicks"), "the disabled link").toBeUndefined();
+  expect(await datasetOf(page, "enabled", "clicks"), "the enabled link").toBe("1");
 });
 
 /**

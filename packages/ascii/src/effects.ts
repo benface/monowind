@@ -17,7 +17,7 @@ const EFFECTS = {
 export type Effect = keyof typeof EFFECTS;
 
 export function isEffect(name: string): name is Effect {
-  return name in EFFECTS;
+  return Object.hasOwn(EFFECTS, name);
 }
 
 export function effectRuns(effect: Effect, lines: string[]): LeafRun[] {

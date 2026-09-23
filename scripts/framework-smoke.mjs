@@ -2,12 +2,13 @@ import { spawnSync } from "node:child_process";
 
 /**
  * The shared body of the framework example smoke tests: build, serve,
- * and drive the ownership loop, plus the menu and dialog from the
- * framework's @monowind/ui bindings where it has them (`ui`). The
- * caller passes its own `chromium` and `createServer` (resolved from
- * the app's own deps), its directory, and its name.
+ * and drive the ownership loop, plus the menu, the select and the
+ * dialog from @monowind/ui — the framework's bindings, or the
+ * `<mono-*>` elements where it has none. The caller passes its own
+ * `chromium` and `createServer` (resolved from the app's own deps),
+ * its directory, and its name.
  */
-export async function runFrameworkSmoke({ name, dir, chromium, createServer, ui = true }) {
+export async function runFrameworkSmoke({ name, dir, chromium, createServer }) {
   const build = spawnSync("pnpm", ["exec", "vite", "build"], {
     cwd: dir,
     stdio: "inherit",
@@ -54,63 +55,58 @@ export async function runFrameworkSmoke({ name, dir, chromium, createServer, ui 
     };
   });
 
-  if (ui) {
-    // The menu from @monowind/ui: opened under its button in the top
-    // layer, an item picked; the dialog opened in the top layer and
-    // dismissed.
-    await page.click('button[aria-haspopup="menu"]');
-    await page.waitForSelector('[data-part="positioner"]:popover-open[data-mw-area]');
-    result.menuUnderButton = await page.evaluate(() => {
-      const trigger = document
-        .querySelector('button[aria-haspopup="menu"]')
-        .getBoundingClientRect();
-      const positioner = document
-        .querySelector('[data-part="positioner"]:popover-open')
-        .getBoundingClientRect();
-      return (
-        Math.abs(positioner.top - trigger.bottom) < 1 &&
-        Math.abs(positioner.left - trigger.left) < 1
-      );
-    });
-    // The submenu: hovering the item that carries it opens a second
-    // positioner, beside that item on the reading side.
-    await page.hover('[data-part="trigger-item"]');
-    await page.waitForFunction(
-      () => document.querySelectorAll('[data-part="positioner"]:popover-open').length === 2,
+  // The menu from @monowind/ui: opened under its button in the top
+  // layer, an item picked; the dialog opened in the top layer and
+  // dismissed.
+  await page.click('button[aria-haspopup="menu"]');
+  await page.waitForSelector('[data-part="positioner"]:popover-open[data-mw-area]');
+  result.menuUnderButton = await page.evaluate(() => {
+    const trigger = document.querySelector('button[aria-haspopup="menu"]').getBoundingClientRect();
+    const positioner = document
+      .querySelector('[data-part="positioner"]:popover-open')
+      .getBoundingClientRect();
+    return (
+      Math.abs(positioner.top - trigger.bottom) < 1 && Math.abs(positioner.left - trigger.left) < 1
     );
-    result.submenuBesideItem = await page.evaluate(() => {
-      const item = document.querySelector('[data-part="trigger-item"]').getBoundingClientRect();
-      const open = document.querySelectorAll('[data-part="positioner"]:popover-open');
-      return Math.abs(open[1].getBoundingClientRect().left - item.right) < 1;
-    });
-    await page.click('[role="menuitem"][data-value="open"]');
-    await page.waitForFunction(() => document.body.textContent?.includes("picked open"));
-    result.menuPicked = await page.evaluate(
-      () => document.body.textContent?.includes("picked open") ?? false,
-    );
-    // The select: its own root element in the flow, its list in the
-    // top layer, the choice written into the trigger and the native
-    // control a form would post.
-    await page.click('button[aria-haspopup="listbox"]');
-    await page.waitForSelector('[role="listbox"]');
-    await page.click('[role="option"][data-value="next"]');
-    await page.waitForFunction(
-      () => document.querySelector('[data-part="value-text"]')?.textContent?.trim() === "next",
-    );
-    result.selectChose = await page.evaluate(() => {
-      const hidden = document.querySelector("select");
-      return hidden?.value === "next" && getComputedStyle(hidden).display === "none";
-    });
+  });
+  // The submenu: hovering the item that carries it opens a second
+  // positioner, beside that item on the reading side.
+  await page.hover('[data-part="trigger-item"]');
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-part="positioner"]:popover-open').length === 2,
+  );
+  result.submenuBesideItem = await page.evaluate(() => {
+    const item = document.querySelector('[data-part="trigger-item"]').getBoundingClientRect();
+    const open = document.querySelectorAll('[data-part="positioner"]:popover-open');
+    return Math.abs(open[1].getBoundingClientRect().left - item.right) < 1;
+  });
+  await page.click('[role="menuitem"][data-value="open"]');
+  await page.waitForFunction(() => document.body.textContent?.includes("picked open"));
+  result.menuPicked = await page.evaluate(
+    () => document.body.textContent?.includes("picked open") ?? false,
+  );
+  // The select: its own root element in the flow, its list in the
+  // top layer, the choice written into the trigger and the native
+  // control a form would post.
+  await page.click('button[aria-haspopup="listbox"]');
+  await page.waitForSelector('[role="listbox"]');
+  await page.click('[role="option"][data-value="next"]');
+  await page.waitForFunction(
+    () => document.querySelector('[data-part="value-text"]')?.textContent?.trim() === "next",
+  );
+  result.selectChose = await page.evaluate(() => {
+    const hidden = document.querySelector("select");
+    return hidden?.value === "next" && getComputedStyle(hidden).display === "none";
+  });
 
-    await page.click('button[aria-haspopup="dialog"]');
-    await page.waitForSelector(
-      '[data-part="positioner"]:popover-open [role="dialog"][data-state="open"]',
-    );
-    await page.keyboard.press("Escape");
-    await page.waitForSelector('[role="dialog"][data-state="closed"]', {
-      state: "attached",
-    });
-  }
+  await page.click('button[aria-haspopup="dialog"]');
+  await page.waitForSelector(
+    '[data-part="positioner"]:popover-open [role="dialog"][data-state="open"]',
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('[role="dialog"][data-state="closed"]', {
+    state: "attached",
+  });
 
   await browser.close();
   await server.close();

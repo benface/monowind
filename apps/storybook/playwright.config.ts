@@ -21,12 +21,12 @@ export default defineConfig({
     {
       name: "webkit",
       use: { browserName: "webkit" },
-      testMatch: /(selection|qr|keyboard|pointer|top-layer|agreement)\.spec\.ts/,
+      testMatch: /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement)\.spec\.ts/,
     },
     {
       name: "firefox",
       use: { browserName: "firefox" },
-      testMatch: /(selection|qr|keyboard|pointer|top-layer|agreement)\.spec\.ts/,
+      testMatch: /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement)\.spec\.ts/,
     },
   ],
   webServer: {

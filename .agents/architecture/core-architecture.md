@@ -258,7 +258,7 @@ blurs focus and resets internal scroll state, violating focus preservation.
 
 ### Companion-stylesheet techniques worth knowing
 
-Two patterns recur in `styles.css` and are easy to misread:
+Four patterns recur in `styles.css` and are easy to misread:
 
 - **Gating on the measuring flag.** Any rule whose output the style reader
   would otherwise read back as if the author wrote it (white-space,
@@ -284,6 +284,14 @@ Two patterns recur in `styles.css` and are easy to misread:
   an inherited property means _inherit the parent's grid-exact value_ — one
   rule covers every element without per-element selectors. The same trick
   makes the inline-inset rule leave un-authored sides at `auto`.
+- **Selectors the style engine can reject fast.** A rule that matches
+  most light elements keeps its descendant combinators outside `:is()`
+  and `:not()` — `dialog:modal :not(…)`, not `:is(dialog:modal *)` —
+  since Chromium's ancestor filter rejects the former cheaply and walks
+  every ancestor for the latter (performance.md "Pointer events and the
+  hit through a layer"). And no `::slotted` rule keys on a host
+  attribute that flips each layout: each flip restyles the shadow tree
+  and every slotted element with it.
 
 ## Reading authored values: CSS Typed OM
 

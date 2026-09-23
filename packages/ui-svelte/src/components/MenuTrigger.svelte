@@ -12,7 +12,7 @@
   } = $props();
 
   const { menu } = menuContext.use();
-  const own = $derived(defined({ value }) as {  });
+  const own = $derived(defined({ value }));
 </script>
 
 <Part tag="button" props={menu.api.getTriggerProps(own)} {children} {child} {...rest} />

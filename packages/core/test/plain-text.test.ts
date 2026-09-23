@@ -11,7 +11,7 @@ import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
 import { makeNode } from "./helpers.ts";
-import type { LayoutNode } from "../src/types.ts";
+import type { BackgroundClip, LayoutNode } from "../src/types.ts";
 
 /**
  * Golden-output tests: lay out a tree, render it as ASCII art, compare to
@@ -590,6 +590,44 @@ describe("bg fill at a row's end", () => {
   });
 });
 
+describe("background-clip on a plain color", () => {
+  /** A bordered, x-padded box's background per cell, clipped as named. */
+  const backgrounds = (backgroundClip: BackgroundClip): (string | undefined)[][] => {
+    const box = makeNode({
+      style: {
+        width: { kind: "cells", value: 6 },
+        height: { kind: "cells", value: 3 },
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        padding: { top: 0, right: 1, bottom: 0, left: 1 },
+        backgroundColor: "red",
+        backgroundClip,
+      },
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 6);
+    return renderCellSegments(root).map((row) =>
+      row.flatMap((segment) => Array.from(segment.text, () => segment.backgroundColor)),
+    );
+  };
+  const edge = Array.from({ length: 6 }, () => undefined);
+
+  it("fills the padding box, the border's cells left as they were", () => {
+    expect(backgrounds("padding-box")).toEqual([
+      edge,
+      [undefined, "red", "red", "red", "red", undefined],
+      edge,
+    ]);
+  });
+
+  it("fills the content box, the padding's cells left as they were", () => {
+    expect(backgrounds("content-box")).toEqual([
+      edge,
+      [undefined, undefined, "red", "red", undefined, undefined],
+      edge,
+    ]);
+  });
+});
+
 describe("form controls (native-rendered value)", () => {
   it("leaves the leaf empty so the browser paints the value on top of the grid", () => {
     // <input>/<textarea>/<select> handle their own caret, selection,
@@ -673,6 +711,59 @@ describe("opacity", () => {
     // opacity: 0 still paints its glyphs (transparent spans stay
     // selectable in grid mode), never drops them.
     expect(rows[1]![0]).toMatchObject({ text: "go", opacity: "0" });
+  });
+
+  it("carries an inline element's own, times its inline ancestors' and its block's", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div><p style="opacity: 0.5">a <span style="opacity: 0.5; background: red">b <em style="opacity: 0.5">c</em></span></p></div>';
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 20);
+    const segmentOf = (text: string) =>
+      renderCellSegments(node)[0]!.find((segment) => segment.text.includes(text));
+    host.remove();
+    expect(segmentOf("a")?.opacity).toBe("0.5");
+    // Its background fades with its glyphs.
+    expect(segmentOf("b")?.opacity).toBe("0.25");
+    // Without one of its own, the glyphs' color carries its share, 0.125
+    // in all.
+    expect(segmentOf("c")?.opacity).toBe("0.5");
+    expect(segmentOf("c")?.color).toMatch(/ 25%, transparent\)$/);
+  });
+
+  it("fades an inline element's own paint, never the ground beneath it", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div><p style="background: blue">xx <span style="opacity: 0.5">yy</span> <span style="opacity: 0.5; background: red">zz</span></p></div>';
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 20);
+    const segmentOf = (text: string) =>
+      renderCellSegments(node)[0]!.find((segment) => segment.text.includes(text));
+    host.remove();
+    // The paragraph's background stays solid under the faded text.
+    expect(segmentOf("yy")).toMatchObject({ backgroundColor: "blue" });
+    expect(segmentOf("yy")?.opacity).toBeUndefined();
+    expect(segmentOf("yy")?.color).toMatch(/^color-mix\(in oklab, .+ 50%, transparent\)$/);
+    // Its own background fades with it, over the page.
+    expect(segmentOf("zz")).toMatchObject({ backgroundColor: "red", opacity: "0.5" });
+  });
+
+  it("fades what a faded inline element holds: an atomic box, an out-of-flow box, a split block", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div style="position: relative"><p>a <span style="opacity: 0.5">b <span style="display: inline-block">box</span><span style="position: absolute; right: 0; bottom: 0">abs</span></span></p><div>c <span style="opacity: 0.5">d<div>block</div>e</span></div></div>';
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 30);
+    const segments = renderCellSegments(node).flat();
+    const opacityOf = (text: string) =>
+      segments.find((segment) => segment.text.includes(text))?.opacity;
+    host.remove();
+    expect(opacityOf("box")).toBe("0.5");
+    expect(opacityOf("abs")).toBe("0.5");
+    expect(opacityOf("block")).toBe("0.5");
   });
 });
 

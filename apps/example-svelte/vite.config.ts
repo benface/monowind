@@ -5,6 +5,6 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [svelte(), monowind()],
   server: {
-    port: 5185,
+    port: 5194,
   },
 });

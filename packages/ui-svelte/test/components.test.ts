@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import Harness from "./Harness.svelte";
 import Provided from "./Provided.svelte";
 import Bound from "./Bound.svelte";
+import Hidden from "./Hidden.svelte";
+import Triggered from "./Triggered.svelte";
 import type { createSelect } from "../src/index.svelte.ts";
+import { posted, resetByClick, settle } from "../../ui/test/helpers.ts";
 
 /** The compound components (specs/ui.md "Component layer"): the parts
  * over the same `create…` functions, a nested `MenuRoot` the submenu
@@ -121,6 +124,9 @@ describe("an API the caller holds", () => {
     await tick();
     expect(api.api.value).toEqual(["next"]);
     expect(at("value-text").textContent?.trim()).toBe("next");
+    // The selection marked as a listbox's items and the mount's are.
+    expect(at("item", "next").hasAttribute("data-selected")).toBe(true);
+    expect(at("item", "main").hasAttribute("data-selected")).toBe(false);
     expect(container.querySelector<HTMLSelectElement>("select")!.value).toBe("next");
     await unmount(tree);
     container.remove();
@@ -175,5 +181,140 @@ describe("a bound prop", () => {
     expect(state.open).toBe(false);
     await unmount(tree);
     container.remove();
+  });
+});
+
+describe("a bound trigger value and input value", () => {
+  it("follows the trigger pressed and the text typed", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    let state: { menu?: string; dialog?: string; input?: string } = {};
+    const tree = mount(Triggered, {
+      target: container,
+      props: { read: (next: typeof state) => (state = next) },
+    });
+    await tick();
+    const at = (selector: string) => container.querySelectorAll<HTMLElement>(selector);
+    at('[data-scope="menu"][data-part="trigger"]')[1]!.click();
+    await tick();
+    at('[data-scope="dialog"][data-part="trigger"]')[1]!.click();
+    await tick();
+    // An idle combobox takes typing once its input has focus.
+    const input = at("input")[0] as HTMLInputElement;
+    input.focus();
+    input.value = "ne";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    expect(state).toEqual({ menu: "b", dialog: "b", input: "ne" });
+    await unmount(tree);
+    container.remove();
+  });
+});
+
+describe("a select's hidden control", () => {
+  const mountHidden = async (props: {
+    id: string;
+    initial: string[];
+    multiple?: boolean;
+    defaultValue?: string[];
+  }) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    let change!: {
+      items(next: string[]): void;
+      name(next: string): void;
+      api(): ReturnType<typeof createSelect>["api"];
+    };
+    const tree = mount(Hidden, {
+      target: container,
+      props: { ...props, change: (to) => (change = to) },
+    });
+    await tick();
+    const hidden = container.querySelector("select")!;
+    return {
+      hidden,
+      posted: () => posted(hidden),
+      change,
+      unmount: () => unmount(tree).then(() => container.remove()),
+    };
+  };
+
+  it("selects every option a multiple select's value holds, through a render that keeps it", async () => {
+    const select = await mountHidden({
+      id: "several",
+      initial: ["main", "next", "old"],
+      multiple: true,
+      defaultValue: ["main", "old"],
+    });
+    expect(select.posted()).toEqual(["main", "old"]);
+    select.change.name("targets");
+    await tick();
+    expect(select.hidden.name).toBe("targets");
+    expect(select.posted()).toEqual(["main", "old"]);
+    await select.unmount();
+  });
+
+  it("selects the option of a value that arrived before it, and none for one no option holds", async () => {
+    const select = await mountHidden({ id: "early", initial: ["main"], defaultValue: ["release"] });
+    expect(select.posted(), "no option chosen in its place").toEqual([]);
+    select.change.items(["main", "release"]);
+    await tick();
+    expect(select.posted()).toEqual(["release"]);
+    await select.unmount();
+  });
+
+  it("goes back to its default at a reset the reader clicks, or to no option", async () => {
+    const select = await mountHidden({
+      id: "clicked",
+      initial: ["main", "next"],
+      defaultValue: ["next"],
+    });
+    select.change.api().setValue(["main"]);
+    await tick();
+    expect(select.posted()).toEqual(["main"]);
+    await resetByClick(select.hidden.form!);
+    expect(select.change.api().value).toEqual(["next"]);
+    expect(select.posted()).toEqual(["next"]);
+    await select.unmount();
+    const empty = await mountHidden({ id: "clicked-empty", initial: ["main", "next"] });
+    empty.change.api().setValue(["main"]);
+    await tick();
+    await resetByClick(empty.hidden.form!);
+    expect(empty.change.api().value).toEqual([]);
+    expect(empty.posted(), "no option chosen in its place").toEqual([]);
+    await empty.unmount();
+  });
+
+  it("keeps a single select's option through an observer that deselects it as the options change", async () => {
+    const select = await mountHidden({
+      id: "observed",
+      initial: ["main", "next"],
+      defaultValue: ["next"],
+    });
+    // Svelte's own on a spread <select>, from 5.20 until 5.56.8: every
+    // option change, a microtask on, selects its `value`, here none.
+    const observer = new MutationObserver(() => (select.hidden.selectedIndex = -1));
+    observer.observe(select.hidden, { childList: true, subtree: true });
+    select.change.items(["main", "next", "release"]);
+    await tick();
+    await settle();
+    expect(select.posted()).toEqual(["next"]);
+    observer.disconnect();
+    await select.unmount();
+  });
+
+  it("goes back to several values at a reset the reader clicks", async () => {
+    const select = await mountHidden({
+      id: "clicked-several",
+      initial: ["main", "next"],
+      multiple: true,
+      defaultValue: ["main", "next"],
+    });
+    select.change.api().setValue([]);
+    await tick();
+    await resetByClick(select.hidden.form!);
+    expect(select.change.api().value).toEqual(["main", "next"]);
+    expect(select.posted()).toEqual(["main", "next"]);
+    await select.unmount();
   });
 });

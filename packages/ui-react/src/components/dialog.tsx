@@ -2,7 +2,7 @@ import { propNames } from "@monowind/ui/dialog";
 import type * as dialog from "@monowind/ui/dialog";
 import type { PropTypes } from "@zag-js/react";
 import { useDialog, type Connected, type Positioned } from "../hooks.ts";
-import { defineContext, defineRoot, defineRootProvider, partsOf } from "./part.tsx";
+import { defineContext, defineRoot, defineRootProvider, partsOf, triggerPart } from "./part.tsx";
 
 /** Zag's dialog as a compound component (specs/ui.md "Component
  * layer"): the positioner is the platform's centered top-layer box and
@@ -25,7 +25,7 @@ export const RootProvider = defineRootProvider<Api>("Dialog.RootProvider", conte
 
 const part = partsOf("Dialog", context.use);
 
-export const Trigger = part("Trigger", (api) => api.getTriggerProps(), "button");
+export const Trigger = triggerPart("Dialog", context.use);
 export const Positioner = part("Positioner", (api) => api.getPositionerProps());
 export const Content = part("Content", (api) => api.getContentProps());
 export const Title = part("Title", (api) => api.getTitleProps(), "h2");

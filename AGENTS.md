@@ -65,6 +65,41 @@ day it is done.
   Standard loop counters (`i`, `j`, `k`) and well-known domain acronyms
   (`url`, `html`, `id`) are fine.
 
+## Git
+
+The user reviews work by staging it while agents are still working,
+so the index moves under you — expected, not worth reporting:
+
+- Never stage, unstage, stash or check out; the index is the user's.
+- Commit or push only with the user's explicit approval, given for
+  that batch — an earlier approval doesn't carry over to the next.
+- The index is no baseline for "without the fix": run the test against
+  a scratch copy with the fix taken out, never by swapping the fix out
+  of the tracked tree, which the user may stage mid-swap.
+
+## Testing
+
+Every fix comes with a regression test seen failing without the fix
+(written first, or run against a scratch copy, as above).
+
+Run the narrowest check that covers a change while working, and the
+full suites once, before handing off:
+
+- A package's unit tests: `npx vitest run test/<file>.test.ts` in the
+  package (`-t "<name>"` for one test) — seconds.
+- A story file, in `apps/storybook` (~5 s):
+  `npx vitest run stories/<file>.stories.ts --browser=chromium`; drop
+  `--browser` to add Firefox and WebKit once it holds (the whole suite
+  is ~50 s).
+- Visual goldens only when paint or layout changes, scoped with
+  `node scripts/test-visual.mjs --grep "<story-id>"`; the full run
+  (a Storybook build, then Docker) once, at the end.
+- `pnpm check` and `pnpm test` (the smokes build every package they
+  serve) once, at the end — not after each edit.
+- Never run two browser suites (stories, visual, smokes) at once,
+  parallel agents included: they contend for the CPU and time out.
+  Long runs go to the background with a hard timeout.
+
 ## Releasing
 
 Bump the `version` in every `packages/*/package.json` (same number) —

@@ -57,8 +57,12 @@ width, rows against its content height (definite) or content (indefinite).
 A track size is one of:
 
 - **cells** — px/rem lengths on the spacing scale (`grid-cols-[8rem_1fr]`).
-- **percent** — of the container's content box in the track's axis
-  (indefinite axis → treated as `auto`, per CSS).
+- **percent** — of the container's content box in the track's axis.
+  Under an indefinite height a percent row is `auto` for the
+  container's height, then resolves against that height (css-grid
+  §7.2.1): `grid-rows-[20%_20%]` over two seven-row items is a 14-row
+  grid whose rows are 3 each, the items overflowing them — all three
+  engines (probed 2026-09-23).
 - **`min()` / `max()`** over cells/percent arguments — the canonical
   responsive auto-fill pattern
   `minmax(min(8rem, 100%), 1fr)`. Resolved at layout time; a percent
@@ -89,22 +93,48 @@ final column widths).
 1. **Initialize** each track at its minmax min (cells/percent resolved; a
    content-based min starts at 0) and minmax max (∞ for fr until step 4).
 2. **Resolve intrinsic minimums/maximums** from items, in ascending span
-   order (span-1 items first, per CSS): each item's min-content and
-   max-content contributions (outer sizes: the item's border + padding +
-   content measure, plus its fixed margins) grow the base/limit of the
-   intrinsic tracks it spans. An item spanning multiple tracks distributes
-   its still-needed space across the spanned intrinsic tracks with the
+   order (span-1 items first, per CSS): each item's contributions (outer
+   sizes: the item's border + padding + content measure, plus its fixed
+   margins) grow the base/limit of the intrinsic tracks it spans. Bases
+   grow to the item's **minimum contribution** (§11.5): a specified size
+   (a cell height; a width other than `auto` or a percent), else its
+   `min-width`/`min-height`, else its automatic minimum — content-based
+   (the min-content width, the laid-out height, capped by its max) only
+   under the §6.6 rule of Items in their areas, 0 for a scroll container
+   (a `truncate` item leaves `1fr 1fr` columns even). A specified size
+   or min-size, and a content-based minimum, never count below the
+   item's border, padding and scrollbar gutter: a `min-w-0 px-3` item
+   holds a 6-wide `1fr` column, and a `px-3` item a `minmax(auto, 2)`
+   one. A zero automatic minimum takes no such floor, as Firefox and
+   WebKit size it (Chromium floors it too; probed 2026-09-23).
+   Min-content and max-content minimums then grow to the min-content
+   contribution too (**simplification**: CSS grows a max-content
+   minimum to the max-content contribution); limits grow to the
+   min-content (a `min-content` max) or max-content contribution.
+   The same contributions size the container's min-content width, as
+   Chromium and Firefox do: a scroll container adds nothing to a `w-min`
+   grid's `1fr` or `auto` column in all three engines, and a `min-w-0`
+   item nothing in those two (WebKit counts its min-content; probed
+   2026-09-23). An item spanning multiple tracks distributes its
+   still-needed space across the spanned intrinsic tracks with the
    shared integer distribution, equal weights (**simplification** of the
    spec's growth-limit ordering — deterministic and close in practice; a
    spanning item never grows tracks that have no intrinsic component).
-   An item spanning an fr track distributes only its MIN-content
-   contribution, and only to the fr tracks with an intrinsic min,
-   weighted by flex factor (CSS §11.5.1) — this seeds the automatic
-   minimum that makes bare `1fr 1fr` columns unequal under long content;
-   its max contribution is step 4's job.
-3. **Clamp** each track: base ≤ limit (limit wins when the pair is
-   inconsistent, mirroring min/max-width and emulating the spec's
-   limited-contribution rule); an intrinsic limit is floored at its base.
+   An item spanning an fr track grows only the bases of the fr tracks
+   with an intrinsic min, weighted by flex factor (CSS §11.5.1) — this
+   seeds the automatic minimum that makes bare `1fr 1fr` columns unequal
+   under long content, and an item spanning several tracks with a
+   flexible one among them (automatic minimum 0) grows nothing; its max
+   contribution is step 4's job.
+3. **Clamp** each track: what content alone grew an `auto`-min track's
+   base by stays within a fixed limit — a spanning item's content-based
+   minimum, shared evenly (deviation 4), would pass it where the spec's
+   growth-limit ordering stops it; then every limit rises to its base
+   (§11.4). `minmax(min-content, 5)` over a 6-wide word is 6,
+   `minmax(10, 5)` is 10, and `minmax(auto, 12)` under an item whose
+   `min-width` or `width` is 20 is 20 — two such tracks under a spanning
+   `min-width` of 30, 15 each — in all three engines (probed
+   2026-09-23).
 4. **Maximize** (CSS §11.6, definite axis only): grow bases up to their
    growth limits with the free space, equal integer shares — this is what
    fills `minmax(0, <fixed>)` tracks and gives `auto` tracks their
@@ -114,10 +144,11 @@ final column widths).
    integer distribution (a factor sum below 1 only distributes that
    fraction, per CSS). Each fr track's result is floored at its base —
    for bare `<n>fr` that's the automatic minimum from step 2, so the
-   track never drops below its items' min-content (`minmax(0, 1fr)` from
-   `grid-cols-<n>` opts out, which is why Tailwind columns divide evenly
-   regardless of content). Re-run the distribution with floored tracks
-   frozen, §9.7-style, until nothing new violates.
+   track never drops below its items' minimum contributions
+   (`minmax(0, 1fr)` from `grid-cols-<n>` opts out, which is why
+   Tailwind columns divide evenly regardless of content). Re-run the
+   distribution with floored tracks frozen, §9.7-style, until nothing
+   new violates.
 6. **Stretch auto tracks** (§11.8): when the axis's content-distribution
    is `stretch` (the CSS-initial `normal` included), remaining free space
    grows the auto-limited tracks equally — a lone grid item in a definite
@@ -127,20 +158,26 @@ final column widths).
    maximizes to its growth limit (a fixed minmax max like
    `minmax(0, 2rem)` fills even without content; §11.6's infinite free
    space — all three browser engines agree), percent tracks behave as
-   `auto`, and fr tracks size to the shared flex fraction (§11.7 with
+   `auto` until the height is known, and fr tracks size to the shared flex fraction (§11.7 with
    indefinite space: the largest of each fr track's base ÷ factor and
    each crossing item's max-content contribution over the crossed
    factors) — so two `1fr` rows both take the TALLEST item's height,
    per CSS. The content height is the sum of row tracks plus gaps. The
    row axis counts as bounded whenever the inner height is finite — a
    `min-height` floor included, matching the flex line behavior
-   (`min-h-* content-*` and self-alignment work). A `max-height` on an
-   indefinite container caps its USED height too (css-grid §11.1):
-   content past the cap re-sizes the tracks against it, and since an
-   item's minimum contribution is the automatic minimum (0 for a scroll
-   container), an `fr` row shrinks and the item scrolls. The container's
-   min-content width instead sizes columns under the min-content
-   constraint (no maximize; fr at its base).
+   (`min-h-* content-*` and self-alignment work). Under a floor alone
+   the rows first size as above, and against the floor only when they
+   come out smaller (css-grid §11.7.1 for fr rows, §11.8 for auto ones):
+   `grid-rows-[1fr_1fr] min-h-10` over items of one and seven rows is
+   7 + 7, over one and three rows 5 + 5 — all three engines agree
+   (probed 2026-09-23, fixed-max rows alike; a percent row resolves
+   against the height that results, as under Track sizes). A
+   `max-height` on an indefinite container caps its USED height too
+   (css-grid §11.1): content past the cap re-sizes the tracks against
+   it, and since an item's minimum contribution is the automatic minimum
+   (0 for a scroll container), an `fr` row shrinks and the item scrolls.
+   The container's min-content width instead sizes columns under the
+   min-content constraint (no maximize; fr at its base).
 8. A definite container size smaller than the track sum simply overflows
    (tracks don't shrink, per CSS — grid has no `flex-shrink`).
 
@@ -196,11 +233,26 @@ it, per axis:
 - **stretch** (default): the item is laid out with its outer size forced to
   the area (minus fixed margins), same authority rules as a flex-assigned
   size; the item's own min/max still clamp, and a clamped or explicitly
-  sized item falls back to start alignment, per CSS.
+  sized item falls back to start alignment, per CSS. Its automatic
+  minimum (`min-width/height: auto` while overflow is visible: the
+  min-content width, the laid-out content height) floors the stretch,
+  capped by its max-width or max-height — a `max-w-3` item holding a
+  longer word is 3 wide in a wider track. Per css-grid §6.6 the
+  automatic minimum is content-based only for an item spanning a track
+  whose min is `auto` (a percent or `min()`/`max()` the axis can't
+  resolve counts), and never for one spanning several tracks with a
+  flexible one among them; where every spanned track has a fixed max it
+  is further capped at their sum plus the gaps between, less the item's
+  margins. Otherwise it is 0: in a `minmax(0, 1fr)` column (Tailwind's
+  `grid-cols-<n>`) or a fixed one narrower than a word, the item is the
+  track's width and the word overflows it; a `col-span-2` item across
+  `1fr 1fr` columns keeps their shares. All three engines lay these out
+  so, rows alike (probed 2026-09-23).
 - **start / center / end**: the item takes its intrinsic (or explicit) size
   and the area's leftover becomes the alignment offset (center floors).
 - **auto margins** win over alignment, absorbing the area's leftover
-  (both → centered, one → that side), exactly like flex.
+  (both → centered, one → that side), exactly like flex; an item
+  wider than its area gets none, at the area's start.
 - Content-distribution (`justify-content` / `align-content`) offsets the
   whole track grid inside the content box when the tracks underfill it,
   using the shared offset math (space-* variants included).
@@ -229,6 +281,10 @@ CSS Grid 2:
 - A subgrid is always exactly its grid area in a subgridded axis
   (self-alignment doesn't apply there), per CSS.
 - Line NAMES are not inherited (**deviation**).
+- A subgrid's own items size the parent's tracks with the parent's
+  sizing functions, but their stretch in a subgridded axis reads the
+  inherited tracks as `auto` ones (**deviation**): the automatic
+  minimum floors it as in an `auto` track, uncapped.
 - A `subgrid` axis on something that is not a grid item behaves as `none`,
   per CSS.
 - Engine mechanics: the parent gathers a subgrid child's items as sizing
@@ -265,20 +321,24 @@ and the same static-position rule still applies.
   their cells; percent, intrinsic, and fr tracks behave as `auto` (CSS
   §11.1's "treated as auto when the container size depends on the tracks")
   and count their items' contributions — max-content for the intrinsic
-  width, min-content for the min-content width — plus gaps. (Good enough
+  width, step 2's minimum contributions for the min-content width — plus
+  gaps. (Good enough
   for `w-max`/shrink-to-fit on grid containers; refinements can follow
   usage.)
 - `min/max-width/height` on the container clamp exactly as for flex
-  (width before content, height after).
+  (width and an explicit height before content, an auto height after),
+  and a flex parent reads the rows at their max-content sizes as the
+  container's content height, whatever height or floor it has.
 - Grid items are laid-out boxes: text wraps at the final track width,
   nested flex/grid/block lay out inside, borders paint as glyphs.
 
 ## Deviations from CSS Grid
 
-1. Subgrids don't inherit line names, and an explicit `gap` on a
-   subgridded axis doesn't override the parent's gutters (see Subgrid).
-   A named span against an `auto` opposite edge is treated as a plain
-   span of its count.
+1. Subgrids don't inherit line names, an explicit `gap` on a
+   subgridded axis doesn't override the parent's gutters, and a
+   subgrid's items stretch in a subgridded axis as if its tracks were
+   `auto` (see Subgrid). A named span against an `auto` opposite edge is
+   treated as a plain span of its count.
 2. Masonry: never planned.
 3. No baseline alignment (as in flex).
 4. Spanning-item space distribution uses equal weights across spanned

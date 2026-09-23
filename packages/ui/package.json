@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Accessible components on the monowind grid: Zag.js machines placed and layered by the engine",
   "keywords": [
     "accessibility",

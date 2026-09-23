@@ -3,7 +3,7 @@ import { getInteractionModality } from "@zag-js/focus-visible";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, withHandlers, type MachineProps } from "./anchor.ts";
-import { itemParts, markupCollection, type WithMarkupItems } from "./items.ts";
+import { itemParts, withMarkupItems, type WithMarkupItems } from "./items.ts";
 import { scrollToItem } from "./scroll.ts";
 import { liveProps, mount, part, start, type Mounted } from "./vanilla.ts";
 
@@ -87,7 +87,7 @@ export type MountProps = WithMarkupItems<Props>;
  * the pointer is on. */
 export function listbox(root: Element, machineProps: MountProps): Mounted<Api> {
   const live = liveProps(
-    { ...machineProps, collection: machineProps.collection ?? markupCollection(root) },
+    withMarkupItems(root, machineProps, (machineProps.selectionMode ?? "single") !== "single"),
     props,
   );
   const label = part(root, "label");
@@ -106,7 +106,6 @@ export function listbox(root: Element, machineProps: MountProps): Mounted<Api> {
       spread(content, current.getContentProps());
       wireItems(current, spread);
     },
-    [],
     live,
   );
 }

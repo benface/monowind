@@ -4,7 +4,7 @@
  * menu item is followed.
  */
 import { chromium } from "playwright";
-import { createServer } from "vite";
+import { build, createServer } from "vite";
 import { runEnhancerSmoke } from "../../scripts/enhancer-smoke.mjs";
 
 const navigated = "navigated by Turbo";
@@ -14,6 +14,7 @@ await runEnhancerSmoke({
   dir: import.meta.dirname,
   chromium,
   createServer,
+  build,
   // A Turbo menu item holds an ordinary anchor, which is what it
   // follows.
   pick: '[role="menuitem"][data-value="next"] a',

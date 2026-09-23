@@ -1,6 +1,8 @@
 import { paintOrderedChildren } from "./borders.ts";
+import type { CellSize } from "./gradient.ts";
+import { layersAt } from "./paint.ts";
+import type { CellHit } from "./paint.ts";
 import { charIndexAtCell, clipBounds, leafLineCovers } from "./plain-text.ts";
-import { charVisible } from "./selection.ts";
 import type { LayoutNode, Rect } from "./types.ts";
 
 /**
@@ -43,12 +45,24 @@ export function hitRect(node: LayoutNode, x: number, y: number): Rect {
  * paint does, a fixed box hit from the host's origin past it. The
  * top-layer stack is tried first, from the top (specs/top-layer.md):
  * a hit in it is the element's ancestors, then the element and its
- * own descent. */
-export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[] {
+ * own descent. `through` is the root of the layer whose grid the cell
+ * is in (cellAtPoint), null for the main grid: a layer's subtree
+ * answers in its own grid alone, where its transform draws it
+ * (specs/layers.md). */
+export function hitStack(
+  root: LayoutNode,
+  col: number,
+  row: number,
+  through: LayoutNode | null,
+): HitEntry[] {
+  return through ? (layerStack(root, col, row, through) ?? []) : mainStack(root, col, row);
+}
+
+function mainStack(root: LayoutNode, col: number, row: number): HitEntry[] {
   const top = root.topLayer ?? [];
   for (let i = top.length - 1; i >= 0; i--) {
     const { node, ancestors } = top[i]!;
-    if (node.forceHidden) continue;
+    if (node.forceHidden || node.style.layer) continue;
     const { x, y } = node.hostRect!;
     if (!covers(hitRect(node, x, y), col, row)) continue;
     const stack: HitEntry[] = [];
@@ -69,11 +83,95 @@ export function hitStack(root: LayoutNode, col: number, row: number): HitEntry[]
   return stack;
 }
 
+/** The hit through a layer at a cell of its laid-out subtree: its
+ * root's ancestors whatever their boxes there — the layer's box took
+ * the point through their clips where it is drawn (paint.ts) — then
+ * the root and its own descent; null where nothing of the subtree
+ * takes the cell. */
+function layerStack(
+  root: LayoutNode,
+  col: number,
+  row: number,
+  through: LayoutNode,
+): HitEntry[] | null {
+  const { places } = indexTree(root);
+  const layer = places.has(through) ? through : sameElement(places, through);
+  const path: LayoutNode[] = [];
+  let up: LayoutNode | null | undefined = layer;
+  while (up && up !== root) {
+    path.push(up);
+    up = places.get(up)?.parent;
+  }
+  const stack: HitEntry[] = [];
+  let at = { x: root.localRect.x, y: root.localRect.y };
+  let parent = root;
+  for (const node of path.reverse()) {
+    // Placed as descend places a child, a fixed one from the host's origin.
+    at = node.hostRect ?? {
+      x: at.x - (parent.scroll?.x ?? 0) + node.localRect.x + (node.stickyShift?.x ?? 0),
+      y: at.y - (parent.scroll?.y ?? 0) + node.localRect.y + (node.stickyShift?.y ?? 0),
+    };
+    stack.push({ node, ...at });
+    parent = node;
+  }
+  const { x, y } = at;
+  return descend(layer, x, y, col, row, stack) || shows(layer, x, y, col, row) ? stack : null;
+}
+
+/** The node of this layout for a layer painted from an earlier one (a
+ * held paint, element.ts), by its element. */
+function sameElement(places: Map<LayoutNode, Placement>, node: LayoutNode): LayoutNode {
+  for (const candidate of places.keys()) if (candidate.source === node.source) return candidate;
+  return node;
+}
+
+/** A node's place in its layout: its parent, and its span in the
+ * grid's paint order — its own index, and the index past its subtree. */
+interface Placement {
+  parent: LayoutNode | null;
+  order: number;
+  end: number;
+}
+
+interface TreeIndex {
+  places: Map<LayoutNode, Placement>;
+  /** The nodes painted. */
+  count: number;
+}
+
+const treeIndexes = new WeakMap<LayoutNode, TreeIndex>();
+
+/** Every node's place, in the order the grid walk paints them
+ * (plain-text.ts): each box, then its children in paint order, the
+ * top-layer stack last. Built once per layout, by its first hit
+ * through a layer. */
+function indexTree(root: LayoutNode): TreeIndex {
+  const known = treeIndexes.get(root);
+  if (known) return known;
+  const places = new Map<LayoutNode, Placement>();
+  let count = 0;
+  const visit = (node: LayoutNode, parent: LayoutNode | null): void => {
+    const place = { parent, order: count++, end: 0 };
+    places.set(node, place);
+    for (const child of paintOrderedChildren(node)) {
+      if (child.topLayerRank === undefined) visit(child, node);
+    }
+    place.end = count;
+  };
+  visit(root, null);
+  for (const { node, ancestors } of root.topLayer ?? []) visit(node, ancestors.at(-1) ?? null);
+  const index = { places, count };
+  treeIndexes.set(root, index);
+  return index;
+}
+
 /** The hit entries under `node`, painted at `x`, `y`, onto `stack`:
  * the topmost covering child and its own descent, a fixed child from
  * the host's origin; whether something that shows took the cell. A
  * hidden box stays on the stack only under what shows of it, else the
- * cell falls to what is beneath it (specs/visibility.md). */
+ * cell falls to what is beneath it (specs/visibility.md). A layer
+ * root's subtree is drawn where its transform puts it, its own hit
+ * (layerStack). */
 function descend(
   node: LayoutNode,
   x: number,
@@ -93,6 +191,7 @@ function descend(
   for (let i = children.length - 1; i >= 0; i--) {
     const child = children[i]!;
     if (child.tableHidden || child.forceHidden || child.topLayerRank !== undefined) continue;
+    if (child.style.layer) continue;
     const hoisted = child.hostRect;
     if (past && !hoisted) continue;
     const cx = hoisted ? hoisted.x : childX + child.localRect.x + (child.stickyShift?.x ?? 0);
@@ -110,14 +209,19 @@ function descend(
   return false;
 }
 
-/** Whether a box, painted at `x`, `y`, shows at a cell for the hit: a
- * visible one anywhere in its rect, a hidden leaf where a visible
- * inline element's character paints. */
+/** Whether a box, painted at `x`, `y`, takes a cell for the hit: a
+ * visible one that takes pointer events anywhere in its rect; else a
+ * leaf where the character painted is an inline element's that is
+ * visible and takes them. A box that takes none is passed through,
+ * its descendants still hit (descend). */
 function shows(node: LayoutNode, x: number, y: number, col: number, row: number): boolean {
-  if (node.style.visible) return true;
-  if (!node.inlineElements?.some((entry) => entry.visible)) return false;
+  if (node.style.visible && node.style.pointerEvents) return true;
+  const takes = (entry: { visible: boolean; pointerEvents: boolean }): boolean =>
+    entry.visible && entry.pointerEvents;
+  if (!node.inlineElements?.some(takes)) return false;
   const index = charIndexAtCell(node, x, y, col, row);
-  return index !== null && charVisible(node, index);
+  const entry = index === null ? undefined : node.inlineElements[node.charInline?.[index] ?? -1];
+  return entry !== undefined && takes(entry);
 }
 
 function covers(rect: Rect, col: number, row: number): boolean {
@@ -132,16 +236,76 @@ export function isInert(element: Element): boolean {
   return element.closest?.("[inert]") != null;
 }
 
+/** A cell under the pointer, with the hit stack there where finding
+ * the cell took it (stackAt). */
+export interface PointerHit extends CellHit {
+  stack?: HitEntry[];
+}
+
+/** The grid cell under a point `x`, `y` px from the grid's origin, with
+ * the grid it is painted in (specs/layers.md): a layer's, through its
+ * transform, where one shows there, nothing painted after it covers
+ * the point — natively above it, ink or none — and something of its
+ * subtree takes the cell; else the main `grid`'s. */
+export function cellAtPoint(
+  root: LayoutNode | null,
+  layers: HTMLElement,
+  grid: HTMLElement,
+  x: number,
+  y: number,
+  cell: CellSize,
+): PointerHit {
+  const col = Math.floor(x / cell.width);
+  const row = Math.floor(y / cell.height);
+  let main: HitEntry[] | undefined;
+  for (const hit of layersAt(layers, x, y)) {
+    if (!root) return hit;
+    const { places, count } = indexTree(root);
+    const end = places.get(hit.layerRoot)?.end ?? count;
+    if (end < count) {
+      main ??= mainStack(root, col, row);
+      const innermost = main.at(-1);
+      if (innermost && (places.get(innermost.node)?.order ?? -1) >= end) continue;
+    }
+    const stack = layerStack(root, hit.col, hit.row, hit.layerRoot);
+    if (stack) return { ...hit, stack };
+  }
+  return { col, row, grid, x: 0, y: 0, layerRoot: null, ...(main ? { stack: main } : {}) };
+}
+
+/** The hit stack at a pointer's cell, found once. */
+export function stackAt(root: LayoutNode, hit: PointerHit): HitEntry[] {
+  return (hit.stack ??= hitStack(root, hit.col, hit.row, hit.layerRoot));
+}
+
+/** What a point's hit is a function of until the next paint: its
+ * main-grid cell and every layer's cell under it, for a pointer's
+ * same-cell moves to skip without a hit test. */
+export function pointKey(layers: HTMLElement, x: number, y: number, cell: CellSize): unknown[] {
+  const key: unknown[] = [Math.floor(x / cell.width), Math.floor(y / cell.height)];
+  for (const hit of layersAt(layers, x, y)) key.push(hit.layerRoot, hit.col, hit.row);
+  return key;
+}
+
 /** The hit stack's elements — what the synthesized states mark — cut
  * at the first inert one, where native :hover stops too. */
-export function hitChain(root: LayoutNode, col: number, row: number): Element[] {
+export function chainOf(stack: HitEntry[]): Element[] {
   const chain: Element[] = [];
-  for (const entry of hitStack(root, col, row)) {
+  for (const entry of stack) {
     if (isInert(entry.node.source)) break;
     // An anonymous run's element is its container, already in the chain.
     if (!entry.node.anonymous) chain.push(entry.node.source);
   }
   return chain;
+}
+
+export function hitChain(
+  root: LayoutNode,
+  col: number,
+  row: number,
+  through: LayoutNode | null,
+): Element[] {
+  return chainOf(hitStack(root, col, row, through));
 }
 
 /** The cells a scroller moves toward a pointer past its box

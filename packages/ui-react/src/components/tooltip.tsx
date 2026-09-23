@@ -2,7 +2,7 @@ import { propNames } from "@monowind/ui/tooltip";
 import type * as tooltip from "@monowind/ui/tooltip";
 import type { PropTypes } from "@zag-js/react";
 import { useTooltip, type Connected, type Positioned } from "../hooks.ts";
-import { defineContext, defineRoot, defineRootProvider, partsOf } from "./part.tsx";
+import { defineContext, defineRoot, defineRootProvider, partsOf, triggerPart } from "./part.tsx";
 
 /** Zag's tooltip as a compound component (specs/ui.md "Component
  * layer"): its parts sit in the sentence around the trigger, so they
@@ -25,6 +25,6 @@ export const RootProvider = defineRootProvider<Api>("Tooltip.RootProvider", cont
 
 const part = partsOf("Tooltip", context.use);
 
-export const Trigger = part("Trigger", (api) => api.getTriggerProps(), "button");
+export const Trigger = triggerPart("Tooltip", context.use);
 export const Positioner = part("Positioner", (api) => api.getPositionerProps(), "span");
 export const Content = part("Content", (api) => api.getContentProps(), "span");

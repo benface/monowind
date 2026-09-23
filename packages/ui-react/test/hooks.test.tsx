@@ -1,10 +1,12 @@
-import { act, type ReactNode } from "react";
+import { act, useState, type ReactNode } from "react";
 import { expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { collection } from "@monowind/ui/listbox";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup, renderToString } from "react-dom/server";
+import { posted, resetByClick as resetFormByClick } from "../../ui/test/helpers.ts";
 import {
   Combobox,
+  Dialog,
   Listbox,
   Menu,
   Select,
@@ -289,6 +291,183 @@ it("renders a select's parts, the hidden control out of the grid", async () => {
   await tree.unmount();
 });
 
+/** A select with only its hidden control, the items and the name a
+ * test changes through `change`. */
+function Hidden(props: {
+  initial: string[];
+  multiple?: boolean;
+  defaultValue: string[];
+  change: (to: { items(next: string[]): void; name(next: string): void }) => void;
+}) {
+  const [items, setItems] = useState(() => collection({ items: props.initial }));
+  const [name, setName] = useState("branches");
+  props.change({ items: (next) => setItems(collection({ items: next })), name: setName });
+  return (
+    <form>
+      <Select.Root
+        id="hidden"
+        collection={items}
+        multiple={props.multiple}
+        defaultValue={props.defaultValue}
+        name={name}
+      >
+        <Select.HiddenSelect />
+      </Select.Root>
+    </form>
+  );
+}
+
+/** A form's reset from a reader's click, React's render inside `act`. */
+const resetByClick = (form: HTMLFormElement) => resetFormByClick(form, (work) => act(work));
+
+/** A select over a hook the test drives, its hidden control in a form. */
+function Reset(props: {
+  id: string;
+  defaultValue?: string[];
+  ready: (api: ReturnType<typeof useSelect>) => void;
+}) {
+  const api = useSelect({
+    id: props.id,
+    collection: collection({ items: ["main", "next"] }),
+    name: "branch",
+    ...(props.defaultValue ? { defaultValue: props.defaultValue } : {}),
+  });
+  props.ready(api);
+  return (
+    <form>
+      <Select.RootProvider value={api}>
+        <Select.HiddenSelect />
+      </Select.RootProvider>
+    </form>
+  );
+}
+
+it("goes back to its default at a reset the reader clicks, or to no option", async () => {
+  let api!: ReturnType<typeof useSelect>;
+  const tree = await mount(
+    <Reset id="clicked" defaultValue={["next"]} ready={(held) => (api = held)} />,
+  );
+  const hidden = tree.container.querySelector("select")!;
+  await resetByClick(hidden.form!);
+  expect(posted(hidden)).toEqual(["next"]);
+  await tree.unmount();
+  const empty = await mount(<Reset id="clicked-empty" ready={(held) => (api = held)} />);
+  const control = empty.container.querySelector("select")!;
+  await act(async () => api.setValue(["main"]));
+  await resetByClick(control.form!);
+  expect(api.value).toEqual([]);
+  expect(posted(control), "no option chosen in its place").toEqual([]);
+  await empty.unmount();
+});
+
+it("posts no option for a value the collection lacks, and the value once it arrives", async () => {
+  let change!: { items(next: string[]): void; name(next: string): void };
+  const tree = await mount(
+    <Hidden initial={["main"]} defaultValue={["release"]} change={(to) => (change = to)} />,
+  );
+  const hidden = tree.container.querySelector("select")!;
+  expect(posted(hidden), "no option chosen in its place").toEqual([]);
+  await act(async () => change.items(["main", "release"]));
+  expect(posted(hidden)).toEqual(["release"]);
+  await tree.unmount();
+});
+
+it("goes back to its default at a form's reset, the machine and the form alike", async () => {
+  let api!: ReturnType<typeof useSelect>;
+  const tree = await mount(
+    <Reset id="reset" defaultValue={["next"]} ready={(held) => (api = held)} />,
+  );
+  const hidden = tree.container.querySelector("select")!;
+  // A reset the machine sees as no change: the form's own reset alone
+  // puts the default back.
+  await act(async () => hidden.form!.reset());
+  expect(posted(hidden)).toEqual(["next"]);
+  await act(async () => api.setValue(["main"]));
+  expect(posted(hidden)).toEqual(["main"]);
+  await act(async () => hidden.form!.reset());
+  expect(api.value).toEqual(["next"]);
+  expect(posted(hidden)).toEqual(["next"]);
+  await tree.unmount();
+});
+
+it("selects every option a multiple select's value holds, through a render that keeps it", async () => {
+  let change!: { items(next: string[]): void; name(next: string): void };
+  const tree = await mount(
+    <Hidden
+      initial={["main", "next", "old"]}
+      multiple
+      defaultValue={["main", "old"]}
+      change={(to) => (change = to)}
+    />,
+  );
+  const hidden = tree.container.querySelector("select")!;
+  const selected = () => [...hidden.selectedOptions].map((option) => option.value);
+  expect(selected()).toEqual(["main", "old"]);
+  await act(async () => change.name("targets"));
+  expect(hidden.name).toBe("targets");
+  expect(selected()).toEqual(["main", "old"]);
+  await tree.unmount();
+});
+
+it("selects the hidden option of a value that arrived before it", async () => {
+  let change!: { items(next: string[]): void; name(next: string): void };
+  const tree = await mount(
+    <Hidden initial={["main"]} defaultValue={["release"]} change={(to) => (change = to)} />,
+  );
+  await act(async () => change.items(["main", "release"]));
+  expect(tree.container.querySelector("select")!.value).toBe("release");
+  await tree.unmount();
+});
+
+it("follows a change on the hidden select, as a form autofill makes it", async () => {
+  let api!: ReturnType<typeof useSelect>;
+  const tree = await mount(
+    <Reset id="autofill" defaultValue={["main"]} ready={(held) => (api = held)} />,
+  );
+  const hidden = tree.container.querySelector("select")!;
+  await act(async () => {
+    hidden.value = "next";
+    hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(api.value).toEqual(["next"]);
+  expect(hidden.value, "not put back").toBe("next");
+  await tree.unmount();
+});
+
+it("server-renders its hidden control's options, a form posting the default before hydration", async () => {
+  const items = collection({ items: ["main", "next"] });
+  const page = (defaultValue?: string[]) => (
+    <form>
+      <Select.Root
+        id="served"
+        collection={items}
+        name="branch"
+        {...(defaultValue ? { defaultValue } : {})}
+      >
+        <Select.HiddenSelect />
+      </Select.Root>
+    </form>
+  );
+  const container = document.createElement("div");
+  container.innerHTML = renderToString(page(["next"]));
+  document.body.append(container);
+  const hidden = container.querySelector("select")!;
+  expect(posted(hidden), "before the script runs").toEqual(["next"]);
+  expect(hidden.getAttribute("size"), "no first option picked in the default's absence").toBe("2");
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  let root!: ReturnType<typeof hydrateRoot>;
+  await act(async () => {
+    root = hydrateRoot(container, page(["next"]));
+  });
+  expect(errors, "a clean hydration").not.toHaveBeenCalled();
+  errors.mockRestore();
+  expect(container.querySelector("select")).toBe(hidden);
+  expect(posted(hidden)).toEqual(["next"]);
+  await act(async () => root.unmount());
+  container.remove();
+  expect(renderToString(page())).not.toContain("selected");
+});
+
 it("selects through a listbox's parts, the choice reaching the page", async () => {
   const items = collection({ items: ["main", "next"] });
   const chosen: string[][] = [];
@@ -354,6 +533,9 @@ it("opens a select from its trigger and writes the choice into it", async () => 
   expect(api!.value).toEqual(["next"]);
   expect(tree.by("value-text").textContent).toBe("next");
   expect(tree.container.querySelector<HTMLSelectElement>("select")!.value).toBe("next");
+  // The selection marked as a listbox's items and the mount's are.
+  expect(tree.by("item", "next").hasAttribute("data-selected")).toBe(true);
+  expect(tree.by("item", "main").hasAttribute("data-selected")).toBe(false);
   await tree.unmount();
 });
 
@@ -363,18 +545,43 @@ it("says so when a root is given a prop that goes nowhere", async () => {
   // a class on it would vanish, where one on <mono-menu> is required.
   // The type says so; the warning is for the JavaScript that does not
   // read types, and for a spread that hides one.
-  const tree = await mount(
-    // @ts-expect-error a root that renders no element takes no class
-    <Menu.Root className="border">
-      <Menu.Trigger>File</Menu.Trigger>
-      <Menu.Positioner>
-        <Menu.Content />
-      </Menu.Positioner>
-    </Menu.Root>,
-  );
+  let rerender!: () => void;
+  function Stray() {
+    const [count, setCount] = useState(0);
+    rerender = () => setCount(count + 1);
+    return (
+      // @ts-expect-error a root that renders no element takes no class
+      <Menu.Root className="border">
+        <Menu.Trigger>File {count}</Menu.Trigger>
+        <Menu.Positioner>
+          <Menu.Content />
+        </Menu.Positioner>
+      </Menu.Root>
+    );
+  }
+  const tree = await mount(<Stray />);
+  // Said once, however often React renders the root.
+  await act(async () => rerender());
+  await act(async () => rerender());
   expect(warned).toHaveBeenCalledTimes(1);
   expect(warned.mock.calls[0]![0]).toContain("`className`");
   expect(warned.mock.calls[0]![0]).toContain("renders no element");
+  // Once per root: another given the same prop says so too.
+  const another = await mount(
+    // @ts-expect-error a root that renders no element takes no class
+    <Dialog.Root className="border">
+      <Dialog.Trigger>Open</Dialog.Trigger>
+    </Dialog.Root>,
+  );
+  const again = await mount(
+    // @ts-expect-error a root that renders no element takes no class
+    <Dialog.Root className="border">
+      <Dialog.Trigger>Open</Dialog.Trigger>
+    </Dialog.Root>,
+  );
+  expect(warned).toHaveBeenCalledTimes(3);
+  await another.unmount();
+  await again.unmount();
   // A listbox's root is an element, so its own attributes are welcome.
   warned.mockClear();
   const listbox = await mount(
@@ -386,6 +593,57 @@ it("says so when a root is given a prop that goes nowhere", async () => {
   await tree.unmount();
   await listbox.unmount();
   warned.mockRestore();
+});
+
+it("tells a dialog opened from one of its triggers which, by its value", async () => {
+  const opened: (string | null)[] = [];
+  const tree = await mount(
+    <Dialog.Root id="shared" onTriggerValueChange={({ value }) => opened.push(value)}>
+      <Dialog.Trigger value="a">A</Dialog.Trigger>
+      <Dialog.Trigger value="b">B</Dialog.Trigger>
+      <Dialog.Positioner>
+        <Dialog.Content>Shared</Dialog.Content>
+      </Dialog.Positioner>
+    </Dialog.Root>,
+  );
+  await act(async () => tree.container.querySelectorAll("button")[1]!.click());
+  expect(opened).toEqual(["b"]);
+  await tree.unmount();
+});
+
+it("links a submenu to its menu once, not on every render", async () => {
+  const setChild = vi.fn();
+  let rerender!: () => void;
+  function Tree() {
+    const [count, setCount] = useState(0);
+    rerender = () => setCount(count + 1);
+    const api = useMenu({ id: "file" });
+    const counted = {
+      ...api,
+      setChild: (child: Parameters<typeof api.setChild>[0]) => {
+        setChild();
+        api.setChild(child);
+      },
+    };
+    return (
+      <Menu.RootProvider value={counted}>
+        <Menu.Trigger>File {count}</Menu.Trigger>
+        <Menu.Positioner>
+          <Menu.Content>
+            <Menu.Root id="share">
+              <Menu.TriggerItem>Share</Menu.TriggerItem>
+            </Menu.Root>
+          </Menu.Content>
+        </Menu.Positioner>
+      </Menu.RootProvider>
+    );
+  }
+  const tree = await mount(<Tree />);
+  await act(async () => rerender());
+  await act(async () => rerender());
+  await act(async () => rerender());
+  expect(setChild).toHaveBeenCalledTimes(1);
+  await tree.unmount();
 });
 
 it("nests a submenu under an API the caller holds, and refuses a bad asChild", async () => {
@@ -475,5 +733,44 @@ it("renders a combobox, its list anchored under the control it types into", asyn
   expect(anchor).toMatch(/^--mw-ui-/);
   expect(tree.by("positioner").style.getPropertyValue("position-anchor")).toBe(anchor);
   expect(tree.by("trigger").style.getPropertyValue("anchor-name")).toBe("");
+  await tree.unmount();
+});
+
+it("keeps the reader's caret when a keystroke opens a combobox whose open state it controls", async () => {
+  const items = collection({ items: ["main", "next"] });
+  function Controlled() {
+    const [open, setOpen] = useState(false);
+    return (
+      <Combobox.Root
+        id="controlled"
+        collection={items}
+        open={open}
+        onOpenChange={(details) => setOpen(details.open)}
+      >
+        <Combobox.Control>
+          <Combobox.Input />
+        </Combobox.Control>
+        <Combobox.Positioner>
+          <Combobox.Content />
+        </Combobox.Positioner>
+      </Combobox.Root>
+    );
+  }
+  const tree = await mount(<Controlled />);
+  const input = tree.by("input") as HTMLInputElement;
+  await act(async () => input.focus());
+  // A backspace in the middle of "main", the list closed until then;
+  // through the prototype's setter, as typing writes it, since React
+  // reads a value set on the element as no change.
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "man");
+    input.setSelectionRange(2, 2);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  expect(tree.by("content").getAttribute("data-state")).toBe("open");
+  expect(input.selectionStart).toBe(2);
   await tree.unmount();
 });

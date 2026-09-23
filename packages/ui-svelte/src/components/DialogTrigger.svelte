@@ -1,10 +1,18 @@
 <script lang="ts">
   import Part from "./Part.svelte";
-  import { dialogContext, type PartProps } from "./context.ts";
+  import { defined, dialogContext, type PartProps } from "./context.ts";
 
-  let { children, child, ...rest }: PartProps = $props();
+  let {
+    value,
+    children,
+    child,
+    ...rest
+  }: PartProps & {
+    value?: string;
+  } = $props();
 
   const dialog = dialogContext.use();
+  const own = $derived(defined({ value }));
 </script>
 
-<Part tag="button" props={dialog.api.getTriggerProps()} {children} {child} {...rest} />
+<Part tag="button" props={dialog.api.getTriggerProps(own)} {children} {child} {...rest} />

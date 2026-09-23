@@ -1,10 +1,10 @@
-import { useEffect, useId, type ReactNode } from "react";
-import { warnStray } from "@monowind/ui/framework";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import { splitProps, warnStray } from "@monowind/ui/framework";
 import { asSubmenuOf, propNames } from "@monowind/ui/menu";
 import type * as menu from "@monowind/ui/menu";
 import type { PropTypes } from "@zag-js/react";
 import { useMenu, type Connected, type Positioned } from "../hooks.ts";
-import { defineContext, partsOf, renderPart, splitProps, type PartProps } from "./part.tsx";
+import { defineContext, partsOf, renderPart, triggerPart, type PartProps } from "./part.tsx";
 
 /**
  * Zag's menu as a compound component (specs/ui.md "Component layer"):
@@ -39,20 +39,22 @@ export function Root({
 }: Omit<menu.Props, "id"> & { id?: string; children?: ReactNode }): ReactNode {
   const generated = useId();
   const parent = context.useOptional();
+  // One object across this root's renders: the warning is said once per root.
+  const instance = useRef(null);
   const [machine, rest] = splitProps(props as Record<string, unknown>, propNames);
-  warnStray("Menu.Root", Object.keys(rest));
+  warnStray("Menu.Root", Object.keys(rest), instance);
   const own = { ...machine, id: props.id ?? generated } as menu.Props;
   // A submenu opens beside its item on the reading side and takes the
   // behavior its parent shares, exactly as a marked one does.
   const machineProps = parent ? asSubmenuOf(parent.props ?? { id: own.id }, own) : own;
   const api = useMenu(machineProps);
-  // The services are the machines themselves and outlive a render, so
-  // the link is made once and not on every one.
+  // Zag hands a fresh service object over the same machine each render:
+  // keyed on its stable `send`, the link is made once.
   useEffect(() => {
     if (!parent) return;
     parent.api.setChild(api.service);
     api.setParent(parent.api.service);
-  }, [parent?.api.service, api.service]);
+  }, [parent?.api.service.send, api.service.send]);
   return (
     <context.Provider value={{ api, parent, props: machineProps }}>{children}</context.Provider>
   );
@@ -71,12 +73,7 @@ RootProvider.displayName = "Menu.RootProvider";
 
 const part = partsOf("Menu", context.use);
 
-export const Trigger = part<"button", { value?: string | undefined }>(
-  "Trigger",
-  ({ api }, own) => api.getTriggerProps(own),
-  "button",
-  ["value"],
-);
+export const Trigger = triggerPart("Menu", () => context.use().api);
 
 /** The item of the menu above that opens this one: the submenu's own
  * trigger, which is why it goes inside the nested `Root`. */

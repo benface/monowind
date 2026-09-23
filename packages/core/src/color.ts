@@ -1,13 +1,14 @@
 /**
  * Computed colors as numbers (specs/gradients.md): the forms engines
  * serialize — `rgb()`/`rgba()`, `oklab()`, `oklch()`, `color(srgb …)`,
- * `transparent` — read to sRGB with alpha, mixed in oklab, oklch,
- * srgb, srgb-linear, or hsl as CSS interpolates gradients (alpha
- * premultiplied, a polar hue turned the named way), and written back
- * as `rgb()`.
+ * `transparent` — read to extended sRGB with alpha, mixed in oklab,
+ * oklch, srgb, srgb-linear, or hsl as CSS interpolates gradients (alpha
+ * premultiplied, a polar hue turned the named way), and clipped to sRGB
+ * only as they composite or are written back as `rgb()`.
  */
 
-/** Gamma-encoded sRGB components and alpha, each 0..1. */
+/** Gamma-encoded sRGB components, past 0..1 for a color outside sRGB,
+ * and alpha, 0..1. */
 export interface Rgba {
   r: number;
   g: number;
@@ -43,10 +44,11 @@ function args(inner: string, legacy: boolean): { tokens: string[]; alpha: number
   return { tokens, alpha: Number.isFinite(alpha) ? clamp01(alpha) : 1 };
 }
 
+/** sRGB's transfer functions, extended to any component by its sign. */
 const srgbToLinear = (c: number): number =>
-  c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  Math.abs(c) <= 0.04045 ? c / 12.92 : Math.sign(c) * ((Math.abs(c) + 0.055) / 1.055) ** 2.4;
 const linearToSrgb = (c: number): number =>
-  c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055;
+  Math.abs(c) <= 0.0031308 ? c * 12.92 : Math.sign(c) * (1.055 * Math.abs(c) ** (1 / 2.4) - 0.055);
 
 /** OKLab from linear-light sRGB (Ottosson's matrices). */
 function linearToOklab(r: number, g: number, b: number): [number, number, number] {
@@ -71,15 +73,15 @@ function oklabToLinear(L: number, a: number, b: number): [number, number, number
   ];
 }
 
-const fromOklab = (L: number, a: number, b: number, alpha: number): Rgba => {
-  const [r, g, bl] = oklabToLinear(L, a, b);
-  return {
-    r: clamp01(linearToSrgb(r)),
-    g: clamp01(linearToSrgb(g)),
-    b: clamp01(linearToSrgb(bl)),
-    a: alpha,
-  };
-};
+const fromLinear = (r: number, g: number, b: number, a: number): Rgba => ({
+  r: linearToSrgb(r),
+  g: linearToSrgb(g),
+  b: linearToSrgb(b),
+  a,
+});
+
+const fromOklab = (L: number, a: number, b: number, alpha: number): Rgba =>
+  fromLinear(...oklabToLinear(L, a, b), alpha);
 
 /** Parse a computed color; null for a form outside the ones engines
  * serialize (a `var()`, a name, a keyword), `hsl()` among them: engines
@@ -95,6 +97,7 @@ export function parseColor(value: string): Rgba | null {
     case "rgb":
     case "rgba": {
       const [r, g, b] = tokens.map((t) => component(t, 255) / 255);
+      // CSS clamps rgb()'s channels as it parses them.
       return r === undefined || [r, g, b].some((c) => !Number.isFinite(c))
         ? null
         : { r: clamp01(r), g: clamp01(g!), b: clamp01(b!), a: alpha };
@@ -121,15 +124,9 @@ export function parseColor(value: string): Rgba | null {
       const [space, ...rest] = tokens;
       const [r, g, b] = rest.map((t) => component(t));
       if (r === undefined || [r, g, b].some((c) => !Number.isFinite(c))) return null;
-      if (space === "srgb-linear")
-        return {
-          r: clamp01(linearToSrgb(r)),
-          g: clamp01(linearToSrgb(g!)),
-          b: clamp01(linearToSrgb(b!)),
-          a: alpha,
-        };
+      if (space === "srgb-linear") return fromLinear(r, g!, b!, alpha);
       // srgb; the wider spaces read by their srgb-like coordinates.
-      return { r: clamp01(r), g: clamp01(g!), b: clamp01(b!), a: alpha };
+      return { r, g: g!, b: b!, a: alpha };
     }
     default:
       return null;
@@ -149,13 +146,16 @@ export interface Prepared {
   a: number;
 }
 
+/** HSL from sRGB; a color outside sRGB can take a saturation below 0,
+ * kept as Chromium and Firefox keep it (specs/gradients.md, deviation 7). */
 const toHsl = (r: number, g: number, b: number): [number, number, number] => {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const l = (max + min) / 2;
   const d = max - min;
   if (d < 1e-9) return [NaN, l <= 1e-9 || l >= 1 - 1e-9 ? NaN : 0, l];
-  const s = d / (1 - Math.abs(2 * l - 1));
+  const span = 1 - Math.abs(2 * l - 1);
+  const s = span === 0 ? 0 : d / span;
   const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [(((h * 60) % 360) + 360) % 360, s, l];
 };
@@ -166,7 +166,7 @@ const fromHsl = (h: number, s: number, l: number, a: number): Rgba => {
     const k = (n + hue / 30) % 12;
     return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
   };
-  return { r: clamp01(f(0)), g: clamp01(f(8)), b: clamp01(f(4)), a };
+  return { r: f(0), g: f(8), b: f(4), a };
 };
 
 /** A color ready to mix in a space — once per stop, since a gradient
@@ -225,12 +225,7 @@ export function mixColors(from: Prepared, to: Prepared, t: number, space: ColorS
     case "srgb":
       return { r: x, g: y, b: z, a };
     case "srgb-linear":
-      return {
-        r: clamp01(linearToSrgb(x)),
-        g: clamp01(linearToSrgb(y)),
-        b: clamp01(linearToSrgb(z)),
-        a,
-      };
+      return fromLinear(x, y, z, a);
     case "hsl":
       return fromHsl(x, y, z, a);
     case "oklab":
@@ -242,11 +237,13 @@ export function mixColors(from: Prepared, to: Prepared, t: number, space: ColorS
   }
 }
 
-/** `over` composited onto `under` (source-over). */
+/** `over` composited onto `under` (source-over), each as painted:
+ * clipped to sRGB. */
 export function compositeColors(over: Rgba, under: Rgba): Rgba {
   const a = over.a + under.a * (1 - over.a);
   if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
-  const channel = (x: number, y: number): number => (x * over.a + y * under.a * (1 - over.a)) / a;
+  const channel = (x: number, y: number): number =>
+    (clamp01(x) * over.a + clamp01(y) * under.a * (1 - over.a)) / a;
   return {
     r: channel(over.r, under.r),
     g: channel(over.g, under.g),
@@ -270,4 +267,23 @@ export function colorAlpha(color: string): number {
   const slash = /\/\s*([\d.]+%?)\s*\)$/.exec(color.trim());
   const alpha = slash ? component(slash[1]!) : 1;
   return Number.isFinite(alpha) ? clamp01(alpha) : 1;
+}
+
+/** A value's comma-separated parts, commas inside parentheses kept —
+ * a gradient's, a shadow list's, a timing-function list's. */
+export function splitCommas(value: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "(") depth++;
+    else if (char === ")") depth--;
+    else if (char === "," && depth === 0) {
+      parts.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(value.slice(start));
+  return parts.filter((part) => part.trim() !== "");
 }

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { trackBackground } from "../src/animate.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
+import { resolvePendingTransitions, trackBackground } from "../src/animate.ts";
 import {
   animatedProperties,
   animatesEffect,
@@ -7,6 +8,8 @@ import {
   drainAnimated,
   nodeIndex,
 } from "../src/animation.ts";
+import { mixColors, parseColor, prepareColor } from "../src/color.ts";
+import type { Rgba } from "../src/color.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { readCellStyle, readPaintStyle } from "../src/style.ts";
 import { makeNode } from "./helpers.ts";
@@ -173,6 +176,117 @@ describe("the background tracker under an animation", () => {
     const cs = getComputedStyle(el);
     expect(trackBackground(el, "rgb(255, 0, 0)", cs)).toBe("rgb(255, 0, 0)");
     expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(255, 0, 0)");
+  });
+});
+
+describe("the synthesized background fade", () => {
+  // Restored however a test ends.
+  let clock: MockInstance<() => number>;
+  let host: HTMLElement;
+  beforeEach(() => {
+    clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+    host = document.createElement("div");
+    document.body.append(host);
+  });
+  afterEach(() => {
+    clock.mockRestore();
+    host.remove();
+  });
+  /** A linear 1s fade's background `t` of the way from `from` to `to`. */
+  const fadeAt = (from: string, to: string, t: number): string => {
+    const el = document.createElement("div");
+    el.style.transitionProperty = "background-color";
+    el.style.transitionDuration = "1s";
+    el.style.transitionTimingFunction = "linear";
+    host.append(el);
+    const cs = getComputedStyle(el);
+    clock.mockReturnValue(1000);
+    trackBackground(el, from, cs);
+    trackBackground(el, to, cs);
+    resolvePendingTransitions(host);
+    clock.mockReturnValue(1000 + t * 1000);
+    return trackBackground(el, to, cs);
+  };
+
+  it("mixes a legacy pair in sRGB and any other in OKLab, alpha premultiplied", () => {
+    const halfway = (from: string, to: string): Rgba => parseColor(fadeAt(from, to, 0.5))!;
+    const near = (actual: Rgba, expected: Rgba) => {
+      for (const key of ["r", "g", "b", "a"] as const) {
+        expect(Math.abs(actual[key] - expected[key]), key).toBeLessThan(0.01);
+      }
+    };
+    near(halfway("rgb(255, 0, 0)", "rgb(0, 0, 255)"), { r: 0.5, g: 0, b: 0.5, a: 1 });
+    // A transparent end keeps the other's color, fading its alpha.
+    near(halfway("rgba(0, 0, 0, 0)", "rgb(0, 0, 255)"), { r: 0, g: 0, b: 1, a: 0.5 });
+    const oklab = (from: string, to: string): Rgba => {
+      const [a, b] = [
+        prepareColor(parseColor(from)!, "oklab"),
+        prepareColor(parseColor(to)!, "oklab"),
+      ];
+      return mixColors(a, b, 0.5, "oklab");
+    };
+    near(
+      halfway("color(srgb 1 0 0)", "color(srgb 0 0 1)"),
+      oklab("rgb(255, 0, 0)", "rgb(0, 0, 255)"),
+    );
+    near(
+      halfway("rgb(255, 0, 0)", "oklab(0.45 -0.03 -0.31)"),
+      oklab("rgb(255, 0, 0)", "oklab(0.45 -0.03 -0.31)"),
+    );
+  });
+
+  it("mixes an end outside sRGB by its own OKLab value, clipped once mixed", () => {
+    // Tailwind's emerald-400 to gray-800, cyan-400 to fuchsia-500,
+    // lime-400 to white.
+    expect(fadeAt("oklch(0.765 0.177 163.223)", "oklch(0.278 0.033 256.848)", 0.25)).toBe(
+      "rgb(0 166 124)",
+    );
+    expect(fadeAt("oklch(0.789 0.154 211.53)", "oklch(0.667 0.295 322.15)", 0.5)).toBe(
+      "rgb(168 150 248)",
+    );
+    expect(fadeAt("oklch(0.841 0.238 128.85)", "rgb(255, 255, 255)", 0.25)).toBe(
+      "rgb(179 238 100)",
+    );
+  });
+
+  it("eases by cubic-bezier(), steps() and linear(), as the computed value writes them", () => {
+    const redAt = (easing: string, elapsed: number): number => {
+      const el = document.createElement("div");
+      el.style.transitionProperty = "background-color";
+      el.style.transitionDuration = "1s";
+      el.style.transitionTimingFunction = easing;
+      host.append(el);
+      const cs = getComputedStyle(el);
+      clock.mockReturnValue(1000);
+      trackBackground(el, "rgb(0, 0, 0)", cs);
+      trackBackground(el, "rgb(255, 0, 0)", cs);
+      resolvePendingTransitions(host);
+      clock.mockReturnValue(1000 + elapsed);
+      return Math.round(parseColor(trackBackground(el, "rgb(255, 0, 0)", cs))!.r * 100) / 100;
+    };
+    // Tailwind's default easing.
+    expect(redAt("cubic-bezier(0.4, 0, 0.2, 1)", 500)).toBe(0.78);
+    expect(redAt("steps(4)", 300)).toBe(0.25);
+    expect(redAt("steps(1, start)", 100)).toBe(1);
+    expect(redAt("steps(1)", 900)).toBe(0);
+    expect(redAt("steps(3, jump-none)", 500)).toBe(0.5);
+    expect(redAt("linear(0 0%, 0.8 20%, 1 100%)", 100)).toBe(0.4);
+    expect(redAt("linear(0 0%, 0.8 20%, 1 100%)", 600)).toBe(0.9);
+  });
+
+  it("takes the background's entry of a timing-function list whose functions nest", () => {
+    const el = document.createElement("div");
+    el.style.transitionProperty = "color, background-color";
+    el.style.transitionDuration = "1s";
+    el.style.transitionTimingFunction = "linear(0 0%, calc(0.8) 20%, 1 100%), steps(4)";
+    host.append(el);
+    const cs = getComputedStyle(el);
+    trackBackground(el, "rgb(0, 0, 0)", cs);
+    trackBackground(el, "rgb(255, 0, 0)", cs);
+    resolvePendingTransitions(host);
+    clock.mockReturnValue(1300);
+    const red = parseColor(trackBackground(el, "rgb(255, 0, 0)", cs))!.r;
+    expect(Math.round(red * 100) / 100).toBe(0.25);
   });
 });
 

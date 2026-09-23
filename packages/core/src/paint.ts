@@ -1,13 +1,7 @@
 import type { GlyphBox, GlyphBoxes } from "./glyph-box.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import {
-  applyCellPaint,
-  isBarePaint,
-  layerShows,
-  renderGridRows,
-  samePaint,
-} from "./plain-text.ts";
+import { applyCellPaint, isBarePaint, renderGridRows, samePaint } from "./plain-text.ts";
 import type { CellSegment, LayerRows, PaintedLayer, RenderOptions } from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
 import type { LayoutNode, Backdrop } from "./types.ts";
@@ -93,7 +87,7 @@ export function paintGrid(
       if (box !== null && (!box.past || !resampled)) {
         return UNIFORM_BLOCK.test(cluster) ? box : true;
       }
-      return paint?.opacity !== undefined && isLineGlyph(cluster);
+      return (paint?.opacity !== undefined || paint?.faded) && isLineGlyph(cluster);
     };
   }
   if (options.selection) render.selection = options.selection;
@@ -147,24 +141,29 @@ export function syncLayers(container: HTMLElement): void {
 
 /** A cell with the grid it is painted in — a layer's, at `x`, `y` of
  * the main grid, or the main grid itself at 0, 0 — in main-grid
- * cells. */
+ * cells, and the layer's root, null on the main grid. */
 export interface CellHit {
   col: number;
   row: number;
   grid: HTMLElement;
   x: number;
   y: number;
+  layerRoot: LayoutNode | null;
 }
 
-/** The cell of a layer under the pointer (specs/layers.md): `x`, `y`
- * in px from the grid's origin, taken through the layers' transforms
- * — the one painted last first — to the cell of the layer's grid it
- * lands on; null over none — a layer's blank cell past its root's
- * border box (a shadow's, an overflowing child's), a cell covered by
- * later ink, and a cell past the layer's clip are see-through. */
-export function layerAt(container: HTMLElement, x: number, y: number): CellHit | null {
+/** The cells of the layers under the pointer (specs/layers.md), the
+ * one painted last first: `x`, `y` in px from the grid's origin, taken
+ * through each layer's transform to the cell of its grid it lands on.
+ * A layer's blank cell past its root's border box (a shadow's, an
+ * overflowing child's), a cell covered by later ink, and a cell past
+ * the layer's clip are see-through. */
+export function* layersAt(
+  container: HTMLElement,
+  x: number,
+  y: number,
+): Generator<CellHit & { layerRoot: LayoutNode }> {
   const set = layerSets.get(container);
-  if (!set) return null;
+  if (!set) return;
   for (let i = set.order.length - 1; i >= 0; i--) {
     const nodes = set.order[i]!;
     const local = localPoint(nodes, x, y);
@@ -186,32 +185,15 @@ export function layerAt(container: HTMLElement, x: number, y: number): CellHit |
       inBox &&
       (layer.node.style.visible || layer.paints[row]?.[col]?.backgroundColor !== undefined);
     if (!own && (paintedCell(nodes.grid, col, row) ?? " ") === " ") continue;
-    return { col: layer.x + col, row: layer.y + row, grid: nodes.grid, x: layer.x, y: layer.y };
+    yield {
+      col: layer.x + col,
+      row: layer.y + row,
+      grid: nodes.grid,
+      x: layer.x,
+      y: layer.y,
+      layerRoot: layer.node,
+    };
   }
-  return null;
-}
-
-/** The grid of the layer painted last over a cell, in main-grid
- * cells, with its origin; null off every layer. */
-export function layerGridAt(
-  container: HTMLElement,
-  col: number,
-  row: number,
-): { grid: HTMLElement; x: number; y: number } | null {
-  const set = layerSets.get(container);
-  if (!set) return null;
-  for (let i = set.order.length - 1; i >= 0; i--) {
-    const { layer, grid } = set.order[i]!;
-    if (
-      col >= layer.x &&
-      col < layer.x + layer.width &&
-      row >= layer.y &&
-      row < layer.y + layer.height &&
-      layerShows(layer, col, row)
-    )
-      return { grid, x: layer.x, y: layer.y };
-  }
-  return null;
 }
 
 /** A point of the grid's space in a layer box's own, through its
@@ -517,7 +499,9 @@ function paintRows(
     for (let i = 0; i < row.length; i++) {
       const segment = row[i]!;
       const stale = refit && segment.box;
-      if (!stale && (isBarePaint(segment) || sameSegment(segment, painted.segments[i]!))) continue;
+      if (!stale && (isTextSegment(segment) || sameSegment(segment, painted.segments[i]!))) {
+        continue;
+      }
       applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs, y, boxOf(segment, glyphs));
     }
     painted.segments = row;
@@ -535,6 +519,11 @@ function paintRows(
  * spill into what its neighbor leaves blank, and a stroke's ends
  * overdraw into a dot per joint. */
 const UNIFORM_BLOCK = /^[\u2580-\u2588\u2594]$/;
+
+/** A bare, unboxed run is a text node; any other a span to patch. */
+function isTextSegment(segment: CellSegment): boolean {
+  return isBarePaint(segment) && !segment.box;
+}
 
 /** A box-drawing or block-element glyph (U+2500–U+259F). */
 function isLineGlyph(cluster: string): boolean {
@@ -558,7 +547,7 @@ function rowNodes(
   let units = 0;
   for (const segment of row) {
     units += segment.text.length;
-    if (isBarePaint(segment) && !segment.box) {
+    if (isTextSegment(segment)) {
       nodes.push(document.createTextNode(segment.text));
       continue;
     }
@@ -657,13 +646,7 @@ function applySegment(
 }
 
 function sameSegment(a: CellSegment, b: CellSegment): boolean {
-  return (
-    samePaint(a, b) &&
-    a.box === b.box &&
-    a.cells === b.cells &&
-    a.backgrounds?.join(",") === b.backgrounds?.join(",") &&
-    a.colors?.join(",") === b.colors?.join(",")
-  );
+  return samePaint(a, b) && a.box === b.box && a.cells === b.cells;
 }
 
 function rowStructureMatches(
@@ -675,8 +658,7 @@ function rowStructureMatches(
   for (let i = 0; i < row.length; i++) {
     const node = previous[i]!;
     const segment = row[i]!;
-    const bare = isBarePaint(segment) && !segment.box;
-    if (bare !== (node.nodeType === Node.TEXT_NODE)) return false;
+    if (isTextSegment(segment) !== (node.nodeType === Node.TEXT_NODE)) return false;
     if (node.textContent !== segment.text) return false;
     // A node detached from the grid can't be patched.
     if (node.parentNode !== target) return false;

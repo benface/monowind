@@ -16,14 +16,39 @@ export type WithMarkupItems<P extends { collection?: unknown }> = Omit<P, "colle
   collection?: P["collection"] | undefined;
 };
 
+/** The selection props the markup can stand in for. */
+interface Selection {
+  value?: string[] | undefined;
+  defaultValue?: string[] | undefined;
+}
+
 /** An item's label for typeahead and for the value as a string: its
  * `item-text` where it has one, so an indicator's glyph stays out. */
 const labelOf = (item: HTMLElement): string =>
   ((part(item, "item-text") ?? item).textContent ?? "").trim();
 
+/** A mount's props with the markup standing in for what they leave
+ * out: the marked items as the collection, and those `data-selected`
+ * marks as the initial selection — the first alone where one value is
+ * taken. */
+export function withMarkupItems<P extends WithMarkupItems<{ collection?: unknown }> & Selection>(
+  root: Element,
+  props: P,
+  multiple: boolean,
+): P & { collection: NonNullable<P["collection"]> | ListCollection<MarkupItem> } {
+  const marked = parts(root, "item")
+    .filter((item) => item.hasAttribute("data-selected"))
+    .map((item) => item.dataset["value"] ?? "");
+  const initial =
+    props.value === undefined && props.defaultValue === undefined && marked.length > 0
+      ? { defaultValue: multiple ? marked : marked.slice(0, 1) }
+      : {};
+  return { ...props, ...initial, collection: props.collection ?? markupCollection(root) };
+}
+
 /** The collection the marked items make, in markup order: the value
  * each carries, its text, and whether `data-disabled` marks it. */
-export function markupCollection(root: Element): ListCollection<MarkupItem> {
+function markupCollection(root: Element): ListCollection<MarkupItem> {
   return new ListCollection({
     items: parts(root, "item").map((item) => ({
       value: item.dataset["value"] ?? "",
@@ -33,13 +58,13 @@ export function markupCollection(root: Element): ListCollection<MarkupItem> {
   });
 }
 
-/** The parts a listbox and a select share, found once and wired on
- * each render: every `item` by its `data-value`, the `item-text` and
- * `item-indicator` inside it, and the `item-group`s and
- * `item-group-label`s by the group's id, with the props an item takes
- * past its own, read per render (a listbox's `highlightOnHover`, which
- * its root can gain or lose). */
-export function itemParts<A extends ItemApi>(
+/** The parts a listbox, a select and a combobox share, found once and
+ * wired on each render: every `item` by its `data-value`, with its
+ * `item-text` and `item-indicator`, and the `item-group`s and their
+ * labels by the group's id; `itemProps` read per render (a listbox's
+ * root can gain or lose `highlightOnHover`); and the API's `value`
+ * marked on the items. */
+export function itemParts<A extends ItemApi & { value: string[] }>(
   root: Element,
   /** The component's name, for the warning where it finds no item. */
   name: string,
@@ -77,11 +102,16 @@ export function itemParts<A extends ItemApi>(
       // goes entirely where the component filters by collection.
       const item = api.collection.find(value);
       if (hideUnlisted && element instanceof HTMLElement) element.hidden = item === null;
-      if (item === null) continue;
-      const props = { item, ...extra };
-      spread(element, api.getItemProps(props));
-      spread(text, api.getItemTextProps(props));
-      spread(indicator, api.getItemIndicatorProps(props));
+      if (item !== null) {
+        const props = { item, ...extra };
+        spread(element, api.getItemProps(props));
+        spread(text, api.getItemTextProps(props));
+        spread(indicator, api.getItemIndicatorProps(props));
+      }
+      // `data-selected` follows the selection on every item, listed or not,
+      // for a remount to read; after the spread, which writes it on a
+      // listbox's items.
+      element.toggleAttribute("data-selected", api.value.includes(value));
     }
   };
 }

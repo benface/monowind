@@ -56,7 +56,9 @@ in — and holds the API for the parts under it. The parts:
   does), `Label`, `Content`, `Item`, `ItemText`, `ItemIndicator`,
   `ItemGroup`, `ItemGroupLabel`; the select adds `Control`,
   `Trigger`, `ValueText`, `Indicator`, `ClearTrigger`, `Positioner`,
-  `List` and `HiddenSelect`, the native control a form submits.
+  `List` and `HiddenSelect`, the native control a form submits — its
+  options in the server's render too, so a form sent before hydration
+  posts the initial value.
 - `Combobox` — `Root` (an element of its own), `Label`, `Control`,
   `Input`, `Trigger`, `ClearTrigger`, `Positioner`, `Content`,
   `List`, and the item parts below. Its list anchors to the `Control`,

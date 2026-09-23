@@ -1,5 +1,5 @@
 import { computed, defineComponent, type ComputedRef } from "vue";
-import type { ItemApi } from "@monowind/ui/framework";
+import { itemOf, itemProps, type ItemApi } from "@monowind/ui/framework";
 import { defineContext, renderPart, partsOf } from "./part.ts";
 
 /**
@@ -25,14 +25,12 @@ export function defineItemParts<A extends ItemApi, V extends { api: ComputedRef<
   const Item = defineComponent(
     (props: { item?: unknown; value?: string; asChild?: boolean }, { slots, attrs }) => {
       const { api } = context.use();
-      const item = computed(() =>
-        props.item !== undefined ? props.item : api.value.collection.find(props.value ?? ""),
-      );
+      const item = computed(() => itemOf(api.value, props));
       held.provide(item);
       return () =>
         renderPart(
           "div",
-          api.value.getItemProps({ item: item.value }),
+          itemProps(api.value, item.value),
           attrs as Props,
           Boolean(props.asChild),
           slots["default"]?.(),

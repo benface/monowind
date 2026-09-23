@@ -64,6 +64,9 @@ export interface CellPaint {
    * blends with what's behind the HOST, never with covered cells.
    * `"0"` still paints: the glyphs stay selectable in grid mode. */
   opacity?: string;
+  /** The glyph color is faded toward transparent by an inline element's
+   * opacity (`fadedPaint`), translucent like an `opacity`. */
+  faded?: true;
   /** The cell is inside a light-DOM selection (specs/wide-characters.md
    * "The grid paints the selection"): painted with its color and
    * background swapped. */
@@ -284,7 +287,8 @@ function joinsGradientRun(
     run.fontWeight === paint.fontWeight &&
     run.fontStyle === paint.fontStyle &&
     run.textDecorationLine === paint.textDecorationLine &&
-    run.opacity === paint.opacity
+    run.opacity === paint.opacity &&
+    run.faded === paint.faded
   );
 }
 
@@ -293,14 +297,23 @@ export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
     a.color === b?.color &&
     a.backgroundColor === b?.backgroundColor &&
     a.gradient === b?.gradient &&
-    a.backgrounds === b?.backgrounds &&
-    a.colors === b?.colors &&
+    sameList(a.backgrounds, b?.backgrounds) &&
+    sameList(a.colors, b?.colors) &&
     a.fontWeight === b?.fontWeight &&
     a.fontStyle === b?.fontStyle &&
     a.textDecorationLine === b?.textDecorationLine &&
     a.opacity === b?.opacity &&
+    a.faded === b?.faded &&
     a.selected === b?.selected
   );
+}
+
+/** Two per-cell lists alike: the one list, as a paint's cells share
+ * it, or its values, as a repaint's arrive anew. */
+function sameList(a: readonly unknown[] | undefined, b: readonly unknown[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((value, i) => value === b[i]);
 }
 
 /** Apply a `CellPaint` to a `CSSStyleDeclaration`. Kept in this file
@@ -332,14 +345,15 @@ export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): vo
 /** The glyph paint of a box clipped to `text` (specs/gradients.md):
  * a glyph's own color composited over the background's color at its
  * cell — the gradient through `text-transparent`, an opaque color
- * as it is — for a color the parser reads; any other stays. */
+ * as it is — for a color the parser reads; any other stays. An inline
+ * element's `fade` applies to the result. */
 function glyphTint(
   colors: (string | null)[][],
   boxX: number,
   boxY: number,
-): (paint: CellPaint | undefined, x: number, y: number) => CellPaint | undefined {
+): (paint: CellPaint | undefined, x: number, y: number, fade: number) => CellPaint | undefined {
   const parsed = new Map<string, Rgba | null>();
-  return (paint, x, y) => {
+  const tinted = (paint: CellPaint | undefined, x: number, y: number): CellPaint | undefined => {
     const under = colors[y - boxY]?.[x - boxX];
     if (under === null || under === undefined || paint?.color === undefined) return paint;
     let own = parsed.get(paint.color);
@@ -349,13 +363,18 @@ function glyphTint(
     if (!ground) return paint;
     return { ...paint, color: serializeColor(compositeColors(own, ground)), gradient: "text" };
   };
+  return (paint, x, y, fade) => {
+    const tint = tinted(paint, x, y);
+    return fade < 1 ? fadedPaint(tint, fade) : tint;
+  };
 }
 
-/** The cells a box's padding box or content box sits inside from its
- * border box, per side. */
-function paddingBoxInset(node: LayoutNode, clip: "padding-box" | "content-box"): Insets {
-  const { border } = node.style;
+/** The cells the box `background-clip` names sits inside the border
+ * box, per side; none for the border box and for text. */
+function backgroundInset(node: LayoutNode): Insets {
+  const { backgroundClip: clip, border } = node.style;
   if (clip === "padding-box") return border;
+  if (clip !== "content-box") return zeroInsets();
   const padding = node.resolvedPadding;
   return {
     top: border.top + padding.top,
@@ -561,7 +580,7 @@ export const inClip = (clip: Clip | null, x: number, y: number): boolean =>
 
 /** Whether a main-grid cell of a layer lies inside its clip and every
  * enclosing layer's. */
-export function layerShows(layer: PaintedLayer, x: number, y: number): boolean {
+function layerShows(layer: PaintedLayer, x: number, y: number): boolean {
   for (let at: PaintedLayer | null = layer; at; at = at.parent) {
     if (!inClip(at.clip, x, y)) return false;
   }
@@ -688,6 +707,19 @@ function textPaint(
   return paint;
 }
 
+/** The fade an inline element's opacity puts on its glyph color alone:
+ * its opacity, or 1 where it has a background, which fades the span. */
+function glyphFade(entry: { backgroundColor: string | undefined; opacity: number }): number {
+  return entry.backgroundColor ? 1 : entry.opacity;
+}
+
+/** A paint whose glyph color is at `opacity`, its hue kept: mixed in
+ * OKLAB with transparent, wide-gamut colors included. */
+function fadedPaint(paint: CellPaint | undefined, opacity: number): CellPaint {
+  const color = `color-mix(in oklab, ${paint?.color ?? "currentcolor"} ${Math.round(opacity * 1000) / 10}%, transparent)`;
+  return { ...paint, color, faded: true };
+}
+
 /** Paint `glyph` at a cell — a cluster over `cells` cells from it. */
 type PutGlyph = (
   x: number,
@@ -730,8 +762,10 @@ function walk(
   // multiply (CSS nests, it doesn't inherit) and the value rides on
   // every paint this node produces — including an opacity of 0, whose
   // glyphs must stay in the grid for select="grid" selection.
-  const alphaPaint = (paint: CellPaint | undefined): CellPaint | undefined =>
-    alpha >= 1 ? paint : { ...paint, opacity: String(Math.round(alpha * 1000) / 1000) };
+  const alphaPaint = (paint: CellPaint | undefined, times = 1): CellPaint | undefined =>
+    alpha * times >= 1
+      ? paint
+      : { ...paint, opacity: String(Math.round(alpha * times * 1000) / 1000) };
   // A hidden box (specs/visibility.md) paints none of its own ink — its
   // shadows, fill, borders, rules, text, and bars — while its subtree
   // walks on, a visible descendant painting.
@@ -756,25 +790,27 @@ function walk(
   let tint: ReturnType<typeof glyphTint> | null = null;
   if (visible) {
     paintShadows(false);
-    // Fill the border-box with painted spaces so this element's bg
-    // wipes ancestor decoration glyphs at these cells; own borders /
-    // text / decoration paint after and layer on top. `bg-clear` wipes
-    // first, with an EXPLICIT undefined so the merge in put() strips the
-    // cell's painted background too — the wipe covers ancestor
-    // backgrounds, not just their glyphs. Gradient layers then fill a
-    // color per cell, composited over the plain color, inside the box
-    // `background-clip` names, a cell they leave clear as it was; clipped
-    // to `text`, the colors go to the glyphs instead (`tint`, below), the
-    // plain color with them.
+    // Fill the box `background-clip` names (the border box by default)
+    // with painted spaces so this element's bg wipes ancestor decoration
+    // glyphs at these cells; own borders / text / decoration paint after
+    // and layer on top. `bg-clear` wipes the border box first, with an
+    // EXPLICIT undefined so the merge in put() strips the cell's painted
+    // background too — the wipe covers ancestor backgrounds, not just
+    // their glyphs. Gradient layers fill a color per cell instead,
+    // composited over the plain color, a cell they leave clear as it
+    // was; clipped to `text`, the colors go to the glyphs instead
+    // (`tint`, below), the plain color with them.
     const { width, height } = node.localRect;
     const cellSize = options.cell ?? DEFAULT_CELL;
-    const fill = (paint: CellPaint | undefined): void => {
+    const fill = (paint: CellPaint | undefined, within: Insets): void => {
       const own: CellPaint = { gradient: undefined, ...paint };
-      for (let dy = 0; dy < height; dy++) {
-        for (let dx = 0; dx < width; dx++) put(absX + dx, absY + dy, " ", own);
+      for (let dy = within.top; dy < height - within.bottom; dy++) {
+        for (let dx = within.left; dx < width - within.right; dx++) {
+          put(absX + dx, absY + dy, " ", own);
+        }
       }
     };
-    if (style.backgroundClear) fill({ backgroundColor: undefined });
+    if (style.backgroundClear) fill({ backgroundColor: undefined }, zeroInsets());
     if (
       style.backgroundClip === "text" &&
       (layers.length > 0 || style.backgroundColor !== undefined)
@@ -786,11 +822,7 @@ function walk(
       );
     } else if (layers.length > 0) {
       const colors = gradientCells(layers, style.backgroundColor, width, height, cellSize);
-      const clip = style.backgroundClip;
-      const inset =
-        clip === "padding-box" || clip === "content-box"
-          ? paddingBoxInset(node, clip)
-          : zeroInsets();
+      const inset = backgroundInset(node);
       for (let dy = inset.top; dy < height - inset.bottom; dy++) {
         for (let dx = inset.left; dx < width - inset.right; dx++) {
           const color = colors[dy]![dx];
@@ -804,7 +836,7 @@ function walk(
         }
       }
     } else if (style.backgroundColor !== undefined) {
-      fill(alphaPaint({ backgroundColor: style.backgroundColor }));
+      fill(alphaPaint({ backgroundColor: style.backgroundColor }), backgroundInset(node));
     }
     paintShadows(true);
 
@@ -870,7 +902,15 @@ function walk(
   if (!hasInFlowChildren && node.text) {
     // The plain color rides along only where it filled the box.
     const leafPaint = alphaPaint(textPaint(style, layers.length === 0 && !tint));
-    const inlinePaints = node.inlineElements?.map((entry) => alphaPaint(textPaint(entry)));
+    // An inline element's opacity fades its own paint (specs/cell-model.md
+    // "Opacity"): the whole span where it has a background, else its
+    // glyphs' color alone, after the tint for a box clipped to its text.
+    const inlinePaints = node.inlineElements?.map((entry) => {
+      const paint = textPaint(entry);
+      const fade = glyphFade(entry);
+      if (fade < 1 && !tint) return alphaPaint(fadedPaint(paint, fade));
+      return alphaPaint(paint, fade < 1 ? 1 : entry.opacity);
+    });
     const selection = options.selection?.get(node);
     type Entry = NonNullable<LayoutNode["inlineElements"]>[number];
     const paintCell = (
@@ -885,13 +925,25 @@ function walk(
       // its element's background still fills it.
       if (node.text[k] === INLINE_PAD) {
         if (entry?.backgroundColor) {
-          contentPut(x, y, " ", alphaPaint({ backgroundColor: entry.backgroundColor }));
+          contentPut(
+            x,
+            y,
+            " ",
+            alphaPaint({ backgroundColor: entry.backgroundColor }, entry.opacity),
+          );
         }
         return;
       }
       const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
       const cells = clusterWidth(cluster);
-      if (cells > 0) contentPut(x, y, cluster, tint ? tint(paint, x, y) : paint, cells);
+      if (cells === 0) return;
+      contentPut(
+        x,
+        y,
+        cluster,
+        tint ? tint(paint, x, y, entry ? glyphFade(entry) : 1) : paint,
+        cells,
+      );
     };
     // A sticky inline element's glyphs paint after the rest of the
     // leaf's, over the line they were shifted onto (specs/sticky.md).
@@ -929,7 +981,7 @@ function walk(
       scrolledY,
       walking,
       contentPut,
-      alpha * child.style.opacity,
+      alpha * child.style.opacity * (child.inlineOpacity ?? 1),
       contentClip,
     );
   }

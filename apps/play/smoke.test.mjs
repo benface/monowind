@@ -27,6 +27,13 @@ const sampleRendered = await page.evaluate(() => {
   return (grid?.textContent ?? "").includes("┌") && (grid?.textContent ?? "").includes("│");
 });
 
+// Sample round-trips through tidy unchanged — anything else means the
+// default HTML would visibly change on the first Tidy click.
+const sampleBefore = await page.evaluate(() => document.getElementById("source").value);
+await page.evaluate(() => document.getElementById("tidy").click());
+const sampleAfter = await page.evaluate(() => document.getElementById("source").value);
+const sampleRoundTrips = sampleBefore.trim() === sampleAfter.trim();
+
 // The sample's share menu, an element the ui CDN bundle registers and
 // that roots its own mount: its button opens it under itself, in the
 // top layer.
@@ -264,6 +271,36 @@ const commentClosed = await page.evaluate(() => {
   return comment?.textContent === "<!-- note -->" && comment.nextElementSibling !== null;
 });
 
+// Every <mono-*> element is destroyed before its markup goes, a
+// combobox too, so Zag's teardown runs on attached nodes.
+await page.fill(
+  "#source",
+  '<mono-wind><mono-combobox><input data-part="input" /></mono-combobox></mono-wind>',
+);
+await page.waitForFunction(() =>
+  document
+    .getElementById("preview")
+    ?.contentDocument?.querySelector('mono-combobox [data-part="input"][role="combobox"]'),
+);
+await page.evaluate(() => {
+  const preview = document.getElementById("preview").contentWindow;
+  const prototype = preview.customElements.get("mono-combobox").prototype;
+  const destroy = prototype.destroy;
+  preview.teardowns = [];
+  prototype.destroy = function () {
+    preview.teardowns.push(this.isConnected);
+    return destroy.call(this);
+  };
+});
+await page.fill("#source", "<mono-wind><p>after</p></mono-wind>");
+await page.waitForFunction(
+  () => !document.getElementById("preview")?.contentDocument?.querySelector("mono-combobox"),
+);
+const teardownAttached = await page.evaluate(() => {
+  const { teardowns } = document.getElementById("preview").contentWindow;
+  return teardowns.length > 0 && teardowns.every(Boolean);
+});
+
 // Share writes the document into the hash and shows its feedback; with
 // no backend (file://) the long URL is what gets copied.
 await page.fill("#source", "<div>shared</div>");
@@ -272,13 +309,6 @@ await page.waitForFunction(() =>
   /copied!|failed/.test(document.getElementById("copy").textContent),
 );
 const shared = await page.evaluate(() => location.hash.startsWith("#1."));
-
-// Sample round-trips through tidy unchanged — anything else means the
-// default HTML would visibly change on the first Tidy click.
-const sampleBefore = await page.evaluate(() => document.getElementById("source").value);
-await page.evaluate(() => document.getElementById("tidy").click());
-const sampleAfter = await page.evaluate(() => document.getElementById("source").value);
-const sampleRoundTrips = sampleBefore.trim() === sampleAfter.trim();
 
 // Tidy re-indents nested markup, sorts Tailwind classes into the
 // canonical order, keeps comments, keeps phrasing content (inline
@@ -298,6 +328,34 @@ const tidyWorks =
   tidied.includes('class="mx-auto flex border px-1 rule-emerald-400 rule-y"') &&
   tidied.includes("<!-- keep -->") &&
   tidied.includes("\n  <div>\n    <p>a <em>b</em> &lt;c></p>\n  </div>\n</div>");
+
+// Tidy parses as the preview does: a leading comment and <style>, and a
+// template's content, stay where they are. Undo takes the tidy back.
+const untidy = "<!-- first --><style>.a{color:red}</style><template><b>t</b></template><p>x</p>";
+await page.fill("#source", untidy);
+await page.evaluate(() => document.getElementById("tidy").click());
+const kept = await page.evaluate(() => document.getElementById("source").value);
+await page.evaluate(() => document.execCommand("undo"));
+const undone = await page.evaluate(() => document.getElementById("source").value);
+const tidyKeeps =
+  kept.includes("<!-- first -->") &&
+  kept.includes("<style>.a{color:red}</style>") &&
+  kept.includes("<template><b>t</b></template>") &&
+  undone === untidy;
+
+// A press on Tidy leaves the focus where it was, so a tap raises no
+// keyboard: on the button where a press focuses it, on the body in
+// WebKit.
+await page.fill("#source", untidy);
+await page.click("#tidy");
+const focusAfterPress = await page.evaluate(() => document.activeElement?.id);
+await page.fill("#source", untidy);
+await page.evaluate(() => {
+  document.activeElement.blur();
+  document.getElementById("tidy").click();
+});
+const focusAfterBodyPress = await page.evaluate(() => document.activeElement === document.body);
+const tidyKeepsFocus = focusAfterPress === "tidy" && focusAfterBodyPress;
 
 // Tab indents instead of leaving the editor: a multi-line selection
 // shifts every line, Shift+Tab shifts them back, a bare caret inserts
@@ -407,9 +465,12 @@ const result = {
   editorFollowsResize,
   highlighted,
   commentClosed,
+  teardownAttached,
   shared,
   sampleRoundTrips,
   tidyWorks,
+  tidyKeeps,
+  tidyKeepsFocus,
   tabIndents,
   editorFilled,
   hoverVariantCompiled,
@@ -439,9 +500,12 @@ if (
   !editorFollowsResize ||
   !highlighted ||
   !commentClosed ||
+  !teardownAttached ||
   !shared ||
   !sampleRoundTrips ||
   !tidyWorks ||
+  !tidyKeeps ||
+  !tidyKeepsFocus ||
   !tabIndents ||
   !editorFilled ||
   !hoverVariantCompiled

@@ -10,6 +10,7 @@ import {
 } from "../src/color.ts";
 import type { ColorSpace, HueMode, Rgba } from "../src/color.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { paintGrid } from "../src/paint.ts";
 import { applyCellPaint, renderCellSegments } from "../src/plain-text.ts";
 import type { CellSegment } from "../src/plain-text.ts";
 import { readCellStyle } from "../src/style.ts";
@@ -29,6 +30,10 @@ const read = (backgroundImage: string): Gradient[] => {
 const rgb = (color: string): string => serializeColor(parseColor(color)!);
 const CYAN = "oklch(0.715 0.143 215.221)";
 const BLUE = "oklch(0.546 0.245 262.881)";
+// Outside sRGB.
+const EMERALD_400 = "oklch(0.765 0.177 163.223)";
+const GRAY_800 = "oklch(0.278 0.033 256.848)";
+const BLUE_500 = "oklch(0.623 0.214 259.815)";
 
 describe("background-image read", () => {
   it("reads Tailwind's linear presets: side, angle, corner, stop positions", () => {
@@ -212,11 +217,12 @@ describe("colors", () => {
     expect(colorAlpha("var(--mw-fg)")).toBe(1);
   });
 
+  const black = parseColor("rgb(0, 0, 0)")!;
+  const white = parseColor("rgb(255, 255, 255)")!;
+  const mix = (from: Rgba, to: Rgba, t: number, space: ColorSpace): string =>
+    serializeColor(mixColors(prepareColor(from, space), prepareColor(to, space), t, space));
+
   it("mixes in each space with alpha premultiplied, and composites", () => {
-    const black = parseColor("rgb(0, 0, 0)")!;
-    const white = parseColor("rgb(255, 255, 255)")!;
-    const mix = (from: Rgba, to: Rgba, t: number, space: ColorSpace): string =>
-      serializeColor(mixColors(prepareColor(from, space), prepareColor(to, space), t, space));
     expect(mix(black, white, 0.5, "srgb")).toBe("rgb(128 128 128)");
     // OKLab's mid-lightness grey sits darker in sRGB.
     expect(mix(black, white, 0.5, "oklab")).toBe("rgb(99 99 99)");
@@ -228,6 +234,15 @@ describe("colors", () => {
     const red = parseColor("rgba(255, 0, 0, 0.5)")!;
     expect(serializeColor(compositeColors(red, white))).toBe("rgb(255 128 128)");
     expect(serializeColor(compositeColors(clear, white))).toBe("rgb(255 255 255)");
+  });
+
+  it("carries a color outside sRGB through the mix, clipped where written or composited", () => {
+    const emerald = parseColor(EMERALD_400)!;
+    // OKLab's own values mixed: the synthesized fade's too.
+    expect(mix(emerald, parseColor(GRAY_800)!, 0.25, "oklab")).toBe("rgb(0 166 124)");
+    const bright = parseColor("color(srgb 1.5 0 0)")!;
+    expect(mix(bright, black, 0.75, "srgb")).toBe("rgb(96 0 0)");
+    expect(serializeColor(compositeColors({ ...emerald, a: 0.5 }, white))).toBe("rgb(128 234 200)");
   });
 });
 
@@ -463,6 +478,20 @@ describe("gradient paint", () => {
     expect(paint([linear(across, [stop(BLACK), stop(WHITE)], "oklab")], 2, 1).colors).toEqual([
       [34, 174].map(grey),
     ]);
+    // Stops outside sRGB mix as they are, each cell clipped.
+    const deep = [stop(EMERALD_400), stop(GRAY_800)];
+    expect(paint([linear(across, deep, "oklab")], 2, 1).colors[0]![0]).toBe("rgb(0 166 124)");
+    // In hsl too: Firefox's cells, Chromium's within a level (probed
+    // 2026-09-23).
+    const toBlue = [stop(EMERALD_400), stop(BLUE_500)];
+    expect(paint([linear(across, toBlue, "hsl")], 4, 1).colors).toEqual([
+      ["rgb(0 229 189)", "rgb(0 237 255)", "rgb(0 192 255)", "rgb(17 142 255)"],
+    ]);
+    // A lightness past 1 gives a saturation below 0, mixed as it is.
+    const glare = [stop("color(srgb 1.5 1.2 0.9)"), stop("rgb(0, 0, 255)")];
+    expect(paint([linear(across, glare, "hsl")], 4, 1).colors).toEqual([
+      ["rgb(255 255 250)", "rgb(230 248 240)", "rgb(198 191 198)", "rgb(123 77 222)"],
+    ]);
   });
 
   it("composites translucent stops over the plain color, and layers over each other", () => {
@@ -498,6 +527,51 @@ describe("gradient paint", () => {
     expect(paint(layers, 4, 1, { backgroundClip: "content-box", padding: sides }).colors).toEqual([
       [undefined, grey(96), grey(159), undefined],
     ]);
+  });
+
+  it("clips to text: an inline element's opacity fades its glyph's tint", () => {
+    // Firefox's rendering: the glyph takes the gradient, then the fade
+    // (Chromium draws it whole, WebKit not at all; probed 2026-09-23).
+    const layers = [linear({ toX: 1, toY: 0 }, [stop(BLACK), stop(WHITE)])];
+    const transparent = "rgba(0, 0, 0, 0)";
+    const box = makeNode({
+      style: {
+        width: { kind: "cells", value: 4 },
+        height: { kind: "cells", value: 1 },
+        backgroundImage: layers,
+        backgroundClip: "text",
+        color: transparent,
+      },
+      text: "ab",
+      intrinsicWidth: 2,
+    });
+    box.charInline = [-1, 0];
+    box.inlineElements = [
+      {
+        element: document.createElement("span"),
+        tracking: 0,
+        padLeft: 0,
+        padRight: 0,
+        insets: null,
+        anchorNames: [],
+        color: transparent,
+        backgroundColor: undefined,
+        fontWeight: "400",
+        fontStyle: "normal",
+        textDecorationLine: "none",
+        visible: true,
+        pointerEvents: true,
+        opacity: 0.5,
+      },
+    ];
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 4);
+    const [first, second] = renderCellSegments(root)[0]!;
+    expect(first).toMatchObject({ text: "a", color: grey(32) });
+    expect(second).toMatchObject({
+      text: "b",
+      color: `color-mix(in oklab, ${grey(96)} 50%, transparent)`,
+    });
   });
 
   it("clips to text: glyphs take the gradient through a transparent color", () => {
@@ -644,6 +718,32 @@ describe("gradient paint", () => {
     expect(style.backgroundImage).toBe(
       "linear-gradient(to right, rgb(32 32 32) 0 calc(var(--mw-cw, 1ch) * 1), rgb(96 96 96) 0 calc(var(--mw-cw, 1ch) * 2), rgb(159 159 159) 0 calc(var(--mw-cw, 1ch) * 3), rgb(223 223 223) 0 calc(var(--mw-cw, 1ch) * 4))",
     );
+  });
+
+  it("leaves a run of cell backgrounds unwritten when a repaint changes something else", () => {
+    const target = document.createElement("pre");
+    const tree = (color: string) => {
+      const root = makeNode({
+        children: [
+          makeNode({
+            style: {
+              width: { kind: "cells", value: 4 },
+              height: { kind: "cells", value: 1 },
+              backgroundImage: [linear({ toX: 1, toY: 0 }, [stop(BLACK), stop(WHITE)])],
+            },
+          }),
+          makeNode({ style: { color }, text: "ab", intrinsicWidth: 2 }),
+        ],
+      });
+      layoutRoot(root, 4);
+      return root;
+    };
+    paintGrid(tree("red"), target);
+    const run = target.querySelector("span")!;
+    run.style.setProperty("--kept", "1");
+    paintGrid(tree("blue"), target);
+    expect(target.querySelector("span")).toBe(run);
+    expect(run.style.getPropertyValue("--kept")).toBe("1");
   });
 
   it("leaves a clear cell to the fill beneath, or wipes it under bg-clear", () => {

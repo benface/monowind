@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ItemApi } from "@monowind/ui/framework";
+import { itemOf, itemProps, type ItemApi } from "@monowind/ui/framework";
 import { defineContext, partsOf, renderPart, type PartProps } from "./part.tsx";
 
 /**
@@ -22,13 +22,10 @@ export function defineItemParts<A extends ItemApi>(prefix: string, context: { us
   const held = defineContext<unknown>(`${prefix}.Item`);
   const part = partsOf(prefix, context.use);
 
-  const itemOf = (api: A, props: ItemProps): unknown =>
-    props.item !== undefined ? props.item : api.collection.find(props.value ?? "");
-
   function Item({ item, value, children, ...rest }: ItemProps): ReactNode {
     const api = context.use();
     const own = itemOf(api, { item, value });
-    return renderPart(`${prefix}.Item`, "div", api.getItemProps({ item: own }), {
+    return renderPart(`${prefix}.Item`, "div", itemProps(api, own), {
       ...rest,
       children: <held.Provider value={own}>{children}</held.Provider>,
     });

@@ -43,11 +43,12 @@ section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
   resolve viewport units to plain px, indistinguishable from
   spacing-scale lengths. A scanned utility is ACTIVE-CHECKED against
   the resolved computed px (within 30%) — an inactive variant
-  (`md:h-screen` below `md`) or an overriding inline style resolves
-  elsewhere and wins; when they agree the resolved px is used, so
-  sv/lv/dv bases are exact. A window `resize` listener retriggers
-  layout (the host ResizeObserver alone can miss height-only viewport
-  changes). Inline styles are caught too (the style attribute keeps
+  (`md:h-screen` below `md`) or an overriding utility or inline style
+  resolves elsewhere, to other px or to a keyword (`h-screen md:h-auto`
+  at `md` resolves to `auto`), and wins; when they agree the resolved
+  px is used, so sv/lv/dv bases are exact. A window `resize` listener
+  retriggers layout (the host ResizeObserver alone can miss height-only
+  viewport changes). Inline styles are caught too (the style attribute keeps
   the authored unit verbatim, and inline beats classes per cascade).
   **Deviation:** viewport units authored in plain CSS stylesheets are
   only caught where the unit survives to the computed string —
@@ -124,9 +125,11 @@ specs: deterministic, document order.)
   allocation is read with the style, so a set registered later
   relayouts connected hosts as any registration does.
 
-- A `background-color` fills the border box in the grid, wiping what
-  ancestors painted there; a gradient `background-image` fills it a
-  color per cell (`gradients.md`).
+- A `background-color` fills the box `background-clip` names in the
+  grid — the border box by default, or the padding or content box —
+  wiping what ancestors painted there; a gradient `background-image`
+  fills it a color per cell, and `text` hands either to the glyphs
+  (`gradients.md`).
 - **Margins are supported** (`m-*`, `mx-*`, `-m-*`…); the spacing
   between siblings is `gap-*`.
 - Margin collapsing: **adjacent-sibling collapsing only** (the visible gap is
@@ -134,7 +137,10 @@ specs: deterministic, document order.)
   in flex/grid, per CSS. **Deviation:** no parent–child or empty-box
   collapsing (rare in utility-class code, where padding dominates).
 - Auto margins: recognized for centering (`mx-auto`; auto margins in flex
-  per the flex spec). MVP may defer; the value must at least parse as `auto`.
+  per the flex spec). A box wider than its slot gets none and starts at
+  the slot's start, per CSS 2 §10.3.3 — in block flow, flex and grid.
+  An absolutely positioned box between two insets solves them instead
+  (`positioning.md`).
   **Deviation (no Typed OM — Firefox before 157):** `auto` is detected by
   class scan, which cannot see the cascade: a variant override of an auto
   side (`mx-auto sm:ms-0` at `sm` and up) still reads as auto, and an
@@ -421,9 +427,6 @@ BEFORE hyphens and is a documented divergence). Segments longer than the width
 break at cell boundaries (`overflow-wrap: anywhere`). Exotic UAX #14 line
 breaking (em dashes, CJK, soft hyphens, …) is not modeled — a deviation.
 
-Mixed text nodes and block-level element children in the same container is
-not supported (documented deviation).
-
 ## Borders: glyph mapping
 
 `border-style` selects the glyph table, `border-width` its weight
@@ -525,18 +528,27 @@ indent doesn't count toward intrinsic sizing.
 `opacity` is honored: ancestors MULTIPLY down the paint walk (CSS
 opacity nests, it doesn't inherit) and the product rides on every grid
 span the subtree paints (glyphs, backgrounds, borders, rules), which
-composites against the page. **Deviations**: translucency blends with
-what's behind the HOST, never with covered cells (the front paint wins
-a cell outright, as always); opacity on INLINE elements (a `<span>`)
-is ignored — only block-level boxes carry it. `opacity: 0` still
-paints its glyphs — invisible but present, so `select="grid"`
-selection keeps working (unlike `invisible`). The light DOM keeps the
-authored opacity natively, so form-control ink dims in step. A
-translucent box-drawing or block glyph is boxed to its cell (the
-tiling fit's inline-block clip): rows are separate spans, and the
-glyph's vertical overshoot, which joins rows seamlessly at full
-opacity, would composite twice at every join below it and darken the
-line there.
+composites against the page. An inline element's (a `<span>`) fades
+its own paint, times its inline ancestors' and its block's: with a
+background of its own, the span's background, padding cells, and
+glyphs together; without one, its glyphs' color alone (mixed toward
+transparent in OKLAB), the background beneath keeping its block's, as
+CSS composites the span over it. What an inline element holds fades
+with it: an atomic inline box, an out-of-flow box, and a block it
+splits around ("Inline content") carry its opacity times their own.
+**Deviations**: translucency blends with what's behind the HOST, never
+with covered cells (the front paint wins a cell outright, as always):
+a translucent box's glyphs carry the background beneath them at the
+box's opacity, and an inline element's own background fades over the
+page rather than over its block's. `opacity: 0` still paints its
+glyphs — invisible but present, so `select="grid"` selection keeps
+working (unlike `invisible`). The light DOM keeps the authored opacity
+natively, so form-control ink dims in step. A box-drawing or block
+glyph in a translucent span — its opacity's, or an inline element's
+faded color — is boxed to its cell (the tiling fit's inline-block
+clip): rows are separate spans, and the glyph's vertical overshoot,
+which joins rows seamlessly at full opacity, would composite twice at
+every join below it and darken the line there.
 
 ## Effects
 
@@ -603,15 +615,16 @@ light-DOM bg transparent at every unmasked commit), so the engine
 SYNTHESIZES its transitions (animate.ts): a read that sees the value
 change on an element whose authored `transition` covers
 background-color arms a fade with the authored duration, delay, and
-easing (cubic-bezier solved numerically; `steps()` behaves as linear),
-interpolating premultiplied in OKLAB (sRGB for legacy rgb pairs, per
-css-color-4) and driving the same per-frame loop. The config resolves
-after the settling flush, where the authored `transition-property` is
-readable again and the reads themselves can start nothing.
-CSS `animation` keyframes are sampled by the same loop, per element
-by what their properties need — a repaint for live paint-only ones, a
-box placement for a layer's effects, a relayout for the rest
-(specs/animations.md). **Deviations**: transitions of other
+easing (cubic-bezier solved numerically, `steps()` and `linear()` as
+CSS defines them), interpolating premultiplied in OKLAB (sRGB for
+legacy rgb pairs, per css-color-4) from each end's own value, clipped
+to sRGB only once mixed, and driving the same per-frame loop. The
+config resolves after the settling flush, where the authored
+`transition-property` is readable again and the reads themselves can
+start nothing. CSS `animation` keyframes are sampled by the same loop,
+per element by what their properties need — a repaint for live
+paint-only ones, a box placement for a layer's effects, a relayout for
+the rest (specs/animations.md). **Deviations**: transitions of other
 non-sampled properties (decoration color, geometry) flip to their
 target on the next relayout instead of fading.
 
@@ -755,9 +768,39 @@ a link in a paragraph — is no box of its own, so its cells are its
 block's. A mark lasts no longer than the pointer's stay in the
 element's own box, the browser hitting it no more: an element the
 pointer left holds none, or a press that never hovered it first would
-find it deaf. Only a real pointer hit is corrected; a script's
-`click()` addresses its element, as it does natively, and a modal
-dialog's subtree is the light DOM's (top-layer.md deviation 7).
+find it deaf. Only a real pointer hit is corrected: a script's
+`click()`, a key's activation, and a label's click forwarded to its
+control address their element, as they do natively — a key's
+activation counts no click (`detail` 0), at the element's centre in
+WebKit and the viewport's origin in Chromium and Firefox, and a
+label's lands at the label's point, outside the control's box
+(counting one click in Chromium and Firefox, none in WebKit; probed
+2026-09-23) — and a modal dialog's subtree is the light DOM's
+(top-layer.md deviation 7).
+
+**`pointer-events: none` passes the pointer through.** The engine's hit
+test takes no box whose computed `pointer-events` is `none`: the cell
+falls to what is beneath it, and a descendant that takes pointer events
+again (`pointer-events-auto`) is hit, its ancestors in the chain as
+natively — a badge laid over a button's corner leaves the press, the
+hover and the cursor there to the button, and a link that takes them
+again inside a paragraph that takes none holds its own characters'
+cells, the paragraph's for the chain. A transformed element that takes
+none passes the pointer to what lies beneath where it is drawn, not
+where it was laid out (layers.md). The value read is the one written
+inside the host, with the grid-mode locks off — each element's
+measuring flag — over an `auto` the shadow states: on a grid-mode
+host's top-level elements, past its slot's `none`, and on a text-mode
+host's slot while the host reads. A lock the page sets above the host
+(a modal's, on the body) stays the page's, and the host's own text
+takes the pointer whatever the host's value; a nested host passes its
+own value down like any element of the outer one, a grid-mode one's
+top-level elements stating `auto` as above. An element whose value is
+`none` carries `data-mw-pointer-none`, which the
+grid-mode opt-in of the interactive elements leaves be: a link the
+utility disables takes no press from the browser either (the keyboard
+still reaches an `<a href>`; `aria-disabled` without `href` is the
+disabled link).
 
 Consumers who redefine `@custom-variant hover` themselves win (last
 definition counts) — their selector must include `[data-mw-hover]`
@@ -808,9 +851,8 @@ alone on an auto-width block does nothing — the box fills its container.
   soft-wraps per the greedy word-wrap in `wrap.ts`.
 - **`nowrap`** (also `pre`): no soft wrapping. The leaf's content height is
   its **hard-line count** (`<br>` still breaks, per CSS); its intrinsic
-  width is the longest hard line (same as normal). **Deviation:** `pre`'s
-  whitespace preservation is NOT honored — the tree builder collapses
-  whitespace regardless; `pre` only gets `pre`'s no-wrap behavior.
+  width is the longest hard line (same as normal). `pre` also preserves
+  whitespace (deviation 8).
 
 The companion stylesheet locks `white-space: normal` on all descendants (so
 browser wrapping matches the engine's), gated on the element's measuring
@@ -926,13 +968,12 @@ lines); the explicit zero `clip` rect still drops them.
 9. `aspect-ratio` is ignored (deferred: cells aren't square, so it needs
    the cell-metric ratio plumbed into layout plus a spec decision on
    px-square vs cell-square semantics).
-10. CSS `order` applies to flex items only (as in CSS). Glyph widths are
-    the `wcwidth` table's, not the font's (specs/wide-characters.md):
-    East Asian wide and emoji-presentation clusters take two cells,
-    ambiguous-width symbols one; a cluster the font draws off its cell
-    count is scaled into a cell-sized box on the grid, and the
-    transparent native text keeps the font's advances (its selection
-    and drags are the engine's, so the drift never shows).
+10. Glyph widths are the `wcwidth` table's, not the font's
+    (specs/wide-characters.md): East Asian wide and emoji-presentation
+    clusters take two cells, ambiguous-width symbols one; a cluster the
+    font draws off its cell count is scaled into a cell-sized box on the
+    grid, and the transparent native text keeps the font's advances (its
+    selection and drags are the engine's, so the drift never shows).
 11. A FLOW CHILD's `position: relative` insets move it on the grid only:
     natively it is `position: static` so the browser's flow can place
     it (see Inline content), and the engine's own offset never reaches

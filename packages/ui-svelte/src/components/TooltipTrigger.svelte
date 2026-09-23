@@ -1,10 +1,18 @@
 <script lang="ts">
   import Part from "./Part.svelte";
-  import { tooltipContext, type PartProps } from "./context.ts";
+  import { defined, tooltipContext, type PartProps } from "./context.ts";
 
-  let { children, child, ...rest }: PartProps = $props();
+  let {
+    value,
+    children,
+    child,
+    ...rest
+  }: PartProps & {
+    value?: string;
+  } = $props();
 
   const tooltip = tooltipContext.use();
+  const own = $derived(defined({ value }));
 </script>
 
-<Part tag="button" props={tooltip.api.getTriggerProps()} {children} {child} {...rest} />
+<Part tag="button" props={tooltip.api.getTriggerProps(own)} {children} {child} {...rest} />

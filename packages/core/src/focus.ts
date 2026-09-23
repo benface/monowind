@@ -81,12 +81,12 @@ function rank(direction: Direction, current: Rect, rect: Rect): Rank | null {
 }
 
 /** Every focusable element the layout knows, with its painted cells
- * (ancestor scroll offsets applied, as the paint walk descends), in
- * tree order: laid-out boxes and atomic inline boxes at their border
- * boxes, a text leaf's inline elements one rect per line they cover
- * (a wrapped link is reachable from each of its lines). The root
- * itself — the host — is the navigation's container, never a
- * candidate. */
+ * (ancestor scroll offsets applied, as the paint walk descends; a
+ * fixed box's from the host's origin), in tree order: laid-out boxes
+ * and atomic inline boxes at their border boxes, a text leaf's inline
+ * elements one rect per line they cover (a wrapped link is reachable
+ * from each of its lines). The root itself — the host — is the
+ * navigation's container, never a candidate. */
 export function focusableRects(root: LayoutNode): Focusable[] {
   const out: Focusable[] = [];
   const walk = (
@@ -100,8 +100,9 @@ export function focusableRects(root: LayoutNode): Focusable[] {
     // A box position-visibility hides takes its subtree with it, a
     // top-layer element inside aside (specs/anchor-positioning.md).
     const hidden = node.forceHidden === true || (forced && node.topLayerRank === undefined);
-    const x = parentX + node.localRect.x + (node.stickyShift?.x ?? 0);
-    const y = parentY + node.localRect.y + (node.stickyShift?.y ?? 0);
+    const hoisted = node.hostRect;
+    const x = hoisted ? hoisted.x : parentX + node.localRect.x + (node.stickyShift?.x ?? 0);
+    const y = hoisted ? hoisted.y : parentY + node.localRect.y + (node.stickyShift?.y ?? 0);
     // A hidden box takes no focus; a visible descendant still does
     // (specs/visibility.md).
     if (!hidden && !isRoot && !node.anonymous && node.style.visible && isFocusable(node.source)) {

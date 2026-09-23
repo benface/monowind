@@ -39,6 +39,10 @@ const PROPERTIES = ["ids"] as const;
  * combobox and a popover take them. */
 const TRANSLATED = [...PROPERTIES, "translations"] as const;
 
+/** A list's selection, a list of values no attribute can spell: set
+ * as a property, or marked on the items (`data-selected`). */
+const SELECTION = ["value", "defaultValue"] as const;
+
 /** The reading direction every component takes. */
 const DIRECTION: Record<string, Kind> = { dir: "string" };
 
@@ -101,7 +105,7 @@ export const MonoSubmenu = defineElement({
 });
 
 export const MonoListbox = defineElement({
-  properties: [...PROPERTIES, "collection", "scrollToIndexFn"],
+  properties: [...PROPERTIES, ...SELECTION, "collection", "scrollToIndexFn"],
   mount: (root, props) => listbox(root, props as unknown as ListboxProps),
   attributes: {
     ...DIRECTION,
@@ -120,7 +124,7 @@ export const MonoListbox = defineElement({
 });
 
 export const MonoSelect = defineElement({
-  properties: [...TRANSLATED, "collection", "scrollToIndexFn"],
+  properties: [...TRANSLATED, ...SELECTION, "collection", "scrollToIndexFn"],
   mount: (root, props) => select(root, props as unknown as SelectProps),
   anchored: true,
   attributes: {
@@ -144,7 +148,7 @@ export const MonoSelect = defineElement({
 });
 
 export const MonoCombobox = defineElement({
-  properties: [...TRANSLATED, "collection", "navigate", "scrollToIndexFn"],
+  properties: [...TRANSLATED, ...SELECTION, "collection", "navigate", "scrollToIndexFn"],
   mount: (root, props) => combobox(root, props as unknown as ComboboxProps),
   anchored: true,
   attributes: {

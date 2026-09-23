@@ -4,13 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5189",
+    "dev": "vite",
     "build": "vite build",
     "test": "node smoke.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@monowind/ui": "workspace:*",
     "@unocss/reset": "^66.10.5",
     "monowind": "workspace:*",
     "playwright": "^1.63.0",

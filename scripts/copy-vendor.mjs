@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 
 /**
- * Copy the scripts an example serves next to its index.html — a plain
+ * Copy the scripts an example serves into its `public/`, which the dev
+ * server serves beside index.html and a build copies as is — a plain
  * relative script URL cannot reach outside the served directory, and
  * this mirrors how they are consumed in the real world (URLs, not
  * monorepo paths).
@@ -13,7 +14,8 @@ import { copyFileSync } from "node:fs";
  * the app, where pnpm linked the dependency, rather than here.
  */
 export function copyVendor(dir, { bundles = {}, extras = {} } = {}) {
-  const into = (name) => new URL(name, `file://${dir}/`);
+  mkdirSync(`${dir}/public`, { recursive: true });
+  const into = (name) => new URL(name, `file://${dir}/public/`);
   for (const [pkg, served] of Object.entries(bundles)) {
     const built = spawnSync("pnpm", ["--filter", pkg, "build"], {
       stdio: "inherit",

@@ -212,6 +212,7 @@ mono-wind.theme-amber,
   --color-gray-800: #4a2d00;
   --color-gray-900: #4a2d00;
   --color-gray-950: #000000;
+  --color-zinc-50: #ffefb3;
   --color-zinc-100: #ffefb3;
   --color-zinc-200: #ffefb3;
   --color-zinc-300: #ffd24a;
@@ -222,6 +223,17 @@ mono-wind.theme-amber,
   --color-zinc-800: #4a2d00;
   --color-zinc-900: #4a2d00;
   --color-zinc-950: #000000;
+  --color-neutral-50: #ffefb3;
+  --color-neutral-100: #ffefb3;
+  --color-neutral-200: #ffefb3;
+  --color-neutral-300: #ffd24a;
+  --color-neutral-400: #b87400;
+  --color-neutral-500: #b87400;
+  --color-neutral-600: #7a4a00;
+  --color-neutral-700: #4a2d00;
+  --color-neutral-800: #4a2d00;
+  --color-neutral-900: #4a2d00;
+  --color-neutral-950: #000000;
   --color-stone-50: #ffefb3;
   --color-stone-100: #ffefb3;
   --color-stone-200: #ffefb3;
@@ -233,6 +245,7 @@ mono-wind.theme-amber,
   --color-stone-800: #4a2d00;
   --color-stone-900: #4a2d00;
   --color-stone-950: #000000;
+  --color-mauve-50: #ffefb3;
   --color-mauve-100: #ffefb3;
   --color-mauve-200: #ffefb3;
   --color-mauve-300: #ffd24a;

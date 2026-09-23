@@ -5,6 +5,7 @@ import {
   cellSize,
   dragTo,
   gridOf,
+  moveTo,
   paintedSpan,
   pressAt,
   readyGrid,
@@ -43,6 +44,7 @@ export const Opacity: StoryObj = {
           <div>Ancestors multiply:</div>
           <div class="opacity-50">nested opacity-50 renders at 0.25</div>
         </div>
+        <p>Inline too: <span class="opacity-50">a span at opacity-50</span>.</p>
       </div>
     </mono-wind>
   `,
@@ -55,10 +57,15 @@ export const Opacity: StoryObj = {
       expect(paintedSpan(host, "opacity-50")!.style.opacity).toBe("0.5");
       // Ancestors multiply (CSS opacity nests, it doesn't inherit).
       expect(paintedSpan(host, "nested opacity-50")!.style.opacity).toBe("0.25");
+      // An inline element with no background fades its glyphs' color,
+      // the block's background beneath it staying whole.
+      const faded = paintedSpan(host, "a span at opacity-50")!;
+      expect(faded.style.opacity).toBe("");
+      expect(getComputedStyle(faded).color).toMatch(/\/ 0\.5\)$/);
       // opacity-0 still paints its glyphs — invisible, but present
       // and selectable in select="grid" mode (unlike `invisible`).
       expect(paintedSpan(host, "opacity-0")!.style.opacity).toBe("0");
-      expect(host.shadowRoot!.getElementById("grid")!.textContent).toContain("opacity-0");
+      expect(gridOf(host).textContent).toContain("opacity-0");
       // A translucent border glyph is boxed to its cell, so its
       // overshoot never composites twice where rows join.
       const line = Array.from(host.shadowRoot!.querySelectorAll("#grid span")).find(
@@ -379,7 +386,7 @@ export const Gradients: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     await waitFor(() => {
-      const spans = Array.from(host.shadowRoot!.getElementById("grid")!.querySelectorAll("span"));
+      const spans = Array.from(gridOf(host).querySelectorAll("span"));
       // A color per cell, a row of them one span's hard stops: far
       // more distinct colors than boxes.
       const colors = spans.flatMap(
@@ -419,6 +426,55 @@ export const Gradients: StoryObj = {
       );
       expect(onSky.length).toBeGreaterThan(40);
     });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a
+ * translated layer answers the pointer where the browser draws it, the
+ * cells it is laid out at being the main grid's (specs/layers.md). */
+export const LayerHit: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="p-2">
+        <div data-test="shifted" class="w-max translate-x-16 border px-1">translated</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const shifted = testHooks(canvasElement)("shifted");
+    const layers = host.shadowRoot!.getElementById("layers")!;
+    await waitFor(() => expect(layers.querySelector(".layer")).not.toBeNull());
+    const { width, height } = cellSize(host);
+    const grid = gridOf(host);
+    const origin = grid.getBoundingClientRect();
+    const cell = (col: number, row: number): Point => ({
+      x: origin.left + (col + 0.5) * width,
+      y: origin.top + (row + 0.5) * height,
+    });
+    // The box as the browser draws it, 64px along.
+    const box = shifted.getBoundingClientRect();
+    const drawn = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    const hover = async (at: Point) => {
+      moveTo(grid, at);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return shifted.hasAttribute("data-mw-hover");
+    };
+    // Its box's first cell untranslated: blank on the main grid.
+    expect(await hover(cell(2, 3))).toBe(false);
+    expect(await hover(drawn)).toBe(true);
+    // A paragraph gesture the same: on its text's first cell untranslated
+    // it takes none of it, where the text is drawn it takes it all.
+    const selectAt = (at: Point) => {
+      document.getSelection()!.removeAllRanges();
+      pressAt(grid, at, 3);
+      release();
+      return document.getSelection()!.toString();
+    };
+    expect(selectAt(cell(4, 3))).not.toContain("translated");
+    expect(selectAt(drawn)).toContain("translated");
+    document.getSelection()!.removeAllRanges();
   },
 };
 
@@ -518,7 +574,7 @@ export const Layers: StoryObj = {
       const nested = boxes.filter((box) => box.parentElement!.classList.contains("layer"));
       expect(nested.length).toBe(1);
       // The layers' text lives in their grids alone.
-      expect(host.shadowRoot!.getElementById("grid")!.textContent).not.toContain("rotated");
+      expect(gridOf(host).textContent).not.toContain("rotated");
       // The native button is under the pointer where the layer shows
       // it: the light element follows the same transform.
       const ok = canvasElement.querySelector<HTMLElement>('[data-test="ok"]')!;
@@ -588,16 +644,7 @@ export const LayerCover: StoryObj = {
       // Over the overlay, the engine's hit-test reaches the overlay.
       const overlay = canvasElement.querySelector<HTMLElement>('[data-test="overlay"]')!;
       const rect = overlay.getBoundingClientRect();
-      overlay.dispatchEvent(
-        new PointerEvent("pointermove", {
-          bubbles: true,
-          composed: true,
-          clientX: rect.left + 4,
-          clientY: rect.top + rect.height / 2,
-          pointerType: "mouse",
-          isPrimary: true,
-        }),
-      );
+      moveTo(overlay, { x: rect.left + 4, y: rect.top + rect.height / 2 });
       expect(overlay.matches("[data-mw-hover], [data-mw-hover] *")).toBe(true);
     });
   },
@@ -729,7 +776,7 @@ export const Transitions: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     await waitFor(() => {
       for (const label of [
         "half a second",

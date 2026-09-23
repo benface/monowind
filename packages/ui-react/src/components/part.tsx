@@ -5,6 +5,7 @@ import {
   isValidElement,
   useContext,
   useId,
+  useRef,
   type ComponentPropsWithRef,
   type ElementType,
   type ReactElement,
@@ -12,7 +13,7 @@ import {
   type Ref,
 } from "react";
 import { mergeProps } from "@zag-js/react";
-import { warnStray } from "@monowind/ui/framework";
+import { splitProps, warnStray, type TriggerApi } from "@monowind/ui/framework";
 
 /**
  * What every part of a compound component is (specs/ui.md "Component
@@ -95,20 +96,6 @@ export function renderPart(
   return cloneElement(element, merge(props, element.props));
 }
 
-const NONE: Props = Object.freeze({});
-
-/** The props a part hands the API rather than the element — an item's
- * `value`, say — split off from the element's own. */
-export function splitProps(props: Props, own: readonly string[]): [Props, Props] {
-  if (own.length === 0) return [NONE, props];
-  const mine: Props = {};
-  const rest: Props = {};
-  for (const [key, value] of Object.entries(props)) {
-    (own.includes(key) ? mine : rest)[key] = value;
-  }
-  return [mine, rest];
-}
-
 /** The name React's devtools and error boundaries show. */
 function named<F extends object>(name: string, component: F): F {
   return Object.assign(component, { displayName: name });
@@ -142,6 +129,22 @@ export function partsOf<A>(prefix: string, useApi: () => A) {
     definePart<A, T, Own>(`${prefix}.${name}`, useApi, propsOf, tag, own);
 }
 
+/** The `Trigger` of a component whose root can open from one of several
+ * — a menu, a dialog, a popover and a tooltip — a button whose `value`
+ * tells the root which trigger it opened from. */
+export function triggerPart<A extends TriggerApi>(
+  prefix: string,
+  useApi: () => A,
+): (props: PartProps<"button"> & { value?: string | undefined }) => ReactNode {
+  return definePart<A, "button", { value?: string | undefined }>(
+    `${prefix}.Trigger`,
+    useApi,
+    (api, own) => api.getTriggerProps(own),
+    "button",
+    ["value"],
+  );
+}
+
 /** The element a root renders, where its component has a root part.
  * A menu, a dialog, a popover and a tooltip have none in Zag, so
  * their root is the provider alone: it renders nothing, and a
@@ -170,8 +173,10 @@ export function defineRoot<
   return named(name, function Root(given: Props) {
     const { children, ...props } = given as { children?: ReactNode } & Props;
     const generated = useId();
+    // One object across this root's renders: the warning is said once per root.
+    const instance = useRef(null);
     const [machine, rest] = splitProps(props, propNames);
-    if (!root) warnStray(name, Object.keys(rest));
+    if (!root) warnStray(name, Object.keys(rest), instance);
     const value = use({ ...machine, id: machine["id"] ?? generated } as unknown as P);
     const inside = <context.Provider value={value}>{children}</context.Provider>;
     if (!root) return inside;

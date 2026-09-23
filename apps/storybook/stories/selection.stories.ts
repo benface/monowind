@@ -299,8 +299,16 @@ export const Semantic: StoryObj = {
     // runner has no coarse pointer, so the rule is replayed without its
     // media query — same selector, same source order — and must win.
     const coarse = document.createElement("style");
-    coarse.textContent =
-      'mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) { pointer-events: auto !important; user-select: text; -webkit-user-select: text; }';
+    coarse.textContent = `
+      mono-wind[select="grid"] [data-mw-scroll]:not([data-mw-measuring], [data-mw-pointer-none]),
+      mono-wind[select="grid"] [data-mw-scroll] :not([data-mw-measuring], [data-mw-pointer-none]) {
+        pointer-events: auto !important;
+      }
+      mono-wind[select="grid"] [data-mw-scroll],
+      mono-wind[select="grid"] [data-mw-scroll] * {
+        user-select: text;
+        -webkit-user-select: text;
+      }`;
     document.head.appendChild(coarse);
     try {
       const style = getComputedStyle(by("scrolled"));
@@ -560,5 +568,30 @@ export const NearestUnit: StoryObj = {
     await waitFor(() => expect(selection()).toBe("Top paragraph, above the box."));
     release();
     document.getSelection()!.removeAllRanges();
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): an
+ * editable region inside a host keeps its native selection in grid
+ * mode, in the editables' swapped `::selection`, where the host's other
+ * text is locked (specs/wide-characters.md). */
+export const EditableRegion: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p data-test="locked">Grid text.</p>
+      <div contenteditable="true">
+        <p>An <b data-test="editable">editable</b> region.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const selectionGround = (name: string) =>
+      getComputedStyle(by(name), "::selection").backgroundColor;
+    const transparent = "rgba(0, 0, 0, 0)";
+    expect(selectionGround("locked")).toBe(transparent);
+    expect(selectionGround("editable")).not.toBe(transparent);
   },
 };

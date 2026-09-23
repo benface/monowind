@@ -1,7 +1,7 @@
 import { trackBackground } from "./animate.ts";
 import { animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
-import { colorAlpha, isLegacyColor, parseColor } from "./color.ts";
+import { colorAlpha, isLegacyColor, parseColor, splitCommas } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
@@ -116,15 +116,15 @@ export function readCellStyle(
   // row — cell-model deviation).
   const rawDisplay = cs.display || TABLE_DISPLAY_FALLBACK[el.tagName] || "";
   const tableRole: TableRole = TABLE_ROLES[rawDisplay] ?? "none";
+  // A computed property's read is a call into the engine each time: one
+  // wanted twice is read once.
+  const { columnCount: count, columnWidth: widthValue, position } = cs;
   // Multicol: a block with an authored column-count or column-width
   // (specs/multicol.md). Computed values are specified values (probed
   // — no used-value trap).
   const columnCount =
-    cs.columnCount && cs.columnCount !== "auto"
-      ? Math.max(1, Math.floor(Number(cs.columnCount) || 1))
-      : null;
-  const columnWidthPx =
-    cs.columnWidth && cs.columnWidth !== "auto" ? parseFloat(cs.columnWidth) : NaN;
+    count && count !== "auto" ? Math.max(1, Math.floor(Number(count) || 1)) : null;
+  const columnWidthPx = widthValue && widthValue !== "auto" ? parseFloat(widthValue) : NaN;
   const columnWidth = Number.isFinite(columnWidthPx)
     ? Math.max(1, pxToCells(columnWidthPx, rootFontSizePx))
     : null;
@@ -210,9 +210,21 @@ export function readCellStyle(
   // none.
   const topLayer = isTopLayer(el);
   const hoisted = topLayer || el.hasAttribute("popover");
-  const outOfFlow = hoisted || cs.position === "absolute" || cs.position === "fixed";
-  const anchorSizes = outOfFlow ? readAnchorSizes(classAttr, inlineStyle, rootFontSizePx) : {};
-  const anchorInsets = outOfFlow ? readAnchorInsets(classAttr, inlineStyle, rootFontSizePx) : {};
+  const outOfFlow = hoisted || position === "absolute" || position === "fixed";
+  const anchoring = readAnchoring(el, cs, outOfFlow);
+  const source: AnchorSource | null = outOfFlow
+    ? {
+        classAttr,
+        inlineStyle,
+        csm,
+        autoMinimum: metrics?.autoMinimum ?? "auto",
+        nativeDefault: anchoring.positionAnchor?.startsWith("--mw:") ?? false,
+        rootFontSizePx,
+      }
+    : null;
+  const anchorSizes = source ? readAnchorSizes(source) : {};
+  const anchorInsets = source ? readAnchorInsets(source) : {};
+  const { flexDirection, flexWrap, flexShrink, columnGap, rowGap, zIndex, breakInside } = cs;
   const style: CellStyle = {
     display,
     tableRole,
@@ -226,12 +238,12 @@ export function readCellStyle(
       tableRole === "cell" || rawDisplay.startsWith("inline-")
         ? readVerticalAlign(el, cs)
         : "start",
-    flexDirection: cs.flexDirection.startsWith("column") ? "column" : "row",
-    flexReverse: cs.flexDirection.endsWith("-reverse"),
-    flexWrap: cs.flexWrap.startsWith("wrap") ? "wrap" : "nowrap",
-    wrapReverse: cs.flexWrap === "wrap-reverse",
+    flexDirection: flexDirection.startsWith("column") ? "column" : "row",
+    flexReverse: flexDirection.endsWith("-reverse"),
+    flexWrap: flexWrap.startsWith("wrap") ? "wrap" : "nowrap",
+    wrapReverse: flexWrap === "wrap-reverse",
     flexGrow: Number(cs.flexGrow) || 0,
-    flexShrink: cs.flexShrink === "" ? 1 : Number(cs.flexShrink) || 0,
+    flexShrink: flexShrink === "" ? 1 : Number(flexShrink) || 0,
     // flex-basis keeps its computed form (percentages stay symbolic), so
     // plain getComputedStyle is reliable here — `flex-1` reads as "0%".
     flexBasis: readFlexBasis(cs.flexBasis, rootFontSizePx),
@@ -263,24 +275,24 @@ export function readCellStyle(
     maxHeight: limit("max-height", cs.maxHeight, "max-h"),
     padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
-    position: readPosition(cs.position),
+    position: readPosition(position),
     // Per CSS an out-of-flow box computes `float: none`; headless DOMs
     // report the authored value, so the engine applies the rule itself.
-    float: isOutOfFlowPosition(cs.position) ? "none" : readFloat(cs.float),
+    float: isOutOfFlowPosition(position) ? "none" : readFloat(cs.float),
     clear: readClear(cs.clear),
     insets: readInsets(cs, csm, classAttr, inlineStyle, rootFontSizePx),
     // `column-gap: normal` is 0 in flex/grid but 1em in multicol, per
     // CSS (specs/multicol.md "Reading"). Headless DOMs report unset as
     // an empty string — same initial value.
     gapX: readSpacing(
-      cs.columnGap === "normal" || cs.columnGap === ""
+      columnGap === "normal" || columnGap === ""
         ? display === "multicol"
           ? `${fontSizePx}px`
           : "0px"
-        : cs.columnGap,
+        : columnGap,
       rootFontSizePx,
     ),
-    gapY: readSpacing(cs.rowGap === "normal" ? "0px" : cs.rowGap, rootFontSizePx),
+    gapY: readSpacing(rowGap === "normal" ? "0px" : rowGap, rootFontSizePx),
     ...readBorder(cs, set),
     borderRadius: {
       tl: readRadius(cs.borderTopLeftRadius, rootFontSizePx),
@@ -317,14 +329,15 @@ export function readCellStyle(
     backgroundClip: readBackgroundClip(cs.backgroundClip),
     layer: readLayer(el, cs),
     visible: readVisible(cs, el),
-    ...readAnchoring(el, cs, outOfFlow),
+    pointerEvents: cs.pointerEvents !== "none",
+    ...anchoring,
     anchorSizes,
     anchorInsets,
     topLayer,
     backdrop: hoisted ? readBackdrop(el) : null,
     glyphSet,
     boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
-    zIndex: cs.zIndex === "auto" || cs.zIndex === "" ? null : Number(cs.zIndex) || 0,
+    zIndex: zIndex === "auto" || zIndex === "" ? null : Number(zIndex) || 0,
     latticeBorder: null,
     ruleX:
       display === "flex" || display === "grid" || display === "multicol"
@@ -351,7 +364,7 @@ export function readCellStyle(
     columnSpan: cs.columnSpan === "all",
     breakBeforeColumn: cs.breakBefore === "column",
     breakAfterColumn: cs.breakAfter === "column",
-    breakInsideAvoid: cs.breakInside === "avoid" || cs.breakInside === "avoid-column",
+    breakInsideAvoid: breakInside === "avoid" || breakInside === "avoid-column",
   };
   // The browser's px for an anchor function is the pre-grid anchor's:
   // the property reads unset until the box is placed (positioning.ts).
@@ -380,37 +393,104 @@ const ANCHOR_SIZE_PROPERTIES = [
   ["maxHeight", "max-height", "max-h", "height"],
 ] as const;
 
+/** What an anchor function is read from: the element's class and inline
+ * style, its computed values as Typed OM has them, how the engine reads
+ * an `auto` minimum there, whether its default anchor is a popover's
+ * invoker, and the root font size its fallbacks resolve by. */
+interface AnchorSource {
+  classAttr: string;
+  inlineStyle: CSSStyleDeclaration;
+  csm: StylePropertyMapReadOnly | null;
+  autoMinimum: string;
+  nativeDefault: boolean;
+  rootFontSizePx: number;
+}
+
+/** An anchor function's arguments: its words before the fallback's
+ * comma, and the fallback, a length the axis resolves — undefined
+ * without a comma, null for anything but a length. */
+interface AnchorArguments {
+  words: string[];
+  fallback: CalcValue | null | undefined;
+}
+
 /** An anchor function authored as a whole property, its arguments: from
- * the inline style, else an arbitrary-value utility of one of the stems
- * (`min-w-[anchor-size(width)]`), its underscores spaces. The browser
- * resolves one against the anchor's pre-grid box, so the function itself
- * is read, for the engine to resolve against the anchor's cells. */
+ * the inline style, else the first arbitrary-value utility of one of the
+ * stems (`min-w-[anchor-size(width)]`) the cascade can leave in effect,
+ * its underscores spaces. The browser resolves one against the anchor's
+ * pre-grid box, so the function itself is read, for the engine to
+ * resolve against the anchor's cells. */
 function authoredAnchorFunction(
   name: "anchor" | "anchor-size",
   property: string,
   stems: string,
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-): string | undefined {
-  const inline = inlineStyle.getPropertyValue(property).trim();
-  if (inline) return new RegExp(`^${name}\\((.*)\\)$`).exec(inline)?.[1];
-  if (!classAttr.includes(`[${name}(`)) return undefined;
-  return new RegExp(`(?:^|[\\s:.[!])(?:${stems})-\\[${name}\\(([^\\s\\]]*)\\)\\]`)
-    .exec(classAttr)?.[1]
-    ?.replaceAll("_", " ");
+  axis: "width" | "height",
+  source: AnchorSource,
+): AnchorArguments | undefined {
+  const inline = source.inlineStyle.getPropertyValue(property).trim();
+  if (inline) {
+    const args = new RegExp(`^${name}\\((.*)\\)$`).exec(inline)?.[1];
+    return args === undefined ? undefined : anchorArguments(args, axis, source.rootFontSizePx);
+  }
+  if (!source.classAttr.includes(`[${name}(`)) return undefined;
+  const utilities = new RegExp(`(?:^|[\\s:.[!])(?:${stems})-\\[${name}\\(([^\\s\\]]*)\\)\\]`, "g");
+  for (const [, args] of source.classAttr.matchAll(utilities)) {
+    const parsed = anchorArguments(args!.replaceAll("_", " "), axis, source.rootFontSizePx);
+    if (inEffect(parsed, property, axis, source)) return parsed;
+  }
+  return undefined;
+}
+
+function anchorArguments(
+  args: string,
+  axis: "width" | "height",
+  rootFontSizePx: number,
+): AnchorArguments {
+  const comma = args.indexOf(",");
+  const words = (comma < 0 ? args : args.slice(0, comma)).trim().split(/\s+/).filter(Boolean);
+  if (comma < 0) return { words, fallback: undefined };
+  return { words, fallback: lengthValue(args.slice(comma + 1).trim(), axis, rootFontSizePx) };
+}
+
+/** Whether Typed OM leaves a utility's anchor function possibly in effect
+ * (specs/anchor-positioning.md deviation 1): unresolved, it computes to
+ * the property's initial value, or to its fallback, compared in px. */
+function inEffect(
+  args: AnchorArguments,
+  property: string,
+  axis: "width" | "height",
+  source: AnchorSource,
+): boolean {
+  if (!source.csm) return true;
+  // The invoker resolves natively, anchor-scope aside.
+  if (source.nativeDefault && !args.words.some((word) => word.startsWith("--"))) return true;
+  const computed = source.csm.get(property)?.toString() ?? "";
+  if (args.fallback === undefined)
+    return computed === unresolvedValue(property, source.autoMinimum);
+  if (args.fallback === null) return true;
+  const value = lengthValue(computed, axis, source.rootFontSizePx);
+  return (
+    value !== null &&
+    Math.abs(value.px - args.fallback.px) < 0.001 &&
+    Math.abs(value.percent - args.fallback.percent) < 0.001
+  );
+}
+
+/** What a property with an unresolvable anchor function computes to:
+ * its initial value — for a minimum, `auto` as this engine reads it. */
+function unresolvedValue(property: string, autoMinimum: string): string {
+  if (property.startsWith("max-")) return "none";
+  if (property.startsWith("min-")) return autoMinimum;
+  return "auto";
 }
 
 /** The sizes an out-of-flow box authors as `anchor-size()`
  * (specs/anchor-positioning.md). */
-function readAnchorSizes(
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-  rootFontSizePx: number,
-): AnchorSizes {
+function readAnchorSizes(source: AnchorSource): AnchorSizes {
   const sizes: AnchorSizes = {};
   for (const [key, property, stems, axis] of ANCHOR_SIZE_PROPERTIES) {
-    const authored = authoredAnchorFunction("anchor-size", property, stems, classAttr, inlineStyle);
-    const size = authored === undefined ? null : parseAnchorSize(authored, axis, rootFontSizePx);
+    const authored = authoredAnchorFunction("anchor-size", property, stems, axis, source);
+    const size = authored === undefined ? null : parseAnchorSize(authored, axis);
     if (size) sizes[key] = size;
   }
   return sizes;
@@ -419,40 +499,33 @@ function readAnchorSizes(
 /** `anchor-size()`'s arguments: an anchor name and a dimension, each
  * optional — the property's own axis by default, the logical keywords
  * those of a horizontal host — and a fallback length after a comma. */
-function parseAnchorSize(
-  args: string,
-  axis: "width" | "height",
-  rootFontSizePx: number,
-): AnchorSize | null {
+function parseAnchorSize(args: AnchorArguments, axis: "width" | "height"): AnchorSize | null {
   let anchor: string | null = null;
   let dimension: AnchorSize["dimension"] = axis;
-  for (const token of anchorTokens(args)) {
-    if (token.startsWith("--")) anchor = token;
-    else if (token === "width" || token.endsWith("inline")) dimension = "width";
-    else if (token === "height" || token.endsWith("block")) dimension = "height";
+  for (const word of args.words) {
+    if (word.startsWith("--")) anchor = word;
+    else if (word === "width" || word.endsWith("inline")) dimension = "width";
+    else if (word === "height" || word.endsWith("block")) dimension = "height";
     else return null;
   }
-  const fallback = anchorFallback(args, axis, rootFontSizePx);
-  return fallback === undefined ? { anchor, dimension } : { anchor, dimension, fallback };
+  return args.fallback
+    ? { anchor, dimension, fallback: lengthCells(args.fallback) }
+    : { anchor, dimension };
 }
 
-/** An anchor function's words before its fallback's comma. */
-function anchorTokens(args: string): string[] {
-  return args.split(",")[0]!.trim().split(/\s+/).filter(Boolean);
-}
-
-/** An anchor function's fallback, after its comma, in cells: a length,
- * a percentage, or a calc() of them; undefined where none is read. */
-function anchorFallback(
-  args: string,
+/** A length, a percentage, or a calc() of them; null for anything else. */
+function lengthValue(
+  text: string,
   axis: "width" | "height",
   rootFontSizePx: number,
-): CellLength | undefined {
-  const comma = args.indexOf(",");
-  if (comma < 0) return undefined;
-  const value = evaluateCalc(args.slice(comma + 1).trim(), axis, undefined, rootFontSizePx);
+): CalcValue | null {
+  const value = evaluateCalc(text, axis, undefined, rootFontSizePx);
   // A unitless zero is the one number a length takes.
-  if (!value || (value.unitless && value.cells !== 0)) return undefined;
+  return !value || (value.unitless && value.cells !== 0) ? null : value;
+}
+
+/** A length in whole cells, a percentage kept. */
+function lengthCells(value: CalcValue): CellLength {
   const cells = roundHalfAwayFromZero(value.cells);
   if (value.percent === 0) return cells;
   return cells === 0 ? { percent: value.percent } : { percent: value.percent, cells };
@@ -461,21 +534,12 @@ function anchorFallback(
 /** The insets an out-of-flow box authors as `anchor()`
  * (specs/anchor-positioning.md), read like `anchor-size()`
  * (`top-[anchor(bottom)]`). */
-function readAnchorInsets(
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-  rootFontSizePx: number,
-): AnchorInsets {
+function readAnchorInsets(source: AnchorSource): AnchorInsets {
   const insets: AnchorInsets = {};
   for (const side of SIDES) {
-    const authored = authoredAnchorFunction(
-      "anchor",
-      side,
-      SIDE_STEMS[side],
-      classAttr,
-      inlineStyle,
-    );
-    const inset = authored === undefined ? null : parseAnchorInset(authored, side, rootFontSizePx);
+    const axis = side === "top" || side === "bottom" ? "height" : "width";
+    const authored = authoredAnchorFunction("anchor", side, SIDE_STEMS[side], axis, source);
+    const inset = authored === undefined ? null : parseAnchorInset(authored, side);
     if (inset) insets[side] = inset;
   }
   return insets;
@@ -487,7 +551,7 @@ function readAnchorInsets(
  * opposite one), or a percentage from the start; another axis's side
  * takes the fallback alone, as in CSS — and a fallback length after a
  * comma. */
-function parseAnchorInset(args: string, inset: Side, rootFontSizePx: number): AnchorInset | null {
+function parseAnchorInset(args: AnchorArguments, inset: Side): AnchorInset | null {
   const vertical = inset === "top" || inset === "bottom";
   const [start, end] = vertical ? ["top", "bottom"] : ["left", "right"];
   const own = inset === start ? 0 : 1;
@@ -506,15 +570,16 @@ function parseAnchorInset(args: string, inset: Side, rootFontSizePx: number): An
   };
   let anchor: string | null = null;
   let fraction: number | null | undefined;
-  for (const token of anchorTokens(args)) {
-    if (token.startsWith("--")) anchor = token;
-    else if (Object.hasOwn(fractions, token)) fraction = fractions[token];
-    else if (/^-?\d+(?:\.\d+)?%$/.test(token)) fraction = parseFloat(token) / 100;
+  for (const word of args.words) {
+    if (word.startsWith("--")) anchor = word;
+    else if (Object.hasOwn(fractions, word)) fraction = fractions[word];
+    else if (/^-?\d+(?:\.\d+)?%$/.test(word)) fraction = parseFloat(word) / 100;
     else return null;
   }
   if (fraction === undefined) return null;
-  const fallback = anchorFallback(args, vertical ? "height" : "width", rootFontSizePx);
-  return fallback === undefined ? { anchor, fraction } : { anchor, fraction, fallback };
+  return args.fallback
+    ? { anchor, fraction, fallback: lengthCells(args.fallback) }
+    : { anchor, fraction };
 }
 
 /** An `anchor-size()` property as cells, or its initial value where no
@@ -561,7 +626,8 @@ export function holdVisible(el: Element, until: number): void {
  * `hidden` and `collapse` do not, unless a fade holds the element; a
  * DOM without the property does. */
 export function readVisible(cs: CSSStyleDeclaration, el?: Element): boolean {
-  if (cs.visibility !== "hidden" && cs.visibility !== "collapse") return true;
+  const { visibility } = cs;
+  if (visibility !== "hidden" && visibility !== "collapse") return true;
   return el !== undefined && (fades.get(el) ?? 0) > performance.now();
 }
 
@@ -958,7 +1024,8 @@ export function readOverflow(cs: CSSStyleDeclaration): Overflow {
  * the light-DOM element keeps its authored styles, so assistive tech
  * still reads it. */
 function isZeroClipped(el: Element, cs: CSSStyleDeclaration): boolean {
-  if (cs.position !== "absolute" && cs.position !== "fixed") return false;
+  const { position } = cs;
+  if (position !== "absolute" && position !== "fixed") return false;
   const clip = cs.clip.replace(/\s/g, "");
   if (clip === "rect(0px,0px,0px,0px)" || clip === "rect(0,0,0,0)") return true;
   // The clipped-box half reads the browser's NATURAL size, which for a
@@ -1453,7 +1520,7 @@ function readBackgroundImage(value: string, color: string, rootFontSizePx: numbe
     const match = /^\s*(repeating-)?(linear|radial|conic)-gradient\((.*)\)\s*$/s.exec(layer);
     if (!match) continue;
     const [, repeating, kind, inner] = match;
-    const args = splitTopLevelCommas(inner!).map((arg) => arg.trim());
+    const args = splitCommas(inner!).map((arg) => arg.trim());
     const leads = args.length > 0 && !startsWithColor(args[0]!);
     const head = leads ? splitTopLevel(args[0]!) : [];
     const stopArgs = leads ? args.slice(1) : args;
@@ -1620,24 +1687,6 @@ function readGradientStops(args: string[], rootFontSizePx: number): GradientStop
   return stops;
 }
 
-/** A value's comma-separated parts, commas inside parentheses kept. */
-function splitCommas(value: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < value.length; i++) {
-    const char = value[i];
-    if (char === "(") depth++;
-    else if (char === ")") depth--;
-    else if (char === "," && depth === 0) {
-      parts.push(value.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(value.slice(start));
-  return parts;
-}
-
 /** A corner's radius in cells on the spacing scale, unrounded — the
  * nearest registered corner glyph draws it; a percentage is `Infinity`
  * (the largest registration), an elliptical pair its smaller radius. */
@@ -1707,7 +1756,7 @@ function readSpacing(value: string, rootFontSizePx: number): CellLength {
 }
 
 /** Computed `opacity`, clamped to [0, 1]; a non-numeric read is opaque. */
-function readOpacity(value: string): number {
+export function readOpacity(value: string): number {
   const parsed = parseFloat(value);
   return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 1;
 }
@@ -1823,16 +1872,10 @@ function readSize(
   const axis = key === "width" ? "w" : "h";
   const viewportPx = viewportUtilityPx(classAttr, axis) ?? viewportUtilityPx(classAttr, "size");
   if (viewportPx !== null) {
-    // Confirm the utility is ACTIVE against the resolved value — an
-    // inactive variant (md:h-screen below md) or an overriding inline
-    // style resolves elsewhere and must win. When it agrees, prefer
-    // the RESOLVED px: it also carries sv/lv/dv bases the innerWidth/
-    // Height estimate can't know. No resolved value at all (headless
-    // test env, stylesheet not loaded yet) trusts the scan.
-    const resolved = parseFloat(csm ? String(csm.get(key) ?? "") : fallback);
-    const agrees = Number.isFinite(resolved) && Math.abs(resolved - viewportPx) <= viewportPx * 0.3;
-    if (agrees || !Number.isFinite(resolved)) {
-      const px = agrees ? resolved : viewportPx;
+    // The resolved px, when active, also carries sv/lv/dv bases the
+    // innerWidth/Height estimate can't know.
+    const px = activeUtilityPx(resolvedText(csm, key, fallback), viewportPx);
+    if (px !== null) {
       return { kind: "cells", value: physicalCells(px, key, metrics, rootFontSizePx) };
     }
   }
@@ -1995,17 +2038,31 @@ function authoredCalcCells(
   const value = evaluateCalc(authored, key, metrics, rootFontSizePx);
   if (!value || value.unitless || value.percent !== 0) return undefined;
   const cells = Math.max(0, roundHalfAwayFromZero(value.cells));
-  // The inline style wins by cascade; a class needs the active-check: an
-  // inactive variant or an overriding declaration resolves elsewhere — to
-  // other px, or to a keyword (`none`, `auto`). No resolved value at all
-  // (headless, stylesheet not loaded) trusts the class.
+  // The inline style wins by cascade; a class needs the active-check.
   if (fromInline) return cells;
-  const resolvedText = (csm ? String(csm.get(property) ?? "") : resolvedValue).trim();
-  const resolved = parseFloat(resolvedText);
-  const agrees = Number.isFinite(resolved)
-    ? Math.abs(resolved - value.px) <= Math.abs(value.px) * 0.3
-    : resolvedText === "";
-  return agrees ? cells : undefined;
+  return activeUtilityPx(resolvedText(csm, property, resolvedValue), value.px) === null
+    ? undefined
+    : cells;
+}
+
+/** A property's resolved value as text: Typed OM's, else the computed one. */
+function resolvedText(
+  csm: StylePropertyMapReadOnly | null,
+  property: string,
+  computed: string,
+): string {
+  return (csm ? String(csm.get(property) ?? "") : computed).trim();
+}
+
+/** The active-check for a length a class authors, against the resolved
+ * value: an inactive variant or an overriding declaration resolves
+ * elsewhere — to other px, or to a keyword (`none`, `auto`) — and wins
+ * (null). Active, the resolved px; no resolved value at all (headless,
+ * stylesheet not loaded) trusts the authored px. */
+function activeUtilityPx(resolvedValue: string, authoredPx: number): number | null {
+  const resolved = parseFloat(resolvedValue);
+  if (!Number.isFinite(resolved)) return resolvedValue === "" ? authoredPx : null;
+  return Math.abs(resolved - authoredPx) <= Math.abs(authoredPx) * 0.3 ? resolved : null;
 }
 
 /** A calc term carried two ways: the engine's cells (per-unit
@@ -2125,9 +2182,8 @@ function evaluateCalc(
 /** Viewport-relative min/max limit, when one is authored. Class scan
  * (`min-h-screen`, `min-h-[95dvh]`, …) — computed values resolve
  * viewport units to plain px in every engine, so the class list is the
- * only reliable signal — active-checked against the resolved value,
- * same rules as readSize's viewport branch. undefined = not
- * viewport-relative (caller falls through to the normal readLimit). */
+ * only reliable signal — active-checked (activeUtilityPx). undefined =
+ * not viewport-relative (caller falls through to the normal readLimit). */
 function viewportLimit(
   csm: StylePropertyMapReadOnly | null,
   property: string,
@@ -2147,25 +2203,21 @@ function viewportLimit(
     viewportLengthPx(inlineStyle.getPropertyValue(property)) ??
     viewportLengthPx(csm?.get(property)?.toString().trim() ?? "");
   if (authoredPx !== null) return physicalCells(authoredPx, key, metrics, rootFontSizePx);
-  // Class scan needs the active-check, same rules as readSize's
-  // viewport branch.
   const scanned = viewportUtilityPx(classAttr, utilityPrefix);
   if (scanned === null) return undefined;
-  const resolvedText = (csm ? String(csm.get(property) ?? "") : resolvedValue).trim();
-  const resolved = parseFloat(resolvedText);
-  const agrees = Number.isFinite(resolved) && Math.abs(resolved - scanned) <= scanned * 0.3;
-  // A keyword (`none`, `auto`) is a resolved value too: the utility lost.
-  if (!agrees && resolvedText !== "") return undefined;
-  return physicalCells(agrees ? resolved : scanned, key, metrics, rootFontSizePx);
+  const px = activeUtilityPx(resolvedText(csm, property, resolvedValue), scanned);
+  return px === null ? undefined : physicalCells(px, key, metrics, rootFontSizePx);
 }
 
 /**
- * CSS `flex-basis`. `auto` (and the unsupported `content`) → undefined, so
- * the layout falls back to the width-or-intrinsic base. `0%` (Tailwind
- * `flex-1`) must survive as an actual zero base.
+ * CSS `flex-basis`. `auto` → undefined, so the layout falls back to the
+ * width-or-intrinsic base; `content` is the content's size, the item's
+ * own width or height aside (CSS §7.2.3). `0%` (Tailwind `flex-1`) must
+ * survive as an actual zero base.
  */
 function readFlexBasis(value: string, rootFontSizePx: number): Size | undefined {
-  if (!value || value === "auto" || value === "content") return undefined;
+  if (!value || value === "auto") return undefined;
+  if (value === "content") return { kind: "max-content" };
   const keyword = intrinsicSizeKeyword(value);
   if (keyword) return keyword;
   if (value.endsWith("%")) {
@@ -2339,7 +2391,7 @@ function parseTrackSize(token: string, rootFontSizePx: number): TrackSize {
   if (minmax) {
     // Depth-aware argument split — a nested function (`minmax(min(8rem,
     // 100%), 1fr)`) has commas of its own.
-    const args = splitTopLevelCommas(minmax[1]!).map((arg) => arg.trim());
+    const args = splitCommas(minmax[1]!).map((arg) => arg.trim());
     if (args.length === 2) {
       return {
         min: parseTrackBreadth(args[0]!, rootFontSizePx),
@@ -2363,9 +2415,7 @@ function parseTrackBreadth(token: string, rootFontSizePx: number): TrackBreadth 
   // deviations).
   const math = token.match(/^(min|max)\((.*)\)$/s);
   if (math) {
-    const args = splitTopLevelCommas(math[2]!).map((arg) =>
-      parseTrackBreadth(arg.trim(), rootFontSizePx),
-    );
+    const args = splitCommas(math[2]!).map((arg) => parseTrackBreadth(arg.trim(), rootFontSizePx));
     const fixed = args.every(
       (a) => a.kind === "cells" || a.kind === "percent" || a.kind === "math",
     );
@@ -2388,25 +2438,6 @@ function parseTrackBreadth(token: string, rootFontSizePx: number): TrackBreadth 
     ? roundHalfAwayFromZero(px / 0.25)
     : pxToCells(px, rootFontSizePx);
   return { kind: "cells", value: cells };
-}
-
-/** Split a CSS function's arguments on top-level commas (nested parens
- * stay intact). */
-function splitTopLevelCommas(value: string): string[] {
-  const args: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i]!;
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "," && depth === 0) {
-      args.push(value.slice(start, i));
-      start = i + 1;
-    }
-  }
-  args.push(value.slice(start));
-  return args.filter((a) => a.trim() !== "");
 }
 
 /** Split a CSS value list on top-level whitespace (nested parens and

@@ -2,10 +2,11 @@
  * test): every theme has a fresh-looking palette, scoped selectors,
  * and resolvable font references. */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { generatePalettes } from "./generate-palettes.mjs";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const { exports } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const themes = readdirSync(join(root, "themes")).filter(
   (f) => f.endsWith(".css") && !f.endsWith(".palette.css") && f !== "index.css",
@@ -24,11 +25,18 @@ for (const file of themes) {
   const palette = readFileSync(join(root, "themes", `${name}.palette.css`), "utf8");
   const tokens = palette.match(/--color-/g)?.length ?? 0;
   if (tokens < 250) fail(`${name}.palette.css: only ${tokens} tokens`);
+  // A sheet's url()s resolve beside it: the theme's own, and the font
+  // sheets it imports.
+  const sheets = [join(root, "themes", file)];
   for (const [, ref] of css.matchAll(/@import "([^"]+)"/g)) {
-    if (!existsSync(join(root, "themes", ref))) fail(`${file}: unresolved import ${ref}`);
+    const imported = join(root, "themes", ref);
+    if (existsSync(imported)) sheets.push(imported);
+    else fail(`${file}: unresolved import ${ref}`);
   }
-  for (const [, ref] of css.matchAll(/url\("([^"]+)"\)/g)) {
-    if (!existsSync(join(root, "themes", ref))) fail(`${file}: missing font file ${ref}`);
+  for (const sheet of sheets) {
+    for (const [, ref] of readFileSync(sheet, "utf8").matchAll(/url\("([^"]+)"\)/g)) {
+      if (!existsSync(join(dirname(sheet), ref))) fail(`${file}: missing font file ${ref}`);
+    }
   }
 }
 const index = readFileSync(join(root, "themes", "index.css"), "utf8");

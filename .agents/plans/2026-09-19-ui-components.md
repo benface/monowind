@@ -432,9 +432,9 @@ when it finds a dependency mid-load, which aborts a `load` wait.
   `OUTSIDE`, the three every list closes on, and `DISMISSABLE`, those
   plus Escape and `onRequestDismiss`), `translations` reached all seven
   elements where three machines take it, and a dialog's `restoreFocus` was both an
-  attribute and a property. `value`/`defaultValue` stay out, listed in
-  the test: Zag types them `string[]` and markup has no agreed way to
-  spell a list.
+  attribute and a property. `value`/`defaultValue` stayed out, Zag
+  typing them `string[]`; they are properties since 2026-09-23, markup
+  marking the selected items `data-selected` (specs/ui.md).
 
 ### The engine gained block-in-inline
 

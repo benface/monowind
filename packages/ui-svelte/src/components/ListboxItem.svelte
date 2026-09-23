@@ -1,6 +1,6 @@
 <script lang="ts">
   import Part from "./Part.svelte";
-  import { itemContext, itemOf, listboxContext, type PartProps } from "./context.ts";
+  import { itemContext, itemOf, itemProps, listboxContext, type PartProps } from "./context.ts";
 
   /** One of the collection's items, named by the item itself or by
    * the value that finds it there, and held for the text and the
@@ -21,4 +21,4 @@
   itemContext.set(() => held);
 </script>
 
-<Part props={listbox.api.getItemProps({ item: held })} {children} {child} {...rest} />
+<Part props={itemProps(listbox.api, held)} {children} {child} {...rest} />

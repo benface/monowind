@@ -6,6 +6,7 @@ import {
   isTransparentColor,
   lineGapRows,
   readAnchorNames,
+  readOpacity,
   readVisible,
   readCellStyle,
   readOverflow,
@@ -101,6 +102,7 @@ export function buildTree(
     intrinsicHeight: 0,
     localRect: { x: 0, y: 0, width: 0, height: 0 },
     unclampedHeight: 0,
+    naturalContentHeight: 0,
     resolvedPadding: zeroInsets(),
   };
 }
@@ -125,7 +127,7 @@ export function buildChildren(
   const children: LayoutNode[] = [];
   const build = (el: Element): void => {
     const node = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
-    if (node) children.push(node);
+    if (node) children.push(fadedBy(node, splitOpacity(el, container)));
   };
   let style = runStyle;
   let run: ChildNode[] = [];
@@ -224,13 +226,20 @@ export function buildRootLeaf(
 
 /** The style of the host's own text (specs/host-leaf.md): its text
  * properties on no box, with no tracking or line gap — the host's
- * letter-spacing and line-height are the cell. */
+ * letter-spacing and line-height are the cell — taking pointer events
+ * whatever the host's own value, as the host's top-level elements read
+ * them (element.ts). */
 export function hostLeafStyle(
   host: Element,
   rootFontSizePx: number,
   metrics?: CellMetrics,
 ): CellStyle {
-  return { ...leafStyleOf(host, rootFontSizePx, metrics), tracking: 0, lineGap: 0 };
+  return {
+    ...leafStyleOf(host, rootFontSizePx, metrics),
+    tracking: 0,
+    lineGap: 0,
+    pointerEvents: true,
+  };
 }
 
 /** A leaf's style from an element's text and inherited paint
@@ -248,6 +257,7 @@ function leafStyleOf(el: Element, rootFontSizePx: number, metrics?: CellMetrics)
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
     visible: readVisible(cs, el),
+    pointerEvents: cs.pointerEvents !== "none",
   };
   // Truncation needs the clip; any other overflow stays the root's.
   if (readOverflow(cs).x === "clip") style.overflow = { ...style.overflow, x: "clip" };
@@ -387,7 +397,7 @@ function buildLeaf(
     if (box) children.push(box);
     else if (roles[i] === "out-of-flow") {
       const child = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
-      if (child) children.push(child);
+      if (child) children.push(fadedBy(child, splitOpacity(el, root)));
     }
   }
   if (nestedBoxes.length > 0) {
@@ -405,6 +415,7 @@ function buildLeaf(
     intrinsicHeight,
     localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
     unclampedHeight: 0,
+    naturalContentHeight: 0,
     resolvedPadding: zeroInsets(),
   };
   if (advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = advances;
@@ -453,6 +464,7 @@ function buildRendererLeaf(
     intrinsicHeight,
     localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
     unclampedHeight: 0,
+    naturalContentHeight: 0,
     resolvedPadding: zeroInsets(),
   };
   if (advances.some((a) => a !== 1)) node.advances = advances;
@@ -469,12 +481,15 @@ function buildRendererLeaf(
       padRight: 0,
       insets: null,
       anchorNames: [],
-      color: run.paint.color,
+      // What a run leaves unset is the leaf's, as a span inherits it.
+      color: run.paint.color ?? style.color,
       backgroundColor: run.paint.backgroundColor,
-      fontWeight: run.paint.fontWeight ?? "",
-      fontStyle: run.paint.fontStyle ?? "",
-      textDecorationLine: run.paint.textDecorationLine ?? "",
+      fontWeight: run.paint.fontWeight ?? style.fontWeight,
+      fontStyle: run.paint.fontStyle ?? style.fontStyle,
+      textDecorationLine: run.paint.textDecorationLine ?? style.textDecorationLine,
       visible: node.style.visible,
+      pointerEvents: node.style.pointerEvents,
+      opacity: 1,
     }));
     runs.forEach((run, index) => {
       const line = lines[run.line];
@@ -578,8 +593,9 @@ function splitsForBlock(children: Element[], roles: ChildRole[]): boolean {
 
 function childRole(el: Element): ChildRole {
   const cs = getComputedStyle(el);
-  if (cs.display === "none") return "none";
-  if (cs.position === "absolute" || cs.position === "fixed") return "out-of-flow";
+  const { display, position } = cs;
+  if (display === "none") return "none";
+  if (position === "absolute" || position === "fixed") return "out-of-flow";
   // A float is block-level whatever its display (specs/float.md): it
   // leaves the text run, which re-wraps around it as anonymous runs.
   if (isFloated(cs.float)) return "block";
@@ -587,7 +603,7 @@ function childRole(el: Element): ChildRole {
   // unstyled custom element computes to `inline`, which would fold
   // its semantic text into the parent's run instead of rendering.
   if (leafRendererFor(el.tagName)) return "block";
-  if (isRunInline(el, cs.display) || isAtomicInline(el, cs.display)) return "inline";
+  if (isRunInline(el, display) || isAtomicInline(el, display)) return "inline";
   return "block";
 }
 
@@ -685,8 +701,9 @@ function collectRunNodes(
     if (!owner || owner === container) {
       collectNodes(group, tracking, ctx, run);
     } else {
-      const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx);
-      collectOwned(run, entry, () => collectNodes(group, entry.tracking, ctx, run));
+      const outer = splitOpacity(owner, container);
+      const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx, outer);
+      collectOwned(run, entry, () => collectNodes(group, entry.tracking, ctx, run, entry.opacity));
     }
     i = end;
   }
@@ -707,14 +724,35 @@ function collectOwned(
   }
 }
 
-/** An inline element's entry in its run, from its computed style. */
+/** The opacity of the inline elements a block split left between an
+ * element and its container (specs/cell-model.md "Inline content"),
+ * multiplied; 1 for the container's own child. */
+function splitOpacity(el: Element, container: Element): number {
+  let opacity = 1;
+  for (let at = el.parentElement; at && at !== container; at = at.parentElement) {
+    opacity *= readOpacity(getComputedStyle(at).opacity);
+  }
+  return opacity;
+}
+
+/** A box inside inline elements carrying `opacity`, theirs multiplied
+ * (LayoutNode `inlineOpacity`). */
+function fadedBy(node: LayoutNode, opacity: number): LayoutNode {
+  if (opacity < 1) node.inlineOpacity = opacity;
+  return node;
+}
+
+/** An inline element's entry in its run, from its computed style, its
+ * opacity times `outer`, its inline ancestors'. */
 function inlineEntry(
   element: Element,
   cs: CSSStyleDeclaration,
   padLeft: number,
   padRight: number,
   ctx: RunContext,
+  outer: number,
 ): LeafRun["inlineElements"][number] {
+  const { position, backgroundColor } = cs;
   return {
     element,
     tracking: trackingCells(
@@ -724,27 +762,41 @@ function inlineEntry(
     ),
     padLeft,
     padRight,
-    insets: cs.position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
-    ...(cs.position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
+    insets: position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
+    ...(position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
     anchorNames: readAnchorNames(element, cs),
     color: cs.color,
-    backgroundColor: isTransparentColor(cs.backgroundColor) ? undefined : cs.backgroundColor,
+    backgroundColor: isTransparentColor(backgroundColor) ? undefined : backgroundColor,
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
     textDecorationLine: cs.textDecorationLine,
     visible: readVisible(cs, element),
+    pointerEvents: cs.pointerEvents !== "none",
+    opacity: outer * readOpacity(cs.opacity),
   };
 }
 
-function collectRun(el: Element, tracking: number, ctx: RunContext, run: LeafRun): void {
+function collectRun(
+  el: Element,
+  tracking: number,
+  ctx: RunContext,
+  run: LeafRun,
+  opacity = 1,
+): void {
   // Form controls render their value / caret / selection natively —
   // leave the leaf empty so the grid doesn't double-render, and skip
   // descending into their internals (e.g. <select>'s <option>s).
   if (isFormControlTag(el.tagName)) return;
-  collectNodes(Array.from(el.childNodes), tracking, ctx, run);
+  collectNodes(Array.from(el.childNodes), tracking, ctx, run, opacity);
 }
 
-function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run: LeafRun): void {
+function collectNodes(
+  nodes: ChildNode[],
+  tracking: number,
+  ctx: RunContext,
+  run: LeafRun,
+  opacity = 1,
+): void {
   // Cells since the current hard line began — the tab-stop basis.
   const column = (): number => {
     let cells = 0;
@@ -798,31 +850,32 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
       }
       // Reads happen during the measure pass, so authored values are visible.
       const cs = getComputedStyle(child);
+      const { display, position } = cs;
       // A hidden span's text must not render.
-      if (cs.display === "none") continue;
+      if (display === "none") continue;
       // Out-of-flow content leaves the run but not the tree: it takes
       // no character, and the leaf keeps it for the positioning pass
       // (a popover inside an inline element is one, and so is every
       // positioner a custom element wraps).
-      if (cs.position === "absolute" || cs.position === "fixed") {
+      if (position === "absolute" || position === "fixed") {
         const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics, ctx.textareaWidths);
-        if (box) run.positioned.push(box);
+        if (box) run.positioned.push(fadedBy(box, opacity));
         continue;
       }
       // An atomic inline box rides the run as ONE unbreakable unit: a
       // U+FFFC marker whose advance layout resolves to the box's width.
-      if (isAtomicInline(child, cs.display)) {
+      if (isAtomicInline(child, display)) {
         const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics, ctx.textareaWidths);
         if (box) {
           box.inlineBox = true;
           pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
-          run.boxes.push(box);
+          run.boxes.push(fadedBy(box, opacity));
         }
         continue;
       }
       // A BLOCK-level element nested inside the run can't be laid out
       // from here — skip its subtree and warn.
-      if (!isRunInline(child, cs.display)) {
+      if (!isRunInline(child, display)) {
         warnSkippedRunContent(child);
         continue;
       }
@@ -835,11 +888,11 @@ function collectNodes(nodes: ChildNode[], tracking: number, ctx: RunContext, run
       const padLeft = inlinePadCells(cs.paddingLeft, ctx.rootFontSizePx);
       const padRight = inlinePadCells(cs.paddingRight, ctx.rootFontSizePx);
       warnInlineBorder(child, cs);
-      const entry = inlineEntry(child, cs, padLeft, padRight, ctx);
+      const entry = inlineEntry(child, cs, padLeft, padRight, ctx, opacity);
       // Pad cells belong to the element too (its bg must fill them).
       collectOwned(run, entry, () => {
         for (let i = 0; i < padLeft; i++) pushChar(run, INLINE_PAD, 1, null, -1);
-        collectRun(child, entry.tracking, ctx, run);
+        collectRun(child, entry.tracking, ctx, run, entry.opacity);
         for (let i = 0; i < padRight; i++) pushChar(run, INLINE_PAD, 1, null, -1);
       });
     }

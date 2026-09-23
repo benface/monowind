@@ -3,21 +3,21 @@ import { glyphSetFor } from "./glyphs.ts";
 import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
 import type { GapSegment, GapStrip, RuleSegment } from "./borders.ts";
 import {
+  autoMarginOffset,
+  boxChrome,
   clampSize,
-  edges,
   intrinsicOuterWidth,
   isOutOfFlow,
   layoutNode,
   minContentOuterWidth,
   resolveGap,
-  resolveLength,
   resolveLimit,
   resolveMargin,
   resolveSizeAgainst,
+  resolveWidthLimit,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import { scrollGutter } from "./types.ts";
-import type { CellStyle, Insets, LayoutNode, NullableInsets } from "./types.ts";
+import type { CellStyle, Insets, LayoutNode } from "./types.ts";
 
 interface FlexLine {
   row: { node: LayoutNode }[];
@@ -103,15 +103,21 @@ export function layoutFlexRow(
   const gapX = resolveGap(node.style, "x", innerWidth);
   const gapY = resolveGap(node.style, "y", innerHeight);
   const items = flexOrderedChildren(node).map((child) => {
-    const margin = resolveMargin(child.style.margin, innerWidth);
+    const base = flexBaseOuterWidth(child, innerWidth, cache);
+    const max = resolveWidthLimit(child.style.maxWidth, innerWidth, child, cache);
+    const min = Math.max(
+      flexItemMinWidth(child, innerWidth, max, cache),
+      boxChrome(child.style, "x", innerWidth),
+    );
     return {
       node: child,
-      base: flexBaseOuterWidth(child, innerWidth, cache),
+      base,
       grow: child.style.flexGrow,
       shrink: child.style.flexShrink,
-      min: Math.max(flexItemMinWidth(child, innerWidth, cache), edgesOf(child, "x", innerWidth)),
-      max: resolveLimit(child.style.maxWidth, innerWidth),
-      margin,
+      min,
+      max,
+      hypothetical: Math.max(0, clampSize(base, min, max)),
+      margin: resolveMargin(child.style.margin, innerWidth),
     };
   });
 
@@ -123,9 +129,7 @@ export function layoutFlexRow(
     let current: typeof items = [];
     let used = 0;
     for (const item of items) {
-      // Placement uses the hypothetical size (base clamped by min/max).
-      const hypothetical = Math.max(0, clampSize(item.base, item.min, item.max));
-      const itemWidth = hypothetical + (item.margin.left ?? 0) + (item.margin.right ?? 0);
+      const itemWidth = item.hypothetical + (item.margin.left ?? 0) + (item.margin.right ?? 0);
       const next = current.length === 0 ? itemWidth : used + gapX + itemWidth;
       if (current.length > 0 && next > innerWidth) {
         rows.push(current);
@@ -147,35 +151,30 @@ export function layoutFlexRow(
   const originY = border.top + padding.top;
 
   // Phase A: resolve each line's item widths, lay the items out, and take
-  // the line's natural height (tallest item).
+  // the line's natural height (tallest item, fixed cross margins in).
   const lines = rows.map((row) => {
     const totalGap = gapX * Math.max(0, row.length - 1);
     const fixedMarginTotal = row.reduce(
       (sum, item) => sum + (item.margin.left ?? 0) + (item.margin.right ?? 0),
       0,
     );
+    // Auto margins count as 0 while the lengths flex, and share what
+    // flexing leaves (CSS §8.1) — below, as the leftover.
     const availableForItems = Math.max(0, innerWidth - totalGap - fixedMarginTotal);
-    // Per CSS: if there's positive free space and any main-axis auto margin,
-    // auto margins absorb the leftover BEFORE flex-grow. Detect that case and
-    // keep items at their base size — the auto-margin loop below will
-    // then distribute the leftover space itself.
-    const rowHasAutoMainMargin = row.some(
-      (item) => item.margin.left === null || item.margin.right === null,
-    );
-    const totalRowBase = row.reduce((s, i) => s + i.base, 0);
-    const skipGrowForAutoMargins = rowHasAutoMainMargin && totalRowBase <= availableForItems;
-    // When the distribution loop doesn't run, items take their HYPOTHETICAL
-    // sizes (base clamped by min/max) — placement must agree with the sizes
-    // the boxes actually get, not the raw bases.
-    const widths = skipGrowForAutoMargins
-      ? row.map((i) => Math.max(0, clampSize(i.base, i.min, i.max)))
-      : resolveFlexMainAxis(row, availableForItems);
+    const widths = resolveFlexMainAxis(row, availableForItems);
     for (let i = 0; i < row.length; i++) {
       layoutNode(row[i]!.node, innerWidth, definiteInnerHeight, 0, 0, "fill", cache, {
         width: widths[i]!,
       });
     }
-    const height = row.reduce((h, item) => Math.max(h, item.node.localRect.height), 0);
+    const height = row.reduce(
+      (h, item) =>
+        Math.max(
+          h,
+          item.node.localRect.height + (item.margin.top ?? 0) + (item.margin.bottom ?? 0),
+        ),
+      0,
+    );
     return { row, widths, availableForItems, height };
   });
 
@@ -300,7 +299,16 @@ export function layoutFlexRow(
       child.localRect = {
         ...child.localRect,
         x: originX + offsets[i]! + i * gapX + cumulativeExtraOffset,
-        y: originY + y + crossAxisOffset(child, node.style.alignItems, rowHeight, item.margin),
+        y:
+          originY +
+          y +
+          alignedOffset(
+            effectiveAlign(child, node),
+            item.margin.top,
+            item.margin.bottom,
+            rowHeight,
+            child.localRect.height,
+          ),
       };
       cumulativeExtraOffset += autoMarginAfter[i]! + fixedRight;
     }
@@ -357,7 +365,10 @@ export function layoutFlexRow(
   }
 
   recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
-  return contentHeight;
+  // The lines' natural heights, a flex parent's read of the box's content
+  // height: the height or min-height floor they stretched into is the
+  // caller's to apply.
+  return lines.reduce((sum, line) => sum + line.height, 0) + totalGapY;
 }
 
 /** Static slots for a flex container's out-of-flow children — the content
@@ -393,6 +404,8 @@ export function layoutFlexColumn(
   cache: IntrinsicCache,
 ): number {
   const gapY = resolveGap(node.style, "y", innerHeight);
+  const finiteInner = Number.isFinite(innerHeight);
+  const definiteHeight = heightIsDefinite && finiteInner ? innerHeight : undefined;
 
   const items = flexOrderedChildren(node).map((child) => {
     const margin = resolveMargin(child.style.margin, innerWidth);
@@ -406,45 +419,50 @@ export function layoutFlexColumn(
     layoutNode(
       child,
       availableChildWidth,
-      heightIsDefinite && Number.isFinite(innerHeight) ? innerHeight : undefined,
+      definiteHeight,
       0,
       0,
       childStretch ? "fill" : "shrink",
       cache,
     );
-    const limitBasis = Number.isFinite(innerHeight) ? innerHeight : undefined;
-    // Base main size per CSS flex-basis: an explicit basis (cells, or
-    // percent against a definite container height) wins; otherwise the
-    // first-pass height BEFORE min/max clamping — distribution starts from
-    // raw bases, the freeze loop enforces the limits.
+    const limitBasis = finiteInner ? innerHeight : undefined;
+    // Base main size per CSS flex-basis: cells, or a percent of a definite
+    // container height; an intrinsic basis, or a percent of an indefinite
+    // one, is the content height (§7.2.3); `auto` is the first-pass height
+    // BEFORE min/max clamping — distribution starts from raw bases, the
+    // freeze loop enforces the limits.
     const basis = child.style.flexBasis;
+    const naturalHeight = child.naturalContentHeight;
     const base =
       basis === undefined || basis.kind === "auto"
         ? child.unclampedHeight
         : basis.kind === "cells"
           ? basis.value
-          : basis.kind === "percent" && limitBasis !== undefined
-            ? percentToCells(basis.value, limitBasis)
-            : child.unclampedHeight;
-    // `min-height: auto` on a column item is the automatic minimum: its
-    // content height (the first-pass laid-out height), unless overflow is
-    // non-visible. Same rule as the row's min-content width.
-    const autoMin =
+          : basis.kind === "percent" && definiteHeight !== undefined
+            ? percentToCells(basis.value, definiteHeight)
+            : naturalHeight;
+    // The automatic minimum is capped by the item's first-pass height: its
+    // own height as its max leaves it.
+    const min = Math.max(
       child.style.minHeight === "auto"
-        ? child.style.overflow.y === "visible"
-          ? child.localRect.height
-          : 0
-        : undefined;
+        ? automaticMinimum(
+            child.style.overflow.y,
+            () => naturalHeight,
+            child.localRect.height,
+            undefined,
+          )
+        : (resolveLimit(child.style.minHeight, limitBasis) ?? 0),
+      boxChrome(child.style, "y", availableChildWidth),
+    );
+    const max = resolveLimit(child.style.maxHeight, limitBasis);
     return {
       node: child,
       base,
       grow: child.style.flexGrow,
       shrink: child.style.flexShrink,
-      min: Math.max(
-        autoMin ?? resolveLimit(child.style.minHeight, limitBasis) ?? 0,
-        edgesOf(child, "y", availableChildWidth),
-      ),
-      max: resolveLimit(child.style.maxHeight, limitBasis),
+      min,
+      max,
+      hypothetical: Math.max(0, clampSize(base, min, max)),
       margin,
     };
   });
@@ -454,32 +472,23 @@ export function layoutFlexColumn(
     (sum, item) => sum + (item.margin.top ?? 0) + (item.margin.bottom ?? 0),
     0,
   );
-  const finiteInner = Number.isFinite(innerHeight);
-  const totalBaseHeight = items.reduce((s, i) => s + i.base, 0);
-  const definiteAvailable = finiteInner
+  const hypotheticalTotal = items.reduce((sum, item) => sum + item.hypothetical, 0);
+  const containerSpace = finiteInner
     ? Math.max(0, innerHeight - totalGap - fixedMarginTotal)
-    : totalBaseHeight;
+    : hypotheticalTotal;
   // A min-height-only container size is a floor, not a cap: it can hand
   // extra space to flex-grow, but content larger than the floor keeps its
-  // intrinsic size (no flex-shrink) and the container grows to fit.
+  // hypothetical size (no flex-shrink) and the container grows to fit.
   const availableForItems = heightIsDefinite
-    ? definiteAvailable
-    : Math.max(definiteAvailable, totalBaseHeight);
+    ? containerSpace
+    : Math.max(containerSpace, hypotheticalTotal);
 
-  // Same CSS rule as flex-row: auto margins on the main axis absorb positive
-  // leftover before flex-grow gets to it.
-  const columnHasAutoMainMargin = items.some(
-    (item) => item.margin.top === null || item.margin.bottom === null,
-  );
-  const skipGrowForAutoMargins =
-    finiteInner && columnHasAutoMainMargin && totalBaseHeight <= availableForItems;
   // Without distribution, items take their HYPOTHETICAL sizes (base clamped
   // by min/max) — stacking with raw bases would disagree with the heights
   // the boxes actually get (e.g. a min-h child would overlap its follower).
-  const finalHeights =
-    finiteInner && !skipGrowForAutoMargins
-      ? resolveFlexMainAxis(items, availableForItems)
-      : items.map((i) => Math.max(0, clampSize(i.base, i.min, i.max)));
+  const finalHeights = finiteInner
+    ? resolveFlexMainAxis(items, availableForItems)
+    : items.map((item) => item.hypothetical);
   // If a child's main-axis size changed, re-run its layout with the new
   // height forced so any nested content that depends on the parent's height
   // (items-center/end in a nested flex, percent heights) sees the final size.
@@ -507,6 +516,7 @@ export function layoutFlexColumn(
   const totalUsed = finalHeights.reduce((s, h) => s + h, 0);
   const leftover = Math.max(0, availableForItems - totalUsed);
 
+  // Auto margins share what flexing leaves, as a row's do.
   const autoCount = items.reduce(
     (n, item) => n + (item.margin.top === null ? 1 : 0) + (item.margin.bottom === null ? 1 : 0),
     0,
@@ -540,7 +550,15 @@ export function layoutFlexColumn(
     cumulativeExtraOffset += autoMarginBefore[i]! + fixedTop;
     child.localRect = {
       ...child.localRect,
-      x: originX + crossAxisOffsetX(child, node.style.alignItems, innerWidth, item.margin),
+      x:
+        originX +
+        alignedOffset(
+          effectiveAlign(child, node),
+          item.margin.left,
+          item.margin.right,
+          innerWidth,
+          child.localRect.width,
+        ),
       y: originY + offsets[i]! + i * gapY + cumulativeExtraOffset,
     };
     cumulativeExtraOffset += autoMarginAfter[i]! + fixedBottom;
@@ -579,53 +597,27 @@ export function layoutFlexColumn(
   }
 
   recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
-  return contentHeight;
+  // What the items need at their hypothetical sizes, a flex parent's read
+  // of the box's content height: the height or min-height floor they
+  // flexed in is the caller's to apply.
+  return hypotheticalTotal + totalGap + fixedMarginTotal;
 }
 
-/**
- * Compute a child's cross-axis (vertical) offset inside a flex row, honoring
- * align-self override, cross-axis auto margins, and fixed cross-axis margins.
- */
-function crossAxisOffset(
-  child: LayoutNode,
-  parentAlign: CellStyle["alignItems"],
-  rowHeight: number,
-  m: NullableInsets,
+/** A box's offset in `space` along one axis under self-alignment (a flex
+ * item's cross axis, a grid item in its area): auto margins take the free
+ * space, else the fixed leading margin plus the margin box's alignment
+ * offset (`stretch` as `start`: the stretch happened in sizing). */
+export function alignedOffset(
+  align: CellStyle["alignItems"],
+  before: number | null,
+  after: number | null,
+  space: number,
+  size: number,
 ): number {
-  const align = child.style.alignSelf === "auto" ? parentAlign : child.style.alignSelf;
-  const marginTop = m.top ?? 0;
-  const marginBottom = m.bottom ?? 0;
-  const crossAvailable = rowHeight - child.localRect.height;
-  const bothAuto = m.top === null && m.bottom === null;
-  const oneAutoTop = m.top === null && m.bottom !== null;
-  const oneAutoBottom = m.bottom === null && m.top !== null;
-  if (bothAuto) return Math.floor(crossAvailable / 2);
-  if (oneAutoTop) return crossAvailable - marginBottom;
-  if (oneAutoBottom) return marginTop;
-  return marginTop + alignCrossOffset(align, rowHeight, child.localRect.height);
-}
-
-/**
- * Symmetric helper for flex-column: cross axis is horizontal, so auto/fixed
- * margins on `left`/`right` participate.
- */
-function crossAxisOffsetX(
-  child: LayoutNode,
-  parentAlign: CellStyle["alignItems"],
-  containerWidth: number,
-  m: NullableInsets,
-): number {
-  const align = child.style.alignSelf === "auto" ? parentAlign : child.style.alignSelf;
-  const marginLeft = m.left ?? 0;
-  const marginRight = m.right ?? 0;
-  const crossAvailable = containerWidth - child.localRect.width;
-  const bothAuto = m.left === null && m.right === null;
-  const oneAutoLeft = m.left === null && m.right !== null;
-  const oneAutoRight = m.right === null && m.left !== null;
-  if (bothAuto) return Math.floor(crossAvailable / 2);
-  if (oneAutoLeft) return crossAvailable - marginRight;
-  if (oneAutoRight) return marginLeft;
-  return marginLeft + alignCrossOffset(align, containerWidth, child.localRect.width);
+  return (
+    autoMarginOffset(before, after, space, size) ??
+    before! + alignCrossOffset(align, space, size + before! + after!)
+  );
 }
 
 /**
@@ -689,10 +681,10 @@ export function mainAxisOffsets(
  * redistribution rounds, an item clamped up to `min-w-*` would keep space
  * its neighbors were already told they could use, and boxes would overlap.
  *
- * `min`/`max` are outer main sizes in cells, already resolved from percent.
- * When clamps bind, the returned sizes may sum to less or more than
- * `available` — that's CSS (`justify-content` sees the underfill; overflow
- * handles the excess).
+ * `min`/`max` are outer main sizes in cells, already resolved from percent,
+ * and `hypothetical` the base clamped by them. When clamps bind, the
+ * returned sizes may sum to less or more than `available` — that's CSS
+ * (`justify-content` sees the underfill; overflow handles the excess).
  */
 export function resolveFlexMainAxis(
   items: ReadonlyArray<{
@@ -701,6 +693,7 @@ export function resolveFlexMainAxis(
     shrink: number;
     min?: number | undefined;
     max?: number | undefined;
+    hypothetical: number;
   }>,
   available: number,
 ): number[] {
@@ -710,7 +703,7 @@ export function resolveFlexMainAxis(
   const base = items.map((i) => i.base);
   // Grow vs shrink is decided from the HYPOTHETICAL sizes (clamped bases),
   // per CSS; distribution then starts from the raw bases.
-  const hypotheticalTotal = base.reduce((s, b, i) => s + clamp(b, i), 0);
+  const hypotheticalTotal = items.reduce((s, item) => s + item.hypothetical, 0);
   const growing = available >= hypotheticalTotal;
 
   const sizes: number[] = Array.from({ length: count }, () => 0);
@@ -721,7 +714,7 @@ export function resolveFlexMainAxis(
   // while growing stays flexible — it grows from the raw base and the
   // violation loop enforces the min afterwards.
   for (let i = 0; i < count; i++) {
-    const hypothetical = clamp(base[i]!, i);
+    const hypothetical = items[i]!.hypothetical;
     const flexFactor = growing ? items[i]!.grow : items[i]!.shrink;
     if (
       flexFactor === 0 ||
@@ -866,32 +859,39 @@ export function effectiveJustify(style: CellStyle): CellStyle["justifyContent"] 
   return justify;
 }
 
-/** A flex item's edges on an axis, the floor of its main size, so the
- * main axis hands it no less and the placement agrees with the floored
- * rects: the padding as the item's own layout resolves it — against
- * the width it is laid out at, a scrollbar's gutter added. */
-function edgesOf(child: LayoutNode, axis: "x" | "y", availableWidth: number): number {
-  const { border, padding } = child.style;
-  const gutter = scrollGutter(child.style);
-  const resolved: Insets = {
-    top: resolveLength(padding.top, availableWidth),
-    right: resolveLength(padding.right, availableWidth) + gutter.right,
-    bottom: resolveLength(padding.bottom, availableWidth) + gutter.bottom,
-    left: resolveLength(padding.left, availableWidth),
-  };
-  return edges(border, resolved, axis);
+/**
+ * The automatic minimum (`min-width/height: auto`, the CSS default) of a
+ * flex or grid item on one axis (css-flexbox §4.5, css-grid §6.6): its
+ * content size, capped by its specified size and its max; 0 for a scroll
+ * container, which `truncate` makes too.
+ */
+export function automaticMinimum(
+  overflow: CellStyle["overflow"]["x"],
+  content: () => number,
+  specified: number | undefined,
+  max: number | undefined,
+): number {
+  if (overflow !== "visible") return 0;
+  return Math.min(content(), specified ?? Infinity, max ?? Infinity);
 }
 
 /**
- * A flex-row item's used minimum width. `min-width: auto` (the CSS default)
- * is the automatic minimum: the item's min-content size — which is why text
- * in a flex row stops shrinking at its longest segment instead of
- * disappearing. It only applies while overflow is visible: `overflow` set
- * to anything else (e.g. via `truncate`) or an explicit `min-w-*` opts out.
+ * A flex-row item's used minimum width: an explicit `min-w-*`, else the
+ * automatic minimum over its min-content width — which is why text in a
+ * flex row stops shrinking at its longest segment instead of
+ * disappearing. `max` is its resolved max-width.
  */
-function flexItemMinWidth(child: LayoutNode, innerWidth: number, cache: IntrinsicCache): number {
-  if (child.style.minWidth === "auto") {
-    return child.style.overflow.x === "visible" ? minContentOuterWidth(child, cache) : 0;
-  }
-  return resolveLimit(child.style.minWidth, innerWidth) ?? 0;
+function flexItemMinWidth(
+  child: LayoutNode,
+  innerWidth: number,
+  max: number | undefined,
+  cache: IntrinsicCache,
+): number {
+  const { minWidth, width, overflow } = child.style;
+  if (minWidth !== "auto") return resolveWidthLimit(minWidth, innerWidth, child, cache) ?? 0;
+  const specified =
+    width === undefined || width.kind === "auto"
+      ? undefined
+      : resolveSizeAgainst(width, innerWidth, child, cache);
+  return automaticMinimum(overflow.x, () => minContentOuterWidth(child, cache), specified, max);
 }

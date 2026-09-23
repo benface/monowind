@@ -1,5 +1,5 @@
-import { createTextVNode, defineComponent, h } from "vue";
-import { propNames } from "@monowind/ui/select";
+import { createTextVNode, defineComponent, ref, watchPostEffect } from "vue";
+import { hiddenSelectOptions, propNames, syncHiddenSelect } from "@monowind/ui/select";
 import type * as select from "@monowind/ui/select";
 import type { PropTypes } from "@zag-js/vue";
 import { useSelect, type Composed } from "../composables.ts";
@@ -78,21 +78,30 @@ export const SelectPositioner = definePart<Api>("SelectPositioner", context, (va
   ref: value.positioner,
 }));
 
-/** The native select a form submits, an option per item: out of the
- * grid, a `display: none` control being one the layout skips and a
- * form still posts (Zag hides it visually, which would take cells). */
+/** The native select a form submits, `display: none` so the layout
+ * skips it and a form still posts it. Its first options are markup Vue
+ * writes once, for a server's page; after each render
+ * `syncHiddenSelect` owns them, the selection and Zag's `value`
+ * (specs/ui.md "A select is a listbox on a trigger"). */
 export const SelectHiddenSelect = defineComponent(
   (_props, { attrs }) => {
-    const { api } = context.use();
-    return () =>
-      renderPart(
+    const { api, service } = context.use();
+    const element = ref<HTMLSelectElement>();
+    const options = hiddenSelectOptions(api.value, service);
+    watchPostEffect(() => {
+      if (element.value) syncHiddenSelect(element.value, api.value, service);
+    });
+    return () => {
+      const { value: _value, ...props } = api.value.getHiddenSelectProps();
+      return renderPart(
         "select",
-        { ...api.value.getHiddenSelectProps(), style: { display: "none" } },
+        { ...props, ref: element, size: 2, style: { display: "none" }, innerHTML: options },
         attrs as Record<string, unknown>,
         false,
-        api.value.collection.getValues().map((value: string) => h("option", { key: value, value })),
+        undefined,
         "SelectHiddenSelect",
       );
+    };
   },
   { name: "SelectHiddenSelect", inheritAttrs: false },
 );

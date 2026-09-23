@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { readyHost } from "./helpers.ts";
+import { cellSize, dragTo, gridOf, hoverOver, pressAt, readyHost, release } from "./helpers.ts";
 
 /**
  * Overflow (specs/scrolling.md): `clip` culls at the padding box;
@@ -44,7 +44,7 @@ export const Overflow: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const box = (name: string) =>
       canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
     const rows = () => grid.textContent!.split("\n");
@@ -222,7 +222,7 @@ export const Styled: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const box = (name: string) =>
       canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
     // The resolved `scrollbar-color` thumb (first of the two colors).
@@ -278,14 +278,7 @@ export const Styled: StoryObj = {
     if (host.getAttribute("select") !== "grid") return;
     const overlay = box("overlay");
     expect(thumbColor(overlay)).toBe("rgba(0, 0, 0, 0)");
-    const rect = overlay.getBoundingClientRect();
-    host.dispatchEvent(
-      new PointerEvent("pointermove", {
-        bubbles: true,
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top + rect.height / 2,
-      }),
-    );
+    hoverOver(overlay);
     await waitFor(() => {
       expect(overlay).toHaveAttribute("data-mw-hover");
       expect(thumbColor(overlay)).not.toBe("rgba(0, 0, 0, 0)");
@@ -322,7 +315,7 @@ export const BothAxes: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const auto = canvasElement.querySelector<HTMLElement>('[data-test="auto"]')!;
     // Invariant-based: the lines overflow sideways only below a certain
     // viewport width (the story is responsive).
@@ -367,7 +360,7 @@ export const Nested: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const inner = canvasElement.querySelector<HTMLElement>('[data-test="inner"]')!;
     await waitFor(() => {
       expect(inner).toHaveAttribute("data-mw-scroll");
@@ -514,7 +507,7 @@ export const ScrollMirroring: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const box = canvasElement.querySelector<HTMLElement>('[data-test="box"]')!;
     await waitFor(() => expect(grid.textContent).toContain("line 01"));
     // Native programmatic scrolling mirrors onto the grid.
@@ -553,5 +546,41 @@ export const ScrollMirroring: StoryObj = {
       expect(Math.abs(box.scrollTop - cellHeight * 4)).toBeLessThan(1);
     });
     box.scrollTop = 0;
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a thumb
+ * dragged to a position between cells and held still, then let go,
+ * settles on the cell the grid shows — the release is the settle a
+ * drag waits for. */
+export const ThumbRelease: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="box" class="h-6 w-32 overflow-y-scroll border px-1">
+        ${LINES.map((line) => html`<div>${line}</div>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const grid = gridOf(host);
+    const box = canvasElement.querySelector<HTMLElement>('[data-test="box"]')!;
+    await waitFor(() => expect(grid.textContent).toContain("line 01"));
+    const { width, height } = cellSize(host);
+    const rect = box.getBoundingClientRect();
+    // The bar's first row, inside the right border: the thumb at the top.
+    const thumb = { x: rect.right - width * 1.5, y: rect.top + height * 1.5 };
+    pressAt(grid, thumb, 1);
+    dragTo(grid, { x: thumb.x, y: thumb.y + height * 0.3 });
+    await waitFor(() => expect(box.scrollTop).toBeGreaterThan(0));
+    // Held past the settle a scroll's end arms, which waits for release.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    await waitFor(() => {
+      const cells = Math.round(box.scrollTop / height);
+      expect(cells).toBeGreaterThan(0);
+      expect(Math.abs(box.scrollTop - cells * height)).toBeLessThan(1);
+    });
   },
 };

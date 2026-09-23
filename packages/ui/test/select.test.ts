@@ -1,8 +1,8 @@
 import * as Select from "@zag-js/select";
 import { describe, expect, it, vi } from "vitest";
 import { normalizeProps } from "@zag-js/vanilla";
-import { api, props, select } from "../src/select.ts";
-import { by, popoverApi, press, settle } from "./helpers.ts";
+import { api, collection, props, select } from "../src/select.ts";
+import { by, popoverApi, posted, press, resetByClick, settle } from "./helpers.ts";
 import { start } from "../src/vanilla.ts";
 
 /** The select on the grid (specs/ui.md): Zag's API with the grid's
@@ -65,6 +65,14 @@ describe("the mount", () => {
     return root;
   };
 
+  /** The markup moved into a form, which is what a reset reaches. */
+  const inForm = (root: HTMLElement): HTMLFormElement => {
+    const form = document.createElement("form");
+    root.replaceWith(form);
+    form.append(root);
+    return form;
+  };
+
   it("wires every part a tick after the mount and opens on the trigger", async () => {
     const root = markup();
     const shown = popoverApi(by(root, "positioner"));
@@ -117,6 +125,18 @@ describe("the mount", () => {
     root.remove();
   });
 
+  it("starts at the item the markup marks selected, the value text and form control with it", async () => {
+    const root = markup();
+    by(root, "item", "next").setAttribute("data-selected", "");
+    const mounted = select(root, { id: "i" });
+    await settle();
+    expect(mounted.api.value).toEqual(["next"]);
+    expect(by(root, "value-text").textContent).toBe("next");
+    expect(root.querySelector<HTMLSelectElement>("select")!.value).toBe("next");
+    mounted.destroy();
+    root.remove();
+  });
+
   it("carries the value into a form through the hidden select, off the grid", async () => {
     const root = markup();
     const mounted = select(root, { id: "f", name: "branch" });
@@ -130,6 +150,149 @@ describe("the mount", () => {
     expect(hidden.value).toBe("next");
     mounted.destroy();
     root.remove();
+  });
+
+  it("gives the form an option for a value a new collection brings", async () => {
+    const root = markup();
+    const mounted = select(root, { id: "n", name: "branch" });
+    await settle();
+    mounted.updateProps({ collection: collection({ items: ["main", "release"] }) });
+    await settle();
+    const hidden = by(root, "hidden-select") as HTMLSelectElement;
+    expect([...hidden.options].map((option) => option.value)).toEqual(["main", "release"]);
+    mounted.api.setValue(["release"]);
+    await settle();
+    expect(hidden.value, "the form posts it").toBe("release");
+    mounted.destroy();
+    root.remove();
+  });
+
+  it("selects the option of a value that arrived before it, and none until then", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, { id: "e", name: "branch", defaultValue: ["release"] });
+    await settle();
+    expect(posted(form), "no option chosen in its place").toEqual([]);
+    mounted.updateProps({ collection: collection({ items: ["main", "release"] }) });
+    await settle();
+    expect(posted(form)).toEqual(["release"]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("posts nothing for a value no option holds", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, { id: "g", name: "branch", defaultValue: ["gone"] });
+    await settle();
+    expect(posted(form)).toEqual([]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("goes back to its default at a form's reset, the machine and the form alike", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, { id: "r", name: "branch", defaultValue: ["next"] });
+    await settle();
+    // A reset the machine sees as no change: the form's own reset alone
+    // puts the default back.
+    form.reset();
+    await settle();
+    expect(posted(form)).toEqual(["next"]);
+    mounted.api.setValue(["main"]);
+    await settle();
+    expect(posted(form)).toEqual(["main"]);
+    form.reset();
+    await settle();
+    expect(mounted.api.value).toEqual(["next"]);
+    expect(by(root, "value-text").textContent).toBe("next");
+    expect(posted(form)).toEqual(["next"]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("goes back to its default at a reset the reader clicks", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, { id: "rc", name: "branch", defaultValue: ["next"] });
+    await settle();
+    await resetByClick(form);
+    expect(posted(form)).toEqual(["next"]);
+    mounted.api.setValue(["main"]);
+    await settle();
+    await resetByClick(form);
+    expect(mounted.api.value).toEqual(["next"]);
+    expect(posted(form)).toEqual(["next"]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("chooses no option at a reset the reader clicks where the default is none", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, { id: "re", name: "branch" });
+    await settle();
+    mounted.api.setValue(["main"]);
+    await settle();
+    await resetByClick(form);
+    expect(mounted.api.value).toEqual([]);
+    expect(posted(form), "no option chosen in its place").toEqual([]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("goes back to several values at a reset where it takes several", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, {
+      id: "rm",
+      name: "branch",
+      multiple: true,
+      defaultValue: ["main", "next"],
+    });
+    await settle();
+    mounted.api.setValue([]);
+    await settle();
+    expect(posted(form)).toEqual([]);
+    form.reset();
+    await settle();
+    expect(mounted.api.value).toEqual(["main", "next"]);
+    expect(posted(form)).toEqual(["main", "next"]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("leaves its form control no choice of its own where the value has none", async () => {
+    const root = markup();
+    const form = inForm(root);
+    const mounted = select(root, { id: "o", name: "branch" });
+    await settle();
+    const hidden = by(root, "hidden-select") as HTMLSelectElement;
+    // What a browser's reset does where no option is a default, and what
+    // this DOM does too: a single control of one row picks its first.
+    hidden.options[2]!.selected = true;
+    hidden.options[2]!.selected = false;
+    expect(posted(form)).toEqual([]);
+    mounted.destroy();
+    form.remove();
+  });
+
+  it("follows a disabled fieldset around it", async () => {
+    const root = markup();
+    const fieldset = document.createElement("fieldset");
+    root.replaceWith(fieldset);
+    fieldset.append(root);
+    fieldset.disabled = true;
+    const mounted = select(root, { id: "d", name: "branch" });
+    await settle();
+    expect(mounted.api.disabled).toBe(true);
+    expect(by(root, "trigger").hasAttribute("disabled")).toBe(true);
+    fieldset.disabled = false;
+    await settle();
+    expect(mounted.api.disabled).toBe(false);
+    mounted.destroy();
+    fieldset.remove();
   });
 
   it("follows a change on the hidden select, as a form autofill makes it", async () => {

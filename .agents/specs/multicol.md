@@ -69,7 +69,7 @@ the count — probed, all three engines agree. With only `column-width`,
 Chromium/WebKit use the content's own max-content (floored at one
 `W`-wide column) while Firefox clamps to `W`; the engine follows
 Chromium/WebKit (documented divergence). Min-content stays the block
-default (widest child / longest unbreakable unit) — deviation 6.
+default (widest child / longest unbreakable unit) — deviation 5.
 
 For ELEMENT-CHILDREN containers, leftover cells after `count × width +
 (count − 1) × gap` distribute one per column left to right
@@ -125,8 +125,8 @@ size) into its owned bottom padding, AFTER min/max height clamping so
 the fold reconciles against the box the browser actually gets. With
 integral line-box heights and a native column height quantized to
 exactly the engine's tight fill plus the `lineGap` trailing rows (the
-companion's height rule), the `--mw-ink` overhang, and 1/32px rounding
-slack (probe 8), the browser's sequential fill breaks at exactly the
+companion's height rule), the `--mw-overhang` ink overhang, and 1/32px
+rounding slack (probe 8), the browser's sequential fill breaks at exactly the
 lines the engine computed — so the (invisible) native text, the caret, and
 selection geometry all sit under the grid's glyphs, the same trick as
 everything else in the cell model. `column-fill: auto` plus an
@@ -185,7 +185,7 @@ Here the reconstruction trick has no per-segment height to force, so
 the companion keeps `column-fill: balance` and the natural height and
 trusts the NATIVE balancer — probed pixel-identical in all three
 engines under quantized inputs, spanner margins never collapsing with
-column content (matching deviation 5 and css-multicol §6.1). The
+column content (css-multicol §6.1, and the engine's segments alike). The
 probes bound the scope to `column-fill: balance` and no height
 restriction; the engine advances non-final segments by FULL line boxes
 (the native stacking) and trims only the final one.
@@ -277,7 +277,9 @@ Without any restriction, `auto` behaves as `balance` (CSS: filling
 A child with `column-span: all` interrupts the flow: content before it
 forms one multicol SEGMENT (balanced into columns as above), the
 spanner lays out at the container's full content width, and content
-after it starts a fresh segment below. Segments stack vertically;
+after it starts a fresh segment below. The spanner's margins never
+collapse with the column content's on either side (§6.1), as in every
+engine (probe 7). Segments stack vertically;
 each balances independently; column rules paint per segment (their
 segments end at the spanner, per css-gaps). A spanner in a direct-text
 container can't occur (no element children in a run — an atomic inline
@@ -327,13 +329,10 @@ avoid`): a child with a border, padding, background, explicit
    the native box by the trailing leading (see Direct text).
 4. `break-before`/`break-after` values other than `column` (`page`,
    `avoid`, …) are ignored.
-5. Spanner margins don't collapse with adjacent column content
-   (segments are independent blocks); CSS collapses them in some
-   cases.
-6. Min-content width uses the block default (widest child) rather than
+5. Min-content width uses the block default (widest child) rather than
    a column-aware contribution; max-content is column-aware (see
    "Used column count and width").
-7. A float whose parent is the multicol container itself is laid out
+6. A float whose parent is the multicol container itself is laid out
    as a plain column item and warned once (specs/float.md); floats
    inside the container's children work as anywhere.
 
@@ -380,7 +379,7 @@ on 14px text:
    18px box at 14px) gets its last line ejected from every column.
    Chromium and Firefox fragment on line boxes. Fix: the cell-metrics
    probe also measures the ink overhang (Range rect height − line-box
-   height) and the companion adds it — `--mw-ink`, plus 1/32px of
+   height) and the companion adds it — `--mw-overhang`, plus 1/32px of
    calc-rounding slack — to the multicol leaf's native height. The
    slack is far below a line box, so no engine fits an extra line.
 9. ✅ `break-inside: avoid` / `avoid-column` on an in-flow child:

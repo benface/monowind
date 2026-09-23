@@ -11,7 +11,9 @@ import {
 } from "./anchor.ts";
 import { liveProps, mergePartial, mountAnchored, parts, start, type Mounted } from "./vanilla.ts";
 
-export type Props = Menu.Props;
+/** An interface of this module's own, so a framework package's types
+ * reach Zag's through this module, one of its dependencies. */
+export interface Props extends Menu.Props {}
 export type Api<T extends PropTypes = PropTypes> = Menu.Api<T>;
 export type Service = Menu.Service;
 /** The props as the machine takes them, `props()`'s return. */
@@ -161,8 +163,8 @@ function mountMenu(root: Element, machineProps: MountProps): MenuMount {
         spread(submenu.item, api.getTriggerItemProps(submenu.mounted.api));
       }
     },
-    submenus.map((submenu) => submenu.machine),
     live,
+    submenus.map((submenu) => submenu.machine),
   );
   return {
     machine,
@@ -173,8 +175,14 @@ function mountMenu(root: Element, machineProps: MountProps): MenuMount {
       updateProps(partial) {
         mounted.updateProps(partial);
         // A submenu is a menu of its own: it takes the behavior its
-        // parent shares, never its id or its placement.
-        const shared = pick(partial as Props, SHARED);
+        // parent shares, never its id or its placement. A key set to
+        // `undefined` is a prop dropped, which the submenu drops too.
+        const shared = Object.fromEntries(
+          SHARED.filter((key) => key in partial).map((key) => [
+            key,
+            (partial as Record<string, unknown>)[key],
+          ]),
+        );
         if (Object.keys(shared).length === 0) return;
         for (const submenu of submenus) submenu.mounted.updateProps(shared);
       },

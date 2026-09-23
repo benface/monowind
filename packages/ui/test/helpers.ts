@@ -1,6 +1,36 @@
 /** A tick past Zag's deferred sends and the mount's first spread. */
 export const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
+/** A form's reset as a browser runs it from a reader's click: the
+ * event, the microtasks it queued (a framework's render among them,
+ * inside `within` — React's `act`), then each option back to its
+ * `selected` attribute, a one-row single control picking its first
+ * where none has it. happy-dom's own `reset()` restores the controls
+ * before the event, and picks that first option whatever the size. */
+export async function resetByClick(
+  form: HTMLFormElement,
+  within: (work: () => Promise<void>) => Promise<void> = (work) => work(),
+): Promise<void> {
+  const event = new Event("reset", { bubbles: true, cancelable: true });
+  await within(async () => {
+    form.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve));
+  });
+  if (event.defaultPrevented) return;
+  for (const control of form.querySelectorAll("select")) {
+    for (const option of control.options) option.selected = option.hasAttribute("selected");
+  }
+}
+
+/** What a browser's form submits for a select — the control, or the
+ * one inside an element: its selected options, where happy-dom's
+ * `FormData` posts the control's `value` as one entry, even with none
+ * selected, and its `selectedOptions` can lag a change. */
+export function posted(within: Element): string[] {
+  const select = within instanceof HTMLSelectElement ? within : within.querySelector("select")!;
+  return [...select.options].filter((option) => option.selected).map((option) => option.value);
+}
+
 /** A root's marked part, by value where several carry the part. */
 export const by = (root: Element, part: string, value?: string) =>
   root.querySelector<HTMLElement>(

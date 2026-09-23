@@ -1,5 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { percentToCells, pxToCells, roundHalfAwayFromZero } from "../src/metrics.ts";
+import { defineMonoWind } from "../src/element.ts";
+import { percentToCells, pxToCells, roundHalfAwayFromZero, sameMetrics } from "../src/metrics.ts";
+
+describe("the host's metrics probe", () => {
+  it("holds its minimum at auto against the page's CSS", () => {
+    // Typed OM reads the probe's `auto` minimum as the engine's, whatever
+    // a page's `* { min-width: 0 }` says (Chromium reads `0px` under it).
+    defineMonoWind();
+    const host = document.createElement("mono-wind");
+    document.body.appendChild(host);
+    const probe = host.querySelector<HTMLElement>("[data-mw-probe]")!;
+    host.remove();
+    expect(probe.style.getPropertyValue("min-width")).toBe("auto");
+    expect(probe.style.getPropertyPriority("min-width")).toBe("important");
+  });
+});
+
+describe("sameMetrics", () => {
+  it("tells measurements apart by any metric the host writes", () => {
+    // The host writes each one out, the baseline as --mw-base.
+    const metrics = {
+      width: 9,
+      height: 18,
+      letterSpacing: 0,
+      gridLetterSpacing: 0.25,
+      inkOverhang: 1,
+      backgroundGap: 0,
+      baseline: 14,
+    };
+    expect(sameMetrics(metrics, { ...metrics })).toBe(true);
+    for (const key of Object.keys(metrics) as (keyof typeof metrics)[]) {
+      expect(sameMetrics(metrics, { ...metrics, [key]: metrics[key] + 1 }), key).toBe(false);
+    }
+  });
+});
 
 describe("roundHalfAwayFromZero", () => {
   it("rounds positive halves up", () => {

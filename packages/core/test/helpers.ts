@@ -22,6 +22,7 @@ export function makeNode(overrides: {
     intrinsicHeight: overrides.intrinsicHeight ?? (text.length > 0 ? 1 : 0),
     localRect: { x: 0, y: 0, width: 0, height: 0 },
     unclampedHeight: 0,
+    naturalContentHeight: 0,
     resolvedPadding: zeroInsets(),
   };
 }

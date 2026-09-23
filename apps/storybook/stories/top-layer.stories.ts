@@ -6,6 +6,7 @@ import {
   dragTo,
   expectOnItsCells,
   gridOf,
+  isChromium,
   paintedSpan,
   pressAt,
   readyHost,
@@ -296,7 +297,7 @@ export const Transitions: StoryObj = {
     ).toBeGreaterThanOrEqual(2);
     await waitFor(() => expect(opacity()).toBe(""));
     pop.hidePopover();
-    if (navigator.userAgent.includes("Chrome/")) {
+    if (isChromium) {
       await new Promise((resolve) => setTimeout(resolve, 150));
       expect(gridOf(host).textContent).toContain("Fading popover");
       expect(parseFloat(opacity()!)).toBeLessThan(1);

@@ -212,6 +212,7 @@ mono-wind.theme-dos,
   --color-gray-800: #555555;
   --color-gray-900: #000000;
   --color-gray-950: #000000;
+  --color-zinc-50: #ffffff;
   --color-zinc-100: #ffffff;
   --color-zinc-200: #ffffff;
   --color-zinc-300: #ffffff;
@@ -222,6 +223,17 @@ mono-wind.theme-dos,
   --color-zinc-800: #555555;
   --color-zinc-900: #000000;
   --color-zinc-950: #000000;
+  --color-neutral-50: #ffffff;
+  --color-neutral-100: #ffffff;
+  --color-neutral-200: #ffffff;
+  --color-neutral-300: #ffffff;
+  --color-neutral-400: #aaaaaa;
+  --color-neutral-500: #555555;
+  --color-neutral-600: #555555;
+  --color-neutral-700: #555555;
+  --color-neutral-800: #555555;
+  --color-neutral-900: #000000;
+  --color-neutral-950: #000000;
   --color-stone-50: #ffffff;
   --color-stone-100: #ffffff;
   --color-stone-200: #ffffff;
@@ -233,6 +245,7 @@ mono-wind.theme-dos,
   --color-stone-800: #555555;
   --color-stone-900: #000000;
   --color-stone-950: #000000;
+  --color-mauve-50: #ffffff;
   --color-mauve-100: #ffffff;
   --color-mauve-200: #ffffff;
   --color-mauve-300: #aaaaaa;

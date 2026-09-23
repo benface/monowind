@@ -1,7 +1,7 @@
 import { Comment, cloneVNode, computed, defineComponent, h, inject, provide, useId } from "vue";
 import type { ComputedRef, DefineSetupFnComponent, InjectionKey, VNode } from "vue";
 import { mergeProps } from "@zag-js/vue";
-import { warnStray } from "@monowind/ui/framework";
+import { BOUND, defined, warnStray, type TriggerApi } from "@monowind/ui/framework";
 
 /**
  * What every part of a compound component is (specs/ui.md "Component
@@ -12,26 +12,10 @@ import { warnStray } from "@monowind/ui/framework";
 
 type Props = Record<string, unknown>;
 
-/** Props as the machine takes them: Vue gives a declared prop that
- * was not passed as an explicit `undefined`, which would override a
- * default of Zag's. */
-export function defined<P extends object>(props: P): P {
-  return Object.fromEntries(Object.entries(props).filter(([, value]) => value !== undefined)) as P;
-}
-
-/** The props a `v-model` binds: each with the callback the machine
- * changes it through, and the key that callback's detail carries. */
-const BOUND = [
-  ["open", "onOpenChange"],
-  ["value", "onValueChange"],
-  ["highlightedValue", "onHighlightChange"],
-  ["triggerValue", "onTriggerValueChange"],
-] as const;
-
 /** The `update:…` events a component's own props allow, which Vue
  * wants declared. */
 export const updatesOf = (names: readonly string[]): string[] =>
-  BOUND.filter(([prop]) => names.includes(prop)).map(([prop]) => `update:${prop}`);
+  BOUND.filter(({ prop }) => names.includes(prop)).map(({ prop }) => `update:${prop}`);
 
 /** Props with each bound callback emitting its `update:…` first, so
  * `v-model:open` follows the machine while the author's own callback
@@ -42,11 +26,11 @@ export function withUpdates(
   emit: (event: string, value: unknown) => void,
 ): Props {
   const merged = { ...props };
-  for (const [prop, callback] of BOUND) {
+  for (const { prop, callback, key } of BOUND) {
     if (!names.includes(prop)) continue;
     const authored = merged[callback] as ((detail: Props) => void) | undefined;
     merged[callback] = (detail: Props) => {
-      emit(`update:${prop}`, detail[prop]);
+      emit(`update:${prop}`, detail[key]);
       authored?.(detail);
     };
   }
@@ -151,6 +135,21 @@ export function partsOf<A, V extends { api: ComputedRef<A> }>(
     );
 }
 
+/** The `Trigger` of a component whose root can open from one of several
+ * — a menu, a dialog, a popover and a tooltip — a button whose `value`
+ * tells the root which trigger it opened from. */
+export function triggerPart<A extends TriggerApi, V extends { api: ComputedRef<A> }>(
+  prefix: string,
+  context: { use: () => V },
+) {
+  return partsOf<A, V>(prefix, context)(
+    "Trigger",
+    (api, own) => api.getTriggerProps(own),
+    "button",
+    ["value"],
+  );
+}
+
 /** The element a root renders, where its component has a root part.
  * A menu, a dialog, a popover and a tooltip have none in Zag, so
  * their root is the provider alone: it renders nothing, and a
@@ -164,7 +163,7 @@ export interface RootPart<V> {
  * generated where none is given, provided to the parts under it.
  * Vue's own overloads do not see through the generic props, so the
  * component is typed here rather than inferred. */
-export function defineRoot<P extends { id: string }, V>(
+export function defineRoot<P extends { id: string }, V extends object>(
   name: string,
   names: readonly string[],
   context: { provide: (value: V) => void },
@@ -184,7 +183,7 @@ export function defineRoot<P extends { id: string }, V>(
       // Vue leaves every prop the component did not declare in
       // `attrs`, which is exactly what a root with no element of its
       // own has nowhere to put.
-      if (!root) warnStray(name, Object.keys(attrs));
+      if (!root) warnStray(name, Object.keys(attrs), value);
       // A declared prop is the machine's; everything else Vue leaves
       // in `attrs`, which is exactly the element's own.
       return () =>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { distributeInteger, resolveFlexMainAxis } from "../src/flex.ts";
-import { layoutRoot } from "../src/layout.ts";
+import { clampSize, layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { makeNode } from "./helpers.ts";
 
@@ -115,6 +115,7 @@ describe("resolveFlexMainAxis", () => {
     shrink,
     min,
     max,
+    hypothetical: Math.max(0, clampSize(base, min ?? 0, max)),
   });
 
   it("returns intrinsics when total exactly fits", () => {
@@ -574,29 +575,37 @@ describe("flex-column parity", () => {
   });
 });
 
-describe("auto margin priority (CSS: auto absorbs leftover before flex-grow)", () => {
-  it("flex-row: `grow` yields to `mx-auto` when both are present", () => {
+describe("auto margins take what flexing leaves (CSS §8.1)", () => {
+  const autoX = { top: 0, right: null, bottom: 0, left: null };
+
+  it("flex-row: `grow` takes the free space before `mx-auto` does", () => {
     const grower = makeNode({ text: "g", style: { flexGrow: 1 } });
-    const autoItem = makeNode({
-      text: "a",
-      style: { margin: { top: 0, right: null, bottom: 0, left: null } },
-    });
+    const autoItem = makeNode({ text: "a", style: { margin: autoX } });
     const container = makeNode({
       style: { display: "flex", flexDirection: "row" },
       children: [grower, autoItem],
     });
-    const root = makeNode({ children: [container] });
-    layoutRoot(root, 20);
-    // Container 20 wide. Intrinsics: g=1, a=1. Total 2, leftover 18.
-    // Auto margins present → grow disabled. widths stay [1, 1]. Auto margins
-    // absorb 18 across 2 slots → shares [9, 9]. grower at x=0, autoItem at
-    // x = 0 + 1 (grower) + 9 (its own leading auto) = 10.
-    expect(grower.localRect.width).toBe(1);
-    expect(autoItem.localRect.width).toBe(1);
-    expect(autoItem.localRect.x).toBe(10);
+    layoutRoot(makeNode({ children: [container] }), 20);
+    // 18 cells free, all the grower's; the auto margins get none — as all
+    // three engines lay it out.
+    expect(grower.localRect.width).toBe(19);
+    expect(autoItem.localRect.x).toBe(19);
   });
 
-  it("flex-column: `grow` yields to `my-auto` when both are present", () => {
+  it("flex-row: the auto margins share what a grow capped by its max leaves", () => {
+    const grower = makeNode({ text: "g", style: { flexGrow: 1, maxWidth: 5 } });
+    const autoItem = makeNode({ text: "a", style: { margin: autoX } });
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "row" },
+      children: [grower, autoItem],
+    });
+    layoutRoot(makeNode({ children: [container] }), 20);
+    // The grower stops at 5; the 14 left split across the two margins.
+    expect(grower.localRect.width).toBe(5);
+    expect(autoItem.localRect.x).toBe(12);
+  });
+
+  it("flex-column: `grow` takes the free space before `my-auto` does", () => {
     const grower = makeNode({ text: "g", style: { flexGrow: 1 } });
     const autoItem = makeNode({
       text: "a",
@@ -606,15 +615,250 @@ describe("auto margin priority (CSS: auto absorbs leftover before flex-grow)", (
       style: { display: "flex", flexDirection: "column", minHeight: 10 },
       children: [grower, autoItem],
     });
-    const root = makeNode({ children: [container] });
-    layoutRoot(root, 20);
-    // Container min-h-10. Intrinsics: g=1, a=1. Total 2, leftover 8.
-    // Auto margins present → grow disabled. Heights stay [1, 1]. Auto
-    // margins absorb 8 across 2 slots → shares [4, 4]. autoItem y = 0 + 1
-    // (grower) + 4 (leading auto) = 5.
-    expect(grower.localRect.height).toBe(1);
-    expect(autoItem.localRect.height).toBe(1);
-    expect(autoItem.localRect.y).toBe(5);
+    layoutRoot(makeNode({ children: [container] }), 20);
+    expect(grower.localRect.height).toBe(9);
+    expect(autoItem.localRect.y).toBe(9);
+  });
+});
+
+describe("the automatic minimum and content bases (CSS §4.5, §7.2.3)", () => {
+  const cells = (value: number) => ({ kind: "cells", value }) as const;
+
+  it("flex-row: an item's width and max-width cap its automatic minimum", () => {
+    const narrow = makeNode({ text: "abcdef", style: { width: cells(3), flexShrink: 1 } });
+    const capped = makeNode({ text: "abcdef", style: { maxWidth: 3, flexShrink: 1 } });
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "row" },
+      children: [narrow, capped],
+    });
+    layoutRoot(makeNode({ children: [container] }), 20);
+    // The word overflows both, as all three engines lay it out.
+    expect(narrow.localRect.width).toBe(3);
+    expect(capped.localRect.width).toBe(3);
+  });
+
+  it("flex-column: items taller than their content shrink past their height", () => {
+    const first = makeNode({ text: "ab", style: { height: cells(15), flexShrink: 1 } });
+    const second = makeNode({ text: "cd", style: { height: cells(15), flexShrink: 1 } });
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "column", height: cells(20) },
+      children: [first, second],
+    });
+    layoutRoot(makeNode({ children: [container] }), 20);
+    expect(first.localRect.height).toBe(10);
+    expect(second.localRect.height).toBe(10);
+  });
+
+  it("flex-column: an intrinsic basis is the content height, whatever the item's height", () => {
+    const item = makeNode({
+      text: "ab",
+      style: { height: cells(10), flexBasis: { kind: "max-content" } },
+    });
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "column", height: cells(20) },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [container] }), 20);
+    expect(item.localRect.height).toBe(1);
+  });
+
+  it.each([
+    ["column", { display: "flex", flexDirection: "column" }],
+    ["row", { display: "flex", flexDirection: "row" }],
+    ["grid", { display: "grid" }],
+  ] as const)(
+    "flex-column: %s container items taller than their content shrink past their height",
+    (_, layout) => {
+      const item = (text: string) =>
+        makeNode({
+          style: { ...layout, height: cells(15), flexShrink: 1 },
+          children: [makeNode({ text })],
+        });
+      const [first, second] = [item("a"), item("b")];
+      const container = makeNode({
+        style: { display: "flex", flexDirection: "column", height: cells(20) },
+        children: [first, second],
+      });
+      layoutRoot(makeNode({ children: [container] }), 20);
+      // As Chromium and Firefox lay them out (WebKit keeps the grid items
+      // at 15).
+      expect(first.localRect.height).toBe(10);
+      expect(second.localRect.height).toBe(10);
+    },
+  );
+
+  it.each([
+    ["column", { display: "flex", flexDirection: "column" }],
+    ["row", { display: "flex", flexDirection: "row" }],
+    ["wrapping row", { display: "flex", flexDirection: "row", flexWrap: "wrap" }],
+    ["grid", { display: "grid" }],
+  ] as const)(
+    "flex-column: a %s item grows from its content, not the min-height it fills",
+    (_, layout) => {
+      // Both bases are one row: the 18 rows left split evenly, and the
+      // min-h is met on the way.
+      const floored = makeNode({
+        style: { ...layout, minHeight: 5, flexGrow: 1 },
+        children: [makeNode({ text: "a" })],
+      });
+      const plain = makeNode({ text: "b", style: { flexGrow: 1 } });
+      const column = makeNode({
+        style: { display: "flex", flexDirection: "column", height: cells(20) },
+        children: [floored, plain],
+      });
+      layoutRoot(makeNode({ children: [column] }), 20);
+      expect(floored.localRect.height).toBe(10);
+      expect(plain.localRect.height).toBe(10);
+    },
+  );
+
+  it("flex-column: an aligned text leaf grows from its text, not the min-height it fills", () => {
+    const floored = makeNode({
+      text: "a",
+      style: { display: "flex", alignItems: "center", minHeight: 5, flexGrow: 1 },
+    });
+    const plain = makeNode({ text: "b", style: { flexGrow: 1 } });
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column", height: cells(20) },
+      children: [floored, plain],
+    });
+    layoutRoot(makeNode({ children: [column] }), 20);
+    // As Chromium and Firefox lay it out (WebKit 12/8).
+    expect(floored.localRect.height).toBe(10);
+    expect(plain.localRect.height).toBe(10);
+  });
+
+  it("flex-column: aligned text leaves taller than their text shrink past their height", () => {
+    const leaf = (text: string) =>
+      makeNode({
+        text,
+        style: { display: "flex", alignItems: "center", height: cells(15), flexShrink: 1 },
+      });
+    const [first, second] = [leaf("a"), leaf("b")];
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column", height: cells(20) },
+      children: [first, second],
+    });
+    layoutRoot(makeNode({ children: [column] }), 20);
+    expect(first.localRect.height).toBe(10);
+    expect(second.localRect).toMatchObject({ y: 10, height: 10 });
+  });
+
+  it("flex-column: a percent basis against an auto height is the content height", () => {
+    const item = makeNode({
+      text: "a",
+      style: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: { kind: "percent", value: 0 },
+        height: cells(10),
+      },
+    });
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column" },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [column] }), 20);
+    // CSS §7.2.3, as all three engines lay it out.
+    expect(item.localRect.height).toBe(1);
+    expect(column.localRect.height).toBe(1);
+  });
+
+  it("flex-column: flex-1 items grow from their content into a min-height floor", () => {
+    const flexOne = {
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: { kind: "percent", value: 0 },
+    } as const;
+    const short = makeNode({ text: "a", style: flexOne });
+    const tall = makeNode({ text: "a\nb\nc", style: flexOne });
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column", minHeight: 10 },
+      children: [short, tall],
+    });
+    layoutRoot(makeNode({ children: [column] }), 20);
+    // A floor is no definite height: the bases are the content, 1 and 3,
+    // and the 6 rows left split evenly (all three engines).
+    expect(short.localRect.height).toBe(4);
+    expect(tall.localRect).toMatchObject({ y: 4, height: 6 });
+  });
+});
+
+describe("fixed cross-axis margins (flex)", () => {
+  const margin = (top: number, right: number, bottom: number, left: number) => ({
+    top,
+    right,
+    bottom,
+    left,
+  });
+
+  it("flex-row: an end-aligned item's bottom margin keeps it off the line's end", () => {
+    const item = makeNode({ text: "a", style: { margin: margin(0, 0, 1, 0) } });
+    const row = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "end",
+        height: { kind: "cells", value: 5 },
+      },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [row] }), 20);
+    // All three engines agree.
+    expect(item.localRect.y).toBe(3);
+  });
+
+  it("flex-row: a centered item's margin box centers", () => {
+    const item = makeNode({ text: "a", style: { margin: margin(2, 0, 0, 0) } });
+    const row = makeNode({
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        height: { kind: "cells", value: 5 },
+      },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [row] }), 20);
+    expect(item.localRect.y).toBe(3);
+  });
+
+  it("flex-row: an auto-height line holds its items' cross margins", () => {
+    const spaced = makeNode({ text: "a", style: { margin: margin(1, 0, 1, 0) } });
+    const stretched = makeNode({ text: "b" });
+    const row = makeNode({
+      style: { display: "flex", flexDirection: "row" },
+      children: [spaced, stretched],
+    });
+    const next = makeNode({ text: "next" });
+    layoutRoot(makeNode({ children: [row, next] }), 20);
+    expect(row.localRect.height).toBe(3);
+    expect(spaced.localRect.y).toBe(1);
+    expect(stretched.localRect.height).toBe(3);
+    expect(next.localRect.y).toBe(3);
+  });
+
+  it("flex-row: a wrapped line holds its items' cross margins", () => {
+    const spaced = makeNode({ text: "aa", style: { margin: margin(1, 0, 1, 0) } });
+    const after = makeNode({ text: "bb" });
+    const row = makeNode({
+      style: { display: "flex", flexDirection: "row", flexWrap: "wrap" },
+      children: [spaced, after],
+    });
+    layoutRoot(makeNode({ children: [row] }), 3);
+    expect(spaced.localRect.y).toBe(1);
+    expect(after.localRect.y).toBe(3);
+    expect(row.localRect.height).toBe(4);
+  });
+
+  it("flex-column: an end-aligned item's right margin keeps it off the edge", () => {
+    const item = makeNode({ text: "ab", style: { margin: margin(0, 1, 0, 0) } });
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column", alignItems: "end" },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [column] }), 20);
+    expect(item.localRect.x).toBe(17);
   });
 });
 
@@ -792,6 +1036,20 @@ describe("indefinite flex column placement uses clamped sizes", () => {
     expect(after.localRect.y).toBe(8); // 7 + gap 1
     expect(column.localRect.height).toBe(9);
   });
+
+  it("auto margins share no space past the items' clamped sizes", () => {
+    const capped = makeNode({
+      text: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+      style: { maxHeight: 5, margin: { top: null, right: 0, bottom: null, left: 0 } },
+    });
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column" },
+      children: [capped],
+    });
+    layoutRoot(makeNode({ children: [column] }), 20);
+    expect(capped.localRect).toMatchObject({ y: 0, height: 5 });
+    expect(column.localRect.height).toBe(5);
+  });
 });
 
 describe("flex item min/max and sizing through layoutRoot", () => {
@@ -829,6 +1087,23 @@ describe("flex item min/max and sizing through layoutRoot", () => {
     // their intrinsic height (no shrink) and the container grows to fit.
     for (const item of items) expect(item.localRect.height).toBe(3);
     expect(container.localRect.height).toBe(11);
+  });
+
+  it("flex-column min-height floor never shrinks items its own minimums outgrow", () => {
+    const floored = makeNode({ text: "a", style: { minHeight: 5, flexShrink: 1 } });
+    const tall = makeNode({
+      text: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+      style: { minHeight: 0, flexShrink: 1 },
+    });
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "column", minHeight: 3 },
+      children: [floored, tall],
+    });
+    layoutRoot(makeNode({ children: [container] }), 20);
+    // All three engines agree.
+    expect(floored.localRect.height).toBe(5);
+    expect(tall.localRect).toMatchObject({ y: 5, height: 10 });
+    expect(container.localRect.height).toBe(15);
   });
 
   it("flex-column min-height larger than content hands the extra to grow", () => {

@@ -235,9 +235,10 @@ const writeUrl = () => history.replaceState(null, "", `${appPath}${stateQuery()}
 // --- the preview's ui bundle registers them. They are destroyed
 // --- before their markup goes, so Zag's teardown (focus, aria-hidden,
 // --- the scroll lock) runs on attached nodes.
-const COMPONENTS = "mono-menu, mono-listbox, mono-select, mono-dialog, mono-popover, mono-tooltip";
 const unmountComponents = () => {
-  for (const element of previewRoot?.querySelectorAll(COMPONENTS) ?? []) element.destroy?.();
+  for (const element of previewRoot?.querySelectorAll("*") ?? []) {
+    if (element.localName.startsWith("mono-")) element.destroy?.();
+  }
 };
 
 const render = () => {
@@ -280,7 +281,7 @@ const onInput = () => {
 const VOID_TAGS = new Set(
   "area base br col embed hr img input link meta param source track wbr".split(" "),
 );
-const PRESERVED_TAGS = new Set(["pre", "textarea", "script", "style"]);
+const PRESERVED_TAGS = new Set(["pre", "textarea", "script", "style", "template"]);
 // HTML phrasing elements — kept inline with their surrounding text so a
 // flowing paragraph doesn't get broken up across lines just because it
 // contains a <span> or <code>.
@@ -328,7 +329,10 @@ const serializeInline = (node) => {
 };
 
 const tidy = (html) => {
-  const body = new DOMParser().parseFromString(html, "text/html").body;
+  // Parsed as the preview parses it, a fragment, where a leading <style>
+  // or comment stays in place.
+  const template = document.createElement("template");
+  template.innerHTML = html;
   const lines = [];
   const write = (node, depth) => {
     const pad = "  ".repeat(depth);
@@ -372,7 +376,7 @@ const tidy = (html) => {
     for (const child of kids) write(child, depth + 1);
     lines.push(pad + `</${tag}>`);
   };
-  for (const child of body.childNodes) write(child, 0);
+  for (const child of template.content.childNodes) write(child, 0);
   return lines.join("\n") + "\n";
 };
 
@@ -527,12 +531,19 @@ for (const { toggle } of MODES) {
 
 const runTidy = () => {
   const caret = source.selectionStart;
-  source.value = tidy(source.value);
-  source.setSelectionRange(
-    Math.min(caret, source.value.length),
-    Math.min(caret, source.value.length),
-  );
-  onInput();
+  const tidied = tidy(source.value);
+  if (tidied === source.value) return;
+  // One edit through insertText, so undo takes the tidy back; the focus
+  // it needs goes back where it was, so a tap on Tidy raises no keyboard.
+  const focused = document.activeElement;
+  source.select();
+  insertText(tidied);
+  const at = Math.min(caret, source.value.length);
+  source.setSelectionRange(at, at);
+  // WebKit leaves a pressed button unfocused: the focus was the body's.
+  if (focused === source) return;
+  if (focused instanceof HTMLElement && focused !== document.body) focused.focus();
+  else source.blur();
 };
 tidyButton.addEventListener("click", runTidy);
 
@@ -602,21 +613,43 @@ const shortLink = async (target) => {
 // The last share, so repeated clicks on an unchanged document reuse the
 // link instead of asking again (the store is content-addressed anyway).
 let lastShare = null;
-copy.addEventListener("click", async () => {
+/** The link to share: the short one where the backend gives it, else
+ * the long URL; either way the address bar shows it. */
+const linkToShare = async () => {
   lastHash = `#${await encodeHash(source.value)}`;
   writeUrl();
   const target = `/${stateQuery()}${lastHash}`;
-  let link = location.href;
   try {
     if (lastShare?.target !== target) lastShare = { target, link: await shortLink(target) };
-    link = lastShare.link;
     // The short link stands in for the address until the next change.
-    history.replaceState(null, "", link);
+    history.replaceState(null, "", lastShare.link);
+    return lastShare.link;
   } catch {
     // No backend: the long URL it is.
+    return location.href;
   }
+};
+/** The link onto the clipboard. Safari writes only within the click, so
+ * the item goes in at once, its text a promise the link resolves; an
+ * engine that refuses a promised item takes the text itself. */
+const copyLink = async (link) => {
+  if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
+    try {
+      const text = link.then((value) => new Blob([value], { type: "text/plain" }));
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": text })]);
+      return;
+    } catch {
+      // Written below as text.
+    }
+  }
+  await navigator.clipboard.writeText(await link);
+};
+copy.addEventListener("click", async () => {
+  // Cleared first: a pending hash write puts the long URL back over the
+  // short one.
+  clearTimeout(hashTimer);
   try {
-    await navigator.clipboard.writeText(link);
+    await copyLink(linkToShare());
     copy.textContent = "copied!";
   } catch {
     // Clipboard unavailable (file://, denied permission) — the hash is

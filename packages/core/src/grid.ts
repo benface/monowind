@@ -5,6 +5,7 @@ import type { RuleSegment } from "./borders.ts";
 import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack } from "./types.ts";
 import {
+  boxChrome,
   clampSize,
   isOutOfFlow,
   layoutNode,
@@ -17,9 +18,15 @@ import {
   widthContribution,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import { alignCrossOffset, distributeInteger, effectiveAlign, mainAxisOffsets } from "./flex.ts";
+import {
+  alignedOffset,
+  automaticMinimum,
+  distributeInteger,
+  effectiveAlign,
+  mainAxisOffsets,
+} from "./flex.ts";
 import type {
-  AlignItems,
+  CellStyle,
   GridAutoFlow,
   GridLine,
   GridTemplate,
@@ -45,6 +52,7 @@ export function layoutGrid(
   node: LayoutNode,
   innerWidth: number,
   innerHeight: number,
+  definiteInnerHeight: number | undefined,
   border: Insets,
   padding: Insets,
   cache: IntrinsicCache,
@@ -135,17 +143,18 @@ export function layoutGrid(
     if (sub.cols) {
       layoutNode(child, areaW, undefined, 0, 0, "fill", cache, { width: availW });
     } else if (justify === "stretch" && !hasAutoX && !hasExplicitWidth) {
-      // The automatic minimum (`min-width: auto` = min-content while
-      // overflow is visible) floors the stretched width, same as flex —
-      // the item can overflow a `minmax(0, 1fr)` track narrower than its
-      // content, matching CSS.
+      const maxW = resolveWidthLimit(child.style.maxWidth, areaW, child, cache);
       const minW =
         child.style.minWidth === "auto"
-          ? child.style.overflow.x === "visible"
-            ? minContentOuterWidth(child, cache)
-            : 0
-          : (resolveLimit(child.style.minWidth, areaW) ?? 0);
-      const maxW = resolveWidthLimit(child.style.maxWidth, areaW, child, cache);
+          ? stretchMinimum(
+              colSizing,
+              p.col,
+              child.style.overflow.x,
+              () => minContentOuterWidth(child, cache),
+              maxW,
+              fixedX(margin),
+            )
+          : (resolveWidthLimit(child.style.minWidth, areaW, child, cache) ?? 0);
       const stretched = clampSize(availW, minW, maxW);
       layoutNode(child, areaW, undefined, 0, 0, "fill", cache, { width: stretched });
     } else {
@@ -157,21 +166,29 @@ export function layoutGrid(
   // Row track sizing from the laid-out heights (at final column widths,
   // an item's max-content block contribution IS its laid-out height; its
   // minimum is the automatic minimum) — or the parent's tracks when this
-  // axis is subgridded.
-  const rowSizing: SizingResult = inheritedRows
+  // axis is subgridded. A min-height floor sizes the rows only when their
+  // max-content extent comes out smaller, and a percent row resolves
+  // against the height that results (specs/grid.md step 7).
+  const rowItems = inheritedRows ? [] : rowSizingItems(structure, subs, margins);
+  const sizeRows = (space: number | "max-content"): SizingResult =>
+    sizeTracks(rowTracks, rowCollapsed, rowItems, space, gapY, style.alignContent === "stretch");
+  const naturalRows = inheritedRows
     ? sizingResultFromInherited(inheritedRows)
-    : sizeTracks(
-        rowTracks,
-        rowCollapsed,
-        rowSizingItems(structure, subs, margins),
-        rowAvailable ?? "max-content",
-        gapY,
-        style.alignContent === "stretch",
-      );
+    : sizeRows("max-content");
+  const naturalExtent = totalExtent(naturalRows);
+  const rowSpace = inheritedRows
+    ? undefined
+    : rowAvailable !== undefined &&
+        (definiteInnerHeight !== undefined || rowAvailable > naturalExtent)
+      ? rowAvailable
+      : rowTracks.some(resolvesAgainstHeight)
+        ? naturalExtent
+        : undefined;
+  const rowSizing = rowSpace === undefined ? naturalRows : sizeRows(rowSpace);
   const contentRows = totalExtent(rowSizing);
   const rowPos = inheritedRows
     ? inheritedRows.positions
-    : trackPositions(rowSizing, rowAvailable ?? contentRows, style.alignContent);
+    : trackPositions(rowSizing, rowSpace ?? contentRows, style.alignContent);
 
   // Second item pass: block-axis stretch and final placement (a row
   // subgrid gets its inherited rows now and is laid out for real).
@@ -202,16 +219,18 @@ export function layoutGrid(
         height: availH,
       });
     } else if (align === "stretch" && !hasAutoY && !hasExplicitHeight) {
-      // Same automatic minimum in the block axis: the laid-out content
-      // height floors the stretch (a definite row smaller than the content
-      // overflows instead of crushing it), unless overflow opts out.
+      const maxH = resolveLimit(child.style.maxHeight, areaH);
       const minH =
         child.style.minHeight === "auto"
-          ? child.style.overflow.y === "visible"
-            ? child.localRect.height
-            : 0
+          ? stretchMinimum(
+              rowSizing,
+              p.row,
+              child.style.overflow.y,
+              () => child.localRect.height,
+              maxH,
+              fixedY(margin),
+            )
           : (resolveLimit(child.style.minHeight, areaH) ?? 0);
-      const maxH = resolveLimit(child.style.maxHeight, areaH);
       const stretched = clampSize(availH, minH, maxH);
       if (stretched !== child.localRect.height) {
         layoutNode(child, areaW, areaH, 0, 0, "fill", cache, {
@@ -230,17 +249,19 @@ export function layoutGrid(
       x:
         originX +
         colPos[p.col.start]! +
-        areaAxisOffset(justifies[i]!, margin.left, margin.right, areaW, child.localRect.width),
+        alignedOffset(justifies[i]!, margin.left, margin.right, areaW, child.localRect.width),
       y:
         originY +
         rowPos[p.row.start]! +
-        areaAxisOffset(align, margin.top, margin.bottom, areaH, child.localRect.height),
+        alignedOffset(align, margin.top, margin.bottom, areaH, child.localRect.height),
     };
   }
 
-  const contentHeight = Number.isFinite(innerHeight)
-    ? Math.max(innerHeight, contentRows)
-    : contentRows;
+  const contentHeight = Math.max(
+    contentRows,
+    rowSpace ?? 0,
+    Number.isFinite(innerHeight) ? innerHeight : 0,
+  );
 
   // Gap rules (specs/gap-decorations.md): gutter bands between adjacent
   // tracks (collapsed auto-fit gutters have no width and drop out),
@@ -390,7 +411,9 @@ export function layoutGrid(
     }
   }
 
-  return contentHeight;
+  // A flex parent's read of the box's content height: the height or
+  // min-height floor the rows stretched into is the caller's to apply.
+  return totalExtent(naturalRows);
 }
 
 /** Which axes of an in-flow grid child are `subgrid`. */
@@ -434,14 +457,61 @@ function inheritTracks(
 /** Adapt inherited tracks to the `SizingResult` shape the rest of
  * `layoutGrid` reads. The tracks are already sized (limits = sizes) —
  * downstream code never mutates a `SizingResult`, so the arrays can be
- * shared. */
+ * shared. Their sizing functions read as the placeholder `auto` tracks
+ * (specs/grid.md Subgrid). */
 function sizingResultFromInherited(t: InheritedTracks): SizingResult {
-  return { sizes: t.sizes, gapBefore: t.gapBefore, limits: t.sizes };
+  const functions = t.sizes.map(() => trackFunctions(autoTrack(), undefined));
+  return { sizes: t.sizes, gapBefore: t.gapBefore, limits: t.sizes, functions };
+}
+
+/** An item's column contributions, `margin` included (a subgrid's edge
+ * chrome counts as margin): min-/max-content, and its minimum
+ * contribution (specs/grid.md step 2), a percent width counting as
+ * `auto`. */
+function columnContributions(
+  child: LayoutNode,
+  margin: number,
+  cache: IntrinsicCache,
+): Omit<SizingItem, "start" | "span"> {
+  const { width, minWidth, overflow } = child.style;
+  const min = widthContribution(child, "min", cache) + margin;
+  const max = widthContribution(child, "max", cache) + margin;
+  if (width !== undefined && width.kind !== "auto" && width.kind !== "percent") {
+    return { min, max, minimum: min, contentFloor: undefined };
+  }
+  const chrome = boxChrome(child.style, "x") + margin;
+  if (minWidth !== "auto") {
+    const floor = (resolveWidthLimit(minWidth, 0, child, cache) ?? 0) + margin;
+    return { min, max, minimum: Math.max(floor, chrome), contentFloor: undefined };
+  }
+  return { min, max, minimum: margin, contentFloor: overflow.x === "visible" ? chrome : undefined };
+}
+
+/** An item's row contributions from its laid-out height (min = max at
+ * the final width), `margin` included; the minimum contribution as for
+ * columns, with only a cell height counting as specified. */
+function rowContributions(child: LayoutNode, margin: number): Omit<SizingItem, "start" | "span"> {
+  const { height, minHeight, overflow } = child.style;
+  const outer = child.localRect.height + margin;
+  if (height?.kind === "cells") {
+    return { min: outer, max: outer, minimum: outer, contentFloor: undefined };
+  }
+  const chrome = boxChrome(child.style, "y") + margin;
+  if (minHeight !== "auto") {
+    const floor = (resolveLimit(minHeight, undefined) ?? 0) + margin;
+    return { min: outer, max: outer, minimum: Math.max(floor, chrome), contentFloor: undefined };
+  }
+  return {
+    min: outer,
+    max: outer,
+    minimum: margin,
+    contentFloor: overflow.y === "visible" ? chrome : undefined,
+  };
 }
 
 /** Column sizing contributions for a resolved grid: each item's
- * min-/max-content outer width plus fixed margins; a column-subgrid child
- * is replaced by its own items, mapped onto the parent's tracks. */
+ * contributions plus fixed margins; a column-subgrid child is replaced
+ * by its own items, mapped onto the parent's tracks. */
 function columnSizingItems(
   structure: GridStructure,
   subs: { cols: boolean; rows: boolean }[],
@@ -462,16 +532,15 @@ function columnSizingItems(
     items.push({
       start: p.col.start,
       span: p.col.span,
-      min: widthContribution(child, "min", cache) + fixedX(margin),
-      max: widthContribution(child, "max", cache) + fixedX(margin),
+      ...columnContributions(child, fixedX(margin), cache),
     });
   });
   return items;
 }
 
-/** Row sizing contributions: each laid-out item's height plus fixed
- * margins (min = max at the final width); a row-subgrid child is
- * replaced by its own items, mapped onto the parent's tracks. */
+/** Row sizing contributions: each laid-out item's contributions plus
+ * fixed margins; a row-subgrid child is replaced by its own items,
+ * mapped onto the parent's tracks. */
 function rowSizingItems(
   structure: GridStructure,
   subs: { cols: boolean; rows: boolean }[],
@@ -488,15 +557,11 @@ function rowSizingItems(
       }
       return;
     }
-    const height = child.localRect.height + fixedY(margin);
-    // The minimum contribution is the automatic minimum (CSS §11.5.1 /
-    // css-sizing): the content height while overflow is visible, 0 for
-    // a scroll container — so `fr` rows can shrink one against a cap.
-    const min =
-      child.style.minHeight === "auto" && child.style.overflow.y !== "visible"
-        ? fixedY(margin)
-        : height;
-    items.push({ start: p.row.start, span: p.row.span, min, max: height });
+    items.push({
+      start: p.row.start,
+      span: p.row.span,
+      ...rowContributions(child, fixedY(margin)),
+    });
   });
   return items;
 }
@@ -570,21 +635,17 @@ function subgridContributions(
       for (const c of nested) items.push({ ...c, start: c.start + a.start });
       return;
     }
-    if (axis === "cols") {
-      items.push({
-        start: a.start,
-        span: a.span,
-        min: widthContribution(item, "min", cache!) + fixedX(margin) + extra,
-        max: widthContribution(item, "max", cache!) + fixedX(margin) + extra,
-      });
-    } else {
-      const height = item.localRect.height + fixedY(margin) + extra;
-      items.push({ start: a.start, span: a.span, min: height, max: height });
-    }
+    items.push({
+      start: a.start,
+      span: a.span,
+      ...(axis === "cols"
+        ? columnContributions(item, fixedX(margin) + extra, cache!)
+        : rowContributions(item, fixedY(margin) + extra)),
+    });
   });
   if (items.length === 0) {
     const total = chrome.start + chrome.end;
-    items.push({ start: 0, span, min: total, max: total });
+    items.push({ start: 0, span, min: total, max: total, minimum: total, contentFloor: undefined });
   }
   return items;
 }
@@ -649,7 +710,7 @@ export function gridIntrinsicInnerWidths(
   const cached = cache.gridIntrinsic.get(node);
   if (cached !== undefined) return cached;
   const style = node.style;
-  const gapX = Math.max(typeof style.gapX === "number" ? style.gapX : 0, style.ruleX?.width ?? 0);
+  const gapX = resolveGap(style, "x", undefined);
   const structure = resolveGridStructure(
     node,
     undefined,
@@ -892,6 +953,14 @@ function resolveTemplate(
 /** A fixed track breadth in cells, or undefined for intrinsic/fr (percent
  * is fixed only when the axis is definite, per CSS). A `min()`/`max()`
  * resolves when every argument does, else behaves as intrinsic. */
+/** Whether a row track has a percent, which only a definite height
+ * resolves. */
+function resolvesAgainstHeight(track: TrackSize): boolean {
+  const percent = (breadth: TrackBreadth): boolean =>
+    breadth.kind === "percent" || (breadth.kind === "math" && breadth.args.some(percent));
+  return percent(track.min) || percent(track.max);
+}
+
 function fixedBreadth(breadth: TrackBreadth, available: number | undefined): number | undefined {
   if (breadth.kind === "cells") return breadth.value;
   if (breadth.kind === "percent" && available !== undefined) {
@@ -1246,6 +1315,14 @@ interface SizingItem {
   min: number;
   /** Max-content outer contribution (cells). */
   max: number;
+  /** The fixed minimum contribution (cells): the margins plus any
+   * specified size or min-size, at least the item's border and padding;
+   * the margins alone for a zero automatic minimum (specs/grid.md step 2). */
+  minimum: number;
+  /** Where the automatic minimum can be content-based (`min`, as the
+   * spanned tracks decide — css-grid §6.6), its floor: the item's border
+   * and padding plus margins. */
+  contentFloor: number | undefined;
 }
 
 interface SizingResult {
@@ -1254,16 +1331,84 @@ interface SizingResult {
   gapBefore: number[];
   /** Final growth limits (for the container's max-content size). */
   limits: number[];
+  functions: TrackFunctions[];
+}
+
+/** What css-grid §6.6 reads of a track's sizing functions. */
+interface TrackFunctions {
+  /** An `auto` minimum (an unresolvable percent or `min()`/`max()` behaves
+   * as one). */
+  autoMin: boolean;
+  flexible: boolean;
+  fixedMax: number | undefined;
+}
+
+function trackFunctions(size: TrackSize, available: number | undefined): TrackFunctions {
+  const { min, max } = size;
+  return {
+    autoMin:
+      fixedBreadth(min, available) === undefined &&
+      min.kind !== "min-content" &&
+      min.kind !== "max-content",
+    flexible: max.kind === "fr",
+    fixedMax: fixedBreadth(max, available),
+  };
+}
+
+/**
+ * The cap on an item's content-based minimum over the tracks it spans
+ * (css-grid §6.6): undefined when its automatic minimum is 0 — no track
+ * with an `auto` minimum, or a flexible track among several — else the
+ * area's fixed maximum, Infinity when a track has none.
+ */
+function contentMinimumCap(
+  functions: TrackFunctions[],
+  gapBefore: number[],
+  start: number,
+  span: number,
+): number | undefined {
+  let autoMin = false;
+  let flexible = false;
+  let cap = 0;
+  for (let i = start; i < start + span; i++) {
+    const track = functions[i];
+    if (track === undefined) continue;
+    autoMin ||= track.autoMin;
+    flexible ||= track.flexible;
+    cap += (track.fixedMax ?? Infinity) + (i > start ? gapBefore[i]! : 0);
+  }
+  return !autoMin || (span > 1 && flexible) ? undefined : cap;
+}
+
+/** A stretched item's automatic minimum on one axis: its content size
+ * where the spanned tracks allow one, capped by its max and by the
+ * area's fixed maximum less its margins (css-grid §6.6). */
+function stretchMinimum(
+  sizing: SizingResult,
+  placed: PlacedAxis,
+  overflow: CellStyle["overflow"]["x"],
+  content: () => number,
+  max: number | undefined,
+  margins: number,
+): number {
+  const cap = contentMinimumCap(sizing.functions, sizing.gapBefore, placed.start, placed.span);
+  if (cap === undefined) return 0;
+  return automaticMinimum(overflow, content, undefined, Math.min(max ?? Infinity, cap - margins));
 }
 
 interface TrackState {
   base: number;
+  /** The base as the items' minimums grew it apart from their content
+   * (specified sizes and min-sizes, border and padding). */
+  hardBase: number;
   /** Fixed or contribution-grown limit; null = infinite so far. */
   limit: number | null;
   /** Which contributions grow the base: intrinsic mins (auto /
-   * min-content / max-content / unresolvable percent) take min-content
-   * contributions (specs/grid.md step 2). */
+   * min-content / max-content / unresolvable percent) take the items'
+   * minimum contributions, and all but `auto` their min-content
+   * contributions too (specs/grid.md step 2). */
   baseIntrinsic: boolean;
+  autoMin: boolean;
   /** How the limit grows: fixed never; fr via §11.7; intrinsic-min from
    * min-content contributions (max = min-content); intrinsic-max from
    * max-content contributions (max = auto / max-content). */
@@ -1279,9 +1424,11 @@ interface TrackState {
  * auto-height container), `"min-content"` for the container's min-content
  * measure. Steps: initialize from the minmax pairs; grow intrinsic
  * bases/limits from item contributions in ascending span order
- * (equal-weight integer distribution — specs/grid.md deviation); clamp
- * bases to fixed limits (the limit wins, emulating the spec's
- * limited-contribution rule). Definite: maximize bases up to limits
+ * (equal-weight integer distribution — specs/grid.md deviation), bases
+ * from the items' minimum contributions (css-grid §6.6 decides where an
+ * automatic minimum is content-based); keep what content grew an
+ * `auto`-min base by within a fixed limit, raise every limit to its base
+ * (§11.4). Definite: maximize bases up to limits
  * (§11.6), distribute the leftover to fr tracks floored at their bases
  * (§11.7), stretch auto-limited tracks over any remainder when the axis's
  * content-distribution is `stretch` (§11.8). Indefinite: fr tracks size
@@ -1299,12 +1446,15 @@ export function sizeTracks(
   stretchAuto: boolean,
 ): SizingResult {
   const available = typeof space === "number" ? space : undefined;
+  const functions = trackSizes.map((size) => trackFunctions(size, available));
   const tracks: TrackState[] = trackSizes.map((size, i) => {
     if (collapsed[i]) {
       return {
         base: 0,
+        hardBase: 0,
         limit: 0,
         baseIntrinsic: false,
+        autoMin: false,
         limitKind: "fixed",
         frFactor: 0,
         collapsed: true,
@@ -1313,23 +1463,27 @@ export function sizeTracks(
     const fixedMin = fixedBreadth(size.min, available);
     const base = fixedMin ?? 0;
     const baseIntrinsic = fixedMin === undefined;
+    const { autoMin, fixedMax } = functions[i]!;
     const max = size.max;
     if (max.kind === "fr") {
       return {
         base,
+        hardBase: base,
         limit: null,
         baseIntrinsic,
+        autoMin,
         limitKind: "fr",
         frFactor: max.value,
         collapsed: false,
       };
     }
-    const fixedMax = fixedBreadth(max, available);
     if (fixedMax !== undefined) {
       return {
         base,
+        hardBase: base,
         limit: fixedMax,
         baseIntrinsic,
+        autoMin,
         limitKind: "fixed",
         frFactor: 0,
         collapsed: false,
@@ -1337,8 +1491,10 @@ export function sizeTracks(
     }
     return {
       base,
+      hardBase: base,
       limit: null,
       baseIntrinsic,
+      autoMin,
       limitKind: max.kind === "min-content" ? "intrinsic-min" : "intrinsic-max",
       frFactor: 0,
       collapsed: false,
@@ -1356,13 +1512,28 @@ export function sizeTracks(
   };
   const effectiveLimit = (t: TrackState): number =>
     t.collapsed ? 0 : t.limitKind === "fixed" ? t.limit! : Math.max(t.base, t.limit ?? t.base);
+  // Grow the receivers' bases (or hard bases), shared by `weights`, until
+  // the spanned tracks cover `contribution`.
+  const growBases = (
+    receivers: TrackState[],
+    weights: number[],
+    spanned: TrackState[],
+    gaps: number,
+    contribution: number,
+    field: "base" | "hardBase" = "base",
+  ): void => {
+    const needed = contribution - spanned.reduce((s, t) => s + t[field], 0) - gaps;
+    if (receivers.length === 0 || needed <= 0) return;
+    const shares = distributeInteger(weights, needed);
+    receivers.forEach((t, k) => {
+      t[field] += shares[k]!;
+    });
+  };
 
-  // Step 2: intrinsic contributions, ascending span order. An item
-  // spanning an fr track distributes only its MIN-content contribution,
-  // and only to the fr tracks' bases (weighted by flex factor, per CSS
-  // §11.5.1) — this is the automatic minimum that makes bare `1fr 1fr`
-  // columns unequal under long content; max contributions are §11.7's
-  // job. Everything else grows the intrinsic tracks it spans.
+  // Step 2: intrinsic contributions, ascending span order (specs/grid.md
+  // step 2): bases grow to the item's minimum contribution, then for
+  // min-/max-content minimums to its min-content contribution; an item
+  // spanning an fr track grows only the fr tracks' bases, by flex factor.
   const bySpan = [...items].sort((a, b) => a.span - b.span);
   for (const item of bySpan) {
     const spanned: TrackState[] = [];
@@ -1375,45 +1546,27 @@ export function sizeTracks(
     }
     if (spanned.length === 0) continue;
     const gaps = internalGaps(item.start, item.span);
-    if (crossesFr) {
-      // Only fr tracks with an INTRINSIC min (`1fr` = minmax(auto, 1fr))
-      // take the automatic minimum; `minmax(0, 1fr)` opts out and keeps
-      // dividing evenly.
-      const frReceivers = spanned.filter(
-        (t) => t.limitKind === "fr" && t.baseIntrinsic && !t.collapsed,
-      );
-      if (frReceivers.length === 0) continue;
-      const current = spanned.reduce((s, t) => s + t.base, 0) + gaps;
-      const needed = item.min - current;
-      if (needed > 0) {
-        const factorSum = frReceivers.reduce((s, t) => s + t.frFactor, 0);
-        const shares = distributeInteger(
-          frReceivers.map((t) => (factorSum > 0 ? t.frFactor : 1)),
-          needed,
-        );
-        frReceivers.forEach((t, k) => {
-          t.base += shares[k]!;
-        });
-      }
-      continue;
-    }
+    const cap =
+      item.contentFloor === undefined
+        ? undefined
+        : contentMinimumCap(functions, gapBefore, item.start, item.span);
+    // The minimum's specified part (sizes, border and padding), which
+    // step 3 keeps.
+    const floor = cap === undefined ? item.minimum : item.contentFloor!;
+    const minimum = cap === undefined ? floor : Math.max(floor, Math.min(item.min, cap));
+    const receivers = spanned.filter(
+      (t) => t.baseIntrinsic && !t.collapsed && (!crossesFr || t.limitKind === "fr"),
+    );
+    const contentReceivers = receivers.filter((t) => !t.autoMin);
+    const weights = (list: TrackState[]): number[] => {
+      const factorSum = list.reduce((s, t) => s + t.frFactor, 0);
+      return list.map((t) => (crossesFr && factorSum > 0 ? t.frFactor : 1));
+    };
+    growBases(receivers, weights(receivers), spanned, gaps, floor, "hardBase");
+    growBases(receivers, weights(receivers), spanned, gaps, minimum);
+    growBases(contentReceivers, weights(contentReceivers), spanned, gaps, item.min);
+    if (crossesFr) continue;
 
-    // Bases: grow the intrinsic-min tracks until the span covers the
-    // item's min-content contribution.
-    const baseReceivers = spanned.filter((t) => t.baseIntrinsic && !t.collapsed);
-    if (baseReceivers.length > 0) {
-      const current = spanned.reduce((s, t) => s + t.base, 0) + gaps;
-      const needed = item.min - current;
-      if (needed > 0) {
-        const shares = distributeInteger(
-          baseReceivers.map(() => 1),
-          needed,
-        );
-        baseReceivers.forEach((t, k) => {
-          t.base += shares[k]!;
-        });
-      }
-    }
     // Limits: grow the intrinsic-limit tracks toward the corresponding
     // contribution (min-content maxes take the min contribution).
     for (const [kind, contribution] of [
@@ -1436,13 +1589,14 @@ export function sizeTracks(
     }
   }
 
-  // Step 3: clamp. A fixed limit wins over a larger base (mirroring
-  // min/max-width, and emulating CSS's limited contributions); an
-  // intrinsic limit is floored at its base.
+  // Step 3: what content alone grew an `auto`-min base by stays within a
+  // fixed limit, then every limit rises to its base (specs/grid.md step 3).
   for (const t of tracks) {
-    if (t.collapsed) continue;
-    if (t.limitKind === "fixed") t.base = Math.min(t.base, t.limit!);
-    else if (t.limitKind !== "fr") t.limit = Math.max(t.base, t.limit ?? t.base);
+    if (t.collapsed || t.limitKind === "fr") continue;
+    if (t.limitKind === "fixed" && t.autoMin) {
+      t.base = Math.max(t.hardBase, Math.min(t.base, t.limit!));
+    }
+    t.limit = Math.max(t.base, t.limit ?? t.base);
   }
 
   if (available === undefined) {
@@ -1564,6 +1718,7 @@ export function sizeTracks(
     sizes: tracks.map((t) => t.base),
     gapBefore,
     limits: tracks.map((t) => effectiveLimit(t)),
+    functions,
   };
 }
 
@@ -1599,24 +1754,4 @@ function areaExtent(positions: number[], sizes: number[], start: number, span: n
   const last = start + span - 1;
   if (positions[start] === undefined || positions[last] === undefined) return 0;
   return positions[last]! + sizes[last]! - positions[start]!;
-}
-
-/** An item's offset inside its grid area along one axis: auto margins win
- * over alignment (both → centered, one → pushed to the other side), then
- * the fixed leading margin plus the alignment offset (`stretch` behaves
- * as `start` — the stretch already happened in sizing). */
-function areaAxisOffset(
-  align: AlignItems,
-  before: number | null,
-  after: number | null,
-  area: number,
-  size: number,
-): number {
-  const fixedBefore = before ?? 0;
-  const fixedAfter = after ?? 0;
-  const slack = area - size;
-  if (before === null && after === null) return Math.floor(slack / 2);
-  if (before === null) return slack - fixedAfter;
-  if (after === null) return fixedBefore;
-  return fixedBefore + alignCrossOffset(align, area, size + fixedBefore + fixedAfter);
 }

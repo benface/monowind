@@ -5,6 +5,8 @@ import {
   cellSize,
   expectOnItsCells,
   expectTouching,
+  hasTypedOM,
+  readsAutoMinimum,
   readyGrid,
   readyHost,
   rowsOf,
@@ -183,6 +185,41 @@ export const StickyHeadings: StoryObj = {
     await scrollTo(1000, () => expect(cells(footers[2]!, "--mw-sy")).toBe(0));
     atTop("Section three");
     expect(boxOf(footers[2]!).row).toBe(bottom - cells(scroller, "--mw-pb"));
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a fixed
+ * box in a scrolled container keeps its light element on the host's
+ * cells through a relayout that moves nothing, its style untouched: the
+ * shift it takes back is written once. */
+export const FixedShiftSteady: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p data-test="edited">Edited.</p>
+      <div data-test="scroller" class="h-4 w-24 overflow-y-auto border">
+        ${Array.from({ length: 8 }, (_, i) => html`<p>Row ${i + 1}</p>`)}
+        <div data-test="fixed" class="fixed top-0 right-0 border px-1">fixed</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells } = await readyGrid(canvasElement);
+    by("scroller").scrollTo({ top: 3 * cellSize(host).height, behavior: "instant" });
+    await waitFor(() => expect(cells(by("fixed"), "--mw-sy")).toBe(3));
+    const writes: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => writes.push(...records));
+    observer.observe(by("fixed"), { attributes: true, attributeFilter: ["style"] });
+    let layouts = 0;
+    const measuring = new MutationObserver((records) => (layouts += records.length));
+    measuring.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    by("edited").append(" Again.");
+    await waitFor(() => expect(layouts).toBeGreaterThanOrEqual(2));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    observer.disconnect();
+    measuring.disconnect();
+    expect(cells(by("fixed"), "--mw-sy")).toBe(3);
+    expect(writes).toHaveLength(0);
   },
 };
 
@@ -652,7 +689,8 @@ export const AnchorFallbackIsTheEngines: StoryObj = {
 /** Test-only (hidden from the sidebar): the anchor functions in cells
  * — `anchor-size()` sizing a box and `anchor()` insetting one, each from
  * a utility and from the inline style — where the browser's own px is
- * the pre-grid anchor's (specs/anchor-positioning.md). */
+ * the pre-grid anchor's, and a utility the cascade overrides left out
+ * where Typed OM can tell (specs/anchor-positioning.md). */
 export const AnchorFunctions: StoryObj = {
   tags: ["!dev", "!golden"],
   render: () => html`
@@ -689,11 +727,29 @@ export const AnchorFunctions: StoryObj = {
         >
           w
         </div>
+        <div
+          data-test="variant"
+          class="absolute top-1 right-0 [position-anchor:--sized] hover:top-[anchor(bottom)]"
+        >
+          v
+        </div>
+        <div
+          data-test="later"
+          class="absolute inset-y-[anchor(top)] top-1 right-2 [position-anchor:--sized]"
+        >
+          l
+        </div>
+        <div
+          data-test="floor"
+          class="absolute min-w-[anchor-size(width)] border [position-anchor:--sized] [position-area:bottom_span-left] md:min-w-0"
+        >
+          f
+        </div>
       </div>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    await readyHost(canvasElement);
+    const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const rect = (name: string) => by(name).getBoundingClientRect();
     const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(1);
@@ -705,6 +761,26 @@ export const AnchorFunctions: StoryObj = {
       near(rect("inset").left, rect("anchor").right);
       near(rect("inset-inline").bottom, rect("anchor").top);
       near(rect("inset-inline").right, rect("anchor").left);
+    });
+    // An anchor function the cascade overrides: an unhovered variant's,
+    // and one a later utility beats on its side — the other side keeping
+    // it. Without Typed OM to tell, the class's own stands.
+    const oneRow = host.getBoundingClientRect().top + cellSize(host).height;
+    await waitFor(() => {
+      if (hasTypedOM) {
+        near(rect("variant").top, oneRow);
+        near(rect("later").top, oneRow);
+      } else {
+        near(rect("variant").top, rect("anchor").bottom);
+        near(rect("later").top, rect("anchor").top);
+      }
+      near(rect("later").bottom, rect("anchor").top);
+    });
+    // A minimum an active variant zeroes: where an auto minimum reads as
+    // 0px too, or Typed OM is missing, the anchor's stands.
+    await waitFor(() => {
+      if (readsAutoMinimum) near(rect("floor").width, 3 * cellSize(host).width);
+      else near(rect("floor").width, rect("anchor").width);
     });
   },
 };

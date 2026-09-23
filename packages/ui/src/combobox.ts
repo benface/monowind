@@ -11,7 +11,7 @@ import {
   withProps,
   type MachineProps,
 } from "./anchor.ts";
-import { itemParts, markupCollection, type WithMarkupItems } from "./items.ts";
+import { itemParts, withMarkupItems, type WithMarkupItems } from "./items.ts";
 import { scrollToItem } from "./scroll.ts";
 import { liveProps, mountAnchored, part, start, type Mounted } from "./vanilla.ts";
 
@@ -21,8 +21,25 @@ export type Service = Combobox.Service;
 /** The props as the machine takes them, `props()`'s return. */
 export type GridProps = MachineProps<typeof Combobox.machine>;
 
-/** Zag's machine, for the framework's `useMachine`. */
-export { machine } from "@zag-js/combobox";
+const zagActions = Combobox.machine.implementations!.actions!;
+
+/** Zag's machine, for the framework's `useMachine` and the mount, with
+ * the list a keystroke opens leaving the reader's caret where it was
+ * (specs/ui.md "Shape"). */
+export const machine: typeof Combobox.machine = {
+  ...Combobox.machine,
+  implementations: {
+    ...Combobox.machine.implementations,
+    actions: {
+      ...zagActions,
+      setInitialFocus(params) {
+        const { event } = params;
+        if (event.type === "INPUT.CHANGE" || event.previousEvent?.type === "INPUT.CHANGE") return;
+        zagActions["setInitialFocus"]!(params);
+      },
+    },
+  },
+};
 /** The machine props' names, for a framework that declares its
  * components' props at runtime. */
 export { props as propNames } from "@zag-js/combobox";
@@ -85,7 +102,7 @@ export type MountProps = WithMarkupItems<Props>;
  * you, and the items it leaves out are hidden. */
 export function combobox(root: Element, machineProps: MountProps): Mounted<Api> {
   const live = liveProps(
-    { ...machineProps, collection: machineProps.collection ?? markupCollection(root) },
+    withMarkupItems(root, machineProps, machineProps.multiple === true),
     props,
   );
   const label = part(root, "label");
@@ -96,9 +113,9 @@ export function combobox(root: Element, machineProps: MountProps): Mounted<Api> 
   // A combobox filters by narrowing the collection, so an item it
   // drops is hidden rather than left standing as plain markup.
   const wireItems = itemParts<Api>(root, "combobox", () => ({}), true);
-  const mounted = mountAnchored(
+  return mountAnchored(
     root,
-    start(Combobox.machine, () => live.machine),
+    start(machine, () => live.machine),
     (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
       // The root is the element the mount was given, its id the
@@ -111,8 +128,6 @@ export function combobox(root: Element, machineProps: MountProps): Mounted<Api> 
       spread(list, current.getListProps());
       wireItems(current, spread);
     },
-    [],
     live,
   );
-  return mounted;
 }

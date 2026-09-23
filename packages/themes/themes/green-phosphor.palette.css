@@ -212,6 +212,7 @@ mono-wind.theme-green-phosphor,
   --color-gray-800: #003b00;
   --color-gray-900: #003b00;
   --color-gray-950: #000000;
+  --color-zinc-50: #c4ffd1;
   --color-zinc-100: #c4ffd1;
   --color-zinc-200: #c4ffd1;
   --color-zinc-300: #66ff84;
@@ -222,6 +223,17 @@ mono-wind.theme-green-phosphor,
   --color-zinc-800: #003b00;
   --color-zinc-900: #003b00;
   --color-zinc-950: #000000;
+  --color-neutral-50: #c4ffd1;
+  --color-neutral-100: #c4ffd1;
+  --color-neutral-200: #c4ffd1;
+  --color-neutral-300: #66ff84;
+  --color-neutral-400: #0adb53;
+  --color-neutral-500: #00711d;
+  --color-neutral-600: #00711d;
+  --color-neutral-700: #003b00;
+  --color-neutral-800: #003b00;
+  --color-neutral-900: #003b00;
+  --color-neutral-950: #000000;
   --color-stone-50: #c4ffd1;
   --color-stone-100: #c4ffd1;
   --color-stone-200: #c4ffd1;
@@ -233,6 +245,7 @@ mono-wind.theme-green-phosphor,
   --color-stone-800: #003b00;
   --color-stone-900: #003b00;
   --color-stone-950: #000000;
+  --color-mauve-50: #c4ffd1;
   --color-mauve-100: #c4ffd1;
   --color-mauve-200: #c4ffd1;
   --color-mauve-300: #66ff84;

@@ -2,7 +2,7 @@ import { propNames } from "@monowind/ui/popover";
 import type * as popover from "@monowind/ui/popover";
 import type { PropTypes } from "@zag-js/react";
 import { usePopover, type Connected, type Positioned } from "../hooks.ts";
-import { defineContext, defineRoot, defineRootProvider, partsOf } from "./part.tsx";
+import { defineContext, defineRoot, defineRootProvider, partsOf, triggerPart } from "./part.tsx";
 
 /** Zag's popover as a compound component (specs/ui.md "Component
  * layer"). */
@@ -24,7 +24,7 @@ export const RootProvider = defineRootProvider<Api>("Popover.RootProvider", cont
 
 const part = partsOf("Popover", context.use);
 
-export const Trigger = part("Trigger", (api) => api.getTriggerProps(), "button");
+export const Trigger = triggerPart("Popover", context.use);
 export const Indicator = part("Indicator", (api) => api.getIndicatorProps(), "span");
 export const Positioner = part("Positioner", (api) => api.getPositionerProps());
 export const Content = part("Content", (api) => api.getContentProps());

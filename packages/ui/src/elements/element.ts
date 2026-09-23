@@ -36,6 +36,32 @@ const camel = (attribute: string): string =>
  * every element casts them at its mount. */
 export type ElementProps = Record<string, unknown>;
 
+/** What a list's API gives an element that remounts it: a listbox's,
+ * a select's and a combobox's. */
+interface Selecting {
+  value: string[];
+  setValue(value: string[]): void;
+}
+
+const isPlain = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
+
+/** Two prop values alike: the same, or arrays or plain objects whose
+ * entries are — a framework hands a fresh `value` array or `ids`
+ * object on every render. */
+function equalProps(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((entry, i) => Object.is(entry, b[i]));
+  }
+  if (!isPlain(a) || !isPlain(b)) return false;
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.hasOwn(b, key) && Object.is(a[key], b[key]))
+  );
+}
+
 /** What every element declares, whichever of the two it is. */
 interface Declared {
   /** Attribute name to how its value reads; the prop is the attribute
@@ -129,6 +155,15 @@ export class MonoElement extends HTMLElementBase {
   #scheduled = false;
   /** The props set as properties, which no attribute carries. */
   #properties: Record<string, unknown> = {};
+  /** A list's value at its first mount — the page's default, which a
+   * form's reset goes back to — and every later mount's start. */
+  #initialValue: string[] | undefined;
+  /** The reader's selection as the last mount left it, which the next
+   * one puts back. */
+  #selection: string[] | undefined;
+  /** Set while a mount puts the reader's selection back, which is no
+   * change of the reader's to announce. */
+  #restoring = false;
   /** Set while the element writes `open` from the machine, so the
    * attribute it just wrote does not open or close it again. */
   #reflecting = false;
@@ -145,6 +180,7 @@ export class MonoElement extends HTMLElementBase {
   }
 
   connectedCallback(): void {
+    this.#upgradeProperties();
     if (this.#marker) {
       this.publish();
       return;
@@ -187,7 +223,7 @@ export class MonoElement extends HTMLElementBase {
       this.#setOpen(value !== null && value !== "false");
       return;
     }
-    this.#mounted.updateProps(this.#propsOf(name));
+    this.#mounted.updateProps(this.#propsOf(name, true));
   }
 
   /** Stop the mount and take its handlers off the parts. */
@@ -214,13 +250,14 @@ export class MonoElement extends HTMLElementBase {
   }
 
   /** A prop no attribute carries — `ids`, `translations`, `navigate`,
-   * `initialFocusEl`, `finalFocusEl`, a `collection`, and
-   * `getRootNode`, which only this sets, the DOM owning that name.
+   * `initialFocusEl`, `finalFocusEl`, a list's `collection`, `value`
+   * and `defaultValue`, and `getRootNode`, which only this sets, the
+   * DOM owning that name.
    * The rest are accessors too, so `element.ids = …` reaches here.
    * Unchanged is no change: React sets such a property on every
-   * render, a fresh object each time. */
+   * render, often a fresh array or object alike the last. */
   setProp(name: string, value: unknown): void {
-    if (this.#properties[name] === value) return;
+    if (equalProps(this.#properties[name], value)) return;
     this.#properties[name] = value;
     this.#mounted?.updateProps({ [name]: value });
   }
@@ -228,6 +265,20 @@ export class MonoElement extends HTMLElementBase {
   /** What `setProp` last set, if anything. */
   getProp(name: string): unknown {
     return this.#properties[name];
+  }
+
+  /** A property set before the element was defined is the instance's
+   * own and hides the class's accessor, so it goes to `setProp` as
+   * the accessor would send it. */
+  #upgradeProperties(): void {
+    const own = this.constructor as typeof MonoElement;
+    const instance = this as unknown as Record<string, unknown>;
+    for (const name of own.definition.properties ?? []) {
+      if (!Object.hasOwn(this, name)) continue;
+      const value = instance[name];
+      delete instance[name];
+      this.setProp(name, value);
+    }
   }
 
   #onParsed = (): void => {
@@ -263,9 +314,17 @@ export class MonoElement extends HTMLElementBase {
     this.#observer.observe(this, { childList: true, subtree: true });
   }
 
+  /** Stop the mount, keeping the reader's selection and clearing the
+   * `data-selected` markers it wrote, so a later mount reads only the
+   * markers of items the page brings. */
   #unmount(): void {
+    const value = (this.#mounted?.api as Partial<Selecting> | undefined)?.value;
+    if (Array.isArray(value)) this.#selection = [...value];
     this.#mounted?.destroy();
     this.#mounted = null;
+    for (const part of this.#parts) {
+      if (part.getAttribute("data-part") === "item") part.removeAttribute("data-selected");
+    }
     this.#parts = [];
   }
 
@@ -274,8 +333,35 @@ export class MonoElement extends HTMLElementBase {
     const { mount } = (this.constructor as typeof MonoElement).definition;
     if (!mount) return;
     if (!this.id) this.id = `mono-ui-${++generated}`;
-    this.#mounted = mount(this, this.#props());
+    const props = this.#props();
+    // Items arriving marked are the page's new default, as an inserted
+    // `<option selected>` is a native select's.
+    const later = this.#initialValue !== undefined;
+    const marked =
+      later &&
+      props["defaultValue"] === undefined &&
+      this.querySelector("[data-part='item'][data-selected]") !== null;
+    if (later && !marked) props["defaultValue"] = this.#initialValue;
+    this.#mounted = mount(this, props);
     this.#parts = Array.from(this.querySelectorAll("[data-part]"));
+    const api = this.#mounted.api as Partial<Selecting>;
+    if (!Array.isArray(api.value)) return;
+    if (!later || marked) this.#initialValue = [...api.value];
+    else if (props["value"] === undefined) this.#restore(api as Selecting);
+  }
+
+  /** The reader's selection put back on a mount that started at the
+   * page's default, Zag's reset target being the value a machine
+   * starts at. Zag applies it a microtask on, and the callbacks it
+   * fires there dispatch nothing. */
+  #restore(api: Selecting): void {
+    const selection = this.#selection;
+    if (!selection || equalProps(selection, api.value)) return;
+    this.#restoring = true;
+    api.setValue(selection);
+    queueMicrotask(() => {
+      this.#restoring = false;
+    });
   }
 
   /** The mount above this element, which roots the markup it marks. */
@@ -309,25 +395,27 @@ export class MonoElement extends HTMLElementBase {
   }
 
   /** One attribute as the prop it carries; a positioning one as the
-   * whole of `positioning`, the four being one prop and a partial
-   * dropping what it leaves out. */
-  #propsOf(name: string): Record<string, unknown> {
+   * whole of `positioning`, the four being one prop. Absent, it says
+   * nothing at the mount; after it (`cleared`), it is undefined, so the
+   * prop it carried goes and the machine takes its default. */
+  #propsOf(name: string, cleared = false): Record<string, unknown> {
     const own = this.constructor as typeof MonoElement;
     const kind = own.table[name];
     if (!kind) return {};
-    if (name in POSITIONING) return { positioning: this.#positioning() };
+    if (name in POSITIONING) return { positioning: this.#positioning(cleared) };
     const value = this.#valueOf(name, kind);
-    // An absent attribute says nothing, so the machine keeps its own
-    // default rather than taking an undefined over it.
-    if (value === undefined) return {};
+    if (value === undefined && !cleared) return {};
     return { [own.definition.aliases?.[name] ?? camel(name)]: value };
   }
 
   /** Where the floating part goes, as the four attributes set it: the
-   * two offsets under `offset`, the rest by their own names. */
-  #positioning(): Record<string, unknown> {
+   * two offsets under `offset`, the rest by their own names — each key
+   * present where `cleared`, since a partial merges into the last. */
+  #positioning(cleared = false): Record<string, unknown> {
     const own = this.constructor as typeof MonoElement;
-    const positioning: Record<string, unknown> = {};
+    const positioning: Record<string, unknown> = cleared
+      ? { placement: undefined, gutter: undefined, offset: undefined }
+      : {};
     const offset: Record<string, unknown> = {};
     for (const [name, kind] of Object.entries(POSITIONING)) {
       if (!(name in own.table)) continue;
@@ -356,6 +444,7 @@ export class MonoElement extends HTMLElementBase {
    * announces. */
   #dispatch(callback: string, detail: unknown): void {
     if (callback === "onOpenChange") this.#reflectOpen(detail);
+    if (this.#restoring) return;
     const name = eventNameOf(callback);
     const cancelable =
       typeof (detail as { preventDefault?: unknown })?.preventDefault === "function";

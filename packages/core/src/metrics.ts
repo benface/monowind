@@ -17,6 +17,10 @@ export function percentToCells(percent: number, containerCells: number): number 
   return roundHalfAwayFromZero((containerCells * percent) / 100);
 }
 
+/** How Typed OM reads an `auto` minimum, a per-engine constant read once
+ * off a probe (see measureCellMetrics). */
+let autoMinimum: string | undefined;
+
 /** Measure the root's cell from the host's PERSISTENT shadow probe (100
  * "M"s inheriting the host's font): the advance of a monospace character
  * (with the root's own letter-spacing) and the line-box height. Root
@@ -50,6 +54,9 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
   // sits on the baseline.
   const mark = probe.lastElementChild;
   const baseline = mark ? mark.getBoundingClientRect().top - rect.top : undefined;
+  // The probe holds its minimum at `auto`, whatever the page's CSS says.
+  autoMinimum ??=
+    "computedStyleMap" in probe ? probe.computedStyleMap().get("min-width")?.toString() : undefined;
   return {
     width,
     height: rect.height,
@@ -58,7 +65,15 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
     inkOverhang,
     backgroundGap,
     ...(baseline === undefined ? {} : { baseline }),
+    ...(autoMinimum === undefined ? {} : { autoMinimum }),
   };
+}
+
+/** Whether two measurements agree on every metric: any change rewrites
+ * the host's properties. */
+export function sameMetrics(a: CellMetrics, b: CellMetrics): boolean {
+  const keys = Object.keys(a) as (keyof CellMetrics)[];
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
 export function getRootFontSizePx(): number {

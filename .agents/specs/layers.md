@@ -124,9 +124,23 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   about the placed origin, nested layers composed) before the cell
   lookup, so text-mode drags, word and paragraph gestures, and the
   synthesized pointer states land on the cell the viewer sees, as
-  native pointer events on the light elements already do. A layer's
-  blank cell past its root's border box (a shadow's, an overflowing
-  child's) is see-through: the point falls to what is beneath.
+  native pointer events on the light elements already do. A box
+  painted after the layer that covers the point where the layer is
+  drawn is above it natively, ink or none — a stretched link over a
+  card, a transparent popover, a fixed header — and takes the point.
+  Otherwise the hit through the layer answers from its root's
+  ancestors, all of them as native hover climbs them, their boxes at
+  the laid-out cells aside (the layer's box took the point through
+  their clips where it is drawn: a carousel's translated track in a
+  clipped view), and from its own subtree (a nested layer's aside) —
+  another box laid out at those cells is drawn elsewhere. The layer
+  takes the point only where that hit lands in its subtree: where the
+  subtree takes no pointer events (`pointer-events: none`), the point
+  falls to the layers beneath, then to the main grid, where the layer is
+  drawn, not where it was laid out. A layer's blank cell past its root's
+  border box (a shadow's, an overflowing child's) is see-through
+  likewise. A point that lands on no layer is the main grid's, where no
+  layer's subtree answers for the cell — its untransformed box included.
 - **Opacity is unchanged in this milestone.** It stays a per-cell
   paint field; making an opacity root a layer, for true group
   compositing, is a possible follow-up on the same mechanism.
@@ -179,7 +193,12 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   boxes — placement, the clipping box, origin offset, node reuse in
   place, removal, re-placement from changed effects — and the pointer
   mapping through a scale, a rotation, nested layers, and off
-  see-through, covered, and clipped cells.
+  see-through, covered, and clipped cells; a layer that takes no
+  pointer events passing the point to the box beneath where it is
+  drawn, a box at a layer's laid-out cells answering none of its
+  points, a box painted after a layer and a top-layer box over one
+  taking the point where the layer is drawn, and a layer drawn into
+  its clipping ancestor's view from past its clip.
 - Storybook: a dialog scaled with a transition (its layer's scale
   equals the light element's mid-way and at rest); the native button
   inside a scaled dialog under the pointer where the layer shows it;
@@ -205,9 +224,16 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 - plain-text.ts `walk` / paint.ts `paintGrid`: the layer open/close
   around a root's subtree; per-layer grids and node reuse; the boxes'
   geometry and copied properties (`placeLayer`, `syncLayers`) and the
-  pointer mapping (`layerAt`).
+  pointer mapping (`layersAt`, every layer's cell under a point).
+- pointer.ts: `cellAtPoint`, the layer a point lands on and takes —
+  nothing painted after it covering the point, by the layout's paint
+  order (`indexTree`) — else the main grid's cell, with the hit stack
+  it found; `hitStack` through a layer (`through`): its root's
+  ancestor path, then its subtree; `pointKey`, what a hit is a
+  function of.
 - element.ts: the layer container in the shadow viewport; the sampled
   transition regex gains `transform`, `translate`, `rotate`, `scale`,
-  and `filter`; `#cellAt` maps a point through the layers under it.
+  and `filter`; `#cellAt` hands a client point to `cellAtPoint`, and
+  the hover's same-cell skip compares `pointKey`s, no hit test run.
 - cell-model.md: "Animation" lists the new sampled properties; an
   "Effects" pointer to this spec.

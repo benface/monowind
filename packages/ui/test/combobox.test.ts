@@ -77,6 +77,17 @@ describe("the mount", () => {
     root.remove();
   });
 
+  it("starts at the item the markup marks selected", async () => {
+    const root = markup();
+    by(root, "item", "next").setAttribute("data-selected", "");
+    const mounted = combobox(root, { id: "i" });
+    await settle();
+    expect(mounted.api.value).toEqual(["next"]);
+    expect(by(root, "item", "next").getAttribute("aria-selected")).toBe("true");
+    mounted.destroy();
+    root.remove();
+  });
+
   it("selects an item, and follows a collection the page narrows", async () => {
     const root = markup();
     const typed: string[] = [];
@@ -98,6 +109,70 @@ describe("the mount", () => {
     await settle();
     expect(mounted.api.collection.getValues()).toEqual(["next"]);
     mounted.destroy();
+    root.remove();
+  });
+
+  it("keeps the reader's caret when a keystroke opens the list", async () => {
+    const root = markup();
+    const mounted = combobox(root, { id: "k" });
+    await settle();
+    const input = by(root, "input") as HTMLInputElement;
+    input.focus();
+    await settle();
+    // A backspace in the middle of "main", the list closed until then.
+    input.value = "man";
+    input.setSelectionRange(2, 2);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    expect(mounted.api.open).toBe(true);
+    expect(input.selectionStart).toBe(2);
+    mounted.destroy();
+    root.remove();
+  });
+
+  it("keeps the reader's caret when a keystroke opens a list whose open state is controlled", async () => {
+    const root = markup();
+    // Controlled as a framework's binding controls it: the machine asks,
+    // the page writes the state back, and the machine opens on that.
+    const mounted = combobox(root, {
+      id: "c",
+      open: false,
+      onOpenChange: ({ open }) => mounted.updateProps({ open }),
+    });
+    await settle();
+    const input = by(root, "input") as HTMLInputElement;
+    input.focus();
+    await settle();
+    input.value = "man";
+    input.setSelectionRange(2, 2);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    expect(mounted.api.open).toBe(true);
+    expect(input.selectionStart).toBe(2);
+    mounted.destroy();
+    root.remove();
+  });
+
+  it("clears the marker of a selection left out of a narrowed collection", async () => {
+    const root = markup();
+    const mounted = combobox(root, { id: "m", defaultValue: ["main"] });
+    await settle();
+    expect(by(root, "item", "main").hasAttribute("data-selected")).toBe(true);
+    // Narrowed to the other item, then that one chosen: the first,
+    // hidden, has left the selection, and a remount reads the second.
+    mounted.updateProps({ collection: collection({ items: ["next"] }) });
+    await settle();
+    mounted.api.selectValue("next");
+    await settle();
+    expect(by(root, "item", "main").hasAttribute("data-selected")).toBe(false);
+    expect(by(root, "item", "next").hasAttribute("data-selected")).toBe(true);
+    mounted.destroy();
+    const again = combobox(root, { id: "m" });
+    await settle();
+    expect(again.api.value).toEqual(["next"]);
+    again.destroy();
     root.remove();
   });
 

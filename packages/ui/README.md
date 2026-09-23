@@ -155,9 +155,14 @@ each with an `item-text` and an `item-indicator` inside it, in
 `item-group`s with their `item-group-label`s. Its items are its
 collection where the props name none — the `data-value` each carries,
 the words of its `item-text`, and `data-disabled` — so a list of static
-items is markup alone. `selectionMode: "multiple"` takes several values
-at once (`"extended"` for the modifier keys), each keeping its own
-indicator. `data-highlight-on-hover` on the root moves the
+items is markup alone, and `data-selected` on an item selects it at the
+mount where the props name no `value` or `defaultValue` (the first
+alone where one value is taken). The mount keeps `data-selected` on the
+selected items — a listbox, a select and a combobox alike, as the React,
+Vue and Svelte components do — so a mount again reads the reader's
+selection, and a `data-selected:` style holds everywhere. `selectionMode: "multiple"` takes
+several values at once (`"extended"` for the modifier keys), each
+keeping its own indicator. `data-highlight-on-hover` on the root moves the
 highlight under the pointer; `data-highlighted` stays the keyboard's
 focus, as Zag sets it, so style the pointer's feedback with `hover:`.
 An unselected item's indicator is hidden, so a box of its own width
@@ -188,13 +193,26 @@ with an optional `list` around them. The markup's own `value-text` is
 the placeholder; the mount writes the selection there as it changes.
 A select is a trigger and a listbox, not a form control, so a
 `<select data-part="hidden-select">` beside it carries the value into
-a form under the machine's `name`, and into a reset. The mount fills
-it with an option per item and hides it with `display: none` as it
+a form under the machine's `name`: a reset of the form puts the
+select back at its initial value, and a disabled `<fieldset>` around
+it disables it. The mount fills it with an option per item, selected
+as the value says — none where the value names an item the collection
+does not hold yet — and hides it with `display: none` as it
 mounts, rather than waiting for Zag's own visually-hidden style,
 which arrives a microtask later with the first spread: an in-flow
 `<select>` is a box as wide as its longest option, so the grid would
 jump. Zag gives it `aria-hidden` and `tabIndex="-1"` either way. With `multiple: true` the trigger names every chosen item
-(Zag's `valueAsString`) and the form control carries them all.
+(Zag's `valueAsString`) and the form control carries them all. On the
+framework path, render a `<select>` with Zag's `getHiddenSelectProps()`
+less the key that carries the value — `defaultValue` from React's
+`normalizeProps`, `value` from Vue's and Svelte's — and `size="2"`,
+and call `syncHiddenSelect(element, api, service)` after each render:
+it writes the options, the selection and the defaults a reset
+restores, as the mount does. For a server's render, write
+`hiddenSelectOptions(api, service)` inside it once, at its first
+render (React's `dangerouslySetInnerHTML`, Vue's `innerHTML`, Svelte's
+`{@html}`), so a form sent before the page's script runs posts the
+initial value; `syncHiddenSelect` owns the options from then on.
 
 States are attributes Zag sets — `data-state`, `data-highlighted`,
 `data-disabled`, `data-placement` — so `data-highlighted:bg-(--mw-fg)`
@@ -238,8 +256,10 @@ written; `placement`, `gutter`, `offset-main-axis` and
 `offset-cross-axis` fold into `positioning`, the dialog's
 `content-role` is the machine's `role`, the element's own being the
 element's, and `aria-label` — which names the content — is written as
-Zag spells it. An attribute absent says nothing, so the machine keeps its
-default. A change reaches the machine and the parts are spread again.
+Zag spells it. An attribute absent at the mount says nothing, so the
+machine keeps its default, and removing one after the mount brings
+that default back. A change reaches the machine and the parts are
+spread again.
 `id` is optional — one is generated where the markup gives none — and
 changing it roots the mount again.
 
@@ -254,14 +274,24 @@ state, set or removed after it opens and closes the component, and the
 machine writes it back as the reader opens or dismisses it.
 
 **A prop no attribute carries** — `ids`, `translations`, a menu's
-`navigate` and `anchorPoint`, a listbox's and a select's
-`collection`, a dialog's `initialFocusEl` — is a property on the
-element: `element.ids = {…}`,
-or `element.setProp(name, value)` by name. `getRootNode` takes the
+`navigate` and `anchorPoint`, a list's `collection`, `value` and
+`defaultValue`, a dialog's `initialFocusEl` — is a property on the
+element: `element.ids = {…}`, `element.defaultValue = ["main"]`,
+or `element.setProp(name, value)` by name, set before or after
+`defineMonoUi()`. `getRootNode` takes the
 second form only, the DOM owning that name on every node. React sets a property it finds, so `<mono-select collection={…}
 />` hands the value over whole rather than stringified, and setting
 the same value again does nothing, which matters because React sets
-one on every render.
+one on every render. `value` controls the selection, as Zag's does: a
+press changes it only where a `valuechange` listener sets it back
+(`element.value = event.detail.value`). `defaultValue` — or the items
+marked `data-selected` where none is set — is the element's first
+mount's, as a form control's default is its page load's: a later mount
+(items added, the element moved) keeps it for a form's reset, even for
+a value whose item arrives after it, and puts the reader's own
+selection back, dispatching no `valuechange` for it. Items that arrive
+marked become the default and the selection, as an inserted
+`<option selected>` does.
 
 `element.api` is the live API and `element.destroy()` stops the mount.
 The element mounts when its parts are there — at the end of the parse
@@ -337,7 +367,9 @@ One entry per component. Each exports the mount, `machine`, `connect`,
   `collection` and `gridCollection` come with it.
 - `@monowind/ui/select` — Zag's select: a listbox anchored to its
   trigger, opening on click, one value or several, with a form value
-  and a clear button; Zag's `collection` comes with it.
+  and a clear button; Zag's `collection` comes with it, and
+  `syncHiddenSelect` and `hiddenSelectOptions` for a framework's
+  hidden control.
 - `@monowind/ui/combobox` — Zag's combobox: a listbox under an input,
   anchored to the control so it lines up under what the reader types;
   filtering is yours — hand `updateProps` a `collection` narrowed by
@@ -354,10 +386,24 @@ registers, plus `defineElement()` and the `MonoElement` base, for an
 element of your own over a mount.
 
 `@monowind/ui/framework` holds what the framework packages share:
-`ItemApi`, what a listbox's, a select's and a combobox's item parts
-read of the API above them; `warnStray`, which names a prop given to a
-root that renders no element; and `warnUnmarked`, which names a mount
-that found none of the items its collection holds.
+
+- `ItemApi`, what a listbox's, a select's and a combobox's item parts
+  read of the API above them;
+- `itemOf(api, { item, value })`, the collection's item a part names;
+- `itemProps(api, item)`, an item's props with `data-selected` on a
+  selected one;
+- `TriggerOptions` and `TriggerApi`, what a trigger's getter takes;
+- `splitProps(props, names)`, props split into those `names` lists
+  and the rest;
+- `defined(props)`, props with their `undefined` values left out,
+  typed as `Defined<P>`;
+- `BOUND`, the props a framework binds both ways, each with its
+  callback;
+- `warnStray(name, stray, root?)`, which names a prop given to a root
+  that renders no element, once per `root` — an object the root keeps
+  across renders — or per `name` where none is given;
+- `warnUnmarked(name, held, marked)`, which names a mount that found
+  none of the items its collection holds.
 
 `@monowind/ui/top-layer`'s `syncTopLayer(positioner, open)` keeps a
 positioner in the top layer while the machine is open and through its

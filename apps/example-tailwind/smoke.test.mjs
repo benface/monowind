@@ -6,7 +6,7 @@
 import { chromium } from "playwright";
 import { createServer } from "vite";
 
-const server = await createServer({ server: { port: 0 } });
+const server = await createServer({ root: import.meta.dirname, server: { port: 0 } });
 await server.listen();
 const url = server.resolvedUrls.local[0];
 

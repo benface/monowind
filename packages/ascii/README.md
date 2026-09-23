@@ -40,11 +40,13 @@ Additional fonts are one import each (~11KB, tree-shaken):
 import "@monowind/ascii/fonts/slant"; // registers "slant"
 ```
 
-or typo-proof via the property (wins over the attribute):
+or typo-proof via the property (wins over the attribute), the font
+module's text parsed:
 
 ```ts
+import { parseFont } from "@monowind/ascii";
 import slant from "@monowind/ascii/fonts/slant";
-document.querySelector("mono-ascii").font = slant;
+document.querySelector("mono-ascii").font = parseFont(slant);
 ```
 
 **CDN (no build step)** — load the bundle next to monowind's; the

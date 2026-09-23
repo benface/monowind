@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseFont } from "../src/font.ts";
 import { renderAscii } from "../src/render.ts";
+import { asciiFont } from "../src/registry.ts";
+import slant from "../src/fonts/slant.ts";
 
 /** Every bundled font must parse and render grid-safe output: the
  * advertised height, equal-width rows, hardblanks resolved. */
@@ -21,4 +23,11 @@ describe("bundled fonts", () => {
         expect(line).not.toContain(font.hardblank === " " ? "\0" : font.hardblank);
     });
   }
+});
+
+describe("a font module", () => {
+  it("registers its font, and hands its text to parseFont for the property", () => {
+    expect(typeof slant).toBe("string");
+    expect(parseFont(slant)).toEqual(asciiFont("slant"));
+  });
 });

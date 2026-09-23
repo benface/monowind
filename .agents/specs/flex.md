@@ -31,11 +31,13 @@ All sizes and positions are integer cells.
    — with their base main sizes, grow/shrink factors, and margins (`auto`
    margins tracked separately from fixed ones). The base size follows CSS
    `flex-basis`: an explicit basis when set (notably `0%` from Tailwind's
-   `flex-1`, which makes grow distribute ALL the space — equal columns),
+   `flex-1`, which makes grow distribute ALL the space — equal columns;
+   `content` is `max-content`, the item's own width aside, CSS §7.2.3),
    else the item's explicit width — cells, percent, or an intrinsic keyword
-   — else its max-content size; clamped by the item's own min/max-width.
-   Percentages (including percent min/max like `max-w-full`) resolve
-   against the container's content box.
+   — else its max-content size. The base itself is unclamped (step 3's
+   loop applies the item's min/max-width); its hypothetical size is the
+   base clamped by them. Percentages (including percent min/max like
+   `max-w-full`) resolve against the container's content box.
 2. **Wrap into lines** (only when `flex-wrap: wrap`): greedy, in document
    order. An item's placement width is its intrinsic width plus its FIXED
    margins (auto margins count as 0 here). An item moves to a new line when
@@ -43,13 +45,13 @@ All sizes and positions are integer cells.
    first item of a line is always placed, even if it alone overflows
    (matches CSS).
 3. **Resolve main-axis sizes per line**: available space = inner width −
-   gaps − fixed margins. Then:
-   - Extra space with any main-axis `auto` margin present → items keep
-     intrinsic sizes (auto margins absorb the leftover — CSS gives auto
-     margins priority over both `flex-grow` and `justify-content`).
-   - Extra space otherwise → distributed to items proportionally to their
+   gaps − fixed margins, `auto` margins counting as 0 (CSS §8.1). Then:
+   - Extra space → distributed to items proportionally to their
      `flex-grow` factors (integer distribution, below). No grow factors →
-     items keep intrinsic sizes.
+     items keep intrinsic sizes. What flexing leaves goes to the
+     main-axis `auto` margins (step 7), which take it before
+     `justify-content` does — so a growing item leaves them none, as in
+     all three engines (probed 2026-09-23).
    - Shortfall → shrink proportionally to `base × flex-shrink`.
      Items with `flex-shrink: 0` keep their base size; if everything
      is shrink-0, the line overflows (real CSS behavior).
@@ -59,14 +61,25 @@ All sizes and positions are integer cells.
      among the rest until nothing new violates. When clamps bind, the line
      may underfill (justify-content sees the leftover) or overflow.
    - **Automatic minimum size** (`min-width/height: auto`, the CSS
-     default): a flex item with visible overflow never shrinks below its
-     min-content main size (longest breakable segment in a row; first-pass
-     content height in a column). Non-visible overflow (e.g. `truncate`)
-     or an explicit `min-w-0`/`min-h-0` disables it — exactly the CSS
-     idiom for shrinkable/truncatable flex children.
+     default, §4.5): a flex item with visible overflow never shrinks below
+     its min-content main size (longest breakable segment in a row; in a
+     column, its content's own height — a container's items, a text
+     leaf's lines — whatever height or `min-height` floor the item has),
+     capped by its own width or height and its max-width or max-height —
+     a `w-3` item holding a longer word stays 3 wide, the word
+     overflowing, and two `h-15` items holding a line each shrink to
+     share an `h-20` column, containers and aligned text leaves alike, as
+     Chromium and Firefox lay them out (probed 2026-09-23; WebKit keeps a
+     grid item at its height, and grows a `min-h-*` aligned leaf from its
+     floor), save for a percent-height child (deviation 3). Non-visible
+     overflow (e.g. `truncate`) or an explicit `min-w-0`/`min-h-0`
+     disables it — exactly the CSS idiom for shrinkable/truncatable flex
+     children.
 4. **Lay out each item at its final width** (text re-wraps at that width,
    nested containers re-lay out).
-5. **Line height**: the tallest item on the line. For a single `nowrap`
+5. **Line height**: the tallest item on the line, its fixed cross-axis
+   margins included (auto ones count 0) — an auto-height row holding a
+   `my-1` item is three rows tall. For a single `nowrap`
    line whose container has a bounded inner height (explicit `height` or
    `min-height`), the line stretches to that height, so cross-axis
    alignment sees the enforced size.
@@ -74,8 +87,9 @@ All sizes and positions are integer cells.
    (container `align-items` unless overridden by the item's `align-self`),
    with no explicit height and no cross-axis auto margins, is re-laid out
    with its height FORCED to the line height minus its fixed cross-axis
-   margins. The forced height overrides the item's `min-height` (the flex
-   "used size" is authoritative), and its own children see the final size.
+   margins, clamped by the item's own `min-height`/`max-height` (a
+   percent against the container's inner height when that is bounded),
+   per CSS; its own children see the final size.
 7. **Main-axis placement**: offsets from `justify-content` (start /
    center / end / space-between / space-around / space-evenly; center
    floors the half-leftover; the space-* variants integer-distribute the
@@ -85,9 +99,13 @@ All sizes and positions are integer cells.
    auto margin, integer-distributed). Under `row-reverse`/`column-reverse`
    the start/end meanings flip (items are already collected reversed).
 8. **Cross-axis placement**: cross-axis auto margins win (both auto →
-   centered, floor; one auto → that side absorbs the space); otherwise
-   fixed margin-top plus the alignment offset (start 0, center floor,
-   end flush).
+   centered, floor; one auto → that side absorbs the space; an item
+   taller than its line gets none, at the line's start, per CSS);
+   otherwise the item's margin box aligns in the line (start 0, center
+   floor, end flush), so `items-end mb-1` ends the item a row above the
+   line's end, as all three engines place it (probed 2026-09-23). The
+   column's cross axis aligns the same way, with the left and right
+   margins; grid items align in their areas with the same function.
 9. **`align-content`** (multi-line only, i.e. `flex-wrap: wrap`, per CSS):
    with a bounded inner height taller than the lines, the leftover cross
    space is distributed with the shared offset math — start / center /
@@ -111,16 +129,25 @@ Same shape, transposed, with these specifics:
   width when its effective alignment is `stretch`, otherwise it shrinks to
   its intrinsic width.
 - With a bounded inner height, main-axis sizes resolve exactly like the row
-  main axis (auto-margin priority, grow, shrink, `flex-basis`, and the same
-  unclamped-base rule: the base is the pre-min/max first-pass height, so
-  e.g. an item's `min-h-*` never skews the distribution). A child whose
+  main axis (grow, shrink, `flex-basis`, auto margins on the leftover,
+  and the same unclamped-base rule: the base is the pre-min/max
+  first-pass height, or the content height for an intrinsic basis
+  (`content`, `max-content`, …) whatever the item's own height —
+  a container item's content, never the `min-height` floor it fills —
+  so e.g. an item's `min-h-*` never skews the distribution). A percent
+  basis resolves against a DEFINITE container height only; against an
+  auto height or a `min-height` floor it is the content height, as CSS
+  §7.2.3 treats it as `content` (all three engines, probed 2026-09-23:
+  `flex-1 h-10` in an auto-height column is one row, and `flex-1` items
+  of one and three rows under `min-h-10` are 4 and 6). A child whose
   height changed from its base is re-laid out with the new height forced,
   so nested content (e.g. `items-center` inside a stretched child) sees the
   final size. Forced (flex-assigned) sizes are authoritative and skip
   resolution — which also means a percent or explicit width on a row item
   is never re-resolved against its own assigned size.
-- Unbounded inner height → children keep intrinsic heights; container
-  content height is their sum plus gaps and fixed margins.
+- Unbounded inner height → children take their hypothetical sizes (bases
+  clamped by their own min/max); container content height is their sum
+  plus gaps and fixed margins, and main-axis auto margins get no space.
 
 ## Integer distribution (shared)
 
@@ -133,12 +160,13 @@ and auto-margin shares.
 ## Interaction with min/max
 
 `min/max-width` clamp the width BEFORE content layout — wrapping and child
-sizing see the constrained width. `min/max-height` clamp the final height
-after layout (content height is an output; overflow handles the spill) —
-except that a container's `max-height` also caps its USED size — a
-column's main size (css-flexbox §9.2), a single-line row's cross size
-(§9.4.8): content past the cap re-flexes against it, so a
-scroll-container item (automatic minimum 0) shrinks to fit and scrolls.
+sizing see the constrained width — and `min/max-height` clamp an explicit
+height the same way: content lays out against the clamped height. An
+auto height is the content's output, clamped after layout (overflow
+handles the spill) — except that a container's `max-height` also caps
+its USED size — a column's main size (css-flexbox §9.2), a single-line
+row's cross size (§9.4.8): content past the cap re-flexes against it, so
+a scroll-container item (automatic minimum 0) shrinks to fit and scrolls.
 In the cross axis, `min-height: auto` is 0: a single line's cross size IS
 a definite inner height, and stretched items shrink to it (content
 overflows) as well as grow.
@@ -146,10 +174,16 @@ Clamp order: `max` first, then `min` — an inconsistent `min > max` resolves
 to `min`, per CSS. A container's `min-height` also feeds the flex algorithm
 as a bounded inner height so alignment and stretch see it (step 5), but as
 a **floor, not a cap**: on a column's main axis it can hand extra space to
-`flex-grow`, yet it never triggers `flex-shrink` — content taller than the
-floor keeps its intrinsic size and the container grows to fit. Only a
+`flex-grow`, yet it never triggers `flex-shrink` — the items keep their
+hypothetical sizes (bases clamped by their own min/max) and the container
+grows to fit, as all three engines lay it out (probed 2026-09-23). Only a
 definite height (explicit `height` or a parent-assigned flex size) can
 shrink content.
+A container's content height as its own flex parent reads it (an
+intrinsic basis, the automatic minimum) is its content's natural extent —
+a column's hypothetical sizes, a row's natural lines, a grid's
+max-content rows, a text leaf's lines — whatever height or floor the
+container itself has.
 
 ## Deviations from CSS Flexbox
 
@@ -157,5 +191,10 @@ shrink content.
    never wrap.
 2. No baseline alignment (`items-baseline` behaves as `start` — cells make
    baselines moot anyway; revisit with the forms milestone).
-3. `flex-basis: content` behaves as `auto`.
+3. A column item's content height — its automatic minimum, an intrinsic
+   basis — counts a percent-height child against the item's own
+   definite height, as WebKit does: in an `h-20` column, an `h-15` item
+   holding an `h-full` child keeps 15 rows beside an `h-15` sibling's 5,
+   where Chromium and Firefox take the child's percent as `auto` for the
+   minimum and share the column 10/10 (probed 2026-09-23).
 4. All the cell-model deviations (integer rounding, etc.) apply.

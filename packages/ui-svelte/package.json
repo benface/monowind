@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui-svelte",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "@monowind/ui for Svelte 5: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid, as runes",
   "keywords": [
     "accessibility",

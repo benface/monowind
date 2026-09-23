@@ -197,7 +197,7 @@ describe("sticky boxes in a scroller", () => {
     const root = makeNode({ children: [box] });
     layoutRoot(root, 20);
     rowsAt(root, box, 6);
-    const stack = hitStack(root, 0, 0);
+    const stack = hitStack(root, 0, 0, null);
     expect(stack[stack.length - 1]!.node).toBe(heading);
     expect(stack[stack.length - 1]!.y).toBe(0);
     expect(focusableRects(root).find((f) => f.element === button)!.rect.y).toBe(0);

@@ -4,7 +4,9 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, withProps, type MachineProps } from "./anchor.ts";
 import { liveProps, mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
 
-export type Props = Dialog.Props;
+/** An interface of this module's own, so a framework package's types
+ * reach Zag's through this module, one of its dependencies. */
+export interface Props extends Dialog.Props {}
 export type Api<T extends PropTypes = PropTypes> = Dialog.Api<T>;
 export type Service = Dialog.Service;
 /** The props as the machine takes them, `props()`'s return. */
@@ -58,7 +60,6 @@ export function dialog(root: Element, machineProps: Props): Mounted<Api> {
     start(Dialog.machine, () => live.machine),
     (service) => connect(service, normalizeProps, live.machine),
     titledParts(root),
-    [],
     live,
   );
 }

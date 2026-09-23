@@ -201,7 +201,11 @@ against the cell layout and Tailwind's `hover:` and `active:` variants
 selection intact. Two things still need a real hit target: native
 `title` tooltips and your own JS click handlers on non-interactive
 elements — opt those elements in with `pointer-events-auto!` (they
-then block grid selection over their cells, like buttons do).
+then block grid selection over their cells, like buttons do). The
+other way round, `pointer-events-none` works as it does natively: a
+badge laid over a button leaves the press to the button, and a link
+it disables (with `aria-disabled` and no `href`, which keeps it out of
+the keyboard's reach too) takes no press.
 
 If you redefine Tailwind's `hover:` variant yourself, your definition
 wins — include the data attribute (and Tailwind's hover-capability
@@ -252,7 +256,7 @@ pnpm check
 pnpm check:fix
 
 # tests (unit + golden + story tests + example smoke tests), one package
-# at a time: two app tests rebuild the packages they load
+# at a time: the app tests that serve a package's bundle rebuild it
 pnpm test
 
 # visual regression tests (screenshots via Docker, one per story)

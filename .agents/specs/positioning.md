@@ -94,7 +94,13 @@ content box (its containing block in flow).
     count as 0 in the static position).
 - Margins apply between the inset edges and the box, per CSS. `auto`
   margins center within the inset-defined space when the size is definite
-  (the `inset-0 m-auto` centering idiom).
+  (the `inset-0 m-auto` centering idiom). Per CSS 2 §10.3.7 and §10.6.4,
+  a single auto margin takes whatever the insets, the size and the other
+  margin leave, negative included — a 20-wide `left-0 right-0 ml-auto`
+  box in a 10-wide block starts at −10 — and two auto margins split it,
+  negative only vertically: an over-tall box centers past both edges,
+  an over-wide one starts at the left inset (all three engines, probed
+  2026-09-23).
 
 ## Inline elements (`<span class="relative top-1">` in a text run)
 

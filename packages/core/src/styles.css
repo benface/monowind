@@ -235,8 +235,11 @@
  * unlayered, out of the lock layer (an author's `pointer-events-none!`
  * or `pointer-events-auto!` still wins), the cursor rule layered and
  * plain (an author's cursor wins). interactive.test.ts holds the two
- * lists equal to INTERACTIVE in element.ts. */
-mono-wind[select="grid"] * {
+ * lists equal to INTERACTIVE in element.ts. An authored `none` stays
+ * one: the engine reads it with the locks off, under each element's
+ * measuring flag, and marks it `data-mw-pointer-none`, which every
+ * opt-in here leaves be. */
+mono-wind[select="grid"] *:not([data-mw-measuring]) {
   pointer-events: none !important;
 }
 mono-wind[select="grid"]:not([data-mw-dragging])
@@ -271,15 +274,21 @@ mono-wind[select="grid"]:not([data-mw-dragging])
     [role="slider"],
     [role="link"],
     [role="combobox"]
-  ):not([data-mw-covered], [data-mw-covered] *) {
+  ):not([data-mw-covered], [data-mw-covered] *, [data-mw-measuring], [data-mw-pointer-none]) {
   pointer-events: auto !important;
 }
 /* A modal dialog blocks the page, the grid included (specs/top-layer.md
  * deviation 7): inside it, grid mode falls back to the light DOM's own
  * pointer events and selection, the highlight showing over the grid as
- * in text mode. */
-mono-wind[select="grid"] :is(dialog:modal, dialog:modal *) {
+ * in text mode. Plain descendant selectors, so the style engine's
+ * ancestor filter rejects every element outside a dialog at once
+ * (architecture/performance.md). */
+mono-wind[select="grid"] dialog:modal:not([data-mw-measuring], [data-mw-pointer-none]),
+mono-wind[select="grid"] dialog:modal :not([data-mw-measuring], [data-mw-pointer-none]) {
   pointer-events: auto !important;
+}
+mono-wind[select="grid"] dialog:modal,
+mono-wind[select="grid"] dialog:modal * {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -292,12 +301,19 @@ mono-wind[select="grid"] :is(dialog:modal, dialog:modal *) {
  * value; the slot's inherited value never reached it). `:where()` keeps
  * the rule at base specificity so the coarse-pointer rule below wins.
  * The host's own text (specs/host-leaf.md) takes the host's value in
- * Firefox, so the leaf host is locked too. */
+ * Firefox, so the leaf host is locked too. An editable's subtree
+ * reverts to the layered cascade in a plain descendant rule, which
+ * the ancestor filter rejects outside an editable
+ * (architecture/performance.md). */
 mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))[data-mw-leaf],
 mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
-  :where(:not(input, textarea, [contenteditable], [contenteditable] *)) {
+  :where(:not(input, textarea, [contenteditable])) {
   user-select: none;
   -webkit-user-select: none;
+}
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])) [contenteditable] * {
+  user-select: revert-layer;
+  -webkit-user-select: revert-layer;
 }
 /* Touch panning (specs/scrolling.md): where the primary pointer is a
  * finger, a scroll container's subtree takes pointer events in grid
@@ -309,8 +325,12 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
  * the touched element, and on the container it falls back to the
  * first positioned leaf. */
 @media (pointer: coarse) {
-  mono-wind[select="grid"] :is([data-mw-scroll], [data-mw-scroll] *) {
+  mono-wind[select="grid"] [data-mw-scroll]:not([data-mw-measuring], [data-mw-pointer-none]),
+  mono-wind[select="grid"] [data-mw-scroll] :not([data-mw-measuring], [data-mw-pointer-none]) {
     pointer-events: auto !important;
+  }
+  mono-wind[select="grid"] [data-mw-scroll],
+  mono-wind[select="grid"] [data-mw-scroll] * {
     user-select: text;
     -webkit-user-select: text;
   }
@@ -407,23 +427,28 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   @layer theme {
     mono-wind:not([measuring])[data-mw-leaf]::selection,
     mono-wind
-      :where(:not(input, textarea, select, [contenteditable], [contenteditable] *)):not(
-        [data-mw-measuring]
-      )::selection {
+      :where(:not(input, textarea, select, [contenteditable])):not([data-mw-measuring])::selection {
       color: transparent !important;
       text-shadow: none !important;
       background: transparent !important;
+    }
+    /* An editable's subtree takes the swap below, in a plain descendant
+     * rule as the user-select lock's. */
+    mono-wind [contenteditable] :not([data-mw-measuring])::selection {
+      color: var(--mw-ground, var(--mw-bg, canvas)) !important;
+      background: var(--mw-ink, var(--mw-fg, canvastext)) !important;
     }
   }
   /* An editable renders its own text, and Chromium and WebKit hand it
    * its parent's `::selection` (css-pseudo-4 highlight inheritance —
    * transparent, from the rule above): its own rule swaps its colors as
    * the grid swaps a selected cell's, from the ink and ground the engine
-   * measured and wrote on it (render.ts). */
-  mono-wind
-    :where(input, textarea, select, [contenteditable], [contenteditable] *):not(
-      [data-mw-measuring]
-    )::selection {
+   * measured and wrote on it (render.ts). One selector per element kind,
+   * so each is matched only against its own. */
+  mono-wind input:not([data-mw-measuring])::selection,
+  mono-wind textarea:not([data-mw-measuring])::selection,
+  mono-wind select:not([data-mw-measuring])::selection,
+  mono-wind [contenteditable]:not([data-mw-measuring])::selection {
     color: var(--mw-ground, var(--mw-bg, canvas));
     background: var(--mw-ink, var(--mw-fg, canvastext));
   }
@@ -818,14 +843,15 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
      * column's last trailing leading trimmed, like single-column leaves),
      * but browsers count FULL line boxes when fragmenting — re-extend by
      * the `--mw-lh − 1` leading rows so every column fits its lines.
-     * `--mw-ink` (the host-measured ink overhang — WebKit breaks at ink
-     * bottoms, and some fonts draw taller than their line box) plus one
-     * layout unit of calc-rounding slack keep the last line's ink inside
-     * its column. The extension is under one line box, so no engine fits
+     * `--mw-overhang` (the host-measured ink overhang — WebKit breaks at
+     * ink bottoms, and some fonts draw taller than their line box) plus
+     * one layout unit of calc-rounding slack keep the last line's ink
+     * inside its column. The extension is under one line box, so no engine fits
      * an extra line, and the extra rows are blank leading — nothing
      * visible moves. */
     height: calc(
-      (var(--mw-h, 0) + var(--mw-lh, 1) - 1) * var(--mw-ch, 1px) + var(--mw-ink, 0px) + 0.03125px
+      (var(--mw-h, 0) + var(--mw-lh, 1) - 1) * var(--mw-ch, 1px) + var(--mw-overhang, 0px) +
+        0.03125px
     ) !important;
   }
 

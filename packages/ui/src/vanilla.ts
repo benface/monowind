@@ -1,5 +1,6 @@
 import type { Machine, MachineSchema, Service } from "@zag-js/core";
 import { VanillaMachine, spreadProps } from "@zag-js/vanilla";
+import type { TriggerApi } from "./framework.ts";
 import { syncTopLayer, type Anchored } from "./top-layer.ts";
 
 /** A component mounted on markup: its API, live, a way to change the
@@ -87,19 +88,10 @@ export function part(root: Element, name: string): HTMLElement | undefined {
 /** Zag's props onto a part, if the markup has it. */
 export type Spread = (element: Element | undefined, props: object) => void;
 
-/** What a trigger takes of its own: a menu names one of several by
- * value, a combobox says whether its one takes focus. Both are
- * optional, and a component ignores what it does not read. */
-interface TriggerOptions {
-  value?: string | undefined;
-  focusable?: boolean | undefined;
-}
-
 /** What an anchored component's API gives its mount past `Anchored`:
  * the props of its triggers — a menu's each by value — and its
  * content. */
-interface CommonApi extends Anchored {
-  getTriggerProps(props?: TriggerOptions): object;
+interface CommonApi extends Anchored, TriggerApi {
   getContentProps(): object;
 }
 
@@ -140,8 +132,8 @@ export function mount<T extends MachineSchema, A>(
   machine: VanillaMachine<T>,
   connect: (service: Service<T>) => A,
   wire: (api: A, spread: Spread) => void,
+  live: LiveProps<Partial<T["props"]>>,
   linked: Iterable<Followed> = [],
-  live?: LiveProps<Partial<T["props"]>>,
 ): Mounted<A> {
   // Zag declares this one private and defines it on the instance.
   const notify = (machine as unknown as { notify?: () => void }).notify;
@@ -165,7 +157,6 @@ export function mount<T extends MachineSchema, A>(
       return current;
     },
     updateProps(partial) {
-      if (!live) return;
       live.update(partial);
       // The machine reads its props from the getter it was started
       // on, so only its watchers are owed the news, and `notify` is
@@ -193,9 +184,9 @@ export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
   root: Element,
   machine: VanillaMachine<T>,
   connect: (service: Service<T>) => A,
-  wire?: (api: A, spread: Spread) => void,
+  wire: ((api: A, spread: Spread) => void) | undefined,
+  live: LiveProps<Partial<T["props"]>>,
   linked: Iterable<Followed> = [],
-  live?: LiveProps<Partial<T["props"]>>,
 ): Mounted<A> {
   const triggers = parts(root, "trigger");
   const positioner = part(root, "positioner");
@@ -212,8 +203,8 @@ export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
       wire?.(api, spread);
       syncTopLayer(positioner, api.open);
     },
-    linked,
     live,
+    linked,
   );
   return {
     get api() {

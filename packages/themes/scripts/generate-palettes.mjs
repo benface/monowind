@@ -9,9 +9,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 /* --- Color math (sRGB ↔ OKLAB / OKLCH) --- */
 const linearize = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -38,12 +39,13 @@ const hexToOklab = (hex) => {
 const parseColor = (value) => {
   const v = value.trim();
   if (v.startsWith("#")) return hexToOklab(v);
-  const oklch = /^oklch\(\s*([\d.]+)%?\s+([\d.]+)\s+([\d.]+)/.exec(v);
+  // A gray's hue is `none`: no angle, and no chroma to turn.
+  const oklch = /^oklch\(\s*([\d.]+)%?\s+([\d.]+)\s+([\d.]+|none)/.exec(v);
   if (oklch) {
     let L = parseFloat(oklch[1]);
     if (v.includes("%")) L /= 100;
     const C = parseFloat(oklch[2]);
-    const H = (parseFloat(oklch[3]) * Math.PI) / 180;
+    const H = oklch[3] === "none" ? 0 : (parseFloat(oklch[3]) * Math.PI) / 180;
     return { L, a: C * Math.cos(H), b: C * Math.sin(H) };
   }
   if (v === "white") return hexToOklab("#ffffff");
@@ -110,11 +112,15 @@ const themeCss = readFileSync(
   "utf8",
 );
 const tokens = [];
+const unread = [];
 for (const [, name, value] of themeCss.matchAll(/--color-([\w-]+):\s*([^;]+);/g)) {
   const lab = parseColor(value);
   if (lab) tokens.push({ name, lab });
+  else if (!/^(transparent|currentcolor|inherit)$/i.test(value.trim())) unread.push(name);
 }
-if (tokens.length < 200) throw new Error(`suspiciously few color tokens parsed (${tokens.length})`);
+// Every color token is read, so each takes its theme's color inside a
+// themed host.
+if (unread.length > 0) throw new Error(`color tokens left unread: ${unread.join(", ")}`);
 
 /** theme name → generated palette css. */
 export function generatePalettes() {
@@ -143,7 +149,7 @@ ${lines.join("\n")}
   return out;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const [theme, css] of generatePalettes()) {
     writeFileSync(join(root, "themes", `${theme}.palette.css`), css);
   }

@@ -1,15 +1,15 @@
 import { computed, defineComponent, useId, type ComputedRef } from "vue";
-import { warnStray } from "@monowind/ui/framework";
+import { defined, warnStray } from "@monowind/ui/framework";
 import { asSubmenuOf, propNames } from "@monowind/ui/menu";
 import type * as menu from "@monowind/ui/menu";
 import type { PropTypes } from "@zag-js/vue";
 import { useMenu, type Composed } from "../composables.ts";
 import {
-  defined,
   defineContext,
   definePart,
   partsOf,
   renderPart,
+  triggerPart,
   updatesOf,
   withUpdates,
 } from "./part.ts";
@@ -44,7 +44,6 @@ export const MenuRoot = defineComponent(
   (props: Omit<menu.Props, "id"> & { id?: string }, { slots, attrs, emit }) => {
     const parent = context.useOptional();
     const generated = useId();
-    warnStray("MenuRoot", Object.keys(attrs));
     const own = computed<menu.Props>(
       () =>
         withUpdates(
@@ -59,6 +58,7 @@ export const MenuRoot = defineComponent(
       parent ? asSubmenuOf(parent.props?.value ?? { id: own.value.id }, own.value) : own.value,
     );
     const instance = useMenu(machineProps);
+    warnStray("MenuRoot", Object.keys(attrs), instance);
     context.provide({ ...instance, parent: parent ?? null, props: machineProps });
     // Linked before the parts render, as the vanilla mount links a
     // marked submenu before its first spread; a service outlives
@@ -77,11 +77,7 @@ export const MenuRoot = defineComponent(
 export const MenuRootProvider = defineComponent(
   (props: { value: Api }, { slots }) => {
     const parent = context.useOptional();
-    context.provide({
-      ...props.value,
-      parent: parent ?? null,
-      props: computed(() => ({ id: "" })),
-    });
+    context.provide({ ...props.value, parent: parent ?? null, props: null });
     return () => slots["default"]?.();
   },
   { name: "MenuRootProvider", inheritAttrs: false, props: ["value"] },
@@ -89,9 +85,7 @@ export const MenuRootProvider = defineComponent(
 
 const part = partsOf<menu.Api<PropTypes>, Value>("Menu", context);
 
-export const MenuTrigger = part("Trigger", (api, own) => api.getTriggerProps(own), "button", [
-  "value",
-]);
+export const MenuTrigger = triggerPart<menu.Api<PropTypes>, Value>("Menu", context);
 
 /** The item of the menu above that opens this one: the submenu's own
  * trigger, which is why it goes inside the nested `MenuRoot`. */

@@ -42,6 +42,7 @@ jobs:
       # commit without green CI, and a publish is irreversible.
       - run: pnpm check
       - run: pnpm test
+      - run: pnpm -r --filter "./packages/*" build && node scripts/check-workspace.mjs --built
       # -r publishes in dependency order, so `workspace:^` resolves.
       - run: pnpm -r publish --access public --no-git-checks
 
@@ -58,7 +59,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       # Unfiltered: a filtered install fails on undeclared cross-package
-      # reaches (declarations guarded by scripts/check-workspace-deps.mjs).
+      # reaches (declarations guarded by scripts/check-workspace.mjs).
       - run: pnpm install --frozen-lockfile
       # No repository is linked to this Netlify site, so this push of
       # the built files is the only deploy path. The CLI must run from

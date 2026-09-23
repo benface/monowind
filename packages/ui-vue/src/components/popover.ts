@@ -2,7 +2,14 @@ import { propNames } from "@monowind/ui/popover";
 import type * as popover from "@monowind/ui/popover";
 import type { PropTypes } from "@zag-js/vue";
 import { usePopover, type Composed } from "../composables.ts";
-import { defineContext, definePart, defineRoot, defineRootProvider, partsOf } from "./part.ts";
+import {
+  defineContext,
+  definePart,
+  defineRoot,
+  defineRootProvider,
+  partsOf,
+  triggerPart,
+} from "./part.ts";
 
 /** Zag's popover as a compound component (specs/ui.md "Component
  * layer"). */
@@ -34,7 +41,7 @@ export const PopoverPositioner = definePart<Api>("PopoverPositioner", context, (
   ref: value.positioner,
 }));
 
-export const PopoverTrigger = part("Trigger", (api) => api.getTriggerProps(), "button");
+export const PopoverTrigger = triggerPart<popover.Api<PropTypes>, Api>("Popover", context);
 export const PopoverIndicator = part("Indicator", (api) => api.getIndicatorProps(), "span");
 export const PopoverContent = part("Content", (api) => api.getContentProps());
 export const PopoverTitle = part("Title", (api) => api.getTitleProps(), "h2");

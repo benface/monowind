@@ -80,6 +80,18 @@ describe("viewport-relative sizing", () => {
       value: Math.floor(window.innerHeight / 2 / 18),
     });
   });
+
+  it("yields to a resolved keyword from Typed OM: md:h-auto overrides h-screen", () => {
+    // At md, Typed OM reads the overriding height as auto, not as px.
+    const metrics = { width: 9, height: 18, letterSpacing: 0 };
+    const el = document.createElement("div");
+    el.className = "h-screen md:h-auto";
+    document.body.appendChild(el);
+    (el as unknown as { computedStyleMap: () => unknown }).computedStyleMap = () => ({
+      get: (property: string) => (property === "height" ? "auto" : null),
+    });
+    expect(readCellStyle(el, 16, metrics).height).toEqual({ kind: "auto" });
+  });
 });
 
 describe("sizing fallbacks", () => {
@@ -210,6 +222,7 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
   it("keeps flex-basis percentages symbolic (flex-1 reads as 0%)", () => {
     expect(read({ style: "flex-basis: 0%" }).flexBasis).toEqual({ kind: "percent", value: 0 });
     expect(read({ style: "flex-basis: auto" }).flexBasis).toBeUndefined();
+    expect(read({ style: "flex-basis: content" }).flexBasis).toEqual({ kind: "max-content" });
     expect(read({ style: "flex-basis: 24px" }).flexBasis).toEqual({ kind: "cells", value: 6 });
   });
 

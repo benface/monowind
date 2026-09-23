@@ -1,17 +1,16 @@
 import { STYLE_RANK } from "./lattice.ts";
-import { scrollGutter } from "./types.ts";
 import { glyphSetFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
 import {
+  boxChrome,
   clampSize,
   intrinsicOuterWidth,
   isOutOfFlow,
   layoutNode,
   minContentOuterWidth,
-  resolveLength,
   resolveSizeAgainst,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
@@ -613,15 +612,9 @@ export function tableUsedOuterWidth(
   availableWidth: number,
   cache: IntrinsicCache,
 ): number {
-  const style = node.style;
   const { bounds, chromeX } = tableData(node, cache);
   const { min, max } = tableIntrinsicInnerWidths(node, cache);
-  const outerChromeX =
-    style.border.left +
-    style.border.right +
-    resolveLength(style.padding.left, availableWidth) +
-    resolveLength(style.padding.right, availableWidth) +
-    scrollGutter(style).right;
+  const outerChromeX = boxChrome(node.style, "x", availableWidth);
 
   // Percent inflation (css-tables-3 style, probed): each percent column
   // demands max ÷ p, the rest demand sum ÷ (1 − Σp); Σp ≥ 100% demands
@@ -847,10 +840,7 @@ export function layoutTable(
     }
     // Align the CONTENT, not the box: an explicit cell height tallens
     // the natural box, but vertical-align still centers within it.
-    alignCellContent(
-      cell.node,
-      areaH - (cell.node.naturalContentHeight ?? cell.node.localRect.height),
-    );
+    alignCellContent(cell.node, areaH - cell.node.naturalContentHeight);
     cell.node.localRect = {
       x: colX[cell.col]!,
       y: 0,
@@ -899,7 +889,9 @@ export function layoutTable(
 
 /** Fold the cell's leftover block-axis space into its content per
  * `vertical-align`: leaves take it as engine-owned padding (the
- * alignLeafText pattern); containers shift their children. */
+ * alignLeafText pattern); containers shift their children. Either way
+ * the children move with it — a leaf's inline boxes were placed at the
+ * padding before it grew. */
 function alignCellContent(cell: LayoutNode, delta: number): void {
   if (delta <= 0) return;
   const align = cell.style.verticalAlign;
@@ -910,11 +902,9 @@ function alignCellContent(cell: LayoutNode, delta: number): void {
     // the renderers then account for every row of the stretched box.
     cell.resolvedPadding.top += offset;
     cell.resolvedPadding.bottom += delta - offset;
-    return;
   }
   if (offset <= 0) return;
   for (const child of cell.children) {
-    if (child.inlineBox) continue;
     if (isOutOfFlow(child.style)) {
       if (child.staticSlot?.kind === "block") child.staticSlot.y += offset;
     } else {

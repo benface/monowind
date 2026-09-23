@@ -2,7 +2,14 @@ import { propNames } from "@monowind/ui/tooltip";
 import type * as tooltip from "@monowind/ui/tooltip";
 import type { PropTypes } from "@zag-js/vue";
 import { useTooltip, type Composed } from "../composables.ts";
-import { defineContext, definePart, defineRoot, defineRootProvider, partsOf } from "./part.ts";
+import {
+  defineContext,
+  definePart,
+  defineRoot,
+  defineRootProvider,
+  partsOf,
+  triggerPart,
+} from "./part.ts";
 
 /** Zag's tooltip as a compound component (specs/ui.md "Component
  * layer"). */
@@ -36,5 +43,5 @@ export const TooltipPositioner = definePart<Api>(
   "span",
 );
 
-export const TooltipTrigger = part("Trigger", (api) => api.getTriggerProps(), "button");
+export const TooltipTrigger = triggerPart<tooltip.Api<PropTypes>, Api>("Tooltip", context);
 export const TooltipContent = part("Content", (api) => api.getContentProps(), "span");

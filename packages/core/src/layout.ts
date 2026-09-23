@@ -186,9 +186,9 @@ export function layoutNode(
   delete node.lineBands;
 
   // Width is clamped to min/max BEFORE laying out content — wrapping and
-  // child sizing must see the constrained width, not the raw resolved one.
-  // (Height differs: max-height clamps the final rect after layout, since
-  // content height is an output, and overflow handles the spill.)
+  // child sizing must see the constrained width, not the raw resolved one —
+  // and so is an explicit height (below); an auto height is the content's
+  // output, clamped after, overflow handling the spill.
   // Percent min/max (`max-w-full`) resolve against the available size; a
   // percent height limit with indefinite available height is ignored, per CSS.
   const minWidth = resolveWidthLimit(style.minWidth, availableWidth, node, cache) ?? 0;
@@ -219,11 +219,16 @@ export function layoutNode(
   const outerHeightExplicit = resolveHeight(style, availableHeight);
   // A `forcedHeight` (set by a parent flex-column when grow/shrink assigned a
   // main-axis size) overrides both explicit `height` and `min-height` — the
-  // flex algorithm's "used main size" is authoritative. Otherwise, `min-height`
-  // is a lower bound so items-center / items-end see the enforced size, not
-  // just the natural content size.
+  // flex algorithm's "used main size" is authoritative. Otherwise the content
+  // lays out against the explicit height as its limits leave it, or a
+  // `min-height` floor, so items-center / items-end see the enforced size.
   const outerHeightFloor =
-    forcedHeight ?? outerHeightExplicit ?? (minHeight > 0 ? minHeight : undefined);
+    forcedHeight ??
+    (outerHeightExplicit === undefined
+      ? minHeight > 0
+        ? minHeight
+        : undefined
+      : clampSize(outerHeightExplicit, minHeight, maxHeight));
 
   const inner = shrinkSize(
     outerWidth,
@@ -244,10 +249,7 @@ export function layoutNode(
   const maxInnerHeight =
     maxHeight === undefined
       ? undefined
-      : Math.max(
-          0,
-          maxHeight - style.border.top - style.border.bottom - padding.top - padding.bottom,
-        );
+      : Math.max(0, maxHeight - edges(style.border, padding, "y"));
 
   // Content layout against an inner height and whether it is definite.
   // Flex and grid containers size their content against a definite
@@ -293,7 +295,15 @@ export function layoutNode(
       );
     }
     if (style.display === "grid") {
-      return layoutGrid(node, inner.width, innerHeight, style.border, padding, cache);
+      return layoutGrid(
+        node,
+        inner.width,
+        innerHeight,
+        definiteInner,
+        style.border,
+        padding,
+        cache,
+      );
     }
     if (style.display === "table") {
       return layoutTable(node, inner.width, definiteInner, style.border, padding, cache);
@@ -319,17 +329,18 @@ export function layoutNode(
     }
     return layoutBlock(node, inner.width, definiteInner, style.border, padding, cache);
   };
+  // Taken before the content lays out: a flex/grid text leaf folds its
+  // alignment into the padding, which is no part of its content height.
+  const chromeY = edges(style.border, padding, "y");
   let contentHeight = layoutContent(inner.height, heightIsDefinite);
   const capsUsedHeight = !isLeaf && (style.display === "flex" || style.display === "grid");
   if (capsUsedHeight && !heightIsDefinite && maxHeight !== undefined) {
     // The USED size: max clamps, and a larger min wins over it (CSS).
-    const chromeY = style.border.top + style.border.bottom + padding.top + padding.bottom;
     const usedInner = clampSize(contentHeight + chromeY, minHeight, maxHeight) - chromeY;
     if (usedInner < contentHeight) contentHeight = layoutContent(Math.max(0, usedInner), true);
   }
 
-  const naturalHeight =
-    contentHeight + style.border.top + style.border.bottom + padding.top + padding.bottom;
+  const naturalHeight = contentHeight + chromeY;
   // Order matters: min-* is a floor, max-* is a ceiling; when both apply,
   // max wins per CSS (min-width < max-width is required, but if the author
   // sets an inconsistent pair CSS clamps to `max(min, min(max, value))`).
@@ -353,8 +364,7 @@ export function layoutNode(
   // pass re-populates the property behind a call TS doesn't track).
   const multicolGeometry = node.multicolGeometry as MulticolLeafGeometry | undefined;
   if (multicolGeometry) {
-    const finalContentHeight =
-      finalHeight - style.border.top - style.border.bottom - padding.top - padding.bottom;
+    const finalContentHeight = finalHeight - edges(style.border, padding, "y");
     if (finalContentHeight > multicolGeometry.totalRows)
       padding.bottom += finalContentHeight - multicolGeometry.totalRows;
     multicolLeafRuleRuns(node, multicolGeometry, style.border, padding);
@@ -368,14 +378,8 @@ export function layoutNode(
     const extent = contentExtent(node);
     const sizeX = Math.max(0, extent.x - style.border.left - padding.left);
     const sizeY = Math.max(0, extent.y - style.border.top - padding.top);
-    const contentW = Math.max(
-      0,
-      outerWidth - style.border.left - style.border.right - padding.left - padding.right,
-    );
-    const contentH = Math.max(
-      0,
-      finalHeight - style.border.top - style.border.bottom - padding.top - padding.bottom,
-    );
+    const contentW = Math.max(0, outerWidth - edges(style.border, padding, "x"));
+    const contentH = Math.max(0, finalHeight - edges(style.border, padding, "y"));
     node.scrollRange = {
       sizeX,
       sizeY,
@@ -825,6 +829,25 @@ export function edges(border: Insets, padding: Insets, axis: "x" | "y"): number 
     : border.top + border.bottom + padding.top + padding.bottom;
 }
 
+/** A box's border, padding and reserved scrollbar gutter on an axis
+ * from its style, before it lays out: percent padding resolves against
+ * `basis`, as 0 where that is indefinite (intrinsic sizing). */
+export function boxChrome(style: CellStyle, axis: "x" | "y", basis?: number): number {
+  const { border, padding } = style;
+  const gutter = scrollGutter(style);
+  return axis === "x"
+    ? border.left +
+        border.right +
+        resolveLength(padding.left, basis) +
+        resolveLength(padding.right, basis) +
+        gutter.right
+    : border.top +
+        border.bottom +
+        resolveLength(padding.top, basis) +
+        resolveLength(padding.bottom, basis) +
+        gutter.bottom;
+}
+
 /** Resolve a spacing length to cells against its containing-block basis.
  * An indefinite basis (percent gap in an unbounded axis) resolves to 0. */
 export function resolveLength(length: CellLength, basis: number | undefined): number {
@@ -843,12 +866,6 @@ export function resolveMargin(margin: PerSide<CellLength | null>, basis: number)
     bottom: side(margin.bottom),
     left: side(margin.left),
   };
-}
-
-/** The cells of a CellLength for intrinsic sizing: percentages count as 0,
- * per CSS intrinsic-size contribution rules. */
-function intrinsicCells(length: CellLength): number {
-  return typeof length === "number" ? length : 0;
 }
 
 /** Resolve a height limit to cells: percent needs a definite available
@@ -1117,10 +1134,23 @@ export function blockCrossOffset(
   slotWidth: number,
   boxWidth: number,
 ): number {
-  const available = slotWidth - boxWidth;
-  if (margin.left === null && margin.right === null) return Math.floor(available / 2);
-  if (margin.left === null) return available - (margin.right ?? 0);
-  return margin.left;
+  return autoMarginOffset(margin.left, margin.right, slotWidth, boxWidth) ?? margin.left!;
+}
+
+/** A box's offset in `space` along one axis where a margin (`null`) is
+ * auto, in block flow, flex and grid (an absolute box's: positioning.ts):
+ * the auto margins take the free space, split when both are, and zero
+ * where there is none. Undefined where neither is auto. */
+export function autoMarginOffset(
+  before: number | null,
+  after: number | null,
+  space: number,
+  size: number,
+): number | undefined {
+  if (before !== null && after !== null) return undefined;
+  const free = Math.max(0, space - size - (before ?? 0) - (after ?? 0));
+  if (before === null && after === null) return Math.floor(free / 2);
+  return before ?? free;
 }
 
 /**
@@ -1205,15 +1235,7 @@ function scrollableExtent(node: LayoutNode): { x: number; y: number } {
 }
 
 function tableMinOuterWidth(node: LayoutNode, available: number, cache: IntrinsicCache): number {
-  const style = node.style;
-  return (
-    tableIntrinsicInnerWidths(node, cache).min +
-    style.border.left +
-    style.border.right +
-    resolveLength(style.padding.left, available) +
-    resolveLength(style.padding.right, available) +
-    scrollGutter(style).right
-  );
+  return tableIntrinsicInnerWidths(node, cache).min + boxChrome(node.style, "x", available);
 }
 
 function resolveHeight(style: CellStyle, available: number | undefined): number | undefined {
@@ -1254,15 +1276,7 @@ export function resolveSizeAgainst(
 export function intrinsicOuterWidth(node: LayoutNode, cache: IntrinsicCache): number {
   const cached = cache.maxContent.get(node);
   if (cached !== undefined) return cached;
-  const style = node.style;
-  const inner = intrinsicInnerWidth(node, cache);
-  const result =
-    inner +
-    style.border.left +
-    style.border.right +
-    intrinsicCells(style.padding.left) +
-    intrinsicCells(style.padding.right) +
-    scrollGutter(style).right;
+  const result = intrinsicInnerWidth(node, cache) + boxChrome(node.style, "x");
   cache.maxContent.set(node, result);
   return result;
 }
@@ -1277,9 +1291,7 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
   if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).max;
   if (node.style.display === "flex" && node.style.flexDirection === "row") {
-    const gap =
-      Math.max(intrinsicCells(node.style.gapX), node.style.ruleX?.width ?? 0) *
-      Math.max(0, inFlow.length - 1);
+    const gap = resolveGap(node.style, "x", undefined) * Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + widthContribution(c, "max", cache), 0) + gap;
   }
   const widest = inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "max", cache)), 0);
@@ -1307,23 +1319,22 @@ function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
 /** A child's outer width contribution to its parent's intrinsic size: its
  * explicit width if fixed (percent behaves as auto, per intrinsic
  * contribution rules), else its min-/max-content outer width; clamped by
- * its own fixed min/max. */
+ * its own fixed min/max, and floored at its border and padding. */
 export function widthContribution(
   child: LayoutNode,
   kind: "min" | "max",
   cache: IntrinsicCache,
 ): number {
   const style = child.style;
-  let width: number | undefined;
-  if (style.width !== undefined && style.width.kind !== "auto" && style.width.kind !== "percent") {
-    width = resolveSizeAgainst(style.width, 0, child, cache);
-  }
-  if (width === undefined) {
-    width = kind === "min" ? minContentOuterWidth(child, cache) : intrinsicOuterWidth(child, cache);
-  }
+  const width =
+    style.width !== undefined && style.width.kind !== "auto" && style.width.kind !== "percent"
+      ? resolveSizeAgainst(style.width, 0, child, cache)
+      : kind === "min"
+        ? minContentOuterWidth(child, cache)
+        : intrinsicOuterWidth(child, cache);
   const min = typeof style.minWidth === "number" ? style.minWidth : 0;
   const max = typeof style.maxWidth === "number" ? style.maxWidth : undefined;
-  return Math.max(0, clampSize(width, min, max));
+  return Math.max(boxChrome(style, "x"), clampSize(width, min, max));
 }
 
 /**
@@ -1336,15 +1347,7 @@ export function widthContribution(
 export function minContentOuterWidth(node: LayoutNode, cache: IntrinsicCache): number {
   const cached = cache.minContent.get(node);
   if (cached !== undefined) return cached;
-  const style = node.style;
-  const inner = minContentInnerWidth(node, cache);
-  const result =
-    inner +
-    style.border.left +
-    style.border.right +
-    intrinsicCells(style.padding.left) +
-    intrinsicCells(style.padding.right) +
-    scrollGutter(style).right;
+  const result = minContentInnerWidth(node, cache) + boxChrome(node.style, "x");
   cache.minContent.set(node, result);
   return result;
 }
@@ -1365,9 +1368,7 @@ function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
     node.style.flexDirection === "row" &&
     node.style.flexWrap === "nowrap"
   ) {
-    const gap =
-      Math.max(intrinsicCells(node.style.gapX), node.style.ruleX?.width ?? 0) *
-      Math.max(0, inFlow.length - 1);
+    const gap = resolveGap(node.style, "x", undefined) * Math.max(0, inFlow.length - 1);
     return inFlow.reduce((sum, c) => sum + widthContribution(c, "min", cache), 0) + gap;
   }
   return inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "min", cache)), 0);
@@ -1380,7 +1381,7 @@ function shrinkSize(
   padding: Insets,
 ): { width: number; height: number } {
   return {
-    width: Math.max(0, width - border.left - border.right - padding.left - padding.right),
-    height: Math.max(0, height - border.top - border.bottom - padding.top - padding.bottom),
+    width: Math.max(0, width - edges(border, padding, "x")),
+    height: Math.max(0, height - edges(border, padding, "y")),
   };
 }

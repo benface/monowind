@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
+import type { CellStyle } from "../src/types.ts";
 import { makeNode } from "./helpers.ts";
 
 /**
@@ -137,6 +138,31 @@ describe("min-width / max-width / min-height / max-height clamping", () => {
     expect(container.localRect.height).toBe(3);
   });
 
+  it("lays content out against an explicit height clamped by min/max", () => {
+    const column = (limits: Partial<CellStyle>) => {
+      const child = makeNode({ text: "end" });
+      const container = makeNode({
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "end",
+          height: { kind: "cells", value: 6 },
+          ...limits,
+        },
+        children: [child],
+      });
+      layoutRoot(makeNode({ children: [container] }), 20);
+      return { container, child };
+    };
+    // The child sits at the bottom of the box as its limits leave it.
+    const capped = column({ maxHeight: 3 });
+    expect(capped.container.localRect.height).toBe(3);
+    expect(capped.child.localRect.y).toBe(2);
+    const floored = column({ minHeight: 9 });
+    expect(floored.container.localRect.height).toBe(9);
+    expect(floored.child.localRect.y).toBe(8);
+  });
+
   it("white-space nowrap: text stays one row instead of wrapping at max-width", () => {
     const leaf = makeNode({
       text: "this text is much longer than the container",
@@ -229,6 +255,63 @@ describe("min-width / max-width / min-height / max-height clamping", () => {
     layoutRoot(root, 30);
     // value=30 → min(10, 30)=10 → max(15, 10)=15.
     expect(container.localRect.width).toBe(15);
+  });
+});
+
+describe("auto margins on a box wider than its space", () => {
+  // Zero where there is no free space: the box starts at its space's
+  // start, overflowing past its end, as all three engines place it.
+  const autoX = { top: 0, right: null, bottom: 0, left: null };
+  const autoY = { top: null, right: 0, bottom: null, left: 0 };
+  const wide = (margin: CellStyle["margin"]) =>
+    makeNode({
+      style: { width: { kind: "cells", value: 15 }, height: { kind: "cells", value: 1 }, margin },
+    });
+  const tall = (margin: CellStyle["margin"]) =>
+    makeNode({
+      style: { width: { kind: "cells", value: 1 }, height: { kind: "cells", value: 5 }, margin },
+    });
+
+  it("in block flow", () => {
+    const [both, start] = [wide(autoX), wide({ ...autoX, right: 2 })];
+    const root = makeNode({
+      style: { width: { kind: "cells", value: 10 } },
+      children: [both, start],
+    });
+    layoutRoot(makeNode({ children: [root] }), 40);
+    expect(both.localRect.x).toBe(0);
+    expect(start.localRect.x).toBe(0);
+  });
+
+  it("on a flex item's cross axis", () => {
+    const [both, start] = [tall(autoY), tall({ ...autoY, bottom: 1 })];
+    const row = makeNode({
+      style: { display: "flex", flexDirection: "row", height: { kind: "cells", value: 2 } },
+      children: [both, start],
+    });
+    const across = wide(autoX);
+    const column = makeNode({
+      style: { display: "flex", flexDirection: "column", width: { kind: "cells", value: 10 } },
+      children: [across],
+    });
+    layoutRoot(makeNode({ children: [row, column] }), 40);
+    expect(both.localRect.y).toBe(0);
+    expect(start.localRect.y).toBe(0);
+    expect(across.localRect.x).toBe(0);
+  });
+
+  it("in a grid area", () => {
+    const ten = { kind: "cells", value: 10 } as const;
+    const item = wide(autoX);
+    const grid = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: { kind: "tracks", tracks: [{ min: ten, max: ten }] },
+      },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [grid] }), 40);
+    expect(item.localRect.x).toBe(0);
   });
 });
 
@@ -418,6 +501,24 @@ describe("intrinsic keywords as min/max limits", () => {
     const root = makeNode({ children: [box] });
     layoutRoot(root, 40);
     expect(box.localRect.width).toBe(19);
+  });
+
+  it("caps a growing flex item at max-w-min and floors a shrinking one at min-w-max", () => {
+    const capped = makeNode({
+      text: "hello world",
+      style: { flexGrow: 1, maxWidth: "min-content" },
+    });
+    const floored = makeNode({
+      text: "wide line",
+      style: { flexShrink: 1, minWidth: "max-content" },
+    });
+    const row = makeNode({
+      style: { display: "flex", flexDirection: "row", width: { kind: "cells", value: 12 } },
+      children: [capped, floored],
+    });
+    layoutRoot(makeNode({ children: [row] }), 40);
+    expect(capped.localRect.width).toBe(5);
+    expect(floored.localRect.width).toBe(9);
   });
 
   it("intrinsic keywords on height limits are no-ops", () => {

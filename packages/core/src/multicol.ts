@@ -60,7 +60,7 @@ export function resolveColumnTracks(style: CellStyle, available: number, gap: nu
  * one `W`-wide column (Chromium/WebKit; Firefox clamps to `W` — a
  * documented divergence, specs/multicol.md). */
 export function multicolIntrinsicInnerWidth(style: CellStyle, contentMax: number): number {
-  const gap = Math.max(typeof style.gapX === "number" ? style.gapX : 0, style.ruleX?.width ?? 0);
+  const gap = resolveGap(style, "x", undefined);
   if (style.columnCount !== null) {
     return style.columnCount * contentMax + (style.columnCount - 1) * gap;
   }
@@ -889,8 +889,8 @@ export function layoutMulticol(
     }
     if (child.style.columnSpan) {
       // Spanner (css-multicol §6.1): full content width, stacked between
-      // segments; its margins don't collapse with column content
-      // (specs/multicol.md deviation 5).
+      // segments, its margins apart from the column content's
+      // (specs/multicol.md "Spanners").
       flushSegment();
       pendingBreak = false;
       const margin = resolveMargin(child.style.margin, innerWidth);

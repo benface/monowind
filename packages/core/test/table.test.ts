@@ -462,6 +462,13 @@ describe("out-of-flow and container cells", () => {
     expect(art).toBe(["ax", "by", "c"].join("\n"));
   });
 
+  it("moves a text cell's inline box with its vertical-align", () => {
+    const art = plainText(
+      `<table><tr><td>a<br>b<br>c</td><td style="vertical-align: bottom">x<span style="display: inline-block">yz</span></td></tr></table>`,
+    );
+    expect(art).toBe(["a", "b", "cxyz"].join("\n"));
+  });
+
   it("anchors an abspos child of the table at the content origin", () => {
     // Imperative: the HTML parser would foster-parent the div out.
     const table = document.createElement("table");

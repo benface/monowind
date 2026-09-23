@@ -1,6 +1,6 @@
 {
   "name": "@monowind/vite",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Zero-config Vite plugin for monowind — Tailwind included, no Tailwind setup required",
   "keywords": [
     "monowind",
@@ -39,6 +39,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
     "prepublishOnly": "pnpm build"
   },
@@ -49,7 +50,8 @@
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
   },
   "peerDependencies": {
     "vite": "^7.0.0 || ^8.0.0"

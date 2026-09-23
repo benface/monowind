@@ -61,7 +61,9 @@ parsed. Positions in px convert on the spacing scale.
   color composited over it, so `text-transparent` shows the gradient
   through the text and an opaque color hides it, as CSS clips the
   background to the glyphs. The plain `background-color` clips the
-  same way.
+  same way, to a box or to the text. An inline element's `opacity`
+  fades its glyphs' color after that, as Firefox draws it — Chromium
+  draws them whole and WebKit not at all (probed 2026-09-23).
 - **The light DOM's own gradient is off**: the companion locks
   `background-image: none` beside its `background-color` lock; the
   grid owns backgrounds.
@@ -94,8 +96,13 @@ parsed. Positions in px convert on the spacing scale.
 6. An editable's native selection (`styles.css`, its `--mw-ground`)
    sits on the plain `background-color` under a gradient, not on the
    gradient's color at its cells.
-7. A stop outside sRGB (Tailwind's wide-gamut `oklch()` colors) clips
-   to sRGB per channel, where CSS gamut-maps by reducing chroma.
+7. A color outside sRGB (Tailwind's wide-gamut `oklch()` colors, and
+   mixes of them) clips to sRGB per channel as a cell paints or
+   composites it, where CSS gamut-maps by reducing chroma; the stops
+   themselves mix unclipped, as CSS interpolates them. An hsl
+   saturation below 0 (a lightness past 1 or below 0) mixes as it is,
+   as Chromium and Firefox mix it, where css-color-4 turns the hue half
+   round, as WebKit does (probed 2026-09-23).
 
 ## Testing
 
@@ -122,6 +129,7 @@ parsed. Positions in px convert on the spacing scale.
   the hue modes, composited; `gradient.ts`: the color at a cell
   (direction math, stop resolution, compositing), kept per box.
 - plain-text.ts `walk`: the fill step paints per-cell colors when
-  gradients are present.
+  gradients are present, a plain color or a gradient inside the
+  `background-clip` box (`backgroundInset`).
 - styles.css: the `background-image: none` lock.
 - cell-model.md: the box-model fill sentence points here.

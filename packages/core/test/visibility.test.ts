@@ -229,7 +229,7 @@ describe("the hit", () => {
     );
     const under = host.querySelector('[data-test="under"]')!;
     const over = host.querySelector('[data-test="over"]')!;
-    const chain = hitChain(root, 0, 0);
+    const chain = hitChain(root, 0, 0, null);
     expect(chain).toContain(under);
     expect(chain).not.toContain(over);
   });
@@ -238,9 +238,9 @@ describe("the hit", () => {
     const { root, host } = build(
       `<div><p data-test="p" style="visibility: hidden">gone <span style="visibility: visible">here</span></p></div>`,
     );
-    expect(hitChain(root, 6, 0)).toContain(host.querySelector('[data-test="p"]'));
+    expect(hitChain(root, 6, 0, null)).toContain(host.querySelector('[data-test="p"]'));
     // Its hidden text takes no hit.
-    expect(hitChain(root, 1, 0)).not.toContain(host.querySelector('[data-test="p"]'));
+    expect(hitChain(root, 1, 0, null)).not.toContain(host.querySelector('[data-test="p"]'));
   });
 
   it("hits a visible inline element in a hidden anonymous run", () => {
@@ -248,15 +248,15 @@ describe("the hit", () => {
       `<div><div data-test="box" style="visibility: hidden"><p>block</p>gone <span style="visibility: visible">here</span></div></div>`,
     );
     const box = host.querySelector('[data-test="box"]');
-    expect(hitChain(root, 6, 1)).toContain(box);
-    expect(hitChain(root, 1, 1)).not.toContain(box);
+    expect(hitChain(root, 6, 1, null)).toContain(box);
+    expect(hitChain(root, 1, 1, null)).not.toContain(box);
   });
 
   it("passes a press on a hidden atomic inline box to its line", () => {
     const { root, host } = build(
       `<div><p data-test="line">a <span data-test="box" style="display: inline-block; visibility: hidden">box</span> b</p></div>`,
     );
-    const chain = hitChain(root, 3, 0);
+    const chain = hitChain(root, 3, 0, null);
     expect(chain).toContain(host.querySelector('[data-test="line"]'));
     expect(chain).not.toContain(host.querySelector('[data-test="box"]'));
   });
@@ -265,7 +265,7 @@ describe("the hit", () => {
     const { root, host } = build(
       `<div><div data-test="hidden" style="visibility: hidden"><p data-test="shown" style="visibility: visible">here</p></div></div>`,
     );
-    const chain = hitChain(root, 0, 0);
+    const chain = hitChain(root, 0, 0, null);
     expect(chain).toContain(host.querySelector('[data-test="shown"]'));
     expect(chain).toContain(host.querySelector('[data-test="hidden"]'));
   });

@@ -1,12 +1,16 @@
 /**
  * The shared body of the HTML-enhancer example smoke tests: serve the
  * app, open it, and drive a `<mono-*>` element the way the enhancer
- * does — attributes alone, no JavaScript in the page. The caller
- * passes its own `chromium` and `createServer` (resolved from the
- * app's own deps), its directory, its name, a `drive` that asserts
+ * does — attributes alone, no JavaScript in the page — then build it
+ * and find every file the built page loads beside it. The caller
+ * passes its own `chromium`, `createServer` and `build` (resolved from
+ * the app's own deps), its directory, its name, a `drive` that asserts
  * what its enhancer did with the event the menu dispatched, and
  * `pick` where what it clicks in the item is not the item itself.
  */
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /** The text the engine painted, which every `drive` reads. */
 const gridText = (page) =>
@@ -35,6 +39,7 @@ export async function runEnhancerSmoke({
   dir,
   chromium,
   createServer,
+  build,
   drive,
   pick = '[role="menuitem"][data-value="next"]',
 }) {
@@ -82,6 +87,20 @@ export async function runEnhancerSmoke({
 
   await browser.close();
   await server.close();
+
+  // The same-origin URLs the built page loads — scripts, links,
+  // fragments, Vite's own assets — each shipped with it.
+  const outDir = mkdtempSync(join(tmpdir(), "monowind-example-"));
+  try {
+    await build({ root: dir, logLevel: "silent", build: { outDir, emptyOutDir: true } });
+    const built = readFileSync(join(outDir, "index.html"), "utf8");
+    const urls = [...built.matchAll(/(?:src|href|hx-get)="\.?\/(?!\/)([^"#?]+)"/g)].map(
+      (m) => m[1],
+    );
+    result.buildShipsFiles = urls.length > 0 && urls.every((url) => existsSync(join(outDir, url)));
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
 
   const failures = Object.entries(result).filter(([, ok]) => !ok);
   if (failures.length > 0) {

@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui-react",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "@monowind/ui as React hooks: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid",
   "keywords": [
     "accessibility",
@@ -64,7 +64,7 @@
     "vitest": "^5.0.1"
   },
   "peerDependencies": {
-    "react": ">=18.0.0",
-    "react-dom": ">=18.0.0"
+    "react": ">=19.0.0",
+    "react-dom": ">=19.0.0"
   }
 }

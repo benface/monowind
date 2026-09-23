@@ -62,9 +62,11 @@ function walk(
   forced = false,
 ): void {
   if (node.inlineElements) {
-    for (const { element, tracking, padLeft, padRight, insets, sticky } of node.inlineElements) {
+    for (const entry of node.inlineElements) {
+      const { element, tracking, padLeft, padRight, insets, sticky } = entry;
       const el = element as HTMLElement;
       setVar(el, "--mw-ls", String(tracking));
+      setFlag(el, "data-mw-pointer-none", !entry.pointerEvents);
       // Quantized horizontal padding (specs/cell-model.md): the companion
       // stylesheet applies these cells as the element's real padding —
       // its typography lock zeroes any authored value, so browser padding
@@ -125,7 +127,6 @@ const EDITABLE = "input, textarea, select, [contenteditable], [contenteditable] 
 function syncEditableColors(el: HTMLElement, node: LayoutNode, ground: string | undefined): void {
   if (!el.matches(EDITABLE)) return;
   if (node.style.color !== undefined) setVar(el, "--mw-ink", node.style.color);
-  else clearVar(el, "--mw-ink");
   if (ground !== undefined) setVar(el, "--mw-ground", ground);
   else clearVar(el, "--mw-ground");
 }
@@ -250,7 +251,11 @@ function positionElement(node: LayoutNode): void {
   const top = node.topLayerRank !== undefined;
   const rect = top ? { ...node.localRect, ...node.hostRect } : node.localRect;
   setFlag(el, "data-mw-top", top);
-  if (node.style.position !== "sticky") {
+  // An authored `pointer-events: none` the grid-mode opt-in leaves be
+  // (styles.css).
+  setFlag(el, "data-mw-pointer-none", !node.style.pointerEvents);
+  // A sticky box's shift and a fixed one's are syncStickyVars' to write.
+  if (node.style.position !== "sticky" && (node.hostRect === undefined || top)) {
     clearVar(el, "--mw-sx");
     clearVar(el, "--mw-sy");
   }

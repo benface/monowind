@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, pressAt, readyHost, release } from "./helpers.ts";
+import { copyText, gridOf, pressAt, readyHost, release, testHooks } from "./helpers.ts";
 
 /**
  * The host's own content states: emptied out, it is zero rows with an
@@ -26,7 +26,7 @@ export const Content: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const grid = host.shadowRoot!.getElementById("grid")!;
+    const grid = gridOf(host);
     const slot = host.shadowRoot!.querySelector("slot")!;
     const by = (name: string) => host.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
     const gridHeight = () => grid.getBoundingClientRect().height;
@@ -168,17 +168,43 @@ export const Nested: StoryObj = {
       const inner = document.createElement("mono-wind");
       inner.innerHTML = "<p>Inner text.</p>";
       outer.appendChild(inner);
-      await waitFor(() =>
-        expect(outer.shadowRoot!.getElementById("grid")!.textContent).toContain("Inner text."),
-      );
+      await waitFor(() => expect(gridOf(outer).textContent).toContain("Inner text."));
       expect(warnings.some((w) => w.includes("inside another <mono-wind> is unsupported"))).toBe(
         true,
       );
-      expect(inner.shadowRoot!.getElementById("grid")!.textContent).toBe("");
+      expect(gridOf(inner).textContent).toBe("");
       expect(inner.hasAttribute("data-mw-ready")).toBe(false);
+      // Its own pointer-events reach its content, as a plain wrapper's do.
+      inner.classList.add("pointer-events-none");
+      await waitFor(() => expect(inner.querySelector("p")).toHaveAttribute("data-mw-pointer-none"));
+      // An attribute set before it connects asks for a layout the
+      // nesting then turns down.
+      const selecting = document.createElement("mono-wind");
+      selecting.setAttribute("select", "text");
+      selecting.innerHTML = "<p>Selecting text.</p>";
+      outer.appendChild(selecting);
+      await waitFor(() => expect(gridOf(outer).textContent).toContain("Selecting text."));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(gridOf(selecting).textContent).toBe("");
+      expect(selecting.hasAttribute("data-mw-ready")).toBe(false);
     } finally {
       console.warn = warn;
     }
+  },
+};
+
+/** A host straight under a shadow root, with no element parent, is a
+ * top-level one: its engine runs. */
+export const InShadowRoot: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`<div data-test="holder"></div>`,
+  play: async ({ canvasElement }) => {
+    const holder = testHooks(canvasElement)("holder");
+    const root = holder.shadowRoot ?? holder.attachShadow({ mode: "open" });
+    root.innerHTML = "<mono-wind><p>Shadowed text.</p></mono-wind>";
+    const host = root.querySelector("mono-wind")!;
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
+    expect(gridOf(host as HTMLElement).textContent).toContain("Shadowed text.");
   },
 };
 

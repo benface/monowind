@@ -11,7 +11,7 @@ import {
   resolveWidthLimit,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import { alignCrossOffset, effectiveAlign, effectiveJustify, mainAxisOffsets } from "./flex.ts";
+import { alignedOffset, effectiveAlign, effectiveJustify, mainAxisOffsets } from "./flex.ts";
 import { roundHalfAwayFromZero } from "./metrics.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
 import type { Clip } from "./plain-text.ts";
@@ -577,13 +577,10 @@ function placeByInsets(
       "anchor-center",
     );
   } else if (left !== null && right !== null) {
-    const slack = Math.max(0, cb.width - left - right - width - marginLeft - marginRight);
-    const bothAuto = margin.left === null && margin.right === null;
     x =
       cb.x +
       left +
-      marginLeft +
-      (bothAuto ? Math.floor(slack / 2) : margin.left === null ? slack : 0);
+      insetMarginOffset(margin.left, margin.right, cb.width - left - right, width, "x");
   } else if (left !== null) {
     x = cb.x + left + marginLeft;
   } else if (right !== null) {
@@ -606,10 +603,10 @@ function placeByInsets(
       "anchor-center",
     );
   } else if (top !== null && bottom !== null) {
-    const slack = Math.max(0, cb.height - top - bottom - height - marginTop - marginBottom);
-    const bothAuto = margin.top === null && margin.bottom === null;
     y =
-      cb.y + top + marginTop + (bothAuto ? Math.floor(slack / 2) : margin.top === null ? slack : 0);
+      cb.y +
+      top +
+      insetMarginOffset(margin.top, margin.bottom, cb.height - top - bottom, height, "y");
   } else if (top !== null) {
     y = cb.y + top + marginTop;
   } else if (bottom !== null) {
@@ -620,6 +617,25 @@ function placeByInsets(
 
   child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
   return margin;
+}
+
+/** A box's offset in the space two insets leave, where a margin (`null`)
+ * is auto (CSS 2 §10.3.7, §10.6.4): one auto margin takes what is left,
+ * negative included; two split it, negative only vertically — an
+ * over-wide box starts at the left. */
+function insetMarginOffset(
+  before: number | null,
+  after: number | null,
+  space: number,
+  size: number,
+  axis: "x" | "y",
+): number {
+  if (before !== null && after !== null) return before;
+  if (before === null && after === null) {
+    const split = Math.floor((space - size) / 2);
+    return axis === "x" ? Math.max(0, split) : split;
+  }
+  return before ?? space - size - after!;
 }
 
 /** An anchor's rect as a box sees it: moved by the scroll of the
@@ -976,16 +992,6 @@ function soleItemMainOffset(
   return mainAxisOffsets(justify, [size], Math.max(0, inner - size))[0]!;
 }
 
-/** Cross alignment for the sole-item rule; stretch behaves as start. */
-function soleItemCrossOffset(
-  child: LayoutNode,
-  parent: LayoutNode,
-  inner: number,
-  size: number,
-): number {
-  return alignCrossOffset(effectiveAlign(child, parent), inner, size);
-}
-
 /** The hypothetical sole-item box includes the element's fixed margins
  * (auto margins count as 0 in the static position, per CSS §10.1). */
 function flexStaticOffset(
@@ -1005,11 +1011,9 @@ function flexStaticOffset(
           slot.innerHeight,
           slot.direction === "column",
         ] as const);
-  const outer = size + before + after;
-  const offset = isMain
-    ? soleItemMainOffset(effectiveJustify(parent.style), inner, outer)
-    : soleItemCrossOffset(child, parent, inner, outer);
-  return offset + before;
+  return isMain
+    ? soleItemMainOffset(effectiveJustify(parent.style), inner, size + before + after) + before
+    : alignedOffset(effectiveAlign(child, parent), before, after, inner, size);
 }
 
 /** The grid static position (specs/grid.md §10.1): the sole item of the
@@ -1036,7 +1040,7 @@ function gridStaticOffset(
           area.height,
           effectiveAlign(child, parent),
         ] as const);
-  return alignCrossOffset(align, inner, size + before + after) + before;
+  return alignedOffset(align, before, after, inner, size);
 }
 
 function staticPositionX(

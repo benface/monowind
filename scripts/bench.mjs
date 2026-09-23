@@ -36,8 +36,13 @@ const given = flag("bundle", null);
 // The bundle under test: built here so the number always belongs to
 // the working tree, unless `--bundle` names one built elsewhere (an
 // older tag's, to compare against).
-if (!given)
-  spawnSync("pnpm", ["-C", "packages/core", "build"], { cwd: repoRoot, stdio: "inherit" });
+if (!given) {
+  const built = spawnSync("pnpm", ["-C", "packages/core", "build"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+  if (built.status !== 0) process.exit(built.status ?? 1);
+}
 const bundle = readFileSync(given ?? resolve(repoRoot, "packages/core/dist/cdn.js"), "utf8");
 
 /** Bordered boxes stress the strokes; a field of blocks stresses the

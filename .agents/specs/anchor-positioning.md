@@ -177,12 +177,31 @@ anchor's pre-grid box, px the grid cannot use.
 1. `anchor()` and `anchor-size()` are read only as a whole inset or
    size from the inline style or a utility — not inside `calc()`, not
    from a stylesheet's rule (its px read instead), a fallback only as
-   a length, a percentage, or a calc() of them — and a utility's
-   variant is not checked, of two utilities for one inset the first in
-   the class attribute read whatever the cascade says
-   (`inset-[anchor(bottom)] top-4`
-   reads `top: anchor(bottom)`); a `width` or `height` takes a fallback of
-   whole cells or a plain percentage, a calc() of both reading `auto`.
+   a length, a percentage, or a calc() of them. A utility's variant
+   is not evaluated: which utility the cascade leaves in effect is told
+   from the computed value, where Typed OM has it (Chromium, WebKit).
+   The engine reads under `anchor-scope`, so an anchor function in
+   effect computes to the property's initial value, or to its fallback
+   where it has one (probed 2026-09-23), and any other value rules it
+   out — a later utility's (`inset-[anchor(bottom)] top-4` is
+   `top: 1rem`) or an active variant's, compared in px, so
+   `md:top-[17px]` rules out `top-[anchor(bottom,1rem)]` though both
+   round to four cells. The first utility in the class attribute the value leaves
+   standing is read, so the initial value stays ambiguous: it is every
+   fallback-less anchor function's
+   (`top-[anchor(bottom)] md:top-[anchor(top)]` reads `anchor(bottom)`
+   at `md` too), an inactive variant's alone
+   (`hover:top-[anchor(bottom)]` unhovered), a later utility's setting
+   it (`top-[anchor(bottom)] md:top-auto`), and in WebKit a competing
+   `min-*-0`'s (its initial minimum reads `0px`); so does a fallback's
+   value, a later utility's computing to it
+   (`top-[anchor(bottom,1rem)] md:top-4` reads the anchor at `md` too),
+   and a fallback the reader cannot evaluate (`em`, `var()`). In
+   Firefox, and for a box whose default anchor is a popover's invoker
+   where the function names no anchor (the invoker resolves natively),
+   the first such utility is read whatever the cascade says. A `width`
+   or `height` takes a fallback of whole cells or a plain percentage, a
+   calc() of both reading `auto`.
    A box with a `position-area` is placed by the area; its insets,
    `anchor()` or not, are not applied inside it. A tactic mirrors the
    insets, the margins, the self-alignment, and the area; `flip-start`
@@ -221,7 +240,8 @@ anchor's pre-grid box, px the grid cannot use.
 
 - Node (`anchor.test.ts`): the read of the properties, the anchor
   functions (their sides, dimensions, and fallbacks, a calc() and a
-  zero one), the try tactics in their order (`flip-x`, `flip-y`), and
+  zero one, the utility the cascade leaves in effect among several, a
+  popover's naming an anchor), the try tactics in their order (`flip-x`, `flip-y`), and
   the implicit anchor under each keyword; a box under, above, beside,
   and centered on its anchor, spanning and flush on each side; a box
   shrunk to a narrow area and one that may not wrap overflowing it; a
@@ -245,7 +265,8 @@ anchor's pre-grid box, px the grid cannot use.
   a word; a submenu beside its item; a menu following its button
   through a list's scroll, flipping as the button nears the host's
   edge; a note flipping with the host's width; the anchor functions
-  from utilities and the inline style (`AnchorFunctions`), the try
+  from utilities and the inline style, a utility the cascade overrides
+  left out (`AnchorFunctions`), the try
   order (`AnchorTryOrder`), and a box hiding as its anchor scrolls away
   (`AnchorVisibility`); in `ui.stories.ts`, a select's menu as wide as
   its trigger.
@@ -259,8 +280,13 @@ anchor's pre-grid box, px the grid cannot use.
   `parsePositionTryFallbacks`); `readAnchorNames` shared with tree.ts,
   which names inline elements' entries; `readAnchorSizes` and
   `readAnchorInsets` the authored `anchor-size()`s and `anchor()`s
-  (`authoredAnchorFunction`), their properties unset until placed
+  (`authoredAnchorFunction`), the first of a property's utilities the
+  cascade can leave in effect (`inEffect`, against the function's
+  fallback in px, or the initial value as the engine reads an `auto` minimum
+  — the cell metrics' `autoMinimum`), their properties unset until placed
   (`setAnchorSize`).
+- metrics.ts: `autoMinimum`, how Typed OM reads an `auto` minimum, read
+  once off the host's probe, which holds its own at `auto`.
 - types.ts: the anchoring on `CellStyle`, `AnchorFallback` and `Flip`,
   `AnchorSize` and `AnchorInset`, and a placed box's `anchorArea` and
   `forceHidden` on `LayoutNode`.
@@ -295,18 +321,20 @@ anchor's pre-grid box, px the grid cannot use.
   placements to the positioning pass.
 - element.ts: the host's placements (`#placements`) from one layout to
   the next, the scroll sync for whichever subtree the layout hands it,
-  and a scroll of an anchor scroller schedules a layout.
+  a scroll of an anchor scroller schedules a layout, and the metrics
+  probe's minimum held at `auto` against the page's CSS.
 - render.ts: the resolved cells written onto the light element as for
   any positioned box, the area taken as `data-mw-area`,
   `data-mw-force-hidden` on a box `position-visibility` hides, and
   `data-mw-top-shown` on a visible top-layer element inside one.
 - styles.css: `position-area: none` locked on laid-out elements
-  outside `[measuring]`, so an engine that positions by it natively
-  leaves the placement to the engine; `anchor-scope: all` on every
-  element under `[measuring]`, so no named anchor resolves natively
-  while the engine reads and the browser applies no fallback of its
-  own — Chromium otherwise reports the fallback it chose from pixel
-  geometry as the computed `position-area`. The implicit anchor of a
+  outside their `data-mw-measuring` flag, so an engine that positions
+  by it natively leaves the placement to the engine;
+  `anchor-scope: all` on every element under its flag, so no named
+  anchor resolves natively while the engine reads and the browser
+  applies no fallback of its own — Chromium otherwise reports the
+  fallback it chose from pixel geometry as the computed
+  `position-area`. The implicit anchor of a
   popover is out of `anchor-scope`'s reach, and needs none: Chromium
   reports an implicitly anchored popover's `position-area` as authored
   whatever its native placement (probed 2026-09-19). A box

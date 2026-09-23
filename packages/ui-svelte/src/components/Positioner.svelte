@@ -15,13 +15,14 @@
     ...rest
   }: {
     tag?: string;
-    props: Record<string, unknown>;
+    /** The API's props for the part, whatever the getter types them as. */
+    props: object;
     positioner: Action<HTMLElement>;
-    children?: Snippet;
+    children?: Snippet | undefined;
     [key: string]: unknown;
   } = $props();
 
-  const merged = $derived(mergeProps(props, rest) as Record<string, unknown>);
+  const merged = $derived(mergeProps(props as Record<string, unknown>, rest) as Record<string, unknown>);
 </script>
 
 <svelte:element this={tag} {...merged} use:positioner>{@render children?.()}</svelte:element>

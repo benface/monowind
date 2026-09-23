@@ -1,10 +1,10 @@
 import * as Select from "@zag-js/select";
-import { normalizeProps } from "@zag-js/vanilla";
+import { VanillaMachine, normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, omit, positionedProps, type MachineProps } from "./anchor.ts";
-import { itemParts, markupCollection, type WithMarkupItems } from "./items.ts";
+import { itemParts, withMarkupItems, type WithMarkupItems } from "./items.ts";
 import { scrollToItem } from "./scroll.ts";
-import { liveProps, mountAnchored, part, start, type Mounted } from "./vanilla.ts";
+import { liveProps, mountAnchored, part, type Mounted } from "./vanilla.ts";
 
 export type Props = Select.Props;
 export type Api<T extends PropTypes = PropTypes> = Select.Api<T>;
@@ -50,32 +50,87 @@ export function api<T extends PropTypes>(
  * the props name none. */
 export type MountProps = WithMarkupItems<Props>;
 
-/** The native control behind the widget, filled with an option per
- * item. A select is a trigger and a listbox, not a form control, so
- * this real `<select>` beside it is what carries the value into a
- * form and a reset; Zag gives it `aria-hidden` and `tabIndex: -1`,
- * the visible widget owning every semantic.
- *
- * Hidden HERE, not left to Zag's own visually-hidden style, because
- * that style arrives with the first spread, which is a microtask
- * late: an in-flow `<select>` is a box as wide as its longest option
- * (7 cells for "release"), so the grid would jump. Either hiding
- * suits the grid — measured, an absolutely positioned clipped
- * control takes no cells — and `display: none` is the shorter one to
- * write, and the one a browser will not try to autofill behind the
- * machine's back. */
-function prepareHiddenSelect(root: Element, values: string[]): HTMLSelectElement | undefined {
+/** The native control that carries the value into a form and a reset
+ * (specs/ui.md "A select is a listbox on a trigger"). Hidden here, as
+ * Zag's visually-hidden style arrives with the first spread, a
+ * microtask after the grid first measures the control; `display: none`
+ * keeps it out of the layout and of a browser's autofill. Zag's id and
+ * form go on here too: the machine looks the control up by that id as
+ * it starts. */
+function prepareHiddenSelect(
+  root: Element,
+  zagProps: { id?: string; form?: string },
+): HTMLSelectElement | undefined {
   const element = part(root, "hidden-select");
   if (!(element instanceof HTMLSelectElement)) return undefined;
   element.style.display = "none";
-  element.replaceChildren(
-    ...values.map((value) => {
-      const option = element.ownerDocument.createElement("option");
-      option.value = value;
-      return option;
-    }),
-  );
+  if (zagProps.id !== undefined) element.id = zagProps.id;
+  if (zagProps.form !== undefined) element.setAttribute("form", zagProps.form);
   return element;
+}
+
+/** A value as a double-quoted attribute's text; a carriage return as a
+ * reference, as HTML's parsing turns a literal one into a line feed. */
+const quoted = (value: string): string =>
+  value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/\r/g, "&#13;");
+
+/** The options `syncHiddenSelect` writes, as markup, for a framework's
+ * `HiddenSelect` to render once, at its first render, so a server's page
+ * posts the initial value; `syncHiddenSelect` owns them from then on. */
+export function hiddenSelectOptions(
+  api: Pick<Select.Api, "collection">,
+  service: Pick<Select.Service, "context">,
+): string {
+  const initial = service.context.initial("value") ?? [];
+  return api.collection
+    .getValues()
+    .map(
+      (value) =>
+        `<option value="${quoted(value)}"${initial.includes(value) ? " selected" : ""}></option>`,
+    )
+    .join("");
+}
+
+/** The native control a form posts, as the machine has it: an option
+ * per value the collection holds, rewritten when the values change; the
+ * machine's initial value, Zag's reset target, as the options a form's
+ * reset selects; and the value selected. The mount and every
+ * framework's `HiddenSelect` call this after each render. */
+export function syncHiddenSelect(
+  element: HTMLSelectElement,
+  api: Pick<Select.Api, "collection" | "value">,
+  service: Pick<Select.Service, "context">,
+): void {
+  // Two rows exempt the control from HTML's selectedness setting, which
+  // gives a one-row single control its first option wherever none is
+  // selected; the control is never displayed.
+  if (element.getAttribute("size") !== "2") element.setAttribute("size", "2");
+  const values = api.collection.getValues();
+  const { options } = element;
+  if (options.length !== values.length || values.some((value, i) => options[i]!.value !== value)) {
+    element.replaceChildren(
+      ...values.map((value) => {
+        const option = element.ownerDocument.createElement("option");
+        option.value = value;
+        return option;
+      }),
+    );
+  }
+  const initial = service.context.initial("value") ?? [];
+  for (const option of options) {
+    const isDefault = initial.includes(option.value);
+    if (option.hasAttribute("selected") !== isDefault)
+      option.toggleAttribute("selected", isDefault);
+  }
+  if (element.multiple) {
+    for (const option of options) {
+      const selected = api.value.includes(option.value);
+      if (option.selected !== selected) option.selected = selected;
+    }
+    return;
+  }
+  const index = api.value.length === 0 ? -1 : values.indexOf(api.value[0]!);
+  if (element.selectedIndex !== index) element.selectedIndex = index;
 }
 
 /** A select on markup marked with `data-part` (the parts in the
@@ -88,7 +143,7 @@ function prepareHiddenSelect(root: Element, values: string[]): HTMLSelectElement
  * text the markup gives the `value-text` is its placeholder. */
 export function select(root: Element, machineProps: MountProps): Mounted<Api> {
   const live = liveProps(
-    { ...machineProps, collection: machineProps.collection ?? markupCollection(root) },
+    withMarkupItems(root, machineProps, machineProps.multiple === true),
     props,
   );
   const label = part(root, "label");
@@ -99,10 +154,15 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
   const list = part(root, "list");
   const wireItems = itemParts<Api>(root, "select");
   const placeholder = valueText?.textContent ?? "";
-  const hiddenSelect = prepareHiddenSelect(root, live.machine.collection?.getValues() ?? []);
+  const machine = new VanillaMachine(Select.machine, () => live.machine);
+  const hiddenSelect = prepareHiddenSelect(
+    root,
+    Select.connect(machine.service, normalizeProps).getHiddenSelectProps(),
+  );
+  machine.start();
   const mounted = mountAnchored(
     root,
-    start(Select.machine, () => live.machine),
+    machine,
     (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
       // The root is the element the mount was given, its id the
@@ -119,17 +179,10 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
       if (valueText && valueText.textContent !== value) valueText.textContent = value;
       spread(list, current.getListProps());
       wireItems(current, spread);
-      spread(hiddenSelect, current.getHiddenSelectProps());
-      // The adapter assigns Zag's `defaultValue` as the element's
-      // `value`, which one taking several ignores: there the options
-      // carry the selection.
-      if (hiddenSelect?.multiple) {
-        for (const option of hiddenSelect.options) {
-          option.selected = current.value.includes(option.value);
-        }
-      }
+      // The options and their selection are `syncHiddenSelect`'s.
+      spread(hiddenSelect, omit(current.getHiddenSelectProps(), "value"));
+      if (hiddenSelect) syncHiddenSelect(hiddenSelect, current, machine.service);
     },
-    [],
     live,
   );
   return {

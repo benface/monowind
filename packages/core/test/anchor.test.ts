@@ -187,6 +187,76 @@ describe("the read", () => {
     expect(anchorSizes.minWidth).toEqual({ anchor: null, dimension: "width", fallback: 0 });
   });
 
+  /** An absolute box carrying `className`, its Typed OM (which happy-dom
+   * lacks) answering `computed`, read with the probe's `autoMinimum`. */
+  const readTyped = (
+    className: string,
+    computed: Record<string, string>,
+    setup?: (box: HTMLElement) => void,
+    autoMinimum?: string,
+  ): CellStyle => {
+    const box = document.createElement("div");
+    box.style.position = "absolute";
+    box.className = className;
+    setup?.(box);
+    document.body.appendChild(box);
+    (box as unknown as { computedStyleMap: () => unknown }).computedStyleMap = () => ({
+      get: (property: string) => computed[property] ?? null,
+    });
+    const metrics =
+      autoMinimum === undefined
+        ? undefined
+        : { width: 9, height: 18, letterSpacing: 0, autoMinimum };
+    return readCellStyle(box, 16, metrics);
+  };
+
+  it("takes a later utility a cell off the fallback as the one in effect", () => {
+    // 17px rounds to the fallback's four cells, but is not 1rem.
+    const style = readTyped("top-[anchor(bottom,1rem)] md:top-[17px]", { top: "17px" });
+    expect(style.anchorInsets.top).toBeUndefined();
+  });
+
+  it("reads an anchor-size() minimum as WebKit computes an auto one", () => {
+    // WebKit's Typed OM reads an `auto` minimum as 0px, as the probe finds.
+    const minWidth = (autoMinimum: string, computed: string) =>
+      readTyped("min-w-[anchor-size(width)]", { "min-width": computed }, undefined, autoMinimum)
+        .anchorSizes.minWidth;
+    expect(minWidth("0px", "0px")).toEqual({ anchor: null, dimension: "width" });
+    expect(minWidth("auto", "0px")).toBeUndefined();
+    expect(minWidth("auto", "auto")).toEqual({ anchor: null, dimension: "width" });
+  });
+
+  it("reads the anchor() utility the cascade leaves in effect among several", () => {
+    // Under the read's anchor-scope an anchor() without a fallback computes
+    // to the initial value, one with a fallback to its fallback (Chromium
+    // and WebKit).
+    const top = (className: string, computed: string) =>
+      readTyped(className, { top: computed }).anchorInsets.top;
+    const bottomOrRem = { anchor: null, fraction: 1, fallback: 4 };
+    expect(top("hover:top-[anchor(bottom,1rem)] top-[anchor(top)]", "auto")).toEqual({
+      anchor: null,
+      fraction: 0,
+    });
+    expect(top("top-[anchor(bottom,1rem)] md:top-[anchor(top)]", "16px")).toEqual(bottomOrRem);
+    expect(top("top-[anchor(bottom,1rem)] md:top-[anchor(top)]", "auto")).toEqual({
+      anchor: null,
+      fraction: 0,
+    });
+    // A later utility in effect leaves every anchor() out.
+    expect(top("top-[anchor(bottom)] md:top-[anchor(bottom,1rem)] top-4", "4px")).toBeUndefined();
+  });
+
+  it("checks a popover's anchor() naming an anchor after its side", () => {
+    // Only an anchor() naming none resolves natively against the invoker.
+    const style = readTyped("top-[anchor(bottom_--a)]", { top: "16px" }, (box) => {
+      box.id = "menu";
+      box.setAttribute("popover", "");
+      box.style.setProperty("position-anchor", "auto");
+    });
+    expect(style.positionAnchor).toBe("--mw:menu");
+    expect(style.anchorInsets.top).toBeUndefined();
+  });
+
   it("parses position-visibility, the initial anchors-visible, and both spellings", () => {
     expect(parsePositionVisibility("")).toEqual({
       anchorValid: false,
@@ -1112,7 +1182,7 @@ describe("position-visibility", () => {
     expect(renderPlainText(root)).not.toContain("inner");
     for (let col = 0; col < 20; col++) {
       for (let row = 0; row < 8; row++)
-        expect(hitChain(root, col, row)).not.toContain(child.source);
+        expect(hitChain(root, col, row, null)).not.toContain(child.source);
     }
   });
 });

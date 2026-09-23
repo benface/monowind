@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
-import { layerAt, layerGridAt, paintGrid, syncLayers } from "../src/paint.ts";
+import { layersAt, paintGrid, syncLayers } from "../src/paint.ts";
 import { renderGridRows, renderPlainText } from "../src/plain-text.ts";
 import { readCellStyle } from "../src/style.ts";
 import { zeroInsets } from "../src/types.ts";
@@ -11,6 +11,10 @@ import { makeNode } from "./helpers.ts";
 /** Layers (specs/layers.md): the read of a layer root's effects, the
  * paint of its subtree into a grid of its own, and the nodes the DOM
  * adapter gives it. */
+
+/** The layer cell under a point, the one painted last's. */
+const layerAt = (layers: HTMLElement, x: number, y: number) =>
+  layersAt(layers, x, y).next().value ?? null;
 
 const read = (style: string): Layer | null => {
   const el = document.createElement("div");
@@ -699,11 +703,9 @@ describe("layer nodes (paint.ts)", () => {
     expect(layer.className).toBe("layer");
     expect([layer.style.left, layer.style.top]).toEqual(["0px", "0px"]);
     // The pointer reaches the layer inside the clip alone; a cell past
-    // it is the grid's, for the pointer and for the glyph search.
+    // it is the grid's.
     expect(layerAt(layers, 25, 30)).toMatchObject({ col: 2, row: 1 });
     expect(layerAt(layers, 55, 30)).toBeNull();
-    expect(layerGridAt(layers, 5, 1)).toBeNull();
-    expect(layerGridAt(layers, 2, 1)).toMatchObject({ x: 1, y: 1 });
   });
 
   it("hits a hidden layer root's visible fill, not its own blank box", () => {
@@ -782,7 +784,5 @@ describe("layer nodes (paint.ts)", () => {
     // blank cells beside them are see-through.
     expect(layerAt(layers, 120, 30)).toMatchObject({ col: 6, row: 1 });
     expect(layerAt(layers, 120, 10)).toBeNull();
-    expect(layerGridAt(layers, 6, 0)).toMatchObject({ x: 2, y: 0 });
-    expect(layerGridAt(layers, 1, 0)).toBeNull();
   });
 });

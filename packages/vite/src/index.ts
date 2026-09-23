@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -14,6 +14,30 @@ export interface MonowindOptions {
 }
 
 const VIRTUAL_ID = "virtual:monowind";
+
+/** The engine's stylesheet and the `resolve` settings that load one
+ * `monowind` for the page, the app's own else this plugin's: two copies
+ * are two registries. */
+function resolveMonowind(root: string): { styles: string; resolve: object } {
+  if (hasPackage(root, "monowind")) {
+    const require = createRequire(path.join(root, "package.json"));
+    return { styles: require.resolve("monowind/styles.css"), resolve: { dedupe: ["monowind"] } };
+  }
+  const require = createRequire(import.meta.url);
+  return {
+    styles: require.resolve("monowind/styles.css"),
+    resolve: { alias: [{ find: /^monowind$/, replacement: require.resolve("monowind") }] },
+  };
+}
+
+/** Whether a package is installed for `root` by the node_modules walk Vite
+ * resolves with, which leaves out the NODE_PATH pnpm's bin shims set. */
+function hasPackage(root: string, name: string): boolean {
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, "node_modules", name, "package.json"))) return true;
+    if (path.dirname(dir) === dir) return false;
+  }
+}
 
 /**
  * Standalone monowind: add this plugin and write HTML — Tailwind v4 and the
@@ -31,23 +55,28 @@ const VIRTUAL_ID = "virtual:monowind";
  */
 export default function monowind(options: MonowindOptions = {}): PluginOption[] {
   // Resolve from THIS package's context: the user's project depends only on
-  // @monowind/vite; tailwindcss and monowind are our dependencies.
+  // @monowind/vite; tailwindcss is our dependency.
   const require = createRequire(import.meta.url);
   const tailwindEntry = path.join(
     path.dirname(require.resolve("tailwindcss/package.json")),
     "index.css",
   );
-  const companionEntry = require.resolve("monowind/styles.css");
-  const engineEntry = require.resolve("monowind");
 
   let cssEntryPath = "";
+  let engine: ReturnType<typeof resolveMonowind>;
   let command: "build" | "serve" = "serve";
 
   const setup: Plugin = {
     name: "monowind",
+    config(config) {
+      engine = resolveMonowind(path.resolve(config.root ?? process.cwd()));
+      // The dev server pre-bundles the engine once, and the packages built
+      // on it against that bundle.
+      return { optimizeDeps: { include: ["monowind"] }, resolve: engine.resolve };
+    },
     configResolved(config) {
       command = config.command;
-      const imports = [tailwindEntry, companionEntry];
+      const imports = [tailwindEntry, engine.styles];
       if (options.css) imports.push(path.resolve(config.root, options.css));
       // A real file on disk (not a virtual module) so Tailwind's plugin and
       // Vite's CSS pipeline treat it like any authored entry. Lives NEXT TO
@@ -69,7 +98,7 @@ export default function monowind(options: MonowindOptions = {}): PluginOption[] 
       if (id !== VIRTUAL_ID) return undefined;
       return [
         `import ${JSON.stringify(cssEntryPath)};`,
-        `import { defineMonoWind } from ${JSON.stringify(engineEntry)};`,
+        `import { defineMonoWind } from "monowind";`,
         `defineMonoWind();`,
       ].join("\n");
     },

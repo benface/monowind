@@ -1,14 +1,9 @@
 import { html } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { collection, combobox } from "@monowind/ui/combobox";
-import { dialog } from "@monowind/ui/dialog";
+import { collection } from "@monowind/ui/combobox";
 import { defineMonoUi } from "@monowind/ui/elements";
-import { listbox } from "@monowind/ui/listbox";
 import { menu } from "@monowind/ui/menu";
-import { popover } from "@monowind/ui/popover";
-import { select } from "@monowind/ui/select";
-import { tooltip } from "@monowind/ui/tooltip";
 import {
   cellSize,
   dragTo,
@@ -32,16 +27,10 @@ import {
  * places each floating part against its trigger as an anchored box in
  * the top layer, Zag runs the roles, the keyboard, typeahead, focus,
  * and dismissal. Headless: the parts are styled here through the
- * theme's tokens, and wired by the vanilla path from each render.
- *
- * Every part is written out: a mount reads them when lit hands it the
- * root, which it does before committing anything a nested template
- * would bring, so items built by a `map` or a helper arrive too late
- * to be found.
+ * theme's tokens. Each component is its `<mono-*>` element, the menu
+ * the vanilla mount (`menu(root, props)`) the elements are built on.
  */
 
-// The elements the `Elements` story writes; the functions above need
-// no registry.
 defineMonoUi();
 const meta: Meta = {
   title: "Packages / ui",
@@ -55,6 +44,42 @@ const MENU_CONTENT = "border bg-clear";
 /** A listbox item: the item's own styles, and the selected one in bold
  * beside its indicator. */
 const LIST_ITEM = `${ITEM} data-[state=checked]:font-bold`;
+
+/** How an item starts: selected (`data-selected`), or disabled. */
+interface ItemState {
+  selected?: boolean;
+  disabled?: boolean;
+}
+
+/** A list's item with its text alone, its value its test hook. */
+const textItem = (value: string, text = value, { selected, disabled }: ItemState = {}) => html`
+  <div
+    data-part="item"
+    data-value=${value}
+    data-test=${value}
+    ?data-selected=${selected}
+    ?data-disabled=${disabled}
+    class=${LIST_ITEM}
+  >
+    <span data-part="item-text">${text}</span>
+  </div>
+`;
+
+/** A list's item with a check before its text, in a column of its own
+ * so an unchecked item's text stays aligned. */
+const checkItem = (value: string, text = value, { selected, disabled }: ItemState = {}) => html`
+  <div
+    data-part="item"
+    data-value=${value}
+    data-test=${value}
+    ?data-selected=${selected}
+    ?data-disabled=${disabled}
+    class=${LIST_ITEM}
+  >
+    <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
+    ><span data-part="item-text">${text}</span>
+  </div>
+`;
 
 /** A grid drag between two points, pressed on the host's grid where
  * the pointer lands (specs/cell-model.md), and the text it selected. */
@@ -80,7 +105,10 @@ const rightOf = (el: Element): Point => {
 };
 
 /** A menu with a group, a disabled item, a separator, and a submenu
- * shifted a row up along its item. */
+ * shifted a row up along its item — mounted by script, the vanilla
+ * path under every element. Every part is written out: the mount reads
+ * them when lit hands it the root, before a nested template (a `map`,
+ * a helper) has committed its own. */
 export const Menu: StoryObj = {
   render: () => html`
     <mono-wind>
@@ -259,68 +287,26 @@ export const Listbox: StoryObj = {
     <mono-wind>
       <div class="p-1">
         <p>A page with a list to choose from.</p>
-        <div
-          class="mt-1"
-          ${mountedOn((root) => listbox(root, { id: "branch", defaultValue: ["main"] }))}
-        >
+        <mono-listbox id="branch" class="mt-1 block">
           <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
           <div data-part="content" data-test="content" class="max-h-8 w-20 overflow-y-auto border">
             <div data-part="item-group" data-value="local">
               <div data-part="item-group-label" data-value="local" class="px-1 text-neutral-500">
                 Local
               </div>
-              <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">main</span>
-              </div>
-              <div data-part="item" data-value="next" data-test="next" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">next</span>
-              </div>
-              <div data-part="item" data-value="feature" data-test="feature" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">feature/grid</span>
-              </div>
-              <div
-                data-part="item"
-                data-value="stale"
-                data-test="stale"
-                data-disabled
-                class=${LIST_ITEM}
-              >
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">stale</span>
-              </div>
+              ${checkItem("main", "main", { selected: true })} ${checkItem("next")}
+              ${checkItem("feature", "feature/grid")}
+              ${checkItem("stale", "stale", { disabled: true })}
             </div>
             <div data-part="item-group" data-value="remote">
               <div data-part="item-group-label" data-value="remote" class="px-1 text-neutral-500">
                 Remote
               </div>
-              <div
-                data-part="item"
-                data-value="origin-main"
-                data-test="origin-main"
-                class=${LIST_ITEM}
-              >
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">origin/main</span>
-              </div>
-              <div
-                data-part="item"
-                data-value="origin-next"
-                data-test="origin-next"
-                class=${LIST_ITEM}
-              >
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">origin/next</span>
-              </div>
-              <div data-part="item" data-value="release" data-test="release" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">release</span>
-              </div>
+              ${checkItem("origin-main", "origin/main")} ${checkItem("origin-next", "origin/next")}
+              ${checkItem("release")}
             </div>
           </div>
-        </div>
+        </mono-listbox>
         <p class="mt-1">More of the page under the list.</p>
       </div>
     </mono-wind>
@@ -391,23 +377,11 @@ export const ListboxHighlightOnHover: StoryObj = {
   tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
-      <div
-        class="p-1"
-        data-highlight-on-hover
-        ${mountedOn((root) => listbox(root, { id: "hovered", defaultValue: ["one"] }))}
-      >
+      <mono-listbox id="hovered" class="block p-1" data-highlight-on-hover>
         <div data-part="content" data-test="content" class="w-16 border">
-          <div data-part="item" data-value="one" data-test="one" class=${LIST_ITEM}>
-            <span data-part="item-text">one</span>
-          </div>
-          <div data-part="item" data-value="two" data-test="two" class=${LIST_ITEM}>
-            <span data-part="item-text">two</span>
-          </div>
-          <div data-part="item" data-value="three" data-test="three" class=${LIST_ITEM}>
-            <span data-part="item-text">three</span>
-          </div>
+          ${textItem("one", "one", { selected: true })} ${textItem("two")} ${textItem("three")}
         </div>
-      </div>
+      </mono-listbox>
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
@@ -430,32 +404,13 @@ export const ListboxMultiple: StoryObj = {
     <mono-wind>
       <div class="p-1">
         <p>A page with a list to choose from, several at a time.</p>
-        <div
-          class="mt-1"
-          ${mountedOn((root) =>
-            listbox(root, { id: "scopes", selectionMode: "multiple", defaultValue: ["read"] }),
-          )}
-        >
+        <mono-listbox id="scopes" selection-mode="multiple" class="mt-1 block">
           <span data-part="label" data-test="label" class="text-neutral-500">Scopes</span>
           <div data-part="content" data-test="content" class="w-16 border">
-            <div data-part="item" data-value="read" data-test="read" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">read</span>
-            </div>
-            <div data-part="item" data-value="write" data-test="write" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">write</span>
-            </div>
-            <div data-part="item" data-value="admin" data-test="admin" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">admin</span>
-            </div>
-            <div data-part="item" data-value="audit" data-test="audit" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">audit</span>
-            </div>
+            ${checkItem("read", "read", { selected: true })} ${checkItem("write")}
+            ${checkItem("admin")} ${checkItem("audit")}
           </div>
-        </div>
+        </mono-listbox>
       </div>
     </mono-wind>
   `,
@@ -488,71 +443,42 @@ export const ListboxMultiple: StoryObj = {
 export const Select: StoryObj = {
   render: () => html`
     <mono-wind>
-      <form class="p-1" ${mountedOn((root) => select(root, { id: "branch", name: "branch" }))}>
+      <form class="p-1">
         <p>A page with a select.</p>
-        <div class="mt-1 flex items-center gap-1">
-          <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
-          <span data-part="control">
-            <button data-part="trigger" data-test="trigger" class="border px-1">
-              <span data-part="value-text" data-test="value">Choose…</span>
-              <span data-part="indicator" class="ml-1">▼</span>
-            </button>
-          </span>
-        </div>
-        <select data-part="hidden-select" data-test="hidden"></select>
-        <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
-          <div
-            data-part="content"
-            data-test="content"
-            class="${MENU_CONTENT} max-h-8 w-20 overflow-y-auto"
-          >
-            <div data-part="item-group" data-value="local">
-              <div data-part="item-group-label" data-value="local" class="px-1 text-neutral-500">
-                Local
+        <mono-select id="branch" name="branch">
+          <div class="mt-1 flex items-center gap-1">
+            <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
+            <span data-part="control">
+              <button data-part="trigger" data-test="trigger" class="border px-1">
+                <span data-part="value-text" data-test="value">Choose…</span>
+                <span data-part="indicator" class="ml-1">▼</span>
+              </button>
+            </span>
+          </div>
+          <select data-part="hidden-select" data-test="hidden"></select>
+          <div data-part="positioner" data-test="positioner" popover="manual" class="-mt-1">
+            <div
+              data-part="content"
+              data-test="content"
+              class="${MENU_CONTENT} max-h-8 w-20 overflow-y-auto"
+            >
+              <div data-part="item-group" data-value="local">
+                <div data-part="item-group-label" data-value="local" class="px-1 text-neutral-500">
+                  Local
+                </div>
+                ${checkItem("main")} ${checkItem("next")}
+                ${checkItem("stale", "stale", { disabled: true })}
+                ${checkItem("feature", "feature/grid")}
               </div>
-              <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">main</span>
-              </div>
-              <div data-part="item" data-value="next" data-test="next" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">next</span>
-              </div>
-              <div
-                data-part="item"
-                data-value="stale"
-                data-test="stale"
-                data-disabled
-                class=${LIST_ITEM}
-              >
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">stale</span>
-              </div>
-              <div data-part="item" data-value="feature" data-test="feature" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">feature/grid</span>
-              </div>
-            </div>
-            <div data-part="item-group" data-value="remote">
-              <div data-part="item-group-label" data-value="remote" class="px-1 text-neutral-500">
-                Remote
-              </div>
-              <div
-                data-part="item"
-                data-value="origin-main"
-                data-test="origin-main"
-                class=${LIST_ITEM}
-              >
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">origin/main</span>
-              </div>
-              <div data-part="item" data-value="release" data-test="release" class=${LIST_ITEM}>
-                <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-                ><span data-part="item-text">release</span>
+              <div data-part="item-group" data-value="remote">
+                <div data-part="item-group-label" data-value="remote" class="px-1 text-neutral-500">
+                  Remote
+                </div>
+                ${checkItem("origin-main", "origin/main")} ${checkItem("release")}
               </div>
             </div>
           </div>
-        </div>
+        </mono-select>
         ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
       </form>
     </mono-wind>
@@ -629,42 +555,30 @@ export const Select: StoryObj = {
 export const SelectMultiple: StoryObj = {
   render: () => html`
     <mono-wind>
-      <form
-        class="p-1"
-        ${mountedOn((root) => select(root, { id: "formats", multiple: true, name: "formats" }))}
-      >
+      <form class="p-1">
         <p>A page with a select taking several values.</p>
-        <div class="mt-1 flex items-center gap-1">
-          <span data-part="label" class="text-neutral-500">Export</span>
-          <span data-part="control">
-            <button data-part="trigger" data-test="trigger" class="border px-1">
-              <span data-part="value-text" data-test="value">Choose…</span>
-              <span data-part="indicator" class="ml-1">▼</span>
-            </button>
-          </span>
-        </div>
-        <select data-part="hidden-select" data-test="hidden"></select>
-        <div
-          data-part="positioner"
-          data-test="positioner"
-          popover="manual"
-          class="-mt-1 w-[anchor-size(width)]"
-        >
-          <div data-part="content" data-test="content" class=${MENU_CONTENT}>
-            <div data-part="item" data-value="csv" data-test="csv" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">csv</span>
-            </div>
-            <div data-part="item" data-value="json" data-test="json" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">json</span>
-            </div>
-            <div data-part="item" data-value="yaml" data-test="yaml" class=${LIST_ITEM}>
-              <span class="inline-block w-2"><span data-part="item-indicator">✓</span></span
-              ><span data-part="item-text">yaml</span>
+        <mono-select id="formats" multiple name="formats">
+          <div class="mt-1 flex items-center gap-1">
+            <span data-part="label" class="text-neutral-500">Export</span>
+            <span data-part="control">
+              <button data-part="trigger" data-test="trigger" class="border px-1">
+                <span data-part="value-text" data-test="value">Choose…</span>
+                <span data-part="indicator" class="ml-1">▼</span>
+              </button>
+            </span>
+          </div>
+          <select data-part="hidden-select" data-test="hidden"></select>
+          <div
+            data-part="positioner"
+            data-test="positioner"
+            popover="manual"
+            class="-mt-1 w-[anchor-size(width)]"
+          >
+            <div data-part="content" data-test="content" class=${MENU_CONTENT}>
+              ${checkItem("csv")} ${checkItem("json")} ${checkItem("yaml")}
             </div>
           </div>
-        </div>
+        </mono-select>
         ${Array.from({ length: 6 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
       </form>
     </mono-wind>
@@ -702,44 +616,40 @@ export const SelectMultiple: StoryObj = {
 /** The branches a combobox filters, in markup order. */
 const BRANCHES = ["main", "next", "release", "feature/grid", "origin/main"];
 
+/** The combobox's whole list, and the id its label takes — the input's
+ * name, Zag naming it through a <label> where this one is a span. Set
+ * once: a re-render hands the element the same values, which it keeps. */
+const ALL_BRANCHES = collection({ items: BRANCHES });
+const BRANCH_IDS = { label: "branch-label" };
+
+/** Filtering is the page's: the element takes the narrowed collection,
+ * and the items it leaves out go. */
+function filterBranches(event: Event): void {
+  const { inputValue } = (event as CustomEvent<{ inputValue: string }>).detail;
+  const matches = BRANCHES.filter((branch) =>
+    branch.toLowerCase().includes(inputValue.toLowerCase()),
+  );
+  (event.currentTarget as HTMLElement & { collection: unknown }).collection = collection({
+    items: matches,
+  });
+}
+
 /** A combobox: a listbox under the input the reader types into, its
  * list anchored to the control rather than the button laid over its
  * end, and filtering the page's own — it hands back a narrowed
  * collection, and the items left out go. A status line beside the
  * listbox says when nothing matches. */
 export const Combobox: StoryObj = {
-  render: () => {
-    return html`
-      <mono-wind>
-        <div
-          class="p-1"
-          ${mountedOn((root) => {
-            // Filtering is the page's: the callback hands the mount a
-            // narrowed collection, and the items it drops go. The count
-            // is written here, not templated: lit owns what it renders.
-            const count = root.querySelector("[data-test='typed']")!;
-            count.textContent = `${BRANCHES.length}`;
-            const mounted = combobox(root, {
-              id: "branch",
-              // Zag names the input through a <label>; this one is a span,
-              // so the input takes its name from the span's id instead.
-              ids: { label: "branch-label" },
-              collection: collection({ items: BRANCHES }),
-              onInputValueChange: ({ inputValue }) => {
-                const matches = BRANCHES.filter((branch) =>
-                  branch.toLowerCase().includes(inputValue.toLowerCase()),
-                );
-                mounted.updateProps({ collection: collection({ items: matches }) });
-                count.textContent = `${matches.length}`;
-              },
-            });
-            return mounted;
-          })}
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        <p>A page with a combobox over ${BRANCHES.length} branches.</p>
+        <mono-combobox
+          id="branch"
+          .ids=${BRANCH_IDS}
+          .collection=${ALL_BRANCHES}
+          @inputvaluechange=${filterBranches}
         >
-          <p>
-            A page with a combobox, matching
-            <b data-test="typed" class="text-yellow-300"></b> of ${BRANCHES.length} branches.
-          </p>
           <div class="mt-1 flex items-center gap-1">
             <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
             <span
@@ -750,7 +660,7 @@ export const Combobox: StoryObj = {
               <input
                 data-part="input"
                 data-test="input"
-                aria-labelledby="branch-label"
+                aria-labelledby=${BRANCH_IDS.label}
                 size="14"
                 placeholder="type to filter"
                 class="border pr-4 pl-1"
@@ -775,31 +685,7 @@ export const Combobox: StoryObj = {
               data-test="content"
               class="${MENU_CONTENT} peer data-empty:hidden"
             >
-              <div data-part="item" data-value="main" data-test="main" class=${LIST_ITEM}>
-                <span data-part="item-text">main</span>
-              </div>
-              <div data-part="item" data-value="next" data-test="next" class=${LIST_ITEM}>
-                <span data-part="item-text">next</span>
-              </div>
-              <div data-part="item" data-value="release" data-test="release" class=${LIST_ITEM}>
-                <span data-part="item-text">release</span>
-              </div>
-              <div
-                data-part="item"
-                data-value="feature/grid"
-                data-test="feature/grid"
-                class=${LIST_ITEM}
-              >
-                <span data-part="item-text">feature/grid</span>
-              </div>
-              <div
-                data-part="item"
-                data-value="origin/main"
-                data-test="origin/main"
-                class=${LIST_ITEM}
-              >
-                <span data-part="item-text">origin/main</span>
-              </div>
+              ${BRANCHES.map((branch) => textItem(branch))}
             </div>
             <div
               role="status"
@@ -808,11 +694,11 @@ export const Combobox: StoryObj = {
               Nothing matches
             </div>
           </div>
-          ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
-        </div>
-      </mono-wind>
-    `;
-  },
+        </mono-combobox>
+        ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+      </div>
+    </mono-wind>
+  `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
@@ -843,9 +729,7 @@ export const Combobox: StoryObj = {
     // Typing narrows the collection, and the items it drops go — the
     // grid lays the shorter list out.
     await userEvent.type(input, "rel");
-    await waitFor(() =>
-      expect(by("main").hidden, `main hidden; matched ${by("typed").textContent}`).toBe(true),
-    );
+    await waitFor(() => expect(by("main").hidden, "main hidden").toBe(true));
     expect(by("release").hidden, "release still listed").toBe(false);
     await waitFor(() => expect(paintedSpan(host, "feature/grid")).toBeUndefined());
     expect(showsRow(host, "Nothing matches"), "no message while something matches").toBe(false);
@@ -868,28 +752,30 @@ export const Combobox: StoryObj = {
 export const Dialog: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="p-1" ${mountedOn((root) => dialog(root, { id: "confirm" }))}>
+      <div class="p-1">
         <p>A page with a button that opens a dialog.</p>
-        <p class="mt-1">
-          <button data-part="trigger" data-test="trigger" class="border px-1">Delete</button>
-        </p>
-        <div
-          data-part="positioner"
-          data-test="positioner"
-          popover="manual"
-          class="backdrop:bg-black/50"
-        >
-          <div data-part="content" data-test="content" class="border px-1">
-            <p data-part="title" class="font-bold">Delete the file?</p>
-            <p data-part="description">This cannot be undone.</p>
-            <p class="mt-1">
-              <button data-part="close-trigger" data-test="cancel" class="border px-1">
-                Cancel
-              </button>
-              <button data-test="delete" class="border px-1">Delete</button>
-            </p>
+        <mono-dialog id="confirm">
+          <p class="mt-1">
+            <button data-part="trigger" data-test="trigger" class="border px-1">Delete</button>
+          </p>
+          <div
+            data-part="positioner"
+            data-test="positioner"
+            popover="manual"
+            class="backdrop:bg-black/50"
+          >
+            <div data-part="content" data-test="content" class="border px-1">
+              <p data-part="title" class="font-bold">Delete the file?</p>
+              <p data-part="description">This cannot be undone.</p>
+              <p class="mt-1">
+                <button data-part="close-trigger" data-test="cancel" class="border px-1">
+                  Cancel
+                </button>
+                <button data-test="delete" class="border px-1">Delete</button>
+              </p>
+            </div>
           </div>
-        </div>
+        </mono-dialog>
         ${Array.from({ length: 8 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
       </div>
     </mono-wind>
@@ -935,29 +821,28 @@ export const Dialog: StoryObj = {
 export const Popover: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div
-        class="p-1"
-        ${mountedOn((root) =>
-          popover(root, { id: "info", positioning: { placement: "bottom-start" } }),
-        )}
-      >
+      <div class="p-1">
         <p>A page with a button that opens a popover.</p>
-        <p class="mt-1">
-          <button data-part="trigger" data-test="trigger" class="border px-1">Details</button>
-        </p>
-        <div data-part="positioner" data-test="positioner" popover="manual">
-          <div
-            data-part="content"
-            data-test="content"
-            class="border bg-clear px-1 transition-opacity duration-300 data-[state=closed]:opacity-0 starting:opacity-0"
-          >
-            <p data-part="title" class="font-bold">A popover</p>
-            <p data-part="description">Anchored to its button, above the page.</p>
-            <p class="mt-1">
-              <button data-part="close-trigger" data-test="close" class="border px-1">Close</button>
-            </p>
+        <mono-popover id="info" placement="bottom-start">
+          <p class="mt-1">
+            <button data-part="trigger" data-test="trigger" class="border px-1">Details</button>
+          </p>
+          <div data-part="positioner" data-test="positioner" popover="manual">
+            <div
+              data-part="content"
+              data-test="content"
+              class="border bg-clear px-1 transition-opacity duration-300 data-[state=closed]:opacity-0 starting:opacity-0"
+            >
+              <p data-part="title" class="font-bold">A popover</p>
+              <p data-part="description">Anchored to its button, above the page.</p>
+              <p class="mt-1">
+                <button data-part="close-trigger" data-test="close" class="border px-1">
+                  Close
+                </button>
+              </p>
+            </div>
           </div>
-        </div>
+        </mono-popover>
         ${Array.from({ length: 9 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
       </div>
     </mono-wind>
@@ -1016,29 +901,21 @@ export const Popover: StoryObj = {
 export const Tooltip: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div
-        class="p-1 pt-4"
-        ${mountedOn((root) =>
-          tooltip(root, {
-            id: "hint",
-            openDelay: 0,
-            closeDelay: 0,
-            positioning: { placement: "top" },
-          }),
-        )}
-      >
-        <p>
-          A page with a
-          <button data-part="trigger" data-test="trigger" class="border px-1 align-middle">
-            button
-          </button>
-          that carries a tooltip.
-        </p>
-        <div data-part="positioner" data-test="positioner" popover="manual">
-          <div data-part="content" data-test="content" class="border bg-clear px-1">
-            Saves the document
+      <div class="p-1 pt-4">
+        <mono-tooltip id="hint" open-delay="0" close-delay="0" placement="top">
+          <p>
+            A page with a
+            <button data-part="trigger" data-test="trigger" class="border px-1 align-middle">
+              button
+            </button>
+            that carries a tooltip.
+          </p>
+          <div data-part="positioner" data-test="positioner" popover="manual">
+            <div data-part="content" data-test="content" class="border bg-clear px-1">
+              Saves the document
+            </div>
           </div>
-        </div>
+        </mono-tooltip>
         <p class="mt-1">More of the page.</p>
       </div>
     </mono-wind>
@@ -1072,12 +949,11 @@ export const Tooltip: StoryObj = {
 };
 
 /**
- * The same components as markup alone: `<mono-menu>` and its kin root
- * the mount themselves, their attributes the machine's props and their
- * callbacks events that bubble — so a selection in the menu opens the
- * dialog by writing its `open`, and the dialog writes it back when it
- * closes itself. A select's items are its collection, and its mount
- * fills the control a form posts. No script mounts anything here.
+ * Components wired to each other by markup alone: their callbacks are
+ * events that bubble, so a selection in the menu opens the dialog by
+ * writing its `open`, and the dialog writes it back when it closes
+ * itself; a submenu is an element of its own inside the menu. No
+ * script mounts anything here.
  *
  * An element has no display of its own: it is inline, as a custom
  * element is, and the engine splits that inline box around the blocks

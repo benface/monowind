@@ -4,7 +4,7 @@
  * `itemselect` event carries.
  */
 import { chromium } from "playwright";
-import { createServer } from "vite";
+import { build, createServer } from "vite";
 import { runEnhancerSmoke } from "../../scripts/enhancer-smoke.mjs";
 
 const picked = "picked next";
@@ -14,6 +14,7 @@ await runEnhancerSmoke({
   dir: import.meta.dirname,
   chromium,
   createServer,
+  build,
   drive: async ({ gridText, logText, waitForGrid }) => {
     await waitForGrid(picked);
     return {

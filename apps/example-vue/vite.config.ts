@@ -9,6 +9,6 @@ export default defineConfig({
     monowind(),
   ],
   server: {
-    port: 5186,
+    port: 5195,
   },
 });

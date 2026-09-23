@@ -212,6 +212,7 @@ mono-wind.theme-teletype,
   --color-gray-800: #20201c;
   --color-gray-900: #20201c;
   --color-gray-950: #20201c;
+  --color-zinc-50: #f5f1e6;
   --color-zinc-100: #f5f1e6;
   --color-zinc-200: #f5f1e6;
   --color-zinc-300: #dad5c6;
@@ -222,6 +223,17 @@ mono-wind.theme-teletype,
   --color-zinc-800: #20201c;
   --color-zinc-900: #20201c;
   --color-zinc-950: #20201c;
+  --color-neutral-50: #f5f1e6;
+  --color-neutral-100: #f5f1e6;
+  --color-neutral-200: #f5f1e6;
+  --color-neutral-300: #dad5c6;
+  --color-neutral-400: #b0ab9c;
+  --color-neutral-500: #7a766a;
+  --color-neutral-600: #4a473e;
+  --color-neutral-700: #4a473e;
+  --color-neutral-800: #20201c;
+  --color-neutral-900: #20201c;
+  --color-neutral-950: #20201c;
   --color-stone-50: #f5f1e6;
   --color-stone-100: #f5f1e6;
   --color-stone-200: #f5f1e6;
@@ -233,6 +245,7 @@ mono-wind.theme-teletype,
   --color-stone-800: #20201c;
   --color-stone-900: #20201c;
   --color-stone-950: #20201c;
+  --color-mauve-50: #f5f1e6;
   --color-mauve-100: #f5f1e6;
   --color-mauve-200: #f5f1e6;
   --color-mauve-300: #dad5c6;

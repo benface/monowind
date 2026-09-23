@@ -1,7 +1,7 @@
 import { getContext, setContext } from "svelte";
 import type { Snippet } from "svelte";
-import type { ItemApi } from "@monowind/ui/framework";
-export { warnStray } from "@monowind/ui/framework";
+import { BOUND } from "@monowind/ui/framework";
+export { defined, itemOf, itemProps, splitProps, warnStray } from "@monowind/ui/framework";
 import type * as combobox from "@monowind/ui/combobox";
 import type * as dialog from "@monowind/ui/dialog";
 import type * as listbox from "@monowind/ui/listbox";
@@ -22,8 +22,8 @@ import type { Created, InFlow } from "../index.svelte.ts";
  * its content, or the `child` snippet that renders an element of the
  * author's own with the part's props handed to it. */
 export interface PartProps {
-  children?: Snippet;
-  child?: Snippet<[Record<string, unknown>]>;
+  children?: Snippet | undefined;
+  child?: Snippet<[Record<string, unknown>]> | undefined;
   [key: string]: unknown;
 }
 
@@ -97,17 +97,13 @@ export const itemContext = defineContext<() => unknown>("Item");
 /** The collection's item the part is inside. */
 export const useItemContext = (): unknown => itemContext.use()();
 
-/** The collection's item a part names: the one it was given, else
- * the one its value finds. */
-export function itemOf(api: ItemApi, props: { item?: unknown; value?: string }): unknown {
-  return props.item !== undefined ? props.item : api.collection.find(props.value ?? "");
-}
-
 /** A created component held live: a prop read outside a closure
  * captures only its first value, so the parts read the caller's
  * current one through these getters. A listbox has no positioner,
  * and reading an absent one back gives the same `undefined`. */
-export function live<A, S>(value: () => Created<A, S>): Created<A, S> {
+export function live<A, S>(value: () => Created<A, S>): Created<A, S>;
+export function live<A, S>(value: () => InFlow<A, S>): InFlow<A, S>;
+export function live<A, S>(value: () => InFlow<A, S> & Partial<Created<A, S>>) {
   return {
     get api() {
       return value().api;
@@ -121,36 +117,22 @@ export function live<A, S>(value: () => Created<A, S>): Created<A, S> {
   };
 }
 
+type Binding = (typeof BOUND)[number];
+
+/** The key a bound prop's callback carries its new value under. */
+type KeyOf<P extends Binding["prop"]> = Extract<Binding, { prop: P }>["key"];
+
 /** A callback that first writes the prop a `bind:` follows, then runs
  * the author's own — Svelte's two-way binding over an uncontrolled
- * machine. */
-export function bound<D extends object, K extends keyof D>(
-  key: K,
-  write: (value: D[K]) => void,
+ * machine, the value read where the callback's detail carries it. */
+export function bound<D extends object, P extends Binding["prop"]>(
+  prop: P,
+  write: (value: D[KeyOf<P> & keyof D]) => void,
   authored: ((detail: D) => void) | undefined,
 ): (detail: D) => void {
+  const { key } = BOUND.find((binding) => binding.prop === prop)!;
   return (detail) => {
-    write(detail[key]);
+    write(detail[key as KeyOf<P> & keyof D]);
     authored?.(detail);
   };
-}
-
-/** A root's props split in two: the machine's, which Zag names, and
- * the rest, which are the root element's own attributes. */
-export function splitProps<P extends object>(
-  props: P,
-  names: readonly string[],
-): [P, Record<string, unknown>] {
-  const machine: Record<string, unknown> = {};
-  const attributes: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(props)) {
-    (names.includes(key) ? machine : attributes)[key] = value;
-  }
-  return [machine as P, attributes];
-}
-
-/** A part's own props as the getter takes them: one left out is not
- * one set to `undefined`, which would override a default of Zag's. */
-export function defined<T extends object>(props: T): T {
-  return Object.fromEntries(Object.entries(props).filter(([, value]) => value !== undefined)) as T;
 }

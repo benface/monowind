@@ -46,6 +46,10 @@ monowind({ css: "./src/theme.css" });
 Setups without an `index.html` can load everything manually with
 `import "virtual:monowind"`.
 
+Every `monowind` import on the page — the plugin's, yours, and those of
+the packages built on it, such as `@monowind/ascii` — reaches one copy:
+your app's own where it has one, the plugin's dependency otherwise.
+
 ## Docs
 
 See the [monowind repository](https://github.com/benface/monowind) for

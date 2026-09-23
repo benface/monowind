@@ -322,8 +322,8 @@ describe("the pointer through the stack", () => {
     const after = makeNode({ text: "afterwards" });
     const root = makeNode({ style: { minHeight: 6 }, children: [box, after] });
     painted(root);
-    expect(hitStack(root, 1, 3).map((entry) => entry.node)).toEqual([box, menu]);
-    expect(hitStack(root, 6, 2).map((entry) => entry.node)).toEqual([after]);
-    expect(hitStack(root, 11, 0).map((entry) => entry.node)).toEqual([box, fixed]);
+    expect(hitStack(root, 1, 3, null).map((entry) => entry.node)).toEqual([box, menu]);
+    expect(hitStack(root, 6, 2, null).map((entry) => entry.node)).toEqual([after]);
+    expect(hitStack(root, 11, 0, null).map((entry) => entry.node)).toEqual([box, fixed]);
   });
 });

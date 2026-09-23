@@ -363,7 +363,9 @@ copy event sees it in all three engines.
   through to the theme's — as `--mw-ink` / `--mw-ground` (render.ts),
   and the rule reads them swapped. A focus-inverted control's measured
   colors are the inverted ones; a contenteditable's inline descendants
-  inherit their block's. The properties land with the relayout a focus
+  inherit their block's. An editable region inside a host keeps its
+  native selection; a host that is itself editable, or sits inside an
+  editable, is unsupported, its text locked as any grid-mode text. The properties land with the relayout a focus
   change triggers, so a gesture that focuses and selects at once can
   show the previous colors for a frame. Left unstyled, Firefox paints
   them its native highlight, and Chromium and WebKit hand a control its
