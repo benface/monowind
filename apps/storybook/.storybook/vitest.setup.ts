@@ -1,6 +1,12 @@
 import { configure } from "storybook/test";
 import { beforeEach } from "vitest";
-import { page } from "vitest/browser";
+import { commands, page } from "vitest/browser";
+
+declare module "vitest/browser" {
+  interface BrowserCommands {
+    movePointerOffPage: () => Promise<void>;
+  }
+}
 
 /** A wait that needs the engine's next layout can outlast testing
  * library's one-second default on a starved browser (three engines run
@@ -13,6 +19,10 @@ configure({ asyncUtilTimeout: 10_000 });
 beforeEach(async () => {
   await page.viewport(1200, 900);
 });
+
+/** Chromium on Linux rests the pointer at the page's top-left, over a
+ * story's first host, whose hover lays it out again: moved off the page. */
+beforeEach(() => commands.movePointerOffPage());
 
 /** Silence lit's dev-mode banner: the test server serves the dev build
  * by design, and the line would otherwise repeat for every story file. */

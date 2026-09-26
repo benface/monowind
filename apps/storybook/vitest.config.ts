@@ -46,6 +46,11 @@ export default defineConfig({
       // fallback also has deterministic headless coverage in
       // packages/core/test/style.test.ts (happy-dom has no Typed OM).
       instances: [{ browser: "chromium" }, { browser: "firefox" }, { browser: "webkit" }],
+      // The real pointer, for .storybook/vitest.setup.ts: past the
+      // viewport's top-left corner, over nothing a story renders.
+      commands: {
+        movePointerOffPage: async ({ page }) => page.mouse.move(-1, -1),
+      },
     },
   },
 });

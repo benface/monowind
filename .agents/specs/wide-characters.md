@@ -474,6 +474,16 @@ unless named):
   extend no caret outside caret browsing), a drag pressed outside from
   its first move over the host, and the engine's own ranges set the
   flag first, and a change to a live selection keeps it.
+- **In WebKitGTK and WPE, a script's selection of a grid-mode host's
+  text shows no highlight while nothing else on the page is
+  selectable.** WebKit queues `selectionchange` only when its visible
+  selection, the range snapped to selectable positions, changes
+  (`FrameSelection::setSelection`); with the host's `user-select: none`
+  text the only text, the range snaps to none before and after, so no
+  event reaches the engine, though `getSelection()` holds the range
+  (probed 2026-09-26; macOS WebKit, Chromium and Firefox fire it). The
+  Selection API fires on any change of the selection's range. A press
+  or a key is seen through its `selectstart`.
 - **Keyboard selection extension follows the native wrap.** Shift+Down
   in text mode moves by the browser's line boxes, which can differ
   from the grid's rows on lines holding drifted glyphs; the painted

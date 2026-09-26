@@ -597,7 +597,9 @@ export const NearestUnit: StoryObj = {
  * the page otherwise, so no restyle computes a `::selection` for the
  * host's elements with nothing selected (specs/wide-characters.md). The
  * word's own `selection:` color shows which: Chromium and WebKit hand
- * an element without one the slot's transparent highlight. */
+ * an element without one the slot's transparent highlight. The page
+ * text is selectable: WebKit on Linux fires no `selectionchange` in a
+ * document with nothing selectable. */
 export const HighlightLock: StoryObj = {
   render: () => html`
     <mono-wind>
@@ -605,6 +607,7 @@ export const HighlightLock: StoryObj = {
         Some <b data-test="word" class="selection:text-red-500">selectable</b> text.
       </p>
     </mono-wind>
+    <p>Page text.</p>
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
