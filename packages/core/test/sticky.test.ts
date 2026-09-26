@@ -5,9 +5,9 @@ import { renderGridRows, renderPlainText } from "../src/plain-text.ts";
 import { charIndexAtCell } from "../src/plain-text.ts";
 import { hitStack } from "../src/pointer.ts";
 import { buildTree } from "../src/tree.ts";
-import { applyStickyShifts, collectStickyBoxes, stickyShiftAxis } from "../src/sticky.ts";
+import { stickyShiftAxis } from "../src/sticky.ts";
 import type { CellLength, LayoutNode, OverflowAxis } from "../src/types.ts";
-import { makeNode } from "./helpers.ts";
+import { makeNode, scrollBox } from "./helpers.ts";
 
 /** Sticky positioning (specs/sticky.md): the paint-time shift a scroll
  * offset gives a sticky box, in cells, and the walks that add it. */
@@ -71,8 +71,7 @@ const sticky = (
     },
   });
 const rowsAt = (root: LayoutNode, box: LayoutNode, y: number, x = 0): string[] => {
-  box.scroll = { x, y };
-  applyStickyShifts(collectStickyBoxes(root));
+  scrollBox(root, box, x, y);
   return renderPlainText(root).split("\n");
 };
 
@@ -186,8 +185,36 @@ describe("sticky boxes in a scroller", () => {
     const loose = sticky("H", { top: 0 });
     const plain = makeNode({ children: [makeNode({ children: [loose, spacer(10)] })] });
     layoutRoot(plain, 20);
-    applyStickyShifts(collectStickyBoxes(plain));
     expect(loose.stickyShift).toBeUndefined();
+  });
+
+  it("sticks in a fixed box to a scroller inside it alone, the one it escapes left out", () => {
+    const fixedAt = (x: number, extra: Parameters<typeof makeNode>[0]) =>
+      makeNode({
+        ...extra,
+        style: {
+          position: "fixed",
+          insets: { top: 0, right: null, bottom: null, left: x },
+          width: { kind: "cells", value: 5 },
+          ...extra.style,
+        },
+      });
+    const still = sticky("S", { top: 0 });
+    const scrolled = sticky("T", { top: 0 });
+    const inner = scroller([scrolled, spacer(10)]);
+    const box = scroller([
+      spacer(10),
+      fixedAt(0, { children: [still, spacer(3)] }),
+      fixedAt(10, { style: { width: { kind: "cells", value: 20 } }, children: [inner] }),
+    ]);
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 40);
+    inner.scroll = { x: 0, y: 2 };
+    const rows = rowsAt(root, box, 3);
+    expect(still.stickyShift).toBeUndefined();
+    expect(rows[0]!.slice(0, 5)).toBe("S    ");
+    expect(scrolled.stickyShift).toEqual({ x: 0, y: 2 });
+    expect(rows[0]!.slice(10, 11)).toBe("T");
   });
 
   it("is where the paint put it for hit-testing and focus", () => {
@@ -197,9 +224,8 @@ describe("sticky boxes in a scroller", () => {
     const root = makeNode({ children: [box] });
     layoutRoot(root, 20);
     rowsAt(root, box, 6);
-    const stack = hitStack(root, 0, 0, null);
-    expect(stack[stack.length - 1]!.node).toBe(heading);
-    expect(stack[stack.length - 1]!.y).toBe(0);
+    expect(hitStack(root, 0, 0, null).at(-1)).toBe(heading);
+    expect(heading.paintOrigin.y).toBe(0);
     expect(focusableRects(root).find((f) => f.element === button)!.rect.y).toBe(0);
   });
 });
@@ -227,6 +253,21 @@ describe("sticky inline elements", () => {
     expect(entry.stickyShift).toEqual({ x: 0, y: 1 });
     expect(rows[0]!.slice(0, 11)).toBe("gg hhbbi jj");
     expect(leaf.text[charIndexAtCell(leaf, 0, -1, 5, 0)!]).toBe("b");
+  });
+
+  it("sticks a span to the leaf that scrolls it", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      `<div><p style="overflow-y: auto; width: 80px; height: 8px">` +
+      `aaaa <span style="position: sticky; top: 0px">bb</span> cc dd ee ff gg hh ii jj</p></div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 20);
+    const leaf = root.children[0]!;
+    const entry = leaf.inlineElements!.find((e) => e.sticky !== undefined)!;
+    const rows = rowsAt(root, leaf, 1);
+    expect(entry.stickyShift).toEqual({ x: 0, y: 1 });
+    expect(rows[0]!.slice(0, 11)).toBe("gg hhbbi jj");
   });
 });
 

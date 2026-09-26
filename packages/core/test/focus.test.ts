@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { arrowIsNative, directionOf, extentOf, focusableRects, nextFocus } from "../src/focus.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
-import { makeNode } from "./helpers.ts";
+import { makeNode, scrollBox } from "./helpers.ts";
 import type { Focusable } from "../src/focus.ts";
 import type { Rect } from "../src/types.ts";
 
@@ -84,7 +84,7 @@ describe("focusableRects", () => {
     layoutRoot(root, 20);
     // The scroll container sits one row down; simulate a scroll of 1.
     const scroller = root.children[4]!;
-    scroller.scroll = { x: 0, y: 1 };
+    scrollBox(root, scroller, 0, 1);
     const rects = focusableRects(root).map(({ element, rect }) => [
       element.textContent!.trim(),
       rect.x,
@@ -121,8 +121,8 @@ describe("focusableRects", () => {
     const scroller = makeNode({ children: [makeNode({ text: "row" }), fixed] });
     const root = makeNode({ children: [makeNode({ text: "above" }), scroller] });
     layoutRoot(root, 20);
-    scroller.scroll = { x: 0, y: 2 };
     fixed.hostRect = { x: 10, y: 0 };
+    scrollBox(root, scroller, 0, 2);
     const rects = focusableRects(root).map(({ rect }) => [rect.x, rect.y]);
     expect(rects).toEqual([[10 + inner.localRect.x, inner.localRect.y]]);
   });

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { distributeInteger, resolveFlexMainAxis } from "../src/flex.ts";
 import { clampSize, layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
-import { makeNode } from "./helpers.ts";
+import type { CellStyle, LayoutNode } from "../src/types.ts";
+import { cells, makeNode } from "./helpers.ts";
 
 describe("a flex item is at least its edges", () => {
   it("places the next item past a bordered item shrunk to its edges", () => {
@@ -483,6 +484,77 @@ describe("flex-basis, order, reverse, and justify space-*", () => {
     expect(second.localRect.x).toBe(15);
   });
 
+  it("packs a reversed axis's flex-start at its main-start, its start at the writing mode's", () => {
+    // Probed: every engine.
+    const place = (
+      flexDirection: CellStyle["flexDirection"],
+      justifyContent: CellStyle["justifyContent"],
+    ) => {
+      const [first, second] = [makeNode({ text: "a" }), makeNode({ text: "bb" })];
+      const container = makeNode({
+        style: {
+          display: "flex",
+          flexDirection,
+          flexReverse: true,
+          justifyContent,
+          height: cells(6),
+        },
+        children: [first, second],
+      });
+      layoutRoot(makeNode({ children: [container] }), 10);
+      return flexDirection === "row" ? first.localRect.x : first.localRect.y;
+    };
+    const keywords = ["flex-start", "flex-end", "start", "end"] as const;
+    expect(keywords.map((keyword) => place("row", keyword))).toEqual([9, 2, 2, 9]);
+    expect(keywords.map((keyword) => place("column", keyword))).toEqual([5, 1, 1, 5]);
+  });
+
+  it("packs a sole item under space-between at a reversed axis's main-start", () => {
+    // space-between falls back to flex-start (css-align; probed: every engine).
+    const place = (flexDirection: CellStyle["flexDirection"]) => {
+      const item = makeNode({ text: "a" });
+      const container = makeNode({
+        style: {
+          display: "flex",
+          flexDirection,
+          flexReverse: true,
+          justifyContent: "space-between",
+          height: cells(6),
+        },
+        children: [item],
+      });
+      layoutRoot(makeNode({ children: [container] }), 10);
+      return [item.localRect.x, item.localRect.y];
+    };
+    expect([place("row"), place("column")]).toEqual([
+      [9, 0],
+      [0, 5],
+    ]);
+  });
+
+  it("justifies a reversed text leaf's text as it packs an item", () => {
+    const offset = (
+      flexDirection: CellStyle["flexDirection"],
+      justifyContent: CellStyle["justifyContent"],
+    ) => {
+      const leaf = makeNode({
+        text: "xx",
+        style: {
+          display: "flex",
+          flexDirection,
+          flexReverse: true,
+          justifyContent,
+          height: cells(4),
+        },
+      });
+      layoutRoot(makeNode({ children: [leaf] }), 10);
+      return flexDirection === "row" ? leaf.resolvedPadding.left : leaf.resolvedPadding.top;
+    };
+    const keywords = ["flex-start", "flex-end", "start", "end", "space-between"] as const;
+    expect(keywords.map((keyword) => offset("row", keyword))).toEqual([8, 0, 0, 8, 8]);
+    expect(keywords.map((keyword) => offset("column", keyword))).toEqual([3, 0, 0, 3, 3]);
+  });
+
   it("space-evenly distributes n+1 equal gaps", () => {
     const items = ["aa", "bb", "cc"].map((text) => makeNode({ text }));
     const container = makeNode({
@@ -622,8 +694,6 @@ describe("auto margins take what flexing leaves (CSS §8.1)", () => {
 });
 
 describe("the automatic minimum and content bases (CSS §4.5, §7.2.3)", () => {
-  const cells = (value: number) => ({ kind: "cells", value }) as const;
-
   it("flex-row: an item's width and max-width cap its automatic minimum", () => {
     const narrow = makeNode({ text: "abcdef", style: { width: cells(3), flexShrink: 1 } });
     const capped = makeNode({ text: "abcdef", style: { maxWidth: 3, flexShrink: 1 } });
@@ -986,7 +1056,7 @@ describe("align-content (multi-line cross distribution)", () => {
         flexDirection: "row",
         flexWrap: "wrap",
         wrapReverse: true,
-        alignContent: "end",
+        alignContent: "flex-end",
         height: { kind: "cells", value: 8 },
       },
       children: items,
@@ -997,6 +1067,84 @@ describe("align-content (multi-line cross distribution)", () => {
     // start → packed at the top.
     expect(items[2]!.localRect.y).toBe(0);
     expect(items[0]!.localRect.y).toBe(1);
+  });
+});
+
+describe("wrap-reverse runs the cross axis backwards (probed: every engine)", () => {
+  const box = (width: number, height: number) =>
+    makeNode({ text: "a", style: { width: cells(width), height: cells(height), flexShrink: 0 } });
+  const lay = (style: Partial<CellStyle>, children: LayoutNode[]) => {
+    const container = makeNode({
+      style: { display: "flex", flexWrap: "wrap", wrapReverse: true, ...style },
+      children,
+    });
+    layoutRoot(makeNode({ children: [container] }), 20);
+  };
+
+  it("aligns flex-start at the line's bottom, start at its top, as an item stretch can't fill", () => {
+    const y = (alignItems: CellStyle["alignItems"], item = box(2, 1)) => {
+      lay({ flexDirection: "row", alignItems, width: cells(8) }, [box(2, 3), item]);
+      return item.localRect.y;
+    };
+    const keywords = ["flex-start", "flex-end", "start", "end", "center", "stretch"] as const;
+    expect(keywords.map((keyword) => y(keyword))).toEqual([2, 0, 0, 2, 1, 2]);
+    const capped = makeNode({ text: "a", style: { width: cells(2), maxHeight: 1 } });
+    expect(y("stretch", capped)).toBe(2);
+  });
+
+  it("aligns a column's flex-start at the right, its start at the left", () => {
+    const x = (alignItems: CellStyle["alignItems"]) => {
+      const item = box(2, 1);
+      lay({ flexDirection: "column", alignItems, width: cells(10) }, [item]);
+      return item.localRect.x;
+    };
+    const keywords = ["flex-start", "flex-end", "start", "end", "stretch"] as const;
+    expect(keywords.map(x)).toEqual([8, 0, 0, 8, 8]);
+  });
+
+  it("packs lines to the bottom under content-start, to the top under start", () => {
+    const y = (alignContent: CellStyle["alignContent"]) => {
+      const [first, last] = [box(4, 1), box(4, 1)];
+      lay({ flexDirection: "row", alignContent, width: cells(4), height: cells(6) }, [first, last]);
+      return [first.localRect.y, last.localRect.y];
+    };
+    const keywords = ["flex-start", "flex-end", "start", "end"] as const;
+    expect(keywords.map(y)).toEqual([
+      [5, 4],
+      [1, 0],
+      [1, 0],
+      [5, 4],
+    ]);
+    const sole = box(4, 1);
+    lay({ alignContent: "space-between", width: cells(4), height: cells(6) }, [sole]);
+    expect(sole.localRect.y).toBe(5);
+  });
+
+  it("puts a text leaf's text at the bottom for items-start, atop its stretched item", () => {
+    const top = (alignItems: CellStyle["alignItems"]) => {
+      const leaf = makeNode({
+        text: "xx",
+        style: {
+          display: "flex",
+          flexWrap: "wrap",
+          wrapReverse: true,
+          alignItems,
+          height: cells(5),
+        },
+      });
+      layoutRoot(makeNode({ children: [leaf] }), 20);
+      return leaf.resolvedPadding.top;
+    };
+    const keywords = ["flex-start", "flex-end", "start", "end", "stretch"] as const;
+    expect(keywords.map(top)).toEqual([4, 0, 0, 4, 0]);
+  });
+
+  it("stacks overflowing lines from the top, overflow alignment being safe", () => {
+    // CSS runs them past the top, stretch's flex-start fallback
+    // (specs/cell-model.md deviation 23).
+    const [first, second] = [box(4, 2), box(4, 2)];
+    lay({ flexDirection: "row", width: cells(4), height: cells(2) }, [first, second]);
+    expect([first.localRect.y, second.localRect.y]).toEqual([2, 0]);
   });
 });
 
@@ -1380,6 +1528,51 @@ describe("justify-content offsets through layoutRoot", () => {
     const root = makeNode({ children: [container] });
     layoutRoot(root, 20);
     expect(b.localRect.x).toBe(2); // 4 - 2
+  });
+});
+
+describe("overflowing alignment at the start edge (specs/cell-model.md deviation 23)", () => {
+  const wide = (width: number, height = 1) =>
+    makeNode({
+      text: "a",
+      style: {
+        width: cells(width),
+        height: cells(height),
+        flexShrink: 0,
+      },
+    });
+  const lay = (style: Partial<CellStyle>, child: LayoutNode) => {
+    const container = makeNode({
+      style: { display: "flex", width: cells(10), ...style },
+      children: [child],
+    });
+    layoutRoot(makeNode({ children: [container] }), 40);
+    return child.localRect;
+  };
+
+  // CSS centers or ends these past the start edge (probed: every engine).
+  it("starts an overflowing line whatever justify-content", () => {
+    const x = (justifyContent: CellStyle["justifyContent"]) =>
+      lay({ flexDirection: "row", justifyContent }, wide(20)).x;
+    expect([x("center"), x("end"), x("space-around"), x("space-evenly")]).toEqual([0, 0, 0, 0]);
+  });
+
+  it("starts an item larger than its line", () => {
+    const row = { flexDirection: "row", height: cells(2) } as const;
+    expect(lay({ ...row, alignItems: "center" }, wide(2, 4)).y).toBe(0);
+    const x = (alignItems: CellStyle["alignItems"]) =>
+      lay({ flexDirection: "column", alignItems }, wide(20)).x;
+    expect([x("center"), x("end")]).toEqual([0, 0]);
+  });
+
+  it("starts overflowing lines under align-content", () => {
+    const style = {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      alignContent: "center",
+      height: cells(2),
+    } as const;
+    expect(lay(style, wide(5, 4)).y).toBe(0);
   });
 });
 

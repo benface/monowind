@@ -1,11 +1,12 @@
 # Why each unexplained CSS deviation exists
 
-Status: **research, 2026-09-23** — no code changed. For every deviation
-the specs list without a reason: where it came from (spec text, plans,
-`git log -S`), whether that reason still holds, and a recommendation.
-Probes ran in Chromium, Firefox and WebKit. Origins: **deliberate** (a
-stated reason), **deferred** (scope or time), **shortcut** (an
-implementation simplification), **none** (no evidence).
+Status: **research, 2026-09-23**; the decisions under "Order" record
+what has been done since. For every deviation the specs list without a
+reason: where it came from (spec text, plans, `git log -S`), whether
+that reason still holds, and a recommendation. Probes ran in Chromium,
+Firefox and WebKit. Origins: **deliberate** (a stated reason),
+**deferred** (scope or time), **shortcut** (an implementation
+simplification), **none** (no evidence).
 
 Several stated reasons are factually wrong and need correcting whatever
 is decided: borders' "most pairs", text indent's "off-grid" and
@@ -144,11 +145,29 @@ decoration-color claim.
 
 ## Order
 
+Decided 2026-09-24: item 4 (stacking) comes next, ahead of incremental
+reads, as its own change — an `absolute z-10` menu in a `relative` card
+paints under the next card, and a stuck `<th class="sticky top-0">`
+under the table body (the StickyHeaderCells story). Its scope: every
+positioned box paints in its nearest stacking context's positioned
+step, by z-index then tree order, carrying its own clip, scroll and
+group; hit testing and the collapsed-table lattice follow the same
+order.
+
+Decided 2026-09-25: overflow alignment past the start edge follows
+stacking (cell-model.md deviation 21, `2026-09-25-overflow-alignment.md`).
+
 Decided 2026-09-23, after the follow-ups commit: opacity becomes one
 color-blending model — each translucent glyph or background color
 composited over what the cell already holds, cell `opacity` kept for
 layers alone — replacing today's two paths and the "blends only with
-the page behind the host" deviation (a spec change first).
+the page behind the host" deviation (a spec change first). **Done
+2026-09-23** (`2026-09-24-one-opacity-model.md`), group-faithful, each
+color clipped to sRGB where it blends, as every engine blends, while a
+gradient's stops mix unclipped: item 5's "unclamped" is done with it
+for gradients; its `lab()`/`lch()`/`color()` parsing and the rest
+stay. The parsing is done since: `lab()`, `lch()` and, from
+2026-09-25, every `color()` space (the opacity plan's "Follow-ups").
 
 1. Lock `columns` on the host.
 2. Margins on inline-blocks.
@@ -166,4 +185,4 @@ the page behind the host" deviation (a spec change first).
    run, percent inline insets, `aspect-ratio`.
 
 Also out of date: anchor-positioning.md's "Firefox … positions nothing"
-(Firefox 155 anchors natively).
+(Firefox 155 anchors natively). **Fixed 2026-09-24.**

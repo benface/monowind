@@ -127,9 +127,11 @@ specs: deterministic, document order.)
 
 - A `background-color` fills the box `background-clip` names in the
   grid — the border box by default, or the padding or content box —
-  wiping what ancestors painted there; a gradient `background-image`
-  fills it a color per cell, and `text` hands either to the glyphs
-  (`gradients.md`).
+  over what ancestors and earlier boxes painted there: their glyphs
+  hidden whatever its alpha, its color composited over their
+  background ("Opacity and translucency"). A gradient
+  `background-image` fills it a color per cell, and `text` hands
+  either to the glyphs (`gradients.md`).
 - **Margins are supported** (`m-*`, `mx-*`, `-m-*`…); the spacing
   between siblings is `gap-*`.
 - Margin collapsing: **adjacent-sibling collapsing only** (the visible gap is
@@ -190,10 +192,43 @@ is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
 the window. The height is engine-set from the content rows, as before;
 a host with nothing to lay out is zero rows — its padding and border
-only, and an empty grid. The host's own inline content is the root
+only, and an empty grid. A host in no box (inside `display: none`)
+measures no cell and keeps its last layout, writing nothing, until
+its resize as it shows lays it out. The host's own inline content is the root
 leaf (specs/host-leaf.md), laid out inside the same content box. A
 host inside another host is unsupported: it warns once and keeps its
 engine off, and the outer host lays it out as plain content.
+
+## Engine variables
+
+The engine hands the browser its geometry and typography as custom
+properties on each light element (render.ts), which the companion
+stylesheet turns into cells. Custom properties inherit, so a variable
+a rule can read on an element that didn't write it is reset plainly
+on every light element, and the engine's inline value, which beats a
+plain rule, sets it: `--mw-z` (positioning.md "Paint order"), the
+inline insets `--mw-it`/`--mw-ir`/`--mw-ib`/`--mw-il`, an inline
+element's padding `--mw-ipl`/`--mw-ipr`, a box's shift
+`--mw-sx`/`--mw-sy` (sticky.md) and the middle-alignment baseline
+`--mw-vb`. The reset is `initial` where a missing value means `auto`
+— `--mw-z` and the insets, whose reading declarations are then
+invalid at computed-value time — and the neutral value elsewhere, and
+a rule reads a reset variable with no fallback. A variable written on
+every box and read under an engine flag alone (geometry, padding and
+border cells, leading, indent) needs none, nor does one read only
+under a flag render.ts sets with it (flow margins, multicol, the
+scroll spacer and gutters, `--mw-va`). `--mw-ls` and an editable's
+`--mw-ink`/`--mw-ground` are their parent's by design, so an inline
+element without its own takes its block's; the ground is written on
+every editable box, the theme's spelled out (`var(--mw-bg)`) where no
+fill paints. cascade.test.ts sorts every variable render.ts writes
+into one of these four classes and checks the reads of each.
+
+What an element carries is its last layout's: an element that layout
+wrote no box on — one now inline, or out of the tree — loses a box's
+flags and variables, found by the flags one of which marks every box;
+one it wrote no inline insets on loses those; and a box, an inline
+element's padding cells.
 
 ## Typography
 
@@ -269,9 +304,10 @@ engine off, and the outer host lays it out as plain content.
   `top` is the default pin. `middle` puts the line's text on the box's
   middle row — the lower of the two for an even height — and places the
   box natively by a whole-row baseline length the engine writes: the
-  rows from the box's own baseline (its last line's, or its bottom edge
-  where it draws no line of its own, in which case the row's measured
-  baseline is added) to that row, so the browser's text lands on the
+  rows from the box's own baseline (its last line's, where the box's own
+  alignment puts it — an `items-center h-3` box's on its middle row —
+  or its bottom edge where it draws no line of its own, in which case
+  the row's measured baseline is added) to that row, so the browser's text lands on the
   same row in every engine (probed). `baseline` behaves as `top`
   (off-grid: descender-grown line boxes).
 
@@ -377,7 +413,8 @@ The host's own text beside a block child runs the same way
 natively (a wrapper element would break frameworks' reconciliation),
 so a mixed BLOCK container keeps its in-flow block children in the
 browser's flow instead — FLOW CHILDREN, engine-sized like any laid-out
-box, `position: static`, with engine margins that put them where the
+box, `position: relative` with the engine's insets alone (a sticky
+one's shift, sticky.md), with engine margins that put them where the
 engine did, the container's half-leading translate and a run's native
 line boxes (`lines × (1 + gap)` rows) counted in. A flow child that is
 a formatting-context root — a container, or a leaf CSS makes one —
@@ -523,32 +560,171 @@ size, not the cell width. **Deviations**: negative values clamp to 0
 (hanging indents are off-grid), percentages resolve to 0, and the
 indent doesn't count toward intrinsic sizing.
 
-## Opacity
+## Opacity and translucency
 
-`opacity` is honored: ancestors MULTIPLY down the paint walk (CSS
-opacity nests, it doesn't inherit) and the product rides on every grid
-span the subtree paints (glyphs, backgrounds, borders, rules), which
-composites against the page. An inline element's (a `<span>`) fades
-its own paint, times its inline ancestors' and its block's: with a
-background of its own, the span's background, padding cells, and
-glyphs together; without one, its glyphs' color alone (mixed toward
-transparent in OKLAB), the background beneath keeping its block's, as
-CSS composites the span over it. What an inline element holds fades
-with it: an atomic inline box, an out-of-flow box, and a block it
-splits around ("Inline content") carry its opacity times their own.
-**Deviations**: translucency blends with what's behind the HOST, never
-with covered cells (the front paint wins a cell outright, as always):
-a translucent box's glyphs carry the background beneath them at the
-box's opacity, and an inline element's own background fades over the
-page rather than over its block's. `opacity: 0` still paints its
-glyphs — invisible but present, so `select="grid"` selection keeps
-working (unlike `invisible`). The light DOM keeps the authored opacity
-natively, so form-control ink dims in step. A box-drawing or block
-glyph in a translucent span — its opacity's, or an inline element's
-faded color — is boxed to its cell (the tiling fit's inline-block
-clip): rows are separate spans, and the glyph's vertical overshoot,
-which joins rows seamlessly at full opacity, would composite twice at
-every join below it and darken the line there.
+CSS paints a translucent color over what lies beneath it, and
+`opacity` renders an element with its whole subtree as one group,
+composited over what lies beneath the element. The grid does both in
+its cells: the engine blends every translucent color and every
+translucent group into the cells it lands on, source-over on
+gamma-encoded sRGB as browsers blend, wherever an opaque color lies
+beneath to blend with. What no opaque color lies under keeps its
+alpha — a group's cell its group's opacity, on its span — and the
+browser composites it over what shows through the cell — the host's
+background, the page behind the host — as it composites what it draws
+itself: a layer's box, a `::backdrop`, the host. A cell carries one
+background and one glyph color, final, the glyph's drawn over the
+cell's own background, and at most one opacity, its span's.
+
+**Painting a cell.** A cell holds a background and at most one glyph
+with its color, painted in paint order:
+
+- A **background** — a box's fill (`background-color` or a
+  gradient's cell, inside the box `background-clip` names), an inline
+  element's background under its text and padding cells — composites
+  over the cell's background and hides its glyph, whatever its alpha:
+  the cell is blank beneath it (deviation 13). Over some but not all
+  cells of a wide cluster, it blanks the cluster, as any paint over
+  part of one does.
+- A **glyph** replaces the cell's glyph — a text run's space replaces
+  it with a blank — and its color is drawn over the cell's
+  background: blended into it where that background is opaque
+  (`text-white/50` on `bg-blue-600` is their mix, opaque), kept as it
+  is over a translucent background or none, for the browser to draw.
+  The glyph beneath is gone (deviation 13).
+- A color at **zero alpha** is no paint: a background there leaves
+  the cell's as it was, an unpainted one unpainted, and a glyph's
+  color over an opaque background is that background exactly, as
+  written (`text-transparent` over a gradient shows each cell's color
+  unclipped).
+- **`currentColor`** is the element's computed `color` by the time
+  the grid reads it — in a border, a shadow, a gradient stop,
+  `text-current/50` — and a glyph with no color of its own is in the
+  host's ink ("The ground").
+- A color the engine cannot read is **taken as opaque** and painted as
+  written. In a browser every color reads: each form an engine
+  computes, and through the shadow the `var()`s the engine writes
+  itself.
+
+**Opacity is a group.** An element whose `opacity` is below 1 paints
+its subtree — its shadows, fill, borders, text, and descendants, a
+fixed one included — onto a transparent grid of its own, blended
+there by the rules above, and that grid composites at the element's
+opacity `α` over every cell it touched, as CSS composites a group:
+the group's glyph, or the blank its background leaves, replaces the
+cell's, and the group's background, its glyph drawn over it, lands at
+`α` over what the cell held. Over an opaque background the engine
+blends them into it — the cell's background becomes `α ×` the
+group's over the cell's, its glyph's color the group's glyph over the
+group's background at `α` over the cell's — and over a translucent
+one likewise, keeping the alpha, but for a glyph over the group's own
+background: that cell is the two as CSS composites them, its glyph's
+color opaque and its span's opacity the alpha the glyph reaches, its
+background beneath at the same. Where nothing lies beneath, the cell
+keeps the group's own paint and takes `α` as its span's `opacity`,
+for the browser to composite over the host's background and the page.
+A later paint over a cell with an opacity lands over its colors at
+that opacity. Groups nest innermost first, so opacities multiply as
+CSS nests them, a span's too, and a filled button at `opacity-50`
+shows its label at half over what lies beneath the button, not over
+its own fill. A translucent color inside a group is translucent
+within it: `bg-black/50` in an `opacity-50` box is a quarter of black
+over what lies beneath, and `text-white/50` there keeps its own alpha
+inside the span's opacity.
+
+**Inline elements** are groups too. A `<span>`'s opacity composites
+its glyphs, its background, and its padding cells over its block's
+cells, inside its inline ancestors' groups as they nest, each
+ancestor's background beneath what it holds. What it holds that is
+no character — an atomic inline box, an out-of-flow box, a block it
+splits around ("Inline content") — composites as a group of its own,
+at its own opacity times its inline ancestors'. An inline ancestor a
+block splits holds no entry of its own in the runs beside the block
+(deviation 18).
+
+**The ground.** Beneath the main grid lies the host's ground: what a
+cell no background has reached shows — the host's background and
+whatever lies behind the host, an image, a gradient, page content —
+which the browser composites, as it composites the translucent paint
+and the groups over such a cell. Where one color must stand for the
+ground — a selected translucent cell ("Selection") — it is the host's
+`--mw-bg` as computed on the host (theming.md): derived from the
+host's own background composited over those behind it down to an
+opaque one, `Canvas` past the root, or an author's own value, which
+names the ground where the derivation cannot see it. The ink is
+`--mw-fg`; each is resolved to a color every layout. A translucent
+host background shows denser than CSS paints it (deviation 17).
+`bg-clear` wipes its cells to the ground — background and glyph,
+through any group it sits in — and the group's own paint then
+composites over it.
+
+**Gradients** are a background per cell. A gradient cell composites
+over the element's own `background-color`, then over the cell, so a
+translucent stop shows what lies beneath. A translucent color or a
+group over gradient cells blends with each cell's color, one span
+still carrying a row's colors (gradients.md). Clipped to `text`, the
+gradient colors the box's glyphs, each glyph's own color over the
+gradient's at its cell. That is the glyph's color, which an inline
+element's opacity composites as a group like any other.
+
+**The top layer** composites over everything painted before it, at
+its own opacity alone: its ancestors' groups don't reach it, as the
+top layer renders outside them (top-layer.md).
+
+**Layers** (layers.md) are the browser's to composite. A layer root's
+opacity, times that of the groups between it and the enclosing
+layer's root (or the grid), is its box's native `opacity`, and its
+cells paint unfaded inside the box: CSS's group opacity, exactly. A
+layer's grid blends as the main grid does: an unpainted cell shows
+what lies beneath the box, a group's cell there taking its opacity on
+its span, and a `bg-clear` there wipes its cells to transparent. A
+top-layer element with a backdrop is such a layer; its `::backdrop`
+is a box the browser fades at its own opacity.
+
+**Selection** swaps a cell's final colors — the glyph color and
+background, a translucent one composited over the ground first, the
+theme's ink and ground for a cell with none of its own — so the
+highlight is what the eye sees, reversed, at the span's opacity, as
+CSS draws a selection in a faded element.
+
+**`opacity: 0`** still paints its glyphs. At zero alpha each is
+invisible — over an opaque background, that background's color
+exactly, its span at zero opacity over none — while its characters
+stay in the grid, so `select="grid"` selects and copies them (unlike
+`invisible`), a grid drag highlighting them in the theme invert
+where they are blended (wide-characters.md "Deviations"). Its
+backgrounds are no paint: the cells keep theirs.
+
+**Line and block glyphs** join their rows and cells by drawing past
+their cell (wide-characters.md), where a translucent color would
+composite twice. One drawn translucent — its color, or its span's
+opacity, with no opaque background under it, on the main grid or in
+a layer — draws each cell once: a stroke is boxed to its cell (the
+tiling fit's clip), a band's run cell by cell, and a shade draws
+every pixel of its box once in any color (wide-characters.md "A
+shade keeps its lattice").
+One blended opaque joins its rows as any glyph.
+
+**A color emoji** takes no color from CSS, only an alpha: its color is
+never blended into what lies beneath, for the browser to draw as it
+draws that color. Its groups fade it by their opacity, over nothing
+on its span with the rest of the group; where its cell blends, on its
+glyph alone — a span of its own at that opacity, its underline in it,
+as WebKit draws a color emoji whole at any color alpha above 0 — so it
+fades over its cell's final background (deviation 15). A cell of it a
+later glyph blanks takes its color blended at that opacity, as a
+faded glyph's.
+
+**What stays native.** The light DOM keeps the authored opacity: a
+form control's own ink and an outline fade with their elements over
+the blended cells, and the host's own opacity fades the whole grid.
+Opacity animates by re-blending with no relayout: each sampled frame
+("Animation") repaints the last layout, compositing the cells at that
+frame's opacity — a span over nothing takes it as its own, the one
+property the frame writes on it — and a layer's box takes the frame's
+opacity natively.
+
+**Deviations**: 13–18 of the running list ("Deviations from CSS").
 
 ## Effects
 
@@ -573,33 +749,52 @@ control's ring).
 ## Animation
 
 Transitions of the SAMPLED properties — `color`, the `border-*-color`
-longhands, and `opacity` — animate the grid: `transitionrun` on the
-host starts a per-frame relayout loop (element.ts) that re-reads
-computed styles until every tracked transition ends (a 30s safety
-valve guards lost end events), so the grid repaints with the browser's
-own interpolated values and lands exactly on the target. A layer
-root's `transform`, `translate`, `rotate`, `scale`, and `filter` are
-sampled too, onto its box (specs/layers.md "Animation is sampled"): a
+longhands, and `opacity` — animate the grid with the browser's own
+interpolated values and land exactly on the target. A `color`
+transition's `transitionrun` on the host starts a per-frame relayout
+loop (element.ts) that re-reads computed styles while one runs: the
+color reaches what inherits it, which a layout snapshots; the frame
+after its last lays out once more, landing it. Each frame reads what
+runs under the host (specs/animations.md "Reading"), so a transition
+ends there however it ends — an element removed mid-fade included,
+whose cancel reaches the host no more. A light element's own
+`opacity` or border color inherits into no other node, so its
+transition is sampled as its keyframe animation is
+(specs/animations.md): each frame reads the live value onto the
+element's node and repaints the last layout, a layer root's opacity
+going to its box, and the frame after its end repaints its landed
+value — no layout of its own. A transition on the host itself, other
+than `color`'s, is the browser's alone — its opacity, border colors
+and transform are native, the grid fading and moving with the host —
+as the host's own animation is; its end reads the grid's place
+afresh, where a pointer held still now points. A layer root's
+`transform`, `translate`, `rotate`, `scale`, and `filter` are sampled
+too, onto its box (specs/layers.md "Animation is sampled"): a
 transition of one of them alone re-copies the computed values per
-frame, the layout untouched until the settle at its end.
+frame, the layout untouched until the loop's last. A frame lays out
+once: a
+layout scheduled for it and the loop's relayout are one, whichever
+the frame runs first — the other finds the frame laid out (element.ts
+`#performLayout` cancels the pending request; the loop's tick skips a
+frame the request laid out).
 
 This works because the text-visibility lock is
 `-webkit-text-fill-color: transparent`, NOT `color: transparent` — the
 computed `color` stays live and authored transitions actually run on
 it (decoration ink follows `color` and gets its own transparent lock).
-A light element's gate is its own flag — `data-mw-measuring`, then
-`data-mw-settling`, set on every light element as the layout sets the
-host's attributes — never the host's attribute read through a
-descendant combinator: any rule of that shape makes each flip of the
-host's attribute walk its whole subtree, the shadow grid's every span
-included, four times a layout (0.85 µs a span a flip in Chromium, 4 ms
-of a border-heavy page's relayout), where an element's own flag
+A light element's gate is its own flag — `data-mw-measuring`, set on
+every light element as the layout sets the host's `measuring`, then
+`data-mw-settling` on the elements that settle — never the host's
+attribute read through a descendant combinator: any rule of that shape
+makes each flip of the host's attribute walk its whole subtree, the
+shadow grid's every span included (0.85 µs a span a flip in Chromium,
+4 ms of a border-heavy page's relayout), where an element's own flag
 invalidates the element alone. The host's `measuring` and `settling`
 gate its own rules. An element inserted since the last layout carries
 no flag and takes the locks until its first.
 Under `[measuring]` — and `[settling]`, which replaces it for one
-forced style flush at the end of every layout — `transition-property`
-is forced to the sampled set: lock-owned properties (backgrounds,
+forced style flush at the end of a layout — `transition-property` is
+forced to the sampled set: lock-owned properties (backgrounds,
 decoration color, geometry) snap instead of animating a lock toggle,
 while in-flight fades of sampled properties survive the pass. The
 settling flush matters — without it, the snap from the measured real
@@ -608,17 +803,27 @@ authored list live and start a NATIVE fade (transitions beat
 `!important` in the cascade) that paints the light-DOM element's box
 on top of the grid. Every unmasked commit — frame ends included — then
 sees no lock delta, so the authored list is fully respected there:
-`transition-colors` does not make `opacity` fade.
+`transition-colors` does not make `opacity` fade. Only an element with
+a transition to start settles: a non-zero duration or delay in any
+entry of its lists, the host's own included, read after the reads
+while the style is clean. Every other element drops its flag with no
+settling flag, before the flush so a settling element snaps against
+its parent's locks, and a layout where nothing settles forces no
+flush at all, the snap-back committing at the frame's own style
+update. Pseudo-elements are never masked.
 
 `background-color` has NO native timeline at all (the lock holds the
 light-DOM bg transparent at every unmasked commit), so the engine
 SYNTHESIZES its transitions (animate.ts): a read that sees the value
 change on an element whose authored `transition` covers
-background-color arms a fade with the authored duration, delay, and
-easing (cubic-bezier solved numerically, `steps()` and `linear()` as
-CSS defines them), interpolating premultiplied in OKLAB (sRGB for
-legacy rgb pairs, per css-color-4) from each end's own value, clipped
-to sRGB only once mixed, and driving the same per-frame loop. The
+background-color arms a fade the browser eases: a target-less
+`Animation` carries the authored duration, delay, and timing function,
+backwards-filling as a CSS transition does (the delay shows the
+easing's start), and each sample reads its progress. The colors
+interpolate premultiplied in OKLAB (sRGB for legacy rgb pairs, per
+css-color-4) from each end's own value, written unclipped
+(`color(srgb …)` past sRGB), and the fade drives the same per-frame
+loop. The
 config resolves after the settling flush, where the authored
 `transition-property` is readable again and the reads themselves can
 start nothing. CSS `animation` keyframes are sampled by the same loop,
@@ -684,8 +889,9 @@ are specified in `semantic-selection.md`.
 The host lays out again on any change to its light DOM's tree or
 text, and on a change to an attribute that can change what the grid
 shows: `class` and `style`; `id`, a popover's implicit anchor
-(anchor-positioning.md) and a `#id` style's hook, `role`, which the
-interactives and the focus invert read, and an invoker's
+(anchor-positioning.md) and a `#id` style's hook, `role` and
+`tabindex`, which mark the interactives and the composites the focus
+invert skips ("Pointer states"), and an invoker's
 `popovertarget` or `commandfor`; HTML's rendering attributes — the
 states and the presentation the UA styles and Tailwind's variants
 read, from `hidden` and `open` to the form controls' `disabled`,
@@ -708,6 +914,24 @@ a `class` or `style` change on any ancestor (past a shadow root, its
 host) and a change of the color scheme schedule a layout as well,
 since the cascade brings them into what the cells show — a theme
 class on the page, the derived tokens' colors (theming.md).
+
+A resize lays the host out again where the layout reads it: the host's
+own box at a size other than the one its last layout gave it (a
+narrower container shrinks the capped host), a box around it — its
+parent or a sibling — at another width ("Host sizing"), and the cell
+probe measuring a cell other than the last layout's (a font matched
+late, which fires no font event). The resizes a layout causes
+schedule nothing: the host's own height and capped width, and a box
+around it growing or shrinking in height with it. A box around the
+host that changes height only moves the grid, as a page scroll does:
+the top layer's origin follows it (top-layer.md), and the pointer's
+states re-derive under a pointer held still ("Pointer states"). Fonts settling — `document.fonts`'
+`ready`, and `loadingdone` for every later batch — lay the host out
+again only where the cell measures differently or a glyph the grid's
+boxes were fit from draws differently (wide-characters.md), so a page
+whose fonts are already in place loads with one layout — two where a
+host holds a textarea, whose value wraps at the width a layout before
+gave it ("Form controls").
 
 ## Pointer states
 
@@ -743,9 +967,21 @@ as natively: the chain stops at it (its ancestor is what hovers), and
 so do wheel routing, thumb drags, arrow-key focus
 (specs/focus-navigation.md), and the semantic gestures. Hover synthesis runs only under
 `select="grid"` on hover-capable pointers; active synthesis is not
-hover-gated (touch presses count). The chain re-derives on scroll and
-after every layout, so content moving under a stationary pointer
-updates like native `:hover`.
+hover-gated (touch presses count). The chain re-derives on scroll,
+after every layout, and when a box around the host moves the grid
+("Observation"), so content moving under a stationary pointer
+updates like native `:hover`, and a press there lands on what the
+grid shows under it.
+
+**The engine marks the interactives.** Each layout, before its read,
+marks every light element the list above makes interactive
+`data-mw-interactive`, and a composite's container `data-mw-composite`
+(element.ts): the companion's grid-mode opt-in and text cursor and the
+focus invert's exclusion key on the marks, the invert's read seeing
+them. What decides them — `role`, `tabindex`, `contenteditable` — is
+observed ("Observation"), so a change applies from the layout it
+schedules; an element inserted since the last layout, which the grid
+does not show yet, takes no pointer events until its first.
 
 **An element the grid covers takes no pointer.** What the browser's
 own hit test lands on an element the grid does not show at that cell —
@@ -828,12 +1064,16 @@ of grid selection over that element.
 - **max-content**: the unwrapped intrinsic width (same measure used for
   shrink-to-fit sizing).
 - **fit-content**: CSS shrink-to-fit — `min(max-content, max(min-content,
-available))`.
+available))`. Its contributions to a parent's intrinsic width are auto's
+  — its min-content width at min-content, its max-content width at
+  max-content (css-sizing-3) — so a `w-fit` label keeps its shrink-wrapped
+  parent (a flex item, a float, a popover) one line wide.
 
 All are outer (border-box) widths, valid both as `width` and as min/max
 limits (`max-w-max`, `min-w-max`, `max-w-fit`, …). On `height` (and height
-limits) these keywords behave as `auto` / no constraint (content height is
-already intrinsic). Detection uses Typed OM;
+limits) these keywords size as the content height, as `auto` does
+(content height is already intrinsic) — though, not being `auto`, a
+height keyword keeps a flex or grid item from stretching, per CSS. Detection uses Typed OM;
 the Firefox pre-157 fallback scans the class list for `w-min`/`w-max`/
 `w-fit` — and `size-*`, which sets both axes, in every form
 (getComputedStyle would return the browser's used px width, which is not
@@ -893,11 +1133,15 @@ Intrinsic sizes mirror the native ones:
   `max(rows, wrapped value lines)` — the value is wrapped by the engine
   against the content width from the PREVIOUS layout (snapshotted by
   the host before the measuring pass), so the box grows and shrinks
-  with typing and reflow. `field-sizing: content` drops the `rows`
+  with typing and reflow. A layout that gives a textarea a width other
+  than the one its value was wrapped at — its first, with no width to
+  snapshot yet, or one after its width changed — lays the host out
+  again, once, at the new width. `field-sizing: content` drops the `rows`
   floor to 1. A trailing newline shows its empty line (where the caret
   sits), unlike `<br>`. Line-gap rows from `leading-*` apply as on any
-  leaf. Textareas never scroll (`overflow: clip`; the box always fits
-  the value) and have no resize handle.
+  leaf; the wrap itself is deviation 19. The box grows to fit its value
+  unless a height is set (`h-*`, `max-h-*`), which clips it: a
+  textarea never scrolls (`overflow: clip`) and has no resize handle.
 - `<select>`: the longest option label; the SELECTED option's label
   under `field-sizing: content`.
 
@@ -930,8 +1174,9 @@ lines); the explicit zero `clip` rect still drops them.
    cells as blank markers glued to the
    element's edges (U+2060, so a wrap carries the padding with the edge
    like `box-decoration-break: slice`), and the companion stylesheet
-   applies exactly those cells as real padding — any raw off-grid inline
-   padding is neutralized. Percent padding reads as 0; vertical inline
+   applies exactly those cells as the element's own padding, its inline
+   descendants taking none — any raw off-grid inline padding is
+   neutralized. Percent padding reads as 0; vertical inline
    padding passes through untouched (it never moves layout, per CSS).
    Inline backgrounds (`bg-*`, focus-invert) are mirrored into the
    grid, cell-aligned, over the run's cells INCLUDING the reserved
@@ -949,7 +1194,9 @@ lines); the explicit zero `clip` rect still drops them.
    engine folds the whole-cell offsets into its owned padding instead
    (flex rows justify horizontally / align vertically, columns swap, grid
    uses `justify-items`/`align-items`). The wrap is unchanged — the padded
-   content box is exactly the widest line.
+   content box is exactly the widest line. Text wider or taller than
+   its box stays at the start, where CSS would center or end it past
+   the start edge: padding can't go negative.
 7. An anonymous run's bare text in a mixed FLEX, GRID, or MULTICOL
    container is laid out on the grid but stays where the browser flows
    it natively (see Inline content — a block container's flow children
@@ -975,11 +1222,120 @@ lines); the explicit zero `clip` rect still drops them.
     grid, and the transparent native text keeps the font's advances (its
     selection and drags are the engine's, so the drift never shows).
 11. A FLOW CHILD's `position: relative` insets move it on the grid only:
-    natively it is `position: static` so the browser's flow can place
-    it (see Inline content), and the engine's own offset never reaches
-    the light DOM. A float is a flow child natively too
-    (specs/float.md).
+    natively its insets are the engine's, so the browser's flow places
+    it (see Inline content), and the relative offset never reaches the
+    light DOM. A float is a flow child natively too (specs/float.md).
 12. Floats deviate as specs/float.md lists: every container is a BFC
     root (it contains its floats and steps aside from a sibling's), a
     float directly in a multicol container is ignored and warned, and
     `shape-outside` is ignored.
+13. One glyph per cell, owned by the front paint ("Opacity and
+    translucency"). A glyph (a faded one, a text run's space, an
+    `opacity: 0` element's) and a background of any alpha hide the
+    glyph beneath, a layer's cells included. CSS shows the lower glyph
+    through the upper's gaps, under a faded upper at 1 − α, and
+    through a translucent background. The reason: a cell is one
+    character on one background, and what covers it owns it.
+14. A layer inside a faded group composites over the group's blended
+    cells rather than over what lay beneath the group.
+15. A color emoji a group fades where its cell blends fades over its
+    cell's final background, not over what lay beneath its group: the
+    group's own background shows through it. The cause: the emoji has
+    no color to blend, and the cell one background.
+16. A blend clips each color to sRGB per channel first, as every
+    engine blends on an sRGB screen (`bg-yellow-400/50` over white:
+    blue 128 against the browser's 127 in all three; probed
+    2026-09-23), and a color no blend touches is written unclipped,
+    `color(srgb …)` past sRGB. On a wide-gamut screen a browser blends
+    in the screen's space, so there a translucent color outside sRGB
+    blends duller than the browser's own.
+17. A translucent host background paints three times under the grid —
+    on the host, then on the shadow's viewport and grid, which inherit
+    it so that the grid's overflow past the host carries it — so a
+    cell no background has reached, and the translucent paint over it,
+    show it denser than CSS, which paints it once. The cause: the
+    shadow repaints the background it inherits.
+18. An inline element a block splits is no entry above the split
+    elements inside it: in `<em>x<span>a<p>b</p>c</span></em>`, `a` and
+    `c` fold `span`'s entry alone, `em`'s background is not painted
+    beneath them, and `em`'s opacity multiplies into `span`'s rather
+    than nesting as a group — exact while `em` has no background.
+19. A textarea's row count wraps its value at the table widths alone,
+    ignoring its `letter-spacing` and its `white-space` (`nowrap`,
+    `pre`, `wrap="off"`), which its native text follows.
+20. Every box lays out left to right: `direction` is not read, and a
+    logical side (`ms-auto`, `inset-s-*`, `float-start`) takes the side
+    it has in a left-to-right box.
+21. Overflow alignment is always `safe`: what overflows its alignment
+    container — a flex line, an item larger than its line or grid
+    area, tracks wider than the grid, an out-of-flow box's static
+    position — aligns to the start edge whatever the keyword, where CSS
+    centers or ends it past the start edge unless the value says
+    `safe` (a `*-safe` class reads its keyword and changes nothing).
+    The cause: scroll ranges start at 0 and the grid has no cells left
+    of or above the host, so content past the start edge would be
+    unreachable — a reversed scroll container, a chat pane's
+    `flex-col-reverse overflow-y-auto`, would lose its overflow.
+
+## Touch points on implementation
+
+For "Opacity and translucency":
+
+- plain-text.ts: `CellPaint.opacity`, a span's group opacity, which
+  `applyCellPaint` writes, and `emojiOpacity`, a blended emoji's; the
+  palette (`createPalette`: each color read once, a `readColor` for
+  the forms the parser leaves alone, one it cannot read opaque, each
+  blend memoized, a written color read back exact, a zero-alpha color
+  no paint, `selected` for the swap over the ground, a blended emoji's
+  color at its opacity, and `composite`, a translucent or faded paint
+  over a cell's background: kept at its opacity over none, blended
+  over an opaque one, a glyph faded with its own background over a
+  translucent one as one opaque color at the alpha the two reach, a
+  color emoji's color kept); the store's `merge` (the cell's
+  background at its opacity beneath, none at zero, the fast path
+  keeping an opaque paint's strings, any other through `composite`,
+  `put` telling it a color emoji) and `release` (a blanked emoji
+  cell's color blended); `WIPE` for `bg-clear`; `openGroup` on the `recorder`
+  it shares with `openLayer`, its close putting each cell at the
+  group's opacity; `inlinePaint`, an inline element's chain folded
+  through `composite`, a color emoji's apart; `PaintedLayer.alpha`;
+  `rowSegments` telling the boxing predicate a glyph drawn
+  translucent.
+- paint.ts: `placeLayer` writes a layer box's `opacity`; the boxing
+  predicate takes a line glyph drawn translucent, and boxes a
+  translucent band cell by cell; `rowNodes` puts a blended emoji's
+  text on a span of its own, which `applySegment` fades with its
+  underline and `rowStructureMatches` rebuilds as the fade comes or
+  goes; `paintRows` patches a span whose opacity alone changed with
+  that one property.
+- element.ts: `#writeTokens` composites a translucent host background
+  down to an opaque one — the backgrounds `#readSurroundings` reads in
+  its one walk of the boxes behind the host — and `#readGround` reads
+  the ground and ink back through the shadow's color probe
+  (`#colorProbe`), which also resolves `#readColor`'s colors, a
+  contextual one (`CONTEXTUAL_COLOR`: a `var()`, `currentcolor`, a
+  system color, a vendor-prefixed one, `light-dark()`) read again each
+  layout; an opacity transition samples as its animation
+  (`transitionSampling`), its frames the repaint path's.
+- shadow.css: the viewport and grid inheriting the host's background
+  (deviation 17).
+- tree.ts: an inline entry's own opacity and its `parent` entry; a
+  split element's entry (`collectRunNodes`), its split ancestors'
+  opacity multiplied in (`splitOpacity`, deviation 18).
+- color.ts: `parseColor`, `lab()`, `lch()` and every `color()` space
+  read through css-color-4's conversions (prophoto-rgb's D50 white
+  adapted to D65); `colorAlpha`, 1 for a form it cannot read;
+  `compositeColors`, clipping to sRGB as it blends, a zero-alpha color
+  giving the color beneath as it is, and `serializeColor`, unclipped.
+- width.ts: `isColorEmoji`.
+
+For "Engine variables":
+
+- styles.css: the resets, plain, in the rule every light element
+  matches (`mono-wind :not([data-mw-measuring])`, the lock layer);
+  cascade.test.ts sorts render.ts's variables into their classes.
+- render.ts: every write, `setVar` removing a variable (null) where
+  the reset stands for it; `render` clears an earlier layout's box
+  writes (`BOX_NAMES`) and inline insets from the elements this one
+  wrote none on (`clearUnwritten`), and `positionElement` an inline
+  element's padding cells from a box.

@@ -5,30 +5,20 @@ import { compositeColors, parseColor, serializeColor } from "./color.ts";
 import type { Rgba } from "./color.ts";
 import { DEFAULT_CELL, gradientCells } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { leafLineGeometry, lineStart } from "./layout.ts";
+import { contentOrigin, edges, isInFlowBox, leafLineGeometry, lineStart } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
 import { zeroInsets } from "./types.ts";
-import type { Insets, LayoutNode, Rect } from "./types.ts";
-import { clusterWidth } from "./width.ts";
+import type { InlineElement, Insets, LayoutNode, Rect } from "./types.ts";
+import { clusterWidth, isColorEmoji } from "./width.ts";
 
 /**
- * Render a laid-out tree as plain text ("ASCII art", though the border
- * glyphs are Unicode box drawing): leaf text word-wrapped inside its
- * content box, everything else as spaces.
- *
- * This is the engine's "screenshot without a browser": deterministic,
- * font-independent, and diffable — used for golden regression tests and as
- * a debugging/agent-inspection tool. It intentionally renders geometry the
- * way the browser would paint it (same border-run and word-wrap code), minus
- * colors and fonts.
- *
- * The grid covers the layout's ink extent (layoutRoot grows the root
- * to it); ink above or left of the origin has no cells and is dropped.
- * A wide cluster (specs/wide-characters.md) sits in its first cell with
- * empty continuation cells after it, so a joined row reads at the
- * width a terminal shows it.
+ * Render a laid-out tree as plain text: the cells paint.ts draws, minus
+ * colors and fonts, a blank cell as a space — the engine's
+ * deterministic, diffable screenshot. Ink above or left of the origin
+ * is dropped; a wide cluster sits in its first cell, empty
+ * continuation cells after it (specs/wide-characters.md).
  */
 export function renderPlainText(root: LayoutNode): string {
   const { store, layers } = renderGrids(root, {});
@@ -36,89 +26,84 @@ export function renderPlainText(root: LayoutNode): string {
   return store.grid.map((row) => row.join("").trimEnd()).join("\n");
 }
 
-/** Per-cell paint; every field optional so spans only carry what
- * differs from the host's inherited text style. `color` paints the
- * glyph, `backgroundColor` fills the cell (the light DOM's own bg is
- * neutralized in styles.css so the grid owns backgrounds outright). */
+/** Per-cell paint, each field optional so a span carries only what
+ * differs from the host's text style; its colors are final
+ * (specs/cell-model.md "Opacity and translucency"). */
 export interface CellPaint {
-  color?: string;
-  /** `string | undefined` (not just optional): a bg-clear fill merges
-   * an EXPLICIT undefined over the cell to erase the bg beneath. */
+  color?: string | undefined;
   backgroundColor?: string | undefined;
-  /** The cell's background (`fill`) or glyph color (`text`) is a
-   * gradient's color for the cell (specs/gradients.md): such cells
-   * join into one run. A later fill merges an EXPLICIT undefined over
-   * the cell to clear it. */
+  /** The opacity of the groups over a cell without an opaque background: the span's. */
+  opacity?: number | undefined;
+  /** A color emoji's groups' opacity over a blended cell: its glyph's alone. */
+  emojiOpacity?: number | undefined;
+  /** The background (`fill`) or glyph color (`text`) is a gradient's
+   * (specs/gradients.md): such cells join into one run. */
   gradient?: "fill" | "text" | undefined;
-  /** A background, or a glyph color, per cell of a run of gradient
-   * cells: one span, its cells' colors as hard stops of a background
-   * (shown through the glyphs for `colors`), in place of a span per
-   * cell. */
+  /** A gradient run's colors, one per cell, as one span's hard stops. */
   backgrounds?: string[];
   colors?: string[];
   fontWeight?: string;
   fontStyle?: string;
   textDecorationLine?: string;
-  /** Effective opacity (ancestor product, baked by the walk) as a CSS
-   * value — the span composites against the page, so translucency
-   * blends with what's behind the HOST, never with covered cells.
-   * `"0"` still paints: the glyphs stay selectable in grid mode. */
-  opacity?: string;
-  /** The glyph color is faded toward transparent by an inline element's
-   * opacity (`fadedPaint`), translucent like an `opacity`. */
-  faded?: true;
-  /** The cell is inside a light-DOM selection (specs/wide-characters.md
-   * "The grid paints the selection"): painted with its color and
-   * background swapped. */
+  /** Inside a light-DOM selection: painted swapped (specs/wide-characters.md). */
   selected?: true;
 }
 
-/** One row of same-paint runs. Joining every segment's text gives the
- * row at the grid's full width (specs/cell-model.md "Selection"): the
- * <pre> is a rectangle of cells, so a drag's highlight sweeps whole
- * rows and a copy is the visible rectangle. A boxed segment is painted
- * in a box of exactly `cells` cells: one cluster the font does not draw
- * at its cell count, or a run of one-cell clusters on the same fit. */
+/** CellPaint's fields: comparing or keying paints reads each. */
+export const PAINT_FIELDS = [
+  "color",
+  "backgroundColor",
+  "opacity",
+  "emojiOpacity",
+  "gradient",
+  "backgrounds",
+  "colors",
+  "fontWeight",
+  "fontStyle",
+  "textDecorationLine",
+  "selected",
+] as const satisfies readonly (keyof CellPaint)[];
+
+/** One of a row's same-paint runs, which join at the grid's full width
+ * (specs/cell-model.md "Selection"); a boxed one is painted in a box of
+ * exactly `cells` cells (specs/wide-characters.md). */
 export interface CellSegment extends CellPaint {
   text: string;
   cells?: number;
-  /** The cells ONE cluster of the box takes; `cells` over it is how
-   * many the box holds. */
+  /** The cells one cluster of the box takes. */
   box?: number;
 }
 
-/** What the DOM adapter knows and the plain-text model does not: which
- * clusters its font draws off their cell count (`boxed`), and which
- * leaves hold the light-DOM selection, as character ranges. */
+/** What the DOM adapter adds to the model: its font's fits, the
+ * selection's character ranges, the cell, and the host's colors. */
 export interface RenderOptions {
-  /** The caller's fit for a cluster, told whether the cells are a
-   * resampled layer's (types.ts `resampled`), where a box's clip edge
-   * seams every row (specs/wide-characters.md): falsy leaves the
-   * cluster unboxed, `true` boxes it alone, and identical one-cell
-   * neighbors given the same other fit share one box. */
+  /** The caller's fit for a cluster (specs/wide-characters.md): falsy
+   * unboxed, `true` boxed alone, any other shared by identical one-cell
+   * neighbors on the same fit. */
   boxed?: (
     cluster: string,
     cells: number,
     paint: CellPaint | undefined,
     resampled: boolean,
+    translucent: boolean,
   ) => unknown;
-  selection?: Map<LayoutNode, { start: number; end: number }>;
-  /** The cell in px, for paint that measures — a gradient's geometry
-   * (specs/gradients.md); a 1:2 cell without. */
-  cell?: CellSize;
+  selection?: Map<LayoutNode, { start: number; end: number }> | undefined;
+  /** The cell in px, for a gradient's geometry; a 1:2 cell without. */
+  cell?: CellSize | undefined;
+  /** The host's ground and ink (specs/cell-model.md); white and black without. */
+  ground?: Rgba | undefined;
+  ink?: Rgba | undefined;
+  /** A color the parser leaves alone, resolved where the spans inherit it. */
+  readColor?: ((value: string) => Rgba | null) | undefined;
 }
 
-/** Row-major cell segments. Each row is `rowSegments(grid[y],
- * paints[y])` — the DOM adapter (paint.ts) uses this, and tests
- * assert paint fields against it. */
+/** Row-major cell segments, as the DOM adapter paints them. */
 export function renderCellSegments(root: LayoutNode, options: RenderOptions = {}): CellSegment[][] {
   return renderGridRows(root, options).segments;
 }
 
-/** A layer (specs/layers.md): a layer root's subtree painted into a
- * grid of its own — its cells' extent, the root's border box grown by
- * what overflows it, at `x`, `y` of the main grid — in the order the
- * walk opened it, `parent` the layer it opened inside. */
+/** A layer (specs/layers.md): a root's subtree painted into a grid of
+ * its own at `x`, `y` of the main grid, `parent` the one it opened in. */
 export interface PaintedLayer {
   node: LayoutNode;
   /** The root's border box, in main-grid cells. */
@@ -132,43 +117,44 @@ export interface PaintedLayer {
   /** The cells the ink painted after the layer covers, as `row × width
    * + col`: blank in the grid, see-through for the pointer. */
   holes: Set<number>;
-  /** The clips between the layer's root and the enclosing layer's (the
-   * grid's edge at the top), intersected, in main-grid cells, for the
-   * box the browser clips the transformed layer to; null unclipped.
-   * The clips above are the enclosing layer's. */
+  /** The clips between the root and the enclosing layer's, intersected,
+   * in main-grid cells; null unclipped. */
   clip: Clip | null;
   parent: PaintedLayer | null;
+  /** The opacity of the groups between the root and the enclosing
+   * layer's root, its own inline ancestors' included (specs/cell-model.md). */
+  alpha: number;
 }
 
-/** A layer's rows of segments, with the layer they were built from. */
+/** A layer's rows of segments, with the layer they were built from and
+ * whether its cells are drawn resampled. */
 export interface LayerRows {
   layer: PaintedLayer;
   segments: CellSegment[][];
+  resampled: boolean;
 }
 
-/** The segments plus the cell strings they were built from — the cell ↔
- * code-unit map a row needs once a cluster spans cells or code units —
- * and the layers' likewise, each apart from the main grid. */
+/** The segments with the cell strings they were built from, each
+ * layer's apart. */
 export function renderGridRows(
   root: LayoutNode,
   options: RenderOptions = {},
 ): { segments: CellSegment[][]; cells: string[][]; layers: LayerRows[] } {
-  const { store, layers } = renderGrids(root, options);
+  const { store, layers, palette } = renderGrids(root, options);
   const segmentsOf = (grid: string[][], paints: (CellPaint | undefined)[][], resampled: boolean) =>
-    grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed, resampled));
+    grid.map((row, y) => rowSegments(row, paints[y]!, options.boxed, resampled, palette));
   return {
     segments: segmentsOf(store.grid, store.paints, false),
     cells: store.grid,
-    layers: layers.map((layer) => ({
-      layer,
-      segments: segmentsOf(layer.grid, layer.paints, layerResampled(layer)),
-    })),
+    layers: layers.map((layer) => {
+      const resampled = layerResampled(layer);
+      return { layer, segments: segmentsOf(layer.grid, layer.paints, resampled), resampled };
+    }),
   };
 }
 
-/** Whether a layer's cells are drawn resampled: by its own effects, or
- * by an enclosing layer's, whose box holds its own
- * (specs/wide-characters.md). */
+/** Whether a layer's cells are drawn resampled, by its own effects or an
+ * enclosing layer's (specs/wide-characters.md). */
 function layerResampled(layer: PaintedLayer): boolean {
   for (let at: PaintedLayer | null = layer; at; at = at.parent) {
     if (at.node.style.layer?.resampled) return true;
@@ -176,38 +162,44 @@ function layerResampled(layer: PaintedLayer): boolean {
   return false;
 }
 
-/** One rendered row → its same-paint runs. Painted spaces stay in
- * their run (underline spans an inline run's inner spaces; a
- * borderless focus-invert fill is nothing but spaces). A continuation
- * cell (`""`) rides with the wide cluster before it; a cluster the
- * caller boxes opens a box, which its neighbors on the same fit
- * share. */
+/** One rendered row → its same-paint runs, painted spaces included: a
+ * continuation cell rides with its wide cluster, and a boxed cluster
+ * opens a box its neighbors on the same fit share. */
 function rowSegments(
   row: string[],
   paints: (CellPaint | undefined)[],
   boxed: RenderOptions["boxed"],
   resampled: boolean,
+  palette: Palette,
 ): CellSegment[] {
   const segments: CellSegment[] = [];
   let lastCells = 0;
   let lastFit: unknown;
+  // The paint read last, translucent or not: a run of one paint reads once.
+  let read: CellPaint | undefined;
+  let translucent = false;
+  // The loop is forEachCluster's, inline: the hottest in the paint.
   for (let x = 0; x < row.length; x++) {
     const cell = row[x]!;
     if (cell === "") continue;
-    const paint = paints[x];
+    let paint = paints[x];
+    if (paint?.selected) paint = palette.selected(paint);
     let cells = 1;
     while (row[x + cells] === "") cells++;
-    const fit =
-      boxed && (cell.length > 1 || cell.charCodeAt(0) >= 0x80)
-        ? boxed(cell, cells, paint, resampled)
-        : undefined;
+    let fit: unknown;
+    if (boxed && (cell.length > 1 || cell.charCodeAt(0) >= 0x80)) {
+      if (paint !== read) {
+        read = paint;
+        translucent =
+          paint !== undefined &&
+          (paint.opacity !== undefined ||
+            (paint.color !== undefined && !palette.opaque(paint.color)));
+      }
+      fit = boxed(cell, cells, paint, resampled, translucent);
+    }
     const last = segments[segments.length - 1];
-    // One box for a run of the same cluster on the same fit: a page of
-    // block glyphs is a span a row, not a span a cell. A fit scales its
-    // glyph past the cell and the box clips it, so a cell joins only
-    // where its neighbor draws the ink it takes — a blank beside a
-    // block would take the block's overflow. Single-cell clusters
-    // only, so the box's cluster is its first character.
+    // A run of one single-cell cluster on one fit shares a box, whose
+    // neighbor draws the ink a fit pushes past each cell.
     const joins =
       last?.box === 1 &&
       cells === 1 &&
@@ -226,38 +218,14 @@ function rowSegments(
       lastFit = fit;
       continue;
     }
-    if (last && !last.box && samePaint(last, paint)) {
-      last.text += cell;
-      lastCells += cells;
-    } else if (
+    if (
       last &&
       !last.box &&
-      paint &&
-      (last.backgrounds || last.backgroundColor !== undefined) &&
-      joinsGradientRun(last, paint, "backgroundColor")
+      (samePaint(last, paint) ||
+        (paint !== undefined && joinGradient(last, paint, lastCells, cells)))
     ) {
-      // Gradient cells apart only in background join as one run of them.
-      last.backgrounds ??= Array.from({ length: lastCells }, () => last.backgroundColor!);
-      delete last.backgroundColor;
       last.text += cell;
       lastCells += cells;
-      for (let k = 0; k < cells; k++) last.backgrounds.push(paint.backgroundColor!);
-    } else if (
-      last &&
-      !last.box &&
-      paint &&
-      paint.backgroundColor === undefined &&
-      (last.colors || last.color !== undefined) &&
-      joinsGradientRun(last, paint, "color")
-    ) {
-      // Gradient-colored glyphs apart only in color, likewise — with no
-      // background of their own: the run's text clip would clip it
-      // away, and Firefox draws no per-layer clip.
-      last.colors ??= Array.from({ length: lastCells }, () => last.color!);
-      delete last.color;
-      last.text += cell;
-      lastCells += cells;
-      for (let k = 0; k < cells; k++) last.colors.push(paint.color!);
     } else {
       segments.push({ text: cell, ...paint });
       lastCells = cells;
@@ -266,44 +234,71 @@ function rowSegments(
   return segments;
 }
 
-/** Whether a gradient cell joins the run before it: both painted by
- * a gradient in `field` (the background of a fill, the glyph color of
- * a text clip), unselected (a selected cell swaps its colors, so it
- * stays a run of its own), alike in everything but that field. */
-function joinsGradientRun(
+/** Each cluster of a row, at the cell it starts, with the cells it
+ * takes: a wide one's continuation cells (`""`) ride with it. */
+function forEachCluster(
+  row: string[],
+  visit: (x: number, cluster: string, cells: number) => void,
+): void {
+  for (let x = 0; x < row.length; x++) {
+    const cluster = row[x]!;
+    if (cluster === "") continue;
+    let cells = 1;
+    while (row[x + cells] === "") cells++;
+    visit(x, cluster, cells);
+  }
+}
+
+/** Joins a gradient cell to the run before it, its color one more of
+ * the run's list, where both are unselected, alike in all else, and
+ * painted in one gradient field — a text clip's only without a
+ * background, which Firefox's clip would take away. */
+function joinGradient(
   run: CellSegment,
   paint: CellPaint,
-  field: "backgroundColor" | "color",
+  runCells: number,
+  cells: number,
 ): boolean {
-  const kind = field === "color" ? "text" : "fill";
-  const other = field === "color" ? "backgroundColor" : "color";
-  return (
-    run.gradient === kind &&
-    paint.gradient === kind &&
+  const fill = run.gradient === "fill";
+  const field = fill ? "backgroundColor" : "color";
+  const other = fill ? "color" : "backgroundColor";
+  const list = fill ? "backgrounds" : "colors";
+  // Field by field, as samePaint: this runs per cell of a gradient.
+  const joins =
+    run.gradient !== undefined &&
+    paint.gradient === run.gradient &&
     paint[field] !== undefined &&
+    (fill || paint.backgroundColor === undefined) &&
+    (run[list] !== undefined || run[field] !== undefined) &&
     run.selected === undefined &&
     paint.selected === undefined &&
     run[other] === paint[other] &&
+    run.opacity === paint.opacity &&
+    run.emojiOpacity === paint.emojiOpacity &&
     run.fontWeight === paint.fontWeight &&
     run.fontStyle === paint.fontStyle &&
-    run.textDecorationLine === paint.textDecorationLine &&
-    run.opacity === paint.opacity &&
-    run.faded === paint.faded
-  );
+    run.textDecorationLine === paint.textDecorationLine;
+  if (!joins) return false;
+  const colors = (run[list] ??= Array.from({ length: runCells }, () => run[field]!));
+  delete run[field];
+  for (let k = 0; k < cells; k++) colors.push(paint[field]!);
+  return true;
 }
 
+/** Two paints alike, field by field: a row compares one per cell, where
+ * reading PAINT_FIELDS by key costs the paint a third again. */
 export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
   return (
     a.color === b?.color &&
     a.backgroundColor === b?.backgroundColor &&
+    a.opacity === b?.opacity &&
+    a.emojiOpacity === b?.emojiOpacity &&
     a.gradient === b?.gradient &&
     sameList(a.backgrounds, b?.backgrounds) &&
     sameList(a.colors, b?.colors) &&
     a.fontWeight === b?.fontWeight &&
     a.fontStyle === b?.fontStyle &&
     a.textDecorationLine === b?.textDecorationLine &&
-    a.opacity === b?.opacity &&
-    a.faded === b?.faded &&
     a.selected === b?.selected
   );
 }
@@ -316,10 +311,10 @@ function sameList(a: readonly unknown[] | undefined, b: readonly unknown[] | und
   return a.every((value, i) => value === b[i]);
 }
 
-/** Apply a `CellPaint` to a `CSSStyleDeclaration`. Kept in this file
- * alongside samePaint / textPaint so the paint schema has one home. A
- * selected cell swaps its colors — the theme's, for an unstyled cell. */
+/** A paint onto a span's style, a selected one's colors swapped — the
+ * theme's, for an unstyled cell — at its opacity. */
 export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): void {
+  if (paint.opacity !== undefined) style.opacity = String(paint.opacity);
   if (paint.selected) {
     style.color = paint.backgroundColor ?? "var(--mw-bg, canvas)";
     style.backgroundColor = paint.color ?? "var(--mw-fg, canvastext)";
@@ -339,34 +334,6 @@ export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): vo
   if (paint.fontWeight !== undefined) style.fontWeight = paint.fontWeight;
   if (paint.fontStyle !== undefined) style.fontStyle = paint.fontStyle;
   if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
-  if (paint.opacity !== undefined) style.opacity = paint.opacity;
-}
-
-/** The glyph paint of a box clipped to `text` (specs/gradients.md):
- * a glyph's own color composited over the background's color at its
- * cell — the gradient through `text-transparent`, an opaque color
- * as it is — for a color the parser reads; any other stays. An inline
- * element's `fade` applies to the result. */
-function glyphTint(
-  colors: (string | null)[][],
-  boxX: number,
-  boxY: number,
-): (paint: CellPaint | undefined, x: number, y: number, fade: number) => CellPaint | undefined {
-  const parsed = new Map<string, Rgba | null>();
-  const tinted = (paint: CellPaint | undefined, x: number, y: number): CellPaint | undefined => {
-    const under = colors[y - boxY]?.[x - boxX];
-    if (under === null || under === undefined || paint?.color === undefined) return paint;
-    let own = parsed.get(paint.color);
-    if (own === undefined) parsed.set(paint.color, (own = parseColor(paint.color)));
-    if (own === null || own.a >= 1) return paint;
-    const ground = parseColor(under);
-    if (!ground) return paint;
-    return { ...paint, color: serializeColor(compositeColors(own, ground)), gradient: "text" };
-  };
-  return (paint, x, y, fade) => {
-    const tint = tinted(paint, x, y);
-    return fade < 1 ? fadedPaint(tint, fade) : tint;
-  };
 }
 
 /** The cells the box `background-clip` names sits inside the border
@@ -396,100 +363,259 @@ function cellStops(colors: string[]): string {
   return stops.join(", ");
 }
 
-/** True when a segment carries no paint — the DOM adapter emits a bare
- * text node for these instead of an empty <span>. */
+/** Whether a segment carries no paint: a bare text node in the DOM. */
 export function isBarePaint(paint: CellPaint): boolean {
-  return (
-    paint.color === undefined &&
-    paint.backgroundColor === undefined &&
-    paint.backgrounds === undefined &&
-    paint.colors === undefined &&
-    paint.fontWeight === undefined &&
-    paint.fontStyle === undefined &&
-    paint.textDecorationLine === undefined &&
-    paint.opacity === undefined &&
-    paint.selected === undefined
-  );
+  return PAINT_FIELDS.every((field) => paint[field] === undefined);
 }
 
-/** A grid of cells and the put that paints it: a glyph at a cell, a
- * cluster over `cells` cells, culled at the edges. The wide cluster
- * owning each cell is kept so a later paint on any of its cells
- * blanks the rest — a half-overwritten wide character is spaces, as
- * in a terminal. `clear` blanks a cell outright, its paint with it.
- * A put covers the closed layers' cells it lands on (`covers`). */
-interface CellStore {
-  grid: string[][];
-  paints: (CellPaint | undefined)[][];
-  put: PutGlyph;
-  clear: (x: number, y: number) => void;
+/** Paints a cluster over `cells` cells at `alpha`, a closing group's
+ * opacity (specs/cell-model.md "Opacity and translucency"). */
+type PutGlyph = (
+  x: number,
+  y: number,
+  glyph: string,
+  paint: CellPaint | undefined,
+  cells?: number,
+  alpha?: number,
+) => void;
+
+/** `bg-clear`'s paint: a put of it wipes its cell to the ground,
+ * background and glyph, through every group it sits in. */
+const WIPE: CellPaint = {};
+
+type Palette = ReturnType<typeof createPalette>;
+
+/** A render's colors, each read once, and its blends, each computed
+ * once (specs/cell-model.md "Opacity and translucency"). */
+function createPalette(options: RenderOptions) {
+  const read = new Map<string, Rgba | null>();
+  const rgba = (value: string): Rgba | null => {
+    let color = read.get(value);
+    if (color === undefined) {
+      color = parseColor(value) ?? options.readColor?.(value) ?? null;
+      read.set(value, color);
+    }
+    return color;
+  };
+  // A written string reads back as the color that wrote it, so a blend
+  // of blends rounds once.
+  const write = (color: Rgba): string => {
+    const value = serializeColor(color);
+    if (!read.has(value)) read.set(value, color);
+    return value;
+  };
+  /** A color's alpha, 1 for one it cannot read. */
+  const alphaOf = (value: string): number => rgba(value)?.a ?? 1;
+  const opaque = (value: string): boolean => alphaOf(value) >= 1;
+  const blends = new Map<number, Map<string, Map<string, string>>>();
+  /** `over` at `alpha` composited over `under`, as written: `under`
+   * itself at zero alpha, `over` as authored where it cannot be read. */
+  const blend = (over: string, alpha: number, under?: string): string => {
+    if (alpha === 1 && (under === undefined || opaque(over))) return over;
+    let byUnder = blends.get(alpha);
+    if (!byUnder) blends.set(alpha, (byUnder = new Map()));
+    let byOver = byUnder.get(under ?? "");
+    if (!byOver) byUnder.set(under ?? "", (byOver = new Map()));
+    let value = byOver.get(over);
+    if (value === undefined) {
+      const top = rgba(over);
+      if (top === null) value = over;
+      else if (top.a * alpha === 0 && under !== undefined) value = under;
+      else {
+        const faded = { ...top, a: top.a * alpha };
+        const base = under === undefined ? null : rgba(under);
+        value = write(base === null ? faded : compositeColors(faded, base));
+      }
+      byOver.set(over, value);
+    }
+    return value;
+  };
+  const alphas = new Map<string, Map<number, string>>();
+  /** `value` at `alpha`, its channels kept. */
+  const withAlpha = (value: string, alpha: number): string => {
+    let byAlpha = alphas.get(value);
+    if (!byAlpha) alphas.set(value, (byAlpha = new Map()));
+    let result = byAlpha.get(alpha);
+    if (result === undefined) {
+      const color = rgba(value);
+      result = color === null ? value : write({ ...color, a: alpha });
+      byAlpha.set(alpha, result);
+    }
+    return result;
+  };
+  const ground = write(options.ground ?? { r: 1, g: 1, b: 1, a: 1 });
+  const ink = write(options.ink ?? { r: 0, g: 0, b: 0, a: 1 });
+  /** Whether a paint's colors, those it has, are opaque. */
+  const opaquePaint = ({ backgroundColor, color }: CellPaint): boolean =>
+    (backgroundColor === undefined || opaque(backgroundColor)) &&
+    (color === undefined || opaque(color));
+  const swaps = new Map<CellPaint, CellPaint>();
+  /** A selected cell's colors as they show, for the swap: a translucent
+   * one over the ground, a blended emoji's at its opacity. */
+  const selected = (paint: CellPaint): CellPaint => {
+    const { backgroundColor, color, emojiOpacity = 1 } = paint;
+    if (emojiOpacity === 1 && opaquePaint(paint)) return paint;
+    let shown = swaps.get(paint);
+    if (!shown) {
+      const beneath = backgroundColor === undefined ? ground : blend(backgroundColor, 1, ground);
+      const glyph = color === undefined ? undefined : blend(color, emojiOpacity, beneath);
+      swaps.set(paint, (shown = { ...paint, backgroundColor: beneath, color: glyph }));
+    }
+    return shown;
+  };
+  /** `paint` at `alpha` over a cell of background `under` and gradient
+   * mark `fill`, as specs/cell-model.md "Opacity and translucency"
+   * composites it. */
+  const composite = (
+    under: string | undefined,
+    fill: "fill" | undefined,
+    paint: CellPaint,
+    alpha: number,
+    glyph: boolean,
+    emoji: boolean,
+  ): CellPaint => {
+    const faded = alpha * (paint.opacity ?? 1);
+    if (under === undefined && faded < 1) {
+      return alpha === 1 ? paint : { ...paint, opacity: faded };
+    }
+    const own = paint.backgroundColor;
+    const over = own !== undefined && alphaOf(own) * faded > 0 ? own : undefined;
+    const mark = over !== undefined || paint.gradient !== "fill" ? paint.gradient : undefined;
+    let backgroundColor = over === undefined ? under : blend(over, faded, under);
+    // A background blended over a gradient's cell stays one of its run's stops.
+    const gradient = backgroundColor === over ? mark : (mark ?? fill);
+    let color = paint.color;
+    if (color === undefined && faded < 1 && glyph) color = ink;
+    let opacity: number | undefined;
+    if (color !== undefined && !emoji && over !== undefined && faded < 1) {
+      color = blend(blend(color, 1, over), faded, under);
+      if (!opaque(under!)) {
+        opacity = alphaOf(color);
+        color = withAlpha(color, 1);
+        backgroundColor = withAlpha(backgroundColor!, alphaOf(backgroundColor!) / opacity);
+      }
+    } else if (color !== undefined && !emoji) {
+      color = blend(color, faded);
+      if (backgroundColor !== undefined && opaque(backgroundColor)) {
+        color = blend(color, 1, backgroundColor);
+      }
+    }
+    const cell: CellPaint = { ...paint, backgroundColor, gradient, color };
+    if (opacity !== undefined || paint.opacity !== undefined) cell.opacity = opacity;
+    if (emoji && faded < 1) cell.emojiOpacity = (paint.emojiOpacity ?? 1) * faded;
+    return cell;
+  };
+  return { opaque, opaquePaint, blend, selected, composite };
 }
 
-function cellStore(width: number, height: number, covers?: Covers): CellStore {
-  const grid: string[][] = Array.from({ length: height }, () =>
-    Array.from({ length: width }, () => " "),
-  );
-  const paints: (CellPaint | undefined)[][] = Array.from({ length: height }, () =>
-    Array.from({ length: width }, (): CellPaint | undefined => undefined),
-  );
-  const owners: ({ x: number; cells: number } | undefined)[][] = Array.from(
-    { length: height },
-    () => Array.from({ length: width }, () => undefined),
-  );
+type CellStore = ReturnType<typeof cellStore>;
+
+const PAINTED = 1;
+const WIPED = 2;
+
+/** A grid of cells and its put, culled at the edges: a wide cluster a
+ * later paint half-covers is blanked whole, as in a terminal;
+ * `touched`, a group's, marks the cells puts and wipes reach. */
+function cellStore(width: number, height: number, palette: Palette, touched?: Uint8Array) {
+  // Rows copied from one blank row: a group's store is made at each close.
+  const blank = " ".repeat(width).split("");
+  const unpainted = blank.map((): CellPaint | undefined => undefined);
+  const grid: string[][] = [];
+  const paints: (CellPaint | undefined)[][] = [];
+  for (let y = 0; y < height; y++) {
+    grid.push(blank.slice());
+    paints.push(unpainted.slice());
+  }
+  // A row's owners, made once a wide cluster lands on it.
+  const owners: (({ x: number; cells: number } | undefined)[] | undefined)[] = [];
   const inside = (x: number, y: number) => x >= 0 && x < width && y >= 0 && y < height;
   const release = (x: number, y: number) => {
-    const owner = owners[y]![x];
+    const owner = owners[y]?.[x];
     if (!owner) return;
-    for (let dx = 0; dx < owner.cells; dx++) {
-      grid[y]![owner.x + dx] = " ";
-      owners[y]![owner.x + dx] = undefined;
+    for (let at = owner.x; at < owner.x + owner.cells; at++) {
+      grid[y]![at] = " ";
+      owners[y]![at] = undefined;
+      // A blank takes the emoji's color blended, as a faded glyph's is.
+      const { emojiOpacity, ...paint } = paints[y]![at] ?? {};
+      if (emojiOpacity === undefined || paint.color === undefined) continue;
+      paint.color = palette.blend(paint.color, emojiOpacity, paint.backgroundColor);
+      paints[y]![at] = paint;
     }
   };
-  const mergePaint = (x: number, y: number, paint: CellPaint | undefined) => {
-    // A put owns its cell's text fields and keeps the fill beneath: a
-    // glyph paints its color on the box's background, and a heading
-    // stuck over an italic run paints upright.
-    const existing = paints[y]![x];
-    paints[y]![x] = existing
-      ? {
-          backgroundColor: existing.backgroundColor,
-          gradient: existing.gradient === "fill" ? "fill" : undefined,
-          ...paint,
-        }
-      : paint;
+  // The paint put last, opaque or not: a run of one paint reads once.
+  let last: CellPaint | undefined;
+  let lastOpaque = true;
+  const opaque = (paint: CellPaint): boolean => {
+    if (paint !== last) {
+      last = paint;
+      lastOpaque = paint.opacity === undefined && palette.opaquePaint(paint);
+    }
+    return lastOpaque;
+  };
+  /** A cell's paint once `paint` lands on it at `alpha`
+   * (specs/cell-model.md "Opacity and translucency"). */
+  const merge = (
+    old: CellPaint | undefined,
+    paint: CellPaint | undefined,
+    glyph: string,
+    alpha: number,
+    emoji: boolean,
+    index: number,
+  ): CellPaint | undefined => {
+    if (touched) touched[index] = touched[index]! | PAINTED;
+    const faded = old?.opacity;
+    let under = old?.backgroundColor;
+    // A zero-alpha color is no paint.
+    if (under !== undefined && faded !== undefined) {
+      under = faded > 0 ? palette.blend(under, faded) : undefined;
+    }
+    const fill = old?.gradient === "fill" ? "fill" : undefined;
+    if (alpha < 1 || (paint !== undefined && !opaque(paint))) {
+      const glyphed = glyph !== " " && glyph !== "";
+      return palette.composite(under, fill, paint ?? {}, alpha, glyphed, emoji);
+    }
+    // An opaque glyph color holds whatever background it lands on.
+    if (paint?.backgroundColor !== undefined || under === undefined) return paint;
+    return { backgroundColor: under, gradient: fill, ...paint };
   };
   const clear = (x: number, y: number): void => {
     if (!inside(x, y)) return;
     release(x, y);
     grid[y]![x] = " ";
     paints[y]![x] = undefined;
+    if (touched) touched[y * width + x] = WIPED;
   };
-  const put: PutGlyph = (x, y, glyph, paint, cells = 1) => {
+  const put: PutGlyph = (x, y, glyph, paint, cells = 1, alpha = 1) => {
     if (y < 0 || y >= height) return;
-    if (covers) coverCells(covers, x, y, cells);
+    if (paint === WIPE) {
+      for (let dx = 0; dx < cells; dx++) clear(x + dx, y);
+      return;
+    }
     if (cells === 1) {
       if (!inside(x, y)) return;
       release(x, y);
       grid[y]![x] = glyph;
-      mergePaint(x, y, paint);
+      paints[y]![x] = merge(paints[y]![x], paint, glyph, alpha, false, y * width + x);
       return;
     }
     // A cluster losing cells past the grid's edge is blanked whole.
     const whole = inside(x, y) && inside(x + cells - 1, y);
-    for (let dx = 0; dx < cells; dx++) {
-      if (!inside(x + dx, y)) continue;
-      release(x + dx, y);
-      grid[y]![x + dx] = whole ? (dx === 0 ? glyph : "") : " ";
-      if (whole) owners[y]![x + dx] = { x, cells };
-      mergePaint(x + dx, y, paint);
+    const emoji =
+      whole && (alpha < 1 || (paint !== undefined && !opaque(paint))) && isColorEmoji(glyph);
+    for (let at = x; at < x + cells; at++) {
+      if (!inside(at, y)) continue;
+      release(at, y);
+      grid[y]![at] = whole ? (at === x ? glyph : "") : " ";
+      if (whole) (owners[y] ??= [])[at] = { x, cells };
+      const cluster = whole ? glyph : " ";
+      paints[y]![at] = merge(paints[y]![at], paint, cluster, alpha, emoji, y * width + at);
     }
   };
   return { grid, paints, put, clear };
 }
 
-/** A closed layer's extent, for the ink painted after it in the same
- * grid (specs/layers.md): a put on one of its cells covers the
- * layer's cell there, as a later box covers what it overlaps. */
+/** A closed layer's extent, whose cells a later put in its grid covers
+ * (specs/layers.md). */
 interface Cover {
   x0: number;
   x1: number;
@@ -516,58 +642,77 @@ function coverCells(covers: Covers, x: number, y: number, cells: number): void {
   }
 }
 
-/** What the walk carries besides its node: the layers opened so far,
- * in order, the one it is inside, the layers closed in the grid it
- * paints into, and the main grid's size — a layer's extent stays
- * within it. */
+/** `place`, covering the closed layers where it lands. */
+const covering =
+  (covers: Covers, place: PutGlyph): PutGlyph =>
+  (x, y, glyph, paint, cells = 1, alpha) => {
+    coverCells(covers, x, y, cells);
+    place(x, y, glyph, paint, cells, alpha);
+  };
+
+/** What the walk carries besides its node: the layers so far, the one
+ * it is in, its grid's closed layers, and the main grid's size. */
 interface Walk {
   options: RenderOptions;
+  palette: Palette;
   layers: PaintedLayer[];
   layer: PaintedLayer | null;
   covers: Covers;
   width: number;
   height: number;
   /** The grid's own put, unclipped: a fixed box paints through it past
-   * its ancestors' clips. */
+   * its ancestors' clips, into the groups it sits in. */
   put: PutGlyph;
+  /** The same, covering no layer: a group's close places its cells
+   * through it, its puts having covered as they arrived. */
+  place: PutGlyph;
+  /** The opacity of the groups open since the enclosing layer's root
+   * (or the grid): a layer opened under them takes it on its box. */
+  alpha: number;
 }
 
 function renderGrids(
   root: LayoutNode,
   options: RenderOptions,
-): { store: CellStore; layers: PaintedLayer[] } {
+): { store: CellStore; layers: PaintedLayer[]; palette: Palette } {
   const width = Math.max(0, root.localRect.width);
   const height = Math.max(0, root.localRect.height);
   const covers: Covers = new Map();
-  const store = cellStore(width, height, covers);
-  const walking: Walk = { options, layers: [], layer: null, covers, width, height, put: store.put };
-  walk(root, 0, 0, walking, walking.put);
-  // The stack after the tree (specs/top-layer.md), each element with
-  // its own opacity alone: the top layer escapes its ancestors'.
-  for (const { node } of root.topLayer ?? []) {
-    walk(node, 0, 0, walking, walking.put, node.style.opacity);
-  }
-  return { store, layers: walking.layers };
+  const palette = createPalette(options);
+  const store = cellStore(width, height, palette);
+  const put = covering(covers, store.put);
+  const walking: Walk = {
+    options,
+    palette,
+    layers: [],
+    layer: null,
+    covers,
+    width,
+    height,
+    put,
+    place: store.put,
+    alpha: 1,
+  };
+  walk(root, walking, put);
+  // The stack after the tree (specs/top-layer.md), each element at its
+  // own opacity alone: the top layer escapes its ancestors'.
+  for (const { node } of root.topLayer ?? []) walk(node, walking, put);
+  return { store, layers: walking.layers, palette };
 }
 
-/** The layers back onto the main grid at their layout positions, in
- * order — every cell a layer painted (a glyph, or a background under a
- * space) over the main cell — so the transcript sees one grid
- * (specs/layers.md). */
+/** The layers back onto the main grid, in order, so the transcript sees
+ * one grid (specs/layers.md). */
 function compositeLayers(store: CellStore, layers: PaintedLayer[]): void {
   for (const layer of layers) {
-    for (let dy = 0; dy < layer.height; dy++) {
-      const row = layer.grid[dy]!;
-      for (let dx = 0; dx < layer.width; dx++) {
-        const glyph = row[dx]!;
-        if (glyph === "" || !layerShows(layer, layer.x + dx, layer.y + dy)) continue;
+    layer.grid.forEach((row, dy) =>
+      forEachCluster(row, (dx, glyph, cells) => {
         const paint = layer.paints[dy]![dx];
-        if (glyph === " " && paint?.backgroundColor === undefined && !paint?.backgrounds) continue;
-        let cells = 1;
-        while (row[dx + cells] === "") cells++;
-        store.put(layer.x + dx, layer.y + dy, glyph, paint, cells);
-      }
-    }
+        if (glyph === " " && paint?.backgroundColor === undefined) return;
+        if (layerShows(layer, layer.x + dx, layer.y + dy)) {
+          store.put(layer.x + dx, layer.y + dy, glyph, paint, cells);
+        }
+      }),
+    );
   }
 }
 
@@ -575,7 +720,7 @@ function compositeLayers(store: CellStore, layers: PaintedLayer[]): void {
  * their clips intersected; null where nothing clips. */
 export type Clip = { x0: number; y0: number; x1: number; y1: number };
 
-export const inClip = (clip: Clip | null, x: number, y: number): boolean =>
+const inClip = (clip: Clip | null, x: number, y: number): boolean =>
   clip === null || (x >= clip.x0 && x < clip.x1 && y >= clip.y0 && y < clip.y1);
 
 /** Whether a main-grid cell of a layer lies inside its clip and every
@@ -597,34 +742,10 @@ const intersect = (a: Clip | null, b: Clip): Clip =>
         y1: Math.min(a.y1, b.y1),
       };
 
-/** A layer opened at `node` (specs/layers.md): its put records every
- * cell of the subtree within the grid — the root's own decorations
- * included, the ancestors' clips left to the layer's box — and grows
- * the extent from the border box, and `close` lays the cells out in a
- * grid of the extent and hands the layer to the enclosing grid's
- * covers, so the ink painted after it covers its cells — a nested
- * layer's through its parent's. */
-function openLayer(
-  walking: Walk,
-  node: LayoutNode,
-  box: Rect,
-  clip: Clip | null,
-): { put: PutGlyph; close: () => void; layer: PaintedLayer; covers: Covers } {
-  const layer: PaintedLayer = {
-    node,
-    box,
-    x: 0,
-    y: 0,
-    width: 0,
-    height: 0,
-    grid: [],
-    paints: [],
-    holes: new Set(),
-    clip: clip && intersect(clip, { x0: 0, y0: 0, x1: walking.width, y1: walking.height }),
-    parent: walking.layer,
-  };
-  walking.layers.push(layer);
-  const covers: Covers = new Map();
+/** The puts a layer or a group records: `put` covers the closed layers
+ * as it arrives, `place` alone, and `lay` replays them into a store of
+ * their extent. */
+function recorder(walking: Walk, covers: Covers) {
   let x0 = Infinity;
   let y0 = Infinity;
   let x1 = -Infinity;
@@ -641,64 +762,139 @@ function openLayer(
     y1 = Math.max(y1, by);
     return true;
   };
-  grow(box.x, box.y, box.width, box.height);
   const puts: Parameters<PutGlyph>[] = [];
-  const put: PutGlyph = (x, y, glyph, paint, cells = 1) => {
-    coverCells(covers, x, y, cells);
-    if (grow(x, y, cells, 1)) puts.push([x, y, glyph, paint, cells]);
+  const place: PutGlyph = (x, y, glyph, paint, cells = 1, alpha) => {
+    if (grow(x, y, cells, 1)) puts.push([x, y, glyph, paint, cells, alpha]);
   };
+  return {
+    put: covering(covers, place),
+    place,
+    grow,
+    extent: (): Clip | null => (x0 === Infinity ? null : { x0, y0, x1, y1 }),
+    lay: (touched?: Uint8Array): CellStore => {
+      const store = cellStore(x1 - x0, y1 - y0, walking.palette, touched);
+      for (const [x, y, glyph, paint, cells, alpha] of puts) {
+        store.put(x - x0, y - y0, glyph, paint, cells, alpha);
+      }
+      return store;
+    },
+  };
+}
+
+/** A layer's or a group's walk, and what ends it once its subtree has
+ * painted. */
+interface Scope {
+  walking: Walk;
+  close: () => void;
+}
+
+/** A layer opened at `node` (specs/layers.md): its subtree recorded
+ * unclipped, laid out at close in a grid of its extent, which the ink
+ * painted after it covers. */
+function openLayer(
+  walking: Walk,
+  node: LayoutNode,
+  box: Rect,
+  clip: Clip | null,
+  alpha: number,
+): Scope {
+  const layer: PaintedLayer = {
+    node,
+    box,
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    grid: [],
+    paints: [],
+    holes: new Set(),
+    clip: clip && intersect(clip, { x0: 0, y0: 0, x1: walking.width, y1: walking.height }),
+    parent: walking.layer,
+    alpha,
+  };
+  walking.layers.push(layer);
+  const covers: Covers = new Map();
+  const recording = recorder(walking, covers);
+  recording.grow(box.x, box.y, box.width, box.height);
   const close = (): void => {
-    if (x0 === Infinity) return;
+    const extent = recording.extent();
+    if (!extent) return;
     // Wholly past its clip (scrolled out of view), a layer shows
     // nothing: its cells stay unlaid.
+    const { x0, y0, x1, y1 } = extent;
     const { clip: shown } = layer;
     if (shown && (x1 <= shown.x0 || x0 >= shown.x1 || y1 <= shown.y0 || y0 >= shown.y1)) return;
     const width = x1 - x0;
-    const { grid, paints, put, clear } = cellStore(width, y1 - y0);
-    for (const [x, y, glyph, paint, cells] of puts) put(x - x0, y - y0, glyph, paint, cells);
+    const { grid, paints, clear } = recording.lay();
     Object.assign(layer, { x: x0, y: y0, width, height: y1 - y0, grid, paints });
-    addCover(walking.covers, { x0, y0, x1, y1 }, (x, y) => {
+    addCover(walking.covers, extent, (x, y) => {
       clear(x - x0, y - y0);
       layer.holes.add((y - y0) * width + (x - x0));
       coverCells(covers, x, y, 1);
     });
   };
-  return { put, close, layer, covers };
+  const { put, place } = recording;
+  return { walking: { ...walking, layer, covers, put, place, alpha: 1 }, close };
 }
 
-/** A put culled by `clipped`: a cluster cut by the clip edge is
- * blanked, its visible cells as spaces. */
-function clipPut(put: PutGlyph, clipped: (x: number, y: number) => boolean): PutGlyph {
-  return (x, y, glyph, paint, cells = 1) => {
+/** A group (specs/cell-model.md "Opacity and translucency"): its
+ * subtree recorded, and put at close at `alpha` over the cells
+ * beneath, its wipes first. */
+function openGroup(walking: Walk, alpha: number): Scope {
+  const recording = recorder(walking, walking.covers);
+  const close = (): void => {
+    const extent = recording.extent();
+    if (!extent) return;
+    const { x0, y0, x1, y1 } = extent;
+    const width = x1 - x0;
+    const touched = new Uint8Array(width * (y1 - y0));
+    const { grid, paints } = recording.lay(touched);
+    const { place } = walking;
+    for (let i = 0; i < touched.length; i++) {
+      if (touched[i]! & WIPED) place(x0 + (i % width), y0 + Math.floor(i / width), " ", WIPE);
+    }
+    grid.forEach((row, y) =>
+      forEachCluster(row, (x, glyph, cells) => {
+        if (!(touched[y * width + x]! & PAINTED)) return;
+        place(x0 + x, y0 + y, glyph, paints[y]![x], cells, alpha);
+      }),
+    );
+  };
+  const { put, place } = recording;
+  return { walking: { ...walking, put, place, alpha: walking.alpha * alpha }, close };
+}
+
+/** `put` culled to `clip`, itself where nothing clips: a cluster cut by
+ * the clip edge is blanked, its visible cells as spaces. */
+function clipPut(put: PutGlyph, clip: Clip | null): PutGlyph {
+  if (clip === null) return put;
+  return (x, y, glyph, paint, cells = 1, alpha) => {
     if (cells === 1) {
-      if (!clipped(x, y)) put(x, y, glyph, paint);
+      if (inClip(clip, x, y)) put(x, y, glyph, paint, 1, alpha);
       return;
     }
     let whole = true;
-    for (let dx = 0; dx < cells; dx++) if (clipped(x + dx, y)) whole = false;
-    if (whole) put(x, y, glyph, paint, cells);
-    else for (let dx = 0; dx < cells; dx++) if (!clipped(x + dx, y)) put(x + dx, y, " ", paint);
+    for (let dx = 0; dx < cells; dx++) if (!inClip(clip, x + dx, y)) whole = false;
+    if (whole) put(x, y, glyph, paint, cells, alpha);
+    else {
+      for (let dx = 0; dx < cells; dx++) {
+        if (inClip(clip, x + dx, y)) put(x + dx, y, " ", paint, 1, alpha);
+      }
+    }
   };
 }
 
-/** Non-default text styling only, so unstyled runs stay bare.
- * `backgroundColor` rides along for INLINE elements (a leaf's own bg
- * paints via the border-box fill instead), and `background` false
- * leaves it out: a leaf's glyphs over its gradient keep the fill's
- * colors. */
+const barPaint = (color: string | undefined): CellPaint | undefined =>
+  color ? { color } : undefined;
+
+/** Non-default text styling only, so unstyled runs stay bare: `color`
+ * and `source`'s font fields. */
 function textPaint(
-  source: {
-    color: string | undefined;
-    backgroundColor?: string | undefined;
-    fontWeight: string;
-    fontStyle: string;
-    textDecorationLine: string;
-  },
-  background = true,
+  source: { fontWeight: string; fontStyle: string; textDecorationLine: string },
+  color: string | undefined,
 ): CellPaint {
   const paint: CellPaint = {};
-  if (source.color) paint.color = source.color;
-  if (background && source.backgroundColor) paint.backgroundColor = source.backgroundColor;
+  if (color) paint.color = color;
   if (source.fontWeight !== "400" && source.fontWeight !== "normal" && source.fontWeight !== "")
     paint.fontWeight = source.fontWeight;
   if (source.fontStyle !== "normal" && source.fontStyle !== "") paint.fontStyle = source.fontStyle;
@@ -707,68 +903,66 @@ function textPaint(
   return paint;
 }
 
-/** The fade an inline element's opacity puts on its glyph color alone:
- * its opacity, or 1 where it has a background, which fades the span. */
-function glyphFade(entry: { backgroundColor: string | undefined; opacity: number }): number {
-  return entry.backgroundColor ? 1 : entry.opacity;
+/** An inline element's paint, its inline ancestors' opacities and
+ * backgrounds folded as nested groups (specs/cell-model.md "Opacity and
+ * translucency"); `color` stands in for its own, a tint's. */
+function inlinePaint(
+  entries: InlineElement[],
+  index: number,
+  palette: Palette,
+  color = entries[index]!.color,
+  emoji = false,
+): CellPaint {
+  const entry = entries[index]!;
+  let paint = textPaint(entry, color);
+  if (entry.backgroundColor !== undefined) paint.backgroundColor = entry.backgroundColor;
+  // Each paint here is this call's own.
+  for (let at: InlineElement | undefined = entry; at; at = entries[at.parent]) {
+    if (at.opacity < 1) paint.opacity = (paint.opacity ?? 1) * at.opacity;
+    const beneath = entries[at.parent]?.backgroundColor;
+    if (beneath !== undefined) paint = palette.composite(beneath, undefined, paint, 1, true, emoji);
+  }
+  return paint;
 }
-
-/** A paint whose glyph color is at `opacity`, its hue kept: mixed in
- * OKLAB with transparent, wide-gamut colors included. */
-function fadedPaint(paint: CellPaint | undefined, opacity: number): CellPaint {
-  const color = `color-mix(in oklab, ${paint?.color ?? "currentcolor"} ${Math.round(opacity * 1000) / 10}%, transparent)`;
-  return { ...paint, color, faded: true };
-}
-
-/** Paint `glyph` at a cell — a cluster over `cells` cells from it. */
-type PutGlyph = (
-  x: number,
-  y: number,
-  glyph: string,
-  paint: CellPaint | undefined,
-  cells?: number,
-) => void;
 
 function walk(
   node: LayoutNode,
-  parentAbsX: number,
-  parentAbsY: number,
   parentWalk: Walk,
   parentPut: PutGlyph,
-  alpha = 1,
   parentClip: Clip | null = null,
 ): void {
   if (node.tableHidden || node.forceHidden) return;
-  // A fixed box, a top-layer element's included, paints from the host's
-  // origin, outside its ancestors' scroll and clips
-  // (specs/positioning.md, specs/top-layer.md).
-  const hoisted = node.hostRect;
-  const absX = hoisted ? hoisted.x : parentAbsX + node.localRect.x + (node.stickyShift?.x ?? 0);
-  const absY = hoisted ? hoisted.y : parentAbsY + node.localRect.y + (node.stickyShift?.y ?? 0);
+  // A fixed box, a top-layer element's included, paints outside its
+  // ancestors' clips (specs/positioning.md, specs/top-layer.md).
+  const hoisted = node.hostRect !== undefined;
+  const { x: absX, y: absY } = node.paintOrigin;
   const style = node.style;
-  const { options } = parentWalk;
-  // A layer root's own paint and its subtree's go to a grid of the
-  // layer's own (specs/layers.md), the main grid untouched beneath;
-  // the ancestors' clips go to the layer's box, so the subtree starts
-  // unclipped.
+  const { options, palette } = parentWalk;
+  // Its opacity with its inline ancestors' (specs/cell-model.md
+  // "Opacity and translucency"); a top-layer element's alone.
+  const inline = node.topLayerRank === undefined ? (node.inlineOpacity ?? 1) : 1;
+  const opacity = style.opacity * inline;
+  // A layer root paints into a grid of its own, its opacity on the box
+  // and its subtree unclipped (specs/layers.md); any other element below
+  // 1 opacity paints as a group, its fixed descendants in it.
   const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
-  const opened = style.layer ? openLayer(parentWalk, node, box, parentClip) : null;
-  const put = opened ? opened.put : hoisted ? parentWalk.put : parentPut;
-  const clip = opened || hoisted ? null : parentClip;
-  const walking = opened
-    ? { ...parentWalk, layer: opened.layer, covers: opened.covers, put: opened.put }
-    : parentWalk;
-  // Effective opacity (specs/cell-model.md "Opacity"): ancestors
-  // multiply (CSS nests, it doesn't inherit) and the value rides on
-  // every paint this node produces — including an opacity of 0, whose
-  // glyphs must stay in the grid for select="grid" selection.
-  const alphaPaint = (paint: CellPaint | undefined, times = 1): CellPaint | undefined =>
-    alpha * times >= 1
-      ? paint
-      : { ...paint, opacity: String(Math.round(alpha * times * 1000) / 1000) };
-  // A hidden box (specs/visibility.md) paints none of its own ink — its
-  // shadows, fill, borders, rules, text, and bars — while its subtree
-  // walks on, a visible descendant painting.
+  const scope = style.layer
+    ? openLayer(parentWalk, node, box, parentClip, parentWalk.alpha * inline)
+    : opacity < 1
+      ? openGroup(parentWalk, opacity)
+      : null;
+  const walking = scope?.walking ?? parentWalk;
+  const clip = style.layer || hoisted ? null : parentClip;
+  const put = scope ? clipPut(walking.put, clip) : hoisted ? parentWalk.put : parentPut;
+  /** Glyph runs in their colors, `dx`, `dy` from the grid's origin. */
+  const putRuns = (runs: readonly BorderRun[], dx = 0, dy = 0): void => {
+    for (const run of runs) {
+      const paint = run.color === undefined ? undefined : { color: run.color };
+      for (let i = 0; i < run.length; i++) put(dx + run.x + i, dy + run.y, run.glyph, paint);
+    }
+  };
+  // A hidden box's own ink stays unpainted, its subtree walking on
+  // (specs/visibility.md).
   const visible = style.visible;
 
   // Shadows (specs/box-shadow.md): the outer ones before the box's own
@@ -777,85 +971,53 @@ function walk(
   const paintShadows = (inset: boolean): void => {
     const runs: BorderRun[] = [];
     collectShadowRuns(style, box, inset, runs);
-    for (const run of runs) {
-      put(
-        run.x,
-        run.y,
-        run.glyph,
-        alphaPaint(run.color === undefined ? undefined : { color: run.color }),
-      );
-    }
+    putRuns(runs);
   };
   const layers = style.backgroundImage;
-  let tint: ReturnType<typeof glyphTint> | null = null;
+  let tint: (string | null)[][] | null = null;
   if (visible) {
     paintShadows(false);
-    // Fill the box `background-clip` names (the border box by default)
-    // with painted spaces so this element's bg wipes ancestor decoration
-    // glyphs at these cells; own borders / text / decoration paint after
-    // and layer on top. `bg-clear` wipes the border box first, with an
-    // EXPLICIT undefined so the merge in put() strips the cell's painted
-    // background too — the wipe covers ancestor backgrounds, not just
-    // their glyphs. Gradient layers fill a color per cell instead,
-    // composited over the plain color, a cell they leave clear as it
-    // was; clipped to `text`, the colors go to the glyphs instead
-    // (`tint`, below), the plain color with them.
+    // The box `background-clip` names fills with painted spaces,
+    // `bg-clear` wiping the border box first; gradient layers fill a
+    // color per cell over the plain color, or tint the glyphs where
+    // clipped to `text` (specs/gradients.md).
     const { width, height } = node.localRect;
     const cellSize = options.cell ?? DEFAULT_CELL;
-    const fill = (paint: CellPaint | undefined, within: Insets): void => {
-      const own: CellPaint = { gradient: undefined, ...paint };
+    const fill = (paint: CellPaint, within: Insets): void => {
       for (let dy = within.top; dy < height - within.bottom; dy++) {
         for (let dx = within.left; dx < width - within.right; dx++) {
-          put(absX + dx, absY + dy, " ", own);
+          put(absX + dx, absY + dy, " ", paint);
         }
       }
     };
-    if (style.backgroundClear) fill({ backgroundColor: undefined }, zeroInsets());
+    if (style.backgroundClear) fill(WIPE, zeroInsets());
     if (
       style.backgroundClip === "text" &&
       (layers.length > 0 || style.backgroundColor !== undefined)
     ) {
-      tint = glyphTint(
-        gradientCells(layers, style.backgroundColor, width, height, cellSize),
-        absX,
-        absY,
-      );
+      tint = gradientCells(layers, style.backgroundColor, width, height, cellSize);
     } else if (layers.length > 0) {
       const colors = gradientCells(layers, style.backgroundColor, width, height, cellSize);
       const inset = backgroundInset(node);
       for (let dy = inset.top; dy < height - inset.bottom; dy++) {
         for (let dx = inset.left; dx < width - inset.right; dx++) {
           const color = colors[dy]![dx];
-          if (color)
-            put(
-              absX + dx,
-              absY + dy,
-              " ",
-              alphaPaint({ backgroundColor: color, gradient: "fill" }),
-            );
+          if (color) put(absX + dx, absY + dy, " ", { backgroundColor: color, gradient: "fill" });
         }
       }
     } else if (style.backgroundColor !== undefined) {
-      fill(alphaPaint({ backgroundColor: style.backgroundColor }), backgroundInset(node));
+      fill({ backgroundColor: style.backgroundColor }, backgroundInset(node));
     }
     paintShadows(true);
 
     const borderRuns: BorderRun[] = [];
     collectBorderRuns(style, box, borderRuns);
-    for (const run of borderRuns) {
-      const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
-      for (let i = 0; i < run.length; i++) put(run.x + i, run.y, run.glyph, paint);
-    }
-    for (const run of node.decorationRuns ?? []) {
-      const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
-      for (let i = 0; i < run.length; i++) put(absX + run.x + i, absY + run.y, run.glyph, paint);
-    }
+    putRuns(borderRuns);
+    if (node.decorationRuns) putRuns(node.decorationRuns, absX, absY);
   }
-  // A collapsed table's lattice, resolved for its parts' sticky shifts
-  // (lattice.ts): a shifted part is handed its cells to paint in its
-  // turn, over what it slid onto; the table paints its own after its
-  // rows and cells, over their backgrounds, as CSS layers collapsed
-  // borders.
+  // A collapsed table's lattice (lattice.ts): a sticky part paints its
+  // cells in its turn, the table the rest after its rows, as CSS layers
+  // collapsed borders.
   const lattice = node.lattice
     ? resolveLattice(node, node.lattice, (x, y) => inClip(clip, absX + x, absY + y))
     : null;
@@ -868,105 +1030,75 @@ function walk(
       part.latticeRuns = own.map((run) => ({ ...run, x: absX + run.x, y: absY + run.y }));
     }
   }
-  if (node.latticeRuns) {
-    for (const run of node.latticeRuns) {
-      put(
-        run.x,
-        run.y,
-        run.glyph,
-        alphaPaint(run.color === undefined ? undefined : { color: run.color }),
-      );
-    }
-  }
+  if (node.latticeRuns) putRuns(node.latticeRuns);
 
-  // Overflow (specs/scrolling.md): a clipping/scrolling axis culls the
-  // node's CONTENT ink (text and children — own decorations paint
-  // unclipped) at the PADDING box, per CSS: padding cells sit blank at
-  // the scroll extremes but content flows through them mid-scroll. A
-  // reserved gutter cell stays excluded (the bar owns it). Nested
-  // containers compose: the wrapped put chains to the parent's.
-  const scrolledX = absX - (node.scroll?.x ?? 0);
-  const scrolledY = absY - (node.scroll?.y ?? 0);
-  let contentPut = put;
-  let contentClip = clip;
+  // Overflow culls the content's ink at the padding box, the gutter
+  // excluded (specs/scrolling.md); nested clips chain.
   const own = clipBounds(node, absX, absY);
-  if (own) {
-    contentClip = intersect(clip, own);
-    contentPut = clipPut(put, (x, y) => !inClip(own, x, y));
-  }
+  const contentClip = own ? intersect(clip, own) : clip;
+  const contentPut = clipPut(put, own);
 
-  const hasInFlowChildren = node.children.some(
-    (child) =>
-      !child.inlineBox && child.style.position !== "absolute" && child.style.position !== "fixed",
-  );
-  if (!hasInFlowChildren && node.text) {
-    // The plain color rides along only where it filled the box.
-    const leafPaint = alphaPaint(textPaint(style, layers.length === 0 && !tint));
-    // An inline element's opacity fades its own paint (specs/cell-model.md
-    // "Opacity"): the whole span where it has a background, else its
-    // glyphs' color alone, after the tint for a box clipped to its text.
-    const inlinePaints = node.inlineElements?.map((entry) => {
-      const paint = textPaint(entry);
-      const fade = glyphFade(entry);
-      if (fade < 1 && !tint) return alphaPaint(fadedPaint(paint, fade));
-      return alphaPaint(paint, fade < 1 ? 1 : entry.opacity);
-    });
+  if (!node.children.some(isInFlowBox) && node.text) {
+    const leaf = textPaint(style, style.color);
+    const entries = node.inlineElements ?? [];
+    const inlines = entries.map((_, index) => inlinePaint(entries, index, palette));
     const selection = options.selection?.get(node);
-    type Entry = NonNullable<LayoutNode["inlineElements"]>[number];
     const paintCell = (
       k: number,
       length: number,
       x: number,
       y: number,
-      entry: Entry | undefined,
-      paint: CellPaint | undefined,
+      index: number,
+      selected: boolean,
     ): void => {
       // INLINE_PAD marks a blank inline-padding cell: no glyph, but
-      // its element's background still fills it.
+      // its element's background, alone, still fills it.
       if (node.text[k] === INLINE_PAD) {
-        if (entry?.backgroundColor) {
-          contentPut(
-            x,
-            y,
-            " ",
-            alphaPaint({ backgroundColor: entry.backgroundColor }, entry.opacity),
-          );
+        const pad = inlines[index];
+        if (pad?.backgroundColor !== undefined) {
+          contentPut(x, y, " ", { backgroundColor: pad.backgroundColor, opacity: pad.opacity });
         }
         return;
       }
       const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
       const cells = clusterWidth(cluster);
       if (cells === 0) return;
-      contentPut(
-        x,
-        y,
-        cluster,
-        tint ? tint(paint, x, y, entry ? glyphFade(entry) : 1) : paint,
-        cells,
-      );
+      // Clipped to `text`, a glyph's own color composites over the
+      // background's at its cell (specs/gradients.md).
+      const color = index >= 0 ? entries[index]!.color : style.color;
+      const under = tint?.[y - absY]?.[x - absX];
+      const tinted = under && color !== undefined ? palette.blend(color, 1, under) : color;
+      // A color emoji keeps its color through its chain (inlinePaint).
+      const emoji = index >= 0 && cells > 1 && isColorEmoji(cluster);
+      let paint = index >= 0 ? inlines[index]! : leaf;
+      if (tinted !== color || emoji) {
+        paint =
+          index >= 0
+            ? inlinePaint(entries, index, palette, tinted, emoji)
+            : textPaint(style, tinted);
+        if (tinted !== color) paint = { ...paint, gradient: "text" };
+      }
+      contentPut(x, y, cluster, selected ? { ...paint, selected: true } : paint, cells);
     };
     // A sticky inline element's glyphs paint after the rest of the
     // leaf's, over the line they were shifted onto (specs/sticky.md).
     const shifted: Parameters<typeof paintCell>[] = [];
     forEachLeafCell(
       node,
-      scrolledX,
-      scrolledY,
+      absX - (node.scroll?.x ?? 0),
+      absY - (node.scroll?.y ?? 0),
       (k, length, x, y) => {
-        const inlineIndex = node.charInline?.[k] ?? -1;
-        const entry = inlineIndex >= 0 ? node.inlineElements![inlineIndex] : undefined;
+        const index = node.charInline?.[k] ?? -1;
+        const entry = index >= 0 ? entries[index] : undefined;
         // An inline element's own visibility, else the leaf's: its cells
         // stay blank, their space kept.
         if (!(entry ? entry.visible : visible)) return;
-        let paint = entry ? inlinePaints![inlineIndex] : leafPaint;
-        if (selection && k >= selection.start && k < selection.end) {
-          paint = { ...paint, selected: true };
-        }
-        if (entry?.stickyShift) shifted.push([k, length, x, y, entry, paint]);
-        else paintCell(k, length, x, y, entry, paint);
+        const selected = selection !== undefined && k >= selection.start && k < selection.end;
+        if (entry?.stickyShift) shifted.push([k, length, x, y, index, selected]);
+        else paintCell(k, length, x, y, index, selected);
       },
       (x, y) => {
-        if (visible) contentPut(x, y, "…", leafPaint);
+        if (visible) contentPut(x, y, "…", leaf);
       },
     );
     for (const args of shifted) paintCell(...args);
@@ -975,60 +1107,38 @@ function walk(
   for (const child of paintOrderedChildren(node)) {
     // The stack paints after the tree (specs/top-layer.md).
     if (child.topLayerRank !== undefined) continue;
-    walk(
-      child,
-      scrolledX,
-      scrolledY,
-      walking,
-      contentPut,
-      alpha * child.style.opacity * (child.inlineOpacity ?? 1),
-      contentClip,
-    );
+    walk(child, walking, contentPut, contentClip);
   }
-  if (visible && lattice) {
-    for (const run of lattice.runs) {
-      const paint = alphaPaint(run.color === undefined ? undefined : { color: run.color });
-      put(absX + run.x, absY + run.y, run.glyph, paint);
-    }
-  }
+  if (visible && lattice) putRuns(lattice.runs, absX, absY);
 
-  // Scrollbars last, over content (specs/scrolling.md): every
-  // reserved gutter paints track + thumb (full-length when nothing
-  // overflows — the `scroll` case; an `auto` gutter exists only with
-  // overflow). The shared corner cell of two bars stays blank.
+  // Scrollbars last, over content (specs/scrolling.md), the corner
+  // cell of two bars blank.
   const range = node.scrollRange;
   const gutter = node.scrollGutterCells;
   if (visible && range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
     const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
-    // `scrollbar-color: auto` means the container's own color (its
-    // currentColor, like borders) — not the inherited grid default.
-    const barPaint = (color: string | undefined): CellPaint | undefined =>
-      alphaPaint(color ? { color } : undefined);
+    // `scrollbar-color: auto` is the container's own color, as a border's.
     const trackPaint = barPaint(style.scrollbarColor?.track ?? style.color);
     const thumbPaint = barPaint(style.scrollbarColor?.thumb ?? style.color);
     const bars = scrollbarGeometry(node, absX, absY);
-    if (bars.y) {
-      const { col, row, thick, len } = bars.y;
-      const { at, len: thumbLen } = thumbSpan(len, range.sizeY, range.maxY, node.scroll?.y ?? 0);
-      for (let dx = 0; dx < thick; dx++) {
-        for (let i = 0; i < len; i++) {
-          const isThumb = i >= at && i < at + thumbLen;
-          put(col + dx, row + i, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
-        }
-      }
-    }
-    if (bars.x) {
-      const { col, row, thick, len } = bars.x;
-      const { at, len: thumbLen } = thumbSpan(len, range.sizeX, range.maxX, node.scroll?.x ?? 0);
-      for (let dy = 0; dy < thick; dy++) {
-        for (let i = 0; i < len; i++) {
-          const isThumb = i >= at && i < at + thumbLen;
-          put(col + i, row + dy, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
+    for (const axis of ["y", "x"] as const) {
+      const bar = bars[axis];
+      if (!bar) continue;
+      const vertical = axis === "y";
+      const { at, len } = vertical
+        ? thumbSpan(bar.len, range.sizeY, range.maxY, node.scroll?.y ?? 0)
+        : thumbSpan(bar.len, range.sizeX, range.maxX, node.scroll?.x ?? 0);
+      for (let across = 0; across < bar.thick; across++) {
+        for (let i = 0; i < bar.len; i++) {
+          const isThumb = i >= at && i < at + len;
+          const x = bar.col + (vertical ? across : i);
+          const y = bar.row + (vertical ? i : across);
+          put(x, y, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
         }
       }
     }
   }
-  opened?.close();
+  scope?.close();
 }
 
 /** The cells a leaf's text occupies: the per-line placement — line
@@ -1049,11 +1159,10 @@ function forEachLeafCell(
   onEllipsis?: (x: number, y: number) => void,
 ): void {
   const style = node.style;
-  const padding = node.resolvedPadding;
-  const contentX = absX + style.border.left + padding.left;
-  const contentY = absY + style.border.top + padding.top;
-  const contentWidth =
-    node.localRect.width - style.border.left - style.border.right - padding.left - padding.right;
+  const origin = contentOrigin(node);
+  const contentX = absX + origin.x;
+  const contentY = absY + origin.y;
+  const contentWidth = node.localRect.width - edges(style.border, node.resolvedPadding, "x");
   const multicol = node.multicolGeometry;
   const { spans, textY } = multicol ?? leafLineGeometry(node, contentWidth);
   for (let i = 0; i < spans.length; i++) {
@@ -1127,9 +1236,9 @@ export function leafLineCovers(
   const geometry = node.multicolGeometry;
   if (!geometry) return false;
   const style = node.style;
-  const padding = node.resolvedPadding;
-  const x = col - (absX + style.border.left + padding.left);
-  const y = row - (absY + style.border.top + padding.top);
+  const origin = contentOrigin(node);
+  const x = col - (absX + origin.x);
+  const y = row - (absY + origin.y);
   const { lineX, lineY } = geometry;
   for (let i = 0; i < lineY.length; i++) {
     if (x < lineX[i]! || x >= lineX[i]! + geometry.columnWidth) continue;
@@ -1142,7 +1251,7 @@ export function leafLineCovers(
 
 /** The index into `node.text` of the character painted at a cell, or
  * null for a blank cell (specs/semantic-selection.md). `absX/absY` is
- * the leaf's painted border-box origin as hitStack reports it. */
+ * the leaf's border-box origin, its `paintOrigin` for the paint's. */
 export function charIndexAtCell(
   node: LayoutNode,
   absX: number,
@@ -1256,7 +1365,7 @@ export function scrollbarGeometry(
 
 /** One bar: the cell its track starts at, its thickness across, and
  * its length along its axis. */
-export interface Scrollbar {
+interface Scrollbar {
   col: number;
   row: number;
   thick: number;

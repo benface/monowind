@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ascii",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "FIGlet/TOIlet ascii-art banner text for monowind: the <mono-ascii> element and a font library",
   "keywords": [
     "ascii-art",
@@ -67,7 +67,7 @@
     "happy-dom": "^20.14.5",
     "monowind": "workspace:^",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0",
+    "vite": "^8.3.1",
     "vitest": "^5.0.1"
   },
   "peerDependencies": {

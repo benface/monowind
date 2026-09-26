@@ -96,8 +96,10 @@ export function renderPart(
   return cloneElement(element, merge(props, element.props));
 }
 
-/** The name React's devtools and error boundaries show. */
-function named<F extends object>(name: string, component: F): F {
+/** A component named for React's devtools and error boundaries. */
+export type Named<P> = ((props: P) => ReactNode) & { displayName: string };
+
+function named<F extends object>(name: string, component: F): F & { displayName: string } {
   return Object.assign(component, { displayName: name });
 }
 
@@ -109,7 +111,7 @@ export function definePart<A, T extends ElementType = "div", Own = unknown>(
   propsOf: (api: A, own: Props) => object,
   tag: T = "div" as T,
   own: readonly string[] = [],
-): (props: PartProps<T> & Own) => ReactNode {
+): Named<PartProps<T> & Own> {
   return named(name, function Part(props: PartProps<T> & Own) {
     const api = useApi();
     const [mine, rest] = splitProps(props as Props, own);
@@ -125,7 +127,7 @@ export function partsOf<A>(prefix: string, useApi: () => A) {
     propsOf: (api: A, own: Props) => object,
     tag?: T,
     own?: readonly string[],
-  ): ((props: PartProps<T> & Own) => ReactNode) =>
+  ): Named<PartProps<T> & Own> =>
     definePart<A, T, Own>(`${prefix}.${name}`, useApi, propsOf, tag, own);
 }
 
@@ -135,7 +137,7 @@ export function partsOf<A>(prefix: string, useApi: () => A) {
 export function triggerPart<A extends TriggerApi>(
   prefix: string,
   useApi: () => A,
-): (props: PartProps<"button"> & { value?: string | undefined }) => ReactNode {
+): Named<PartProps<"button"> & { value?: string | undefined }> {
   return definePart<A, "button", { value?: string | undefined }>(
     `${prefix}.Trigger`,
     useApi,
@@ -145,17 +147,10 @@ export function triggerPart<A extends TriggerApi>(
   );
 }
 
-/** The element a root renders, where its component has a root part.
- * A menu, a dialog, a popover and a tooltip have none in Zag, so
- * their root is the provider alone: it renders nothing, and a
- * wrapper invented for it would put a box in the grid's layout. */
-export interface RootPart<V> {
-  propsOf: (value: V) => object;
-  tag?: ElementType;
-}
-
 /** A root over its own machine: the hook on its props, an id
- * generated where none is given, held for the parts under it. */
+ * generated where none is given, held for the parts under it — inside
+ * the element `rootProps` gives the props of where Zag names a root
+ * part, around the parts alone elsewhere (`warnStray`). */
 export function defineRoot<
   P extends { id: string },
   V,
@@ -168,22 +163,19 @@ export function defineRoot<
   use: (props: P) => V,
   context: { Provider: (props: { value: V; children?: ReactNode }) => ReactNode },
   propNames: readonly string[],
-  root?: RootPart<V>,
-): (props: Omit<P, "id"> & { id?: string } & Extra) => ReactNode {
+  rootProps?: (value: V) => object,
+): Named<Omit<P, "id"> & { id?: string } & Extra> {
   return named(name, function Root(given: Props) {
     const { children, ...props } = given as { children?: ReactNode } & Props;
     const generated = useId();
     // One object across this root's renders: the warning is said once per root.
     const instance = useRef(null);
     const [machine, rest] = splitProps(props, propNames);
-    if (!root) warnStray(name, Object.keys(rest), instance);
+    if (!rootProps) warnStray(name, Object.keys(rest), instance);
     const value = use({ ...machine, id: machine["id"] ?? generated } as unknown as P);
     const inside = <context.Provider value={value}>{children}</context.Provider>;
-    if (!root) return inside;
-    return renderPart(name, root.tag ?? "div", root.propsOf(value), {
-      ...rest,
-      children: inside,
-    });
+    if (!rootProps) return inside;
+    return renderPart(name, "div", rootProps(value), { ...rest, children: inside });
   });
 }
 
@@ -192,7 +184,7 @@ export function defineRoot<
 export function defineRootProvider<V>(
   name: string,
   context: { Provider: (props: { value: V; children?: ReactNode }) => ReactNode },
-): (props: { value: V; children?: ReactNode }) => ReactNode {
+): Named<{ value: V; children?: ReactNode }> {
   return named(name, function RootProvider({ value, children }) {
     return <context.Provider value={value}>{children}</context.Provider>;
   });
@@ -200,7 +192,10 @@ export function defineRootProvider<V>(
 
 /** A component's context: what its parts read, and the hook that
  * fails loudly outside a root rather than on an undefined API. */
-export function defineContext<V>(name: string): {
+export function defineContext<V>(
+  name: string,
+  outside = `a ${name} part must be inside <${name}.Root>`,
+): {
   Provider: (props: { value: V; children?: ReactNode }) => ReactNode;
   use: () => V;
   useOptional: () => V | null;
@@ -210,7 +205,7 @@ export function defineContext<V>(name: string): {
     Provider: ({ value, children }) => <Context value={value}>{children}</Context>,
     use: () => {
       const value = useContext(Context);
-      if (value === null) throw new Error(`a ${name} part must be inside <${name}.Root>`);
+      if (value === null) throw new Error(outside);
       return value;
     },
     useOptional: () => useContext(Context),

@@ -306,6 +306,22 @@ describe("column sizing", () => {
     expect(row.children.map((c) => c.localRect.width)).toEqual([6, 6]);
   });
 
+  it("sizes a fit-content cell as auto (probed: every engine)", () => {
+    const node = build(`<table><tr><td style="width: fit-content">Save changes</td></tr></table>`);
+    layoutRoot(node, 40);
+    expect(node.localRect.width).toBe(12);
+  });
+
+  it("leaves a fit-content first-row cell's column unsized under table-fixed", () => {
+    const fixed = build(
+      `<table style="table-layout: fixed; width: 160px">
+        <tr><td style="width: fit-content">Save changes</td><td>x</td></tr></table>`,
+    );
+    layoutRoot(fixed, 60);
+    const row = fixed.children[0]!.children[0]!;
+    expect(row.children.map((c) => c.localRect.width)).toEqual([20, 20]);
+  });
+
   it("shrink-to-fits a rowless table (text leaf) instead of filling", () => {
     const node = build(`<table>plain text</table>`);
     layoutRoot(node, 60);
@@ -487,6 +503,53 @@ describe("out-of-flow and container cells", () => {
     const absNode = node.children.find((c) => c.style.position === "absolute")!;
     expect(absNode.localRect.x).toBe(2);
     expect(absNode.localRect.y).toBe(0);
+  });
+
+  it("puts an abspos child of the table at its static position, margins in", () => {
+    const table = document.createElement("table");
+    table.setAttribute("style", "position: relative");
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.textContent = "abc";
+    tr.appendChild(td);
+    const abs = document.createElement("div");
+    abs.setAttribute("style", "position: absolute; margin: 8px 0 0 12px");
+    abs.textContent = "z";
+    table.append(tr, abs);
+    document.body.appendChild(table);
+    const node = buildTree(table, 16)!;
+    layoutRoot(node, 60);
+    const absNode = node.children.find((c) => c.style.position === "absolute")!;
+    expect([absNode.localRect.x, absNode.localRect.y]).toEqual([3, 3]);
+  });
+
+  it("puts an abspos child of the table where a row in its place would start", () => {
+    // Probed: every engine. Header rows lead and footer rows trail
+    // whatever the DOM order; the border spacing insets the row.
+    const element = (tag: string, ...children: (Node | string)[]) => {
+      const made = document.createElement(tag);
+      made.append(...children);
+      return made;
+    };
+    const row = () => element("tr", element("td", "x"));
+    const place = (children: (abs: Element) => Node[], style = "") => {
+      const abs = element("div", "z");
+      abs.setAttribute("style", "position: absolute");
+      const table = element("table", ...children(abs));
+      table.setAttribute("style", `position: relative; ${style}`);
+      document.body.appendChild(table);
+      const node = buildTree(table, 16)!;
+      layoutRoot(node, 60);
+      const absNode = node.children.find((child) => child.source === abs)!;
+      return [absNode.localRect.x, absNode.localRect.y];
+    };
+    expect(place((abs) => [abs, row()])).toEqual([0, 0]);
+    expect(place((abs) => [row(), abs, row()])).toEqual([0, 1]);
+    expect(place((abs) => [abs, element("thead", row()), element("tbody", row())])).toEqual([0, 1]);
+    expect(place((abs) => [element("tfoot", row()), abs, row()])).toEqual([0, 0]);
+    expect(place((abs) => [element("tbody", row()), abs, element("thead", row())])).toEqual([0, 2]);
+    expect(place((abs) => [abs, element("caption", "cap"), row()])).toEqual([0, 1]);
+    expect(place((abs) => [row(), abs], "border-spacing: 4px")).toEqual([1, 3]);
   });
 });
 

@@ -22,16 +22,30 @@ truth.
   (cell metrics are measured, any monospace works), and a glyph-set
   NAME. Themes need JS only to register a CUSTOM glyph set.
 - **Token contract**: `--mw-fg` and `--mw-bg`, which the engine
-  derives from the host before each measure (a host coloring itself
-  through `--mw-fg` is circular and keeps the seed) — its computed
-  `color`,
-  and its `background-color` or the nearest ancestor's where its own
-  is transparent, `canvas` past the root — and writes into the
-  shadow's `:host` rule, so the text and background a host wears
+  derives from the host before each read of its elements (a host
+  coloring itself through `--mw-fg` is circular and keeps the seed) —
+  its computed `color`,
+  and its `background-color` composited over those behind it down to
+  an opaque one, `canvas` past the root — and writes into the
+  shadow's `:host` rule before it flags the elements, so one style
+  resolution serves the tokens and the reads. The host's own background
+  is read under the host's mask, which ends a transition of it, so the
+  tokens take the value it lands on; an ancestor's background or color
+  in transition
+  lays the host out again at its end, the tokens holding the value the
+  first frame read until then. So the text and background a host wears
   through `text-*`/`bg-*` or a theme's rule are what the engine
   inverts focus with and what `bg-(--mw-bg)` paints; an explicit
   token on the host outranks the derived one (an outer rule beats
-  `:host`) and one on a descendant scopes its subtree. And the sixteen
+  `:host`) and one on a descendant scopes its subtree; the resolved
+  `--mw-bg` is the ground's color where one color must stand for
+  what shows behind the grid — a selected translucent cell — and
+  `--mw-fg` the ink of a glyph with no color of its own (cell-model.md
+  "Opacity and translucency"); translucent paint and a faded group
+  with nothing opaque beneath keep their alpha for the browser to
+  composite over what lies behind the host, and a host over a backdrop
+  the derivation cannot see — an image — names its color with
+  `--mw-bg`. And the sixteen
   `--mw-ansi-{black,red,green,yellow,blue,magenta,cyan,white}` +
   `--mw-ansi-bright-*` properties, inherited, overridable at any
   scope. Consumers of the contract (the engine's focus-invert,

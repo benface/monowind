@@ -3,7 +3,8 @@
 Status: **implemented** (2026-09-12; `color.ts`, `gradient.ts`, the
 `backgroundImage` read in `style.ts`, the fill in `plain-text.ts`). Cell-unit
 fundamentals live in `cell-model.md`; backgrounds in `cell-model.md`
-"Box model" (the border-box fill); the shade glyphs of shadows in
+"Box model" (the fill, inside the box `background-clip` names); the
+shade glyphs of shadows in
 `box-shadow.md`.
 
 ## Motivation
@@ -48,11 +49,12 @@ parsed. Positions in px convert on the spacing scale.
   The cell's glyphs keep their color; only the background changes, as
   with any fill.
 - **It is the box's fill.** The gradient replaces the plain
-  background fill in the paint walk: it wipes ancestor decorations at
-  its cells like `bg-*` does, layers paint from the last declared to
-  the first (the first on top), a `background-color` under them shows
-  through transparent stops as CSS composites it — approximated by
-  compositing each cell's color over the plain color — and `bg-clear`
+  background fill in the paint walk and paints over what ancestors
+  painted at its cells as `bg-*` does, their glyphs hidden and its
+  color over their background. Layers paint from the last declared to
+  the first (the first on top); a `background-color` under them shows
+  through transparent stops as CSS composites it, approximated by
+  compositing each cell's color over the plain color; and `bg-clear`
   keeps its wipe under a gradient with transparent stops.
   `background-clip` says where the fill paints — the border box, the
   padding box, or the content box, the gradient's geometry the border
@@ -62,14 +64,22 @@ parsed. Positions in px convert on the spacing scale.
   through the text and an opaque color hides it, as CSS clips the
   background to the glyphs. The plain `background-color` clips the
   same way, to a box or to the text. An inline element's `opacity`
-  fades its glyphs' color after that, as Firefox draws it — Chromium
-  draws them whole and WebKit not at all (probed 2026-09-23).
+  composites the tinted glyph as a group (cell-model.md) after that,
+  as Firefox draws it — Chromium draws them whole and WebKit not at
+  all (probed 2026-09-23).
 - **The light DOM's own gradient is off**: the companion locks
   `background-image: none` beside its `background-color` lock; the
   grid owns backgrounds.
 - **Selection inverts the cell's own color**, as it does for any
   filled cell: a selected cell swaps its glyph color and its gradient
   color.
+- **A run of gradient cells is one span.** A gradient box computes a
+  color per cell once per layout, kept between layouts. In the DOM a
+  run of cells apart only in their gradient background is one span,
+  its colors as hard stops of a `linear-gradient` at the cell width; a
+  run of gradient-colored glyphs likewise, the stops shown through the
+  text, where the cells have no background of their own (a span's text
+  clip would clip that away, and Firefox draws no per-layer clip).
 
 ## Deviations from CSS (summary)
 
@@ -85,24 +95,15 @@ parsed. Positions in px convert on the spacing scale.
 3. `url()` images are ignored.
 4. Interpolation spaces other than oklab, oklch, srgb, srgb-linear,
    and hsl interpolate in oklab.
-5. Cost: a gradient box computes a color per cell once per layout
-   (kept between layouts). In the DOM a run of cells apart only in
-   their gradient background is one span, its colors as hard stops of
-   a `linear-gradient` at the cell width, so a box row is one node; a
-   run of gradient-colored glyphs likewise, the stops shown through
-   the text, where the cells have no background of their own (a span's
-   text clip would clip that away, and Firefox draws no per-layer
-   clip).
-6. An editable's native selection (`styles.css`, its `--mw-ground`)
+5. An editable's native selection (`styles.css`, its `--mw-ground`)
    sits on the plain `background-color` under a gradient, not on the
    gradient's color at its cells.
-7. A color outside sRGB (Tailwind's wide-gamut `oklch()` colors, and
-   mixes of them) clips to sRGB per channel as a cell paints or
-   composites it, where CSS gamut-maps by reducing chroma; the stops
-   themselves mix unclipped, as CSS interpolates them. An hsl
-   saturation below 0 (a lightness past 1 or below 0) mixes as it is,
-   as Chromium and Firefox mix it, where css-color-4 turns the hue half
-   round, as WebKit does (probed 2026-09-23).
+6. An hsl saturation below 0 (a color outside sRGB, Tailwind's
+   wide-gamut `oklch()` colors among them, which mix and paint
+   unclipped and clip to sRGB only to composite, cell-model.md
+   "Opacity and translucency") mixes as it is, as Chromium and
+   Firefox mix it, where css-color-4 turns the hue half round, as
+   WebKit does (probed 2026-09-23).
 
 ## Testing
 
@@ -122,14 +123,20 @@ parsed. Positions in px convert on the spacing scale.
 
 ## Touch points on implementation
 
-- style.ts / types.ts: `backgroundImage: Gradient[]` and
-  `backgroundClip` on `CellStyle`, the parser (colors, stops,
-  directions, spaces, hue modes).
-- `color.ts`: computed colors parsed, prepared per space, mixed with
-  the hue modes, composited; `gradient.ts`: the color at a cell
-  (direction math, stop resolution, compositing), kept per box.
+- style.ts: `readBackgroundImage`, the parser (colors, stops,
+  directions, spaces, hue modes), and the `background-clip` read.
+- types.ts: `backgroundImage: Gradient[]` and `backgroundClip` on
+  `CellStyle`.
+- color.ts: computed colors parsed (`lab()`, `lch()` and every
+  `color()` space among them, cell-model.md "Opacity and translucency"),
+  prepared per space, mixed with the hue modes, composited clipped to
+  sRGB, written unclipped.
+- gradient.ts: the color at a cell (direction math, stop resolution,
+  compositing), kept per box.
 - plain-text.ts `walk`: the fill step paints per-cell colors when
   gradients are present, a plain color or a gradient inside the
-  `background-clip` box (`backgroundInset`).
+  `background-clip` box (`backgroundInset`), which the store blends
+  over the cells beneath; the leaf's paint tints a glyph through the
+  palette (cell-model.md "Opacity and translucency").
 - styles.css: the `background-image: none` lock.
 - cell-model.md: the box-model fill sentence points here.

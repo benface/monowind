@@ -8,7 +8,8 @@
 /** What an item part needs of the API it is under: Zag gives a
  * listbox, a select and a combobox the same collection and five
  * getters, and the mount and every framework's item parts read
- * exactly these. */
+ * exactly these — a framework's from the nearest of the three roots,
+ * whichever the part is named for. */
 export interface ItemApi {
   collection: { find(value: string): unknown; size: number };
   getItemProps(props: { item: unknown }): object;
@@ -103,7 +104,8 @@ const rootNamed = (name: string): object => {
 
 /** What a root was given that is neither the machine's props nor its
  * element's: a menu's, a dialog's, a popover's and a tooltip's root
- * renders nothing — Zag gives those four no root part — so there is
+ * renders nothing — Zag gives those four no root part, and a wrapper
+ * invented for one would put a box in the grid's layout — so there is
  * nowhere for it to go. Said once per root and props, and not in
  * production: the same word on an element (`class` on a
  * `<mono-menu>`) styles it, which is exactly the mistake worth naming.

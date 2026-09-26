@@ -4,7 +4,7 @@ import { asSubmenuOf, propNames } from "@monowind/ui/menu";
 import type * as menu from "@monowind/ui/menu";
 import type { PropTypes } from "@zag-js/react";
 import { useMenu, type Connected, type Positioned } from "../hooks.ts";
-import { defineContext, partsOf, renderPart, triggerPart, type PartProps } from "./part.tsx";
+import { defineContext, partsOf, triggerPart } from "./part.tsx";
 
 /**
  * Zag's menu as a compound component (specs/ui.md "Component layer"):
@@ -44,8 +44,6 @@ export function Root({
   const [machine, rest] = splitProps(props as Record<string, unknown>, propNames);
   warnStray("Menu.Root", Object.keys(rest), instance);
   const own = { ...machine, id: props.id ?? generated } as menu.Props;
-  // A submenu opens beside its item on the reading side and takes the
-  // behavior its parent shares, exactly as a marked one does.
   const machineProps = parent ? asSubmenuOf(parent.props ?? { id: own.id }, own) : own;
   const api = useMenu(machineProps);
   // Zag hands a fresh service object over the same machine each render:
@@ -77,12 +75,10 @@ export const Trigger = triggerPart("Menu", () => context.use().api);
 
 /** The item of the menu above that opens this one: the submenu's own
  * trigger, which is why it goes inside the nested `Root`. */
-export function TriggerItem(props: PartProps): ReactNode {
-  const { api, parent } = context.use();
+export const TriggerItem = part("TriggerItem", ({ api, parent }) => {
   if (!parent) throw new Error("a Menu.TriggerItem must be inside a nested <Menu.Root>");
-  return renderPart("Menu.TriggerItem", "div", parent.api.getTriggerItemProps(api), props);
-}
-TriggerItem.displayName = "Menu.TriggerItem";
+  return parent.api.getTriggerItemProps(api);
+});
 
 export const Positioner = part("Positioner", ({ api }) => api.getPositionerProps());
 export const Content = part("Content", ({ api }) => api.getContentProps());

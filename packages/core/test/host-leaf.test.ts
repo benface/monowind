@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { leafExtent, positionOf } from "../src/selection.ts";
-import { buildRootLeaf } from "../src/tree.ts";
+import { buildRoot } from "../src/tree.ts";
 import { INLINE_PAD, OBJECT_REPLACEMENT } from "../src/wrap.ts";
 
 /** The host as a leaf (specs/host-leaf.md): its own inline content is
@@ -20,14 +20,14 @@ function host(innerHTML: string, style = ""): HTMLElement {
   return el;
 }
 
-describe("buildRootLeaf", () => {
+describe("buildRoot", () => {
   it("collects text, inline elements, atomic boxes, and <br> without the probe", () => {
     const el = host(
       'foo <b style="padding-left: 4px">bar</b><br>baz <span style="display: inline-block">box</span>' +
         '<div style="position: absolute">out</div>',
       "padding: 8px; border: 1px solid; text-align: center; white-space: nowrap",
     );
-    const leaf = buildRootLeaf(el, 16)!;
+    const leaf = buildRoot(el, 16);
     expect(leaf.source).toBe(el);
     expect(leaf.text).toBe(`foo ${INLINE_PAD}bar\nbaz ${OBJECT_REPLACEMENT}`);
     expect(leaf.inlineElements?.map((entry) => [entry.element.tagName, entry.padLeft])).toEqual([
@@ -62,23 +62,34 @@ describe("buildRootLeaf", () => {
       "a long line",
       "white-space: nowrap; overflow: hidden; text-overflow: ellipsis",
     );
-    const leaf = buildRootLeaf(el, 16)!;
+    const leaf = buildRoot(el, 16);
     layoutRoot(leaf, 6);
     expect(renderPlainText(leaf)).toBe("a lon…");
   });
 
   it("keeps zero tracking and line gap: the host's spacing is the cell", () => {
     const el = host("foo bar", "line-height: 32px; letter-spacing: 0.4px; color: red");
-    const leaf = buildRootLeaf(el, 16)!;
+    const leaf = buildRoot(el, 16);
     expect(leaf.style).toMatchObject({ tracking: 0, lineGap: 0, color: "red" });
   });
 
-  it("is null for a container host, an empty host, or out-of-flow children alone", () => {
-    expect(buildRootLeaf(host("foo<div>block</div>"), 16)).toBeNull();
+  it("is a container for a container host, an empty host, or out-of-flow children alone", () => {
+    const children = (innerHTML: string) =>
+      buildRoot(host(innerHTML), 16).children.map((child) => [
+        child.text,
+        Boolean(child.anonymous),
+      ]);
+    expect(children("foo<div>block</div>")).toEqual([
+      ["foo", true],
+      ["block", false],
+    ]);
     // A block below an inline child splits that inline, so the host is
     // a container as surely as a block child makes it one.
-    expect(buildRootLeaf(host("foo<span>a<p>block</p></span>"), 16)).toBeNull();
-    expect(buildRootLeaf(host("  \n  "), 16)).toBeNull();
-    expect(buildRootLeaf(host('<div style="position: absolute">out</div>'), 16)).toBeNull();
+    expect(children("foo<span>a<p>block</p></span>")).toEqual([
+      ["fooa", true],
+      ["block", false],
+    ]);
+    expect(children("  \n  ")).toEqual([]);
+    expect(children('<div style="position: absolute">out</div>')).toEqual([["out", false]]);
   });
 });

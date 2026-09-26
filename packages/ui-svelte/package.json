@@ -1,7 +1,7 @@
 {
   "name": "@monowind/ui-svelte",
-  "version": "0.3.2",
-  "description": "@monowind/ui for Svelte 5: a menu, a listbox, a select, a dialog, a popover, a tooltip on the monowind grid, as runes",
+  "version": "0.3.3",
+  "description": "@monowind/ui for Svelte 5: a menu, a listbox, a select, a combobox, a dialog, a popover, a tooltip on the monowind grid, as runes",
   "keywords": [
     "accessibility",
     "components",
@@ -57,12 +57,12 @@
     "@zag-js/svelte": "^1.44.0"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/node": "^26.6.2",
     "happy-dom": "^20.14.5",
     "svelte": "^5.57.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0",
+    "vite": "^8.3.1",
     "vitest": "^5.0.1"
   },
   "peerDependencies": {

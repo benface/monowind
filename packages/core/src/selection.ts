@@ -26,7 +26,7 @@ export function comparePoints(aNode: Node, aOffset: number, bNode: Node, bOffset
  * when that node holds the leaf's text verbatim (specs/leaf-renderers.md)
  * — a text-mode drag, the painted highlight, and the copy then read
  * positions in it as indices into `leaf.text`. */
-export function transcriptOf(leaf: LayoutNode): Node | null {
+function transcriptOf(leaf: LayoutNode): Node | null {
   const target = leafRendererFor(leaf.source.tagName)?.selectionTarget?.(leaf.source) ?? null;
   return target && target.textContent === leaf.text ? target : null;
 }
@@ -135,7 +135,7 @@ export interface BoundaryPoints {
 /** The document Selection's first range as seen through `shadowRoot`
  * and the `leafRoots` (`getComposedRanges` on Firefox/WebKit and
  * standards-path Chromium; `ShadowRoot.getSelection()` as the legacy
- * Chromium fallback — verified 2026-09-01). A selection inside a shadow
+ * Chromium fallback). A selection inside a shadow
  * root not listed comes back retargeted onto that root's host, which
  * is exactly the light-tree range around it; listing a custom leaf's
  * transcript root keeps the points inside it. Any API surprise reads
@@ -164,7 +164,7 @@ export function selectionRangeThrough(
 /** Where a selection lives relative to a host: in its shadow `grid`,
  * in its light DOM (both points, the host's own child list included),
  * or anywhere else — including straddling the two. */
-export type SelectionKind = "grid" | "light" | "outside";
+type SelectionKind = "grid" | "light" | "outside";
 
 export function classifySelection(
   host: Element,
@@ -246,23 +246,30 @@ export function selectedRanges(
   const visit = (node: LayoutNode): void => {
     if (node.tableHidden || node.forceHidden || !rangeMeets(node, range)) return;
     if (isTextLeaf(node)) {
-      const { text } = node;
-      let start = 0;
-      let end = text.length;
-      if (node.charSource) {
-        if (leafHolds(node, range.startContainer)) {
-          start = charIndexAt(node, range.startContainer, range.startOffset);
-        }
-        if (leafHolds(node, range.endContainer)) {
-          end = charIndexAt(node, range.endContainer, range.endOffset);
-        }
-      }
-      if (end > start) ranges.set(node, { start, end });
+      const chars = coveredChars(node, range);
+      if (chars.end > chars.start) ranges.set(node, chars);
     }
     for (const child of node.children) visit(child);
   };
   visit(root);
   return ranges;
+}
+
+/** The characters of a leaf's layout text a range covers: from or to a
+ * boundary point inside it, all of them for a renderer leaf (its text
+ * has no source positions). */
+function coveredChars(leaf: LayoutNode, range: Range): { start: number; end: number } {
+  let start = 0;
+  let end = leaf.text.length;
+  if (leaf.charSource) {
+    if (leafHolds(leaf, range.startContainer)) {
+      start = charIndexAt(leaf, range.startContainer, range.startOffset);
+    }
+    if (leafHolds(leaf, range.endContainer)) {
+      end = charIndexAt(leaf, range.endContainer, range.endOffset);
+    }
+  }
+  return { start, end };
 }
 
 /* === Copy serialization ============================================== */
@@ -443,23 +450,13 @@ export function isTextLeaf(node: LayoutNode): boolean {
   );
 }
 
-/** The part of a leaf's layout text the range covers — all of it for a
- * renderer leaf (its text has no source positions) — with inline
- * boxes spliced in for their U+FFFC markers and padding markers
- * dropped. A final newline (a trailing `<br>`, which the wrap layer
- * drops) goes too. */
+/** The part of a leaf's layout text the range covers (coveredChars),
+ * with inline boxes spliced in for their U+FFFC markers and padding
+ * markers dropped. A final newline (a trailing `<br>`, which the wrap
+ * layer drops) goes too. */
 function leafSlice(leaf: LayoutNode, range: Range): string {
   const { text } = leaf;
-  let start = 0;
-  let end = text.length;
-  if (leaf.charSource) {
-    if (leafHolds(leaf, range.startContainer)) {
-      start = charIndexAt(leaf, range.startContainer, range.startOffset);
-    }
-    if (leafHolds(leaf, range.endContainer)) {
-      end = charIndexAt(leaf, range.endContainer, range.endOffset);
-    }
-  }
+  const { start, end } = coveredChars(leaf, range);
   // Hidden text is no rendered text (specs/visibility.md).
   const last = end === text.length && text.endsWith("\n") ? end - 1 : end;
   let slice = "";

@@ -30,7 +30,7 @@ export const Important: StoryObj = {
         margin-top: 12px !important;
       }
     </style>
-    <mono-wind data-test="host" class="border border-neutral-500 p-1">
+    <mono-wind class="border border-neutral-500 p-1">
       <div data-test="utility" class="mt-3! w-22.5! bg-[#f97316]! pl-5! text-2xl! text-[#fafafa]!">
         Utility
       </div>

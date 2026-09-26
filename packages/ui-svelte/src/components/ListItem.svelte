@@ -1,6 +1,6 @@
 <script lang="ts">
   import Part from "./Part.svelte";
-  import { itemContext, itemOf, itemProps, selectContext, type PartProps } from "./context.ts";
+  import { itemContext, itemOf, itemProps, listContext, type PartProps } from "./context.ts";
 
   /** One of the collection's items, named by the item itself or by
    * the value that finds it there, and held for the text and the
@@ -16,9 +16,9 @@
     value?: string;
   } = $props();
 
-  const select = selectContext.use();
-  const held = $derived(itemOf(select.api, { item, value }));
+  const list = listContext.use();
+  const held = $derived(itemOf(list.api, { item, value }));
   itemContext.set(() => held);
 </script>
 
-<Part props={itemProps(select.api, held)} {children} {child} {...rest} />
+<Part props={itemProps(list.api, held)} {children} {child} {...rest} />

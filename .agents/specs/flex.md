@@ -1,6 +1,6 @@
 # Spec: flex layout
 
-Status: normative, extracted from the implementation (`layout.ts`) and its
+Status: normative, extracted from the implementation (`flex.ts`) and its
 tests after Milestone 2 shipped. Cell-unit fundamentals (rounding, box
 model, margins) live in `cell-model.md`; this spec covers the flex
 algorithm itself. Deviations from CSS Flexbox are listed at the end.
@@ -15,14 +15,40 @@ All sizes and positions are integer cells.
 
 - **Main axis**: horizontal for row, vertical for column. **Cross axis**:
   the other one.
-- **Intrinsic outer width** of a node: border + padding + intrinsic inner
-  width, where inner is — for a text leaf, the longest hard-broken line;
-  for a flex-row container, the sum of children's intrinsic outer widths
-  plus gaps; for anything else, the max of children's intrinsic outer
-  widths. (Memoized per layout pass.)
+- **Intrinsic outer width** of a node, min- or max-content: border +
+  padding + the intrinsic inner width, where inner is — for a text leaf,
+  its longest unbreakable unit (a word under normal wrapping, a whole
+  hard line under `nowrap`) at min-content and its unwrapped text at
+  max-content; for a flex row, the sum of the children's contributions
+  plus gaps (at min-content only when it can't wrap); for a grid or a
+  table, its track or column sizing's; for anything else, the widest
+  child's (at max-content, floats share a line and multicol multiplies
+  by its columns). A child contributes its cell or
+  min-/max-content width, else its own intrinsic outer width — a
+  percent or `fit-content` width contributes as auto (css-sizing-3) —
+  clamped by its fixed min/max. (Memoized per layout pass.)
 - **Intrinsic height** of an item: the height it lays out to when given its
   allocated width (text wraps; containers stack), before any flex
   redistribution.
+
+## Reading alignment
+
+Each alignment property (`justify-content`, `align-content`,
+`align-items`, `align-self`, `justify-items`, `justify-self`) reads as
+its keyword — `self-start` and `left` as `start`, their ends as `end`,
+`flex-start` and `flex-end` apart from them, as a reversed flex axis
+swaps them alone (steps 7–9) and they are `start` and `end` elsewhere —
+with css-align's overflow position beside it: `safe` (Tailwind's
+`*-safe` utilities) sets the field's flag (`justifyContentSafe`, …),
+which changes nothing while overflow alignment is always safe
+(cell-model.md deviation 21), `unsafe` reads as the bare keyword, and
+`legacy` (`justify-items`) drops out. A baseline is safe, and places
+an item at the line edge its baseline group sits at, as `flex-start`
+(`flex-end` for `last baseline`), and anything else — a grid item, an
+out-of-flow child's static position — at its fallback `start` (`end`);
+`align-content` reads it as `flex-start` (`end`) (deviation 2). Any other value warns once and reads as the property's
+initial value (`normal`, or `auto` for `align-self` and
+`justify-self`).
 
 ## Row algorithm
 
@@ -97,24 +123,50 @@ All sizes and positions are integer cells.
    the edges at half, between splits the n−1 inner gaps), plus accumulated
    gaps, fixed margins, and auto-margin shares (leftover split equally per
    auto margin, integer-distributed). Under `row-reverse`/`column-reverse`
-   the start/end meanings flip (items are already collected reversed).
+   `flex-start` and `flex-end` swap (items are already collected
+   reversed), `normal` and a sole item's `space-between` packing to the
+   main-start with them (their fallback), where `start`, `end`, `left`
+   and `right` keep the writing mode's:
+   `justify-end` packs a `flex-row-reverse` to the left,
+   `justify-content: end` to the right (probed 2026-09-25, every
+   engine).
+   An overflowing line (a negative leftover, auto margins taking none)
+   starts at the start edge whatever the keyword: overflow alignment is
+   always safe (cell-model.md deviation 21), where CSS centers or ends
+   it past the start edge, the space-* keywords falling back to start
+   (probed 2026-09-24, every engine).
 8. **Cross-axis placement**: cross-axis auto margins win (both auto →
    centered, floor; one auto → that side absorbs the space; an item
    taller than its line gets none, at the line's start, per CSS);
    otherwise the item's margin box aligns in the line (start 0, center
    floor, end flush), so `items-end mb-1` ends the item a row above the
-   line's end, as all three engines place it (probed 2026-09-23). The
-   column's cross axis aligns the same way, with the left and right
-   margins; grid items align in their areas with the same function.
+   line's end, as all three engines place it (probed 2026-09-23); an
+   item larger than its line sits at the line's start, like an
+   overflowing line (step 7). The column's cross axis aligns the same
+   way, with the left and right margins; grid items align in their
+   areas with the same function. Under `wrap-reverse` the cross axis
+   runs backwards: `flex-start` and `flex-end` swap, `start` and `end`
+   (the `place-*` utilities) keeping the writing mode's, and an item
+   `stretch` leaves short of its line (an explicit height, a
+   `max-height`) sits at the line's end, `flex-start` being stretch's
+   fallback. A column's items (its one line) and a text leaf's anonymous
+   item flip alike, a stretched anonymous item keeping its text at its
+   start (probed 2026-09-25, every engine).
 9. **`align-content`** (multi-line only, i.e. `flex-wrap: wrap`, per CSS):
    with a bounded inner height taller than the lines, the leftover cross
    space is distributed with the shared offset math — start / center /
    end / space-between / space-around / space-evenly — or, for `stretch`
    (the CSS default `normal`), split across the LINES' heights with the
    integer distribution (each line's items then re-align/stretch within
-   the grown line). Under `wrap-reverse` the cross axis runs backwards:
-   the line order is reversed at collection time and `start`/`end` swap
-   meaning (symmetric values are unaffected).
+   the grown line). Lines overflowing a definite height start at its
+   top, as step 7 aligns an overflowing line; a `min-height` floor grows
+   with them instead. Under `wrap-reverse` the cross axis runs
+   backwards: the line order is reversed at collection time and
+   `flex-start`/`flex-end` swap, the `flex-start` that `stretch` and a
+   sole line's `space-between` fall back to included, where
+   `start`/`end` keep the writing mode's —
+   overflowing lines, which CSS runs past the top from the bottom edge
+   (probed 2026-09-25, every engine), stack from the top here.
 10. Line heights plus `row-gap` between lines add up to the container's
     content height.
 
@@ -189,12 +241,20 @@ container itself has.
 
 1. `flex-wrap: wrap` only wraps in the row direction; column containers
    never wrap.
-2. No baseline alignment (`items-baseline` behaves as `start` — cells make
-   baselines moot anyway; revisit with the forms milestone).
+2. No baseline alignment: a baseline item sits at the line edge its
+   baseline group starts from (`items-baseline` behaves as
+   `items-start`, `items-baseline-last` as `items-end`) — cells make
+   baselines moot anyway; revisit with the forms milestone. Under
+   `wrap-reverse` that puts a group's shorter items at the line's
+   bottom, where CSS lines their first rows up with the tallest's
+   (probed 2026-09-25).
 3. A column item's content height — its automatic minimum, an intrinsic
    basis — counts a percent-height child against the item's own
    definite height, as WebKit does: in an `h-20` column, an `h-15` item
    holding an `h-full` child keeps 15 rows beside an `h-15` sibling's 5,
    where Chromium and Firefox take the child's percent as `auto` for the
    minimum and share the column 10/10 (probed 2026-09-23).
-4. All the cell-model deviations (integer rounding, etc.) apply.
+4. `justify-content: right` reads as `end` in a column too, where
+   css-align makes it `start` off the inline axis (probed 2026-09-25,
+   every engine); no utility writes it.
+5. All the cell-model deviations (integer rounding, etc.) apply.

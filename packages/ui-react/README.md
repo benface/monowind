@@ -61,7 +61,7 @@ in — and holds the API for the parts under it. The parts:
   posts the initial value.
 - `Combobox` — `Root` (an element of its own), `Label`, `Control`,
   `Input`, `Trigger`, `ClearTrigger`, `Positioner`, `Content`,
-  `List`, and the item parts below. Its list anchors to the `Control`,
+  `List`, and the item parts above. Its list anchors to the `Control`,
   so it lines up under the input; filtering is yours — give `Root` the
   collection your input value narrows, and the items it leaves out are
   hidden.
@@ -70,14 +70,17 @@ A menu's, a dialog's, a popover's and a tooltip's `Root` render
 nothing — Zag gives those four no root part, and a wrapper invented
 for one would put a box in the grid's layout — so they take no
 attributes, and a `className` on one is a type error and, in a
-development build, a warning naming it. A listbox's and a select's
-root renders its part and takes attributes as any part does.
+development build, a warning naming it. A listbox's, a select's and a
+combobox's root renders its part and takes attributes as any part does.
 
 An `Item` names one of the collection's items, by `item` or by the
 `value` that finds it there, and holds it for the `ItemText` and
-`ItemIndicator` inside; `useListboxItemContext()` and
-`useSelectItemContext()` read it. `Select.ValueText` shows what is
-selected, its children the placeholder until something is.
+`ItemIndicator` inside; `Listbox.useListboxItemContext()`,
+`Select.useSelectItemContext()` and `Combobox.useComboboxItemContext()`
+read it. The item parts read the nearest listbox, select or combobox
+root, whichever of the three they are named for. `Select.ValueText`
+shows what is selected, its children the placeholder until something
+is.
 A `Menu.Root` inside another is that menu's **submenu**: Zag links the
 two, and the submenu takes the side it opens on (`right-start`, or
 `left-start` in a right-to-left menu) and the behavior its parent

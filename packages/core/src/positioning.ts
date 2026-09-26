@@ -1,9 +1,9 @@
 import {
   clampSize,
-  intrinsicOuterWidth,
+  edges,
+  fixedMargins,
   isPositioned,
   layoutNode,
-  minContentOuterWidth,
   resolveLength,
   resolveLimit,
   resolveMargin,
@@ -11,11 +11,18 @@ import {
   resolveWidthLimit,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import { alignedOffset, effectiveAlign, effectiveJustify, mainAxisOffsets } from "./flex.ts";
+import {
+  alignedOffset,
+  effectiveAlign,
+  effectiveJustify,
+  lineAlign,
+  mainAxisOffsets,
+  resolveFlexEdge,
+} from "./flex.ts";
 import { roundHalfAwayFromZero } from "./metrics.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
 import type { Clip } from "./plain-text.ts";
-import { setAnchorSize } from "./style.ts";
+import { IMPLICIT_ANCHOR, setAnchorSize } from "./style.ts";
 import { SIDES } from "./types.ts";
 import type {
   AnchorInset,
@@ -33,13 +40,10 @@ import type {
   Side,
 } from "./types.ts";
 
-/**
- * Positioning pass (specs/positioning.md): after flow layout, place
- * out-of-flow (absolute/fixed) boxes against their containing blocks and
- * apply relative offsets. Runs top-down so ancestor rects are final
- * first. See layout.ts for the deliberate import cycle between the layout
- * modules.
- */
+/** Positioning pass (specs/positioning.md): after flow layout, place
+ * out-of-flow boxes against their containing blocks and apply relative
+ * offsets, top-down so ancestor rects are final first (layout.ts has the
+ * import cycle between the layout modules). */
 
 type Effective = "static" | "relative" | "absolute";
 
@@ -125,28 +129,12 @@ function walkPositioned(
     if (effective === "relative") {
       // Pure visual offset; percent insets resolve against the parent's
       // content box. `top` wins over `bottom`, `left` over `right` (LTR).
-      const contentW =
-        node.localRect.width -
-        node.style.border.left -
-        node.style.border.right -
-        node.resolvedPadding.left -
-        node.resolvedPadding.right;
-      const contentH =
-        node.localRect.height -
-        node.style.border.top -
-        node.style.border.bottom -
-        node.resolvedPadding.top -
-        node.resolvedPadding.bottom;
-      child.localRect.x += relativeOffset(
-        child.style.insets.left,
-        child.style.insets.right,
-        contentW,
-      );
-      child.localRect.y += relativeOffset(
-        child.style.insets.top,
-        child.style.insets.bottom,
-        contentH,
-      );
+      const { border } = node.style;
+      const { insets } = child.style;
+      const contentW = node.localRect.width - edges(border, node.resolvedPadding, "x");
+      const contentH = node.localRect.height - edges(border, node.resolvedPadding, "y");
+      child.localRect.x += relativeOffset(insets.left, insets.right, contentW);
+      child.localRect.y += relativeOffset(insets.top, insets.bottom, contentH);
     } else if (effective === "absolute") {
       placeAbsolute(child, node, absX, absY, ancestors, pass);
       pass.syncScroll?.(child);
@@ -201,6 +189,38 @@ function recordAnchors(
     }
     named.delete(element);
   }
+}
+
+/** The elements of a tree naming an anchor by an authored `anchor-name`,
+ * and whether a box in it is anchored by such a name: what `anchor-scope`
+ * changes the read of (specs/anchor-positioning.md "Reading"). */
+export function namedAnchors(root: LayoutNode): { named: Set<Element>; anchored: boolean } {
+  const named = new Set<Element>();
+  let anchored = false;
+  const visit = (node: LayoutNode): void => {
+    if (!node.anonymous && node.style.anchorNames.some(authored)) named.add(node.source);
+    for (const entry of node.inlineElements ?? []) {
+      if (entry.anchorNames.some(authored)) named.add(entry.element);
+    }
+    anchored ||= anchoredByName(node.style);
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return { named, anchored };
+}
+
+/** Whether a name is an author's: the engine's (an invoker's) start with `IMPLICIT_ANCHOR`. */
+function authored(name: string | null): boolean {
+  return name !== null && !name.startsWith(IMPLICIT_ANCHOR);
+}
+
+/** Whether a box's `position-anchor`, `anchor()` or `anchor-size()` names an authored anchor. */
+function anchoredByName(style: CellStyle): boolean {
+  return (
+    authored(style.positionAnchor) ||
+    Object.values(style.anchorInsets).some((inset) => authored(inset.anchor)) ||
+    Object.values(style.anchorSizes).some((size) => authored(size.anchor))
+  );
 }
 
 /** The frames whose scroll and clip reach a box: from its nearest fixed
@@ -430,8 +450,8 @@ function resolvedInsets(
   flips: Flip[],
 ): PerSide<CellLength | null> {
   const insets = flips.length > 0 ? flipSides(style.insets, flips) : { ...style.insets };
-  const authored = Object.entries(style.anchorInsets) as [Side, AnchorInset][];
-  for (const [authoredSide, { anchor, fraction, fallback }] of authored) {
+  const anchorInsets = Object.entries(style.anchorInsets) as [Side, AnchorInset][];
+  for (const [authoredSide, { anchor, fraction, fallback }] of anchorInsets) {
     const { side, mirrored } = flipSide(authoredSide, flips);
     const rect = fraction === null ? undefined : seen(anchor ?? style.positionAnchor);
     if (rect === undefined || fraction === null) {
@@ -492,6 +512,13 @@ function fitsIn(
   );
 }
 
+/** An axis's sides, start then end, and its extent. */
+const AXES = {
+  x: { start: "left", end: "right", size: "width" },
+  y: { start: "top", end: "bottom", size: "height" },
+} as const;
+type Axis = keyof typeof AXES;
+
 /** An absolute box placed by its insets and margins in its containing
  * block, its static position where both an axis's insets are auto, or
  * under `anchor-center` centered on its anchor in the block its insets
@@ -511,131 +538,73 @@ function placeByInsets(
   const style = child.style;
   delete child.anchorArea;
   const self = flipSelf(style, flips);
-  const centerX = self.x === "anchor-center" && anchor !== undefined;
-  const centerY = self.y === "anchor-center" && anchor !== undefined;
   const margin = resolveMargin(margins, cb.width);
-  if (centerX) {
-    margin.left ??= 0;
-    margin.right ??= 0;
-  }
-  if (centerY) {
-    margin.top ??= 0;
-    margin.bottom ??= 0;
-  }
-  const inset = (side: Side, basis: number, centered: boolean): number | null => {
-    const length = insets[side];
-    if (length === null) return centered ? 0 : null;
-    return resolveLength(length, basis);
+  /** An axis's insets in cells, auto as null — as zero, its auto margins
+   * too, where it centers on the anchor. */
+  const axisInsets = (axis: Axis) => {
+    const { start, end, size } = AXES[axis];
+    const centered = self[axis] === "anchor-center" && anchor !== undefined;
+    if (centered) {
+      margin[start] ??= 0;
+      margin[end] ??= 0;
+    }
+    const inset = (side: Side): number | null => {
+      const length = insets[side];
+      if (length === null) return centered ? 0 : null;
+      return resolveLength(length, cb[size]);
+    };
+    return { centered, start: inset(start), end: inset(end) };
   };
-  const left = inset("left", cb.width, centerX);
-  const right = inset("right", cb.width, centerX);
-  const top = inset("top", cb.height, centerY);
-  const bottom = inset("bottom", cb.height, centerY);
-  const marginLeft = margin.left ?? 0;
-  const marginRight = margin.right ?? 0;
-  const marginTop = margin.top ?? 0;
-  const marginBottom = margin.bottom ?? 0;
+  const x = axisInsets("x");
+  const y = axisInsets("y");
 
-  // Used width, per CSS in priority order: an explicit width resolves
-  // against the CONTAINING BLOCK (percent included); opposing insets with
-  // an auto width stretch the box between them; otherwise shrink-to-fit
-  // (fit-content) within the space the insets and margins leave. All
-  // clamped by the element's min/max against the containing block. A
-  // centered box shrinks to fit the block its insets leave.
-  const heightAuto = style.height === undefined || style.height.kind === "auto";
-  const across = marginLeft + marginRight;
+  // A centered box shrinks to fit the block its insets leave.
+  const across = fixedMargins(margin, "x");
   const forced: { width?: number; height?: number } = {
-    width: centerX
-      ? absoluteWidth(child, cb.width, null, null, across + left! + right!, cache)
-      : absoluteWidth(child, cb.width, left, right, across, cache),
+    width: x.centered
+      ? absoluteWidth(child, cb.width, null, null, across + x.start! + x.end!, cache)
+      : absoluteWidth(child, cb.width, x.start, x.end, across, cache),
   };
-  if (top !== null && bottom !== null && heightAuto && !centerY) {
+  if (y.start !== null && y.end !== null && style.height === undefined && !y.centered) {
     forced.height = clampSize(
-      Math.max(0, cb.height - top - bottom - marginTop - marginBottom),
+      Math.max(0, cb.height - y.start - y.end - fixedMargins(margin, "y")),
       resolveLimit(style.minHeight, cb.height) ?? 0,
       resolveLimit(style.maxHeight, cb.height),
     );
   }
   layoutNode(child, cb.width, cb.height, 0, 0, "shrink", cache, forced);
-  const width = child.localRect.width;
-  const height = child.localRect.height;
 
-  // Horizontal placement. Both insets + auto margins center (`inset-0
-  // m-auto` idiom); a single auto margin absorbs the slack on its side.
-  let x: number;
-  if (centerX) {
-    const blockWidth = cb.width - left! - right!;
-    x = alignInArea(
-      "center",
-      cb.x + left!,
-      blockWidth,
-      anchor!.x,
-      anchor!.width,
-      width,
-      marginLeft,
-      marginRight,
-      "anchor-center",
-    );
-  } else if (left !== null && right !== null) {
-    x =
-      cb.x +
-      left +
-      insetMarginOffset(margin.left, margin.right, cb.width - left - right, width, "x");
-  } else if (left !== null) {
-    x = cb.x + left + marginLeft;
-  } else if (right !== null) {
-    x = cb.x + cb.width - right - width - marginRight;
-  } else {
-    x = staticPositionX(child, parent, parentAbsX, width);
-  }
-  let y: number;
-  if (centerY) {
-    const blockHeight = cb.height - top! - bottom!;
-    y = alignInArea(
-      "center",
-      cb.y + top!,
-      blockHeight,
-      anchor!.y,
-      anchor!.height,
-      height,
-      marginTop,
-      marginBottom,
-      "anchor-center",
-    );
-  } else if (top !== null && bottom !== null) {
-    y =
-      cb.y +
-      top +
-      insetMarginOffset(margin.top, margin.bottom, cb.height - top - bottom, height, "y");
-  } else if (top !== null) {
-    y = cb.y + top + marginTop;
-  } else if (bottom !== null) {
-    y = cb.y + cb.height - bottom - height - marginBottom;
-  } else {
-    y = staticPositionY(child, parent, parentAbsY, height);
-  }
-
-  child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
+  // Both insets and auto margins center (`inset-0 m-auto` idiom); one
+  // auto margin takes what is left, negative included, two split it
+  // negative only vertically — an over-wide box starts at the left (CSS
+  // 2 §10.3.7, §10.6.4).
+  const place = (axis: Axis, parentAbs: number): number => {
+    const { centered, start, end } = axis === "x" ? x : y;
+    const size = child.localRect[AXES[axis].size];
+    if (centered) {
+      const block = insetBlock(cb, insets);
+      return alignInArea(axis, "center", block, anchor!, size, margin, "anchor-center");
+    }
+    if (start === null && end === null) return staticPosition(child, parent, axis, parentAbs, size);
+    const cbStart = cb[axis];
+    const cbSize = cb[AXES[axis].size];
+    const before = margin[AXES[axis].start];
+    const after = margin[AXES[axis].end];
+    if (end === null) return cbStart + start! + (before ?? 0);
+    if (start === null) return cbStart + cbSize - end - size - (after ?? 0);
+    const space = cbSize - start - end;
+    if (before === null && after === null) {
+      const split = Math.floor((space - size) / 2);
+      return cbStart + start + (axis === "x" ? Math.max(0, split) : split);
+    }
+    return cbStart + start + (before ?? space - size - after!);
+  };
+  child.localRect = {
+    ...child.localRect,
+    x: place("x", parentAbsX) - parentAbsX,
+    y: place("y", parentAbsY) - parentAbsY,
+  };
   return margin;
-}
-
-/** A box's offset in the space two insets leave, where a margin (`null`)
- * is auto (CSS 2 §10.3.7, §10.6.4): one auto margin takes what is left,
- * negative included; two split it, negative only vertically — an
- * over-wide box starts at the left. */
-function insetMarginOffset(
-  before: number | null,
-  after: number | null,
-  space: number,
-  size: number,
-  axis: "x" | "y",
-): number {
-  if (before !== null && after !== null) return before;
-  if (before === null && after === null) {
-    const split = Math.floor((space - size) / 2);
-    return axis === "x" ? Math.max(0, split) : split;
-  }
-  return before ?? space - size - after!;
 }
 
 /** An anchor's rect as a box sees it: moved by the scroll of the
@@ -676,22 +645,17 @@ function absoluteWidth(
   cache: IntrinsicCache,
 ): number {
   const style = child.style;
-  const minW = resolveWidthLimit(style.minWidth, cbWidth, child, cache) ?? 0;
-  const maxW = resolveWidthLimit(style.maxWidth, cbWidth, child, cache);
-  if (style.width !== undefined && style.width.kind !== "auto") {
-    return clampSize(resolveSizeAgainst(style.width, cbWidth, child, cache), minW, maxW);
-  }
-  if (left !== null && right !== null) {
-    return clampSize(Math.max(0, cbWidth - left - right - margins), minW, maxW);
-  }
   const available = Math.max(0, cbWidth - (left ?? 0) - (right ?? 0) - margins);
+  const width =
+    style.width !== undefined
+      ? resolveSizeAgainst(style.width, cbWidth, child, cache)
+      : left !== null && right !== null
+        ? available
+        : resolveSizeAgainst({ kind: "fit-content" }, available, child, cache);
   return clampSize(
-    Math.min(
-      intrinsicOuterWidth(child, cache),
-      Math.max(minContentOuterWidth(child, cache), available),
-    ),
-    minW,
-    maxW,
+    width,
+    resolveWidthLimit(style.minWidth, cbWidth, child, cache) ?? 0,
+    resolveWidthLimit(style.maxWidth, cbWidth, child, cache),
   );
 }
 
@@ -824,34 +788,14 @@ function placeInArea(
   cache: IntrinsicCache,
 ): NullableInsets {
   const margin = resolveMargin(margins, region.width);
-  const across = (margin.left ?? 0) + (margin.right ?? 0);
+  const across = fixedMargins(margin, "x");
   layoutNode(child, region.width, region.height, 0, 0, "shrink", cache, {
     width: absoluteWidth(child, region.width, null, null, across, cache),
   });
   const { width, height } = child.localRect;
   const self = flipSelf(child.style, flips);
-  const x = alignInArea(
-    area.x,
-    region.x,
-    region.width,
-    anchor.x,
-    anchor.width,
-    width,
-    margin.left ?? 0,
-    margin.right ?? 0,
-    self.x,
-  );
-  const y = alignInArea(
-    area.y,
-    region.y,
-    region.height,
-    anchor.y,
-    anchor.height,
-    height,
-    margin.top ?? 0,
-    margin.bottom ?? 0,
-    self.y,
-  );
+  const x = alignInArea("x", area.x, region, anchor, width, margin, self.x);
+  const y = alignInArea("y", area.y, region, anchor, height, margin, self.y);
   child.localRect = { ...child.localRect, x: x - parentAbsX, y: y - parentAbsY };
   child.anchorArea = area;
   return margin;
@@ -864,8 +808,8 @@ type SelfAlign = CellStyle["alignSelf"] | "anchor-center";
  * under `flip-start`. */
 function flipSelf(style: CellStyle, flips: Flip[]): { x: SelfAlign; y: SelfAlign } {
   return flipAxes<SelfAlign>(
-    style.anchorCenter.x ? "anchor-center" : style.justifySelf,
-    style.anchorCenter.y ? "anchor-center" : style.alignSelf,
+    style.anchorCenter.x ? "anchor-center" : resolveFlexEdge(style.justifySelf, false),
+    style.anchorCenter.y ? "anchor-center" : resolveFlexEdge(style.alignSelf, false),
     flips,
     (self) => (self === "start" ? "end" : self === "end" ? "start" : self),
   );
@@ -941,29 +885,29 @@ function areaSpan(
  * under `center`, `span-all`, and `anchor-center`, or where
  * `justify-self`/`align-self` says. */
 function alignInArea(
+  axis: Axis,
   side: AreaSide,
-  regionStart: number,
-  regionSize: number,
-  anchorStart: number,
-  anchorSize: number,
+  region: Rect,
+  anchor: Rect,
   size: number,
-  before: number,
-  after: number,
+  margin: NullableInsets,
   self: SelfAlign,
 ): number {
-  const atStart = regionStart + before;
-  const atEnd = regionStart + regionSize - after - size;
+  const { start, end, size: extent } = AXES[axis];
+  const before = margin[start] ?? 0;
+  const after = margin[end] ?? 0;
+  const centerIn = (box: Rect) =>
+    box[axis] + Math.floor((box[extent] - size - before - after) / 2) + before;
+  const atStart = region[axis] + before;
+  const atEnd = region[axis] + region[extent] - after - size;
   if (self === "start") return atStart;
   if (self === "end") return atEnd;
-  if (self === "center") {
-    return regionStart + Math.floor((regionSize - size - before - after) / 2) + before;
-  }
+  if (self === "center") return centerIn(region);
   if (self !== "anchor-center") {
     if (side === "start" || side === "span-start") return atEnd;
     if (side === "end" || side === "span-end") return atStart;
   }
-  const centered = anchorStart + Math.floor((anchorSize - size - before - after) / 2) + before;
-  return Math.max(atStart, Math.min(centered, atEnd));
+  return Math.max(atStart, Math.min(centerIn(anchor), atEnd));
 }
 
 /** A side mirrored across the anchor. */
@@ -981,39 +925,23 @@ function flipArea(area: PositionArea, flips: Flip[]): PositionArea {
   return flipAxes(area.x, area.y, flips, (side) => MIRRORED[side]);
 }
 
-/** The sole-item static position along the main axis is exactly where a
- * single in-flow item would land — reuse the canonical justify math, which
- * already encodes the CSS content-distribution fallbacks. */
-function soleItemMainOffset(
-  justify: CellStyle["justifyContent"],
-  inner: number,
-  size: number,
-): number {
-  return mainAxisOffsets(justify, [size], Math.max(0, inner - size))[0]!;
-}
-
 /** The hypothetical sole-item box includes the element's fixed margins
  * (auto margins count as 0 in the static position, per CSS §10.1). */
 function flexStaticOffset(
   child: LayoutNode,
   parent: LayoutNode,
   slot: { direction: "row" | "column"; innerWidth: number; innerHeight: number },
-  axis: "x" | "y",
+  axis: Axis,
   size: number,
 ): number {
   const margin = resolveMargin(child.style.margin, slot.innerWidth);
-  const [before, after, inner, isMain] =
-    axis === "x"
-      ? ([margin.left ?? 0, margin.right ?? 0, slot.innerWidth, slot.direction === "row"] as const)
-      : ([
-          margin.top ?? 0,
-          margin.bottom ?? 0,
-          slot.innerHeight,
-          slot.direction === "column",
-        ] as const);
-  return isMain
-    ? soleItemMainOffset(effectiveJustify(parent.style), inner, size + before + after) + before
-    : alignedOffset(effectiveAlign(child, parent), before, after, inner, size);
+  const before = margin[AXES[axis].start] ?? 0;
+  const after = margin[AXES[axis].end] ?? 0;
+  const inner = axis === "x" ? slot.innerWidth : slot.innerHeight;
+  const outer = size + before + after;
+  return (slot.direction === "row") === (axis === "x")
+    ? mainAxisOffsets(effectiveJustify(parent.style, 1), [outer], inner - outer)[0]! + before
+    : alignedOffset(lineAlign(child, parent, false), before, after, inner, size);
 }
 
 /** The grid static position (specs/grid.md §10.1): the sole item of the
@@ -1023,56 +951,37 @@ function gridStaticOffset(
   child: LayoutNode,
   parent: LayoutNode,
   area: Rect,
-  axis: "x" | "y",
+  axis: Axis,
   size: number,
 ): number {
   const margin = resolveMargin(child.style.margin, area.width);
-  const justify =
-    child.style.justifySelf === "auto"
-      ? parent.style.justifyItems
-      : (child.style.justifySelf as CellStyle["alignItems"]);
-  const [before, after, inner, align] =
-    axis === "x"
-      ? ([margin.left ?? 0, margin.right ?? 0, area.width, justify] as const)
-      : ([
-          margin.top ?? 0,
-          margin.bottom ?? 0,
-          area.height,
-          effectiveAlign(child, parent),
-        ] as const);
-  return alignedOffset(align, before, after, inner, size);
+  const { justifySelf } = child.style;
+  const align =
+    axis === "y"
+      ? effectiveAlign(child, parent)
+      : justifySelf === "auto"
+        ? parent.style.justifyItems
+        : justifySelf;
+  const { start, end, size: extent } = AXES[axis];
+  return alignedOffset(align, margin[start] ?? 0, margin[end] ?? 0, area[extent], size);
 }
 
-function staticPositionX(
+/** Where a box without insets on an axis sits, in absolute cells: the
+ * static position its parent's layout recorded (`staticSlot`). */
+function staticPosition(
   child: LayoutNode,
   parent: LayoutNode,
-  parentAbsX: number,
-  width: number,
+  axis: Axis,
+  parentAbs: number,
+  size: number,
 ): number {
   const slot = child.staticSlot;
-  if (slot === undefined) return parentAbsX;
-  if (slot.kind === "block") return parentAbsX + slot.x;
+  if (slot === undefined) return parentAbs;
+  if (slot.kind === "block") return parentAbs + slot[axis];
   if (slot.kind === "grid") {
-    return (
-      parentAbsX + slot.staticArea.x + gridStaticOffset(child, parent, slot.staticArea, "x", width)
-    );
+    const area = slot.staticArea;
+    return parentAbs + area[axis] + gridStaticOffset(child, parent, area, axis, size);
   }
-  return parentAbsX + slot.originX + flexStaticOffset(child, parent, slot, "x", width);
-}
-
-function staticPositionY(
-  child: LayoutNode,
-  parent: LayoutNode,
-  parentAbsY: number,
-  height: number,
-): number {
-  const slot = child.staticSlot;
-  if (slot === undefined) return parentAbsY;
-  if (slot.kind === "block") return parentAbsY + slot.y;
-  if (slot.kind === "grid") {
-    return (
-      parentAbsY + slot.staticArea.y + gridStaticOffset(child, parent, slot.staticArea, "y", height)
-    );
-  }
-  return parentAbsY + slot.originY + flexStaticOffset(child, parent, slot, "y", height);
+  const origin = axis === "x" ? slot.originX : slot.originY;
+  return parentAbs + origin + flexStaticOffset(child, parent, slot, axis, size);
 }

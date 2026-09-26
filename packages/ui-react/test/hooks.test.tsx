@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { collection } from "@monowind/ui/listbox";
 import { renderToStaticMarkup, renderToString } from "react-dom/server";
-import { posted, resetByClick as resetFormByClick } from "../../ui/test/helpers.ts";
+import { by, posted, resetByClick as resetFormByClick } from "../../ui/test/helpers.ts";
 import {
   Combobox,
   Dialog,
@@ -118,10 +118,7 @@ async function mount(element: ReactNode) {
   });
   return {
     container,
-    by: (part: string, value?: string) =>
-      container.querySelector<HTMLElement>(
-        value ? `[data-part="${part}"][data-value="${value}"]` : `[data-part="${part}"]`,
-      )!,
+    by: (part: string, value?: string) => by(container, part, value),
     unmount: async () => {
       await act(async () => {
         root.unmount();
@@ -225,6 +222,41 @@ it("tells a part it is outside its root", () => {
   expect(() => renderToStaticMarkup(<Menu.Item value="lost">Cut</Menu.Item>)).toThrow(
     /inside <Menu.Root>/,
   );
+  expect(() =>
+    renderToStaticMarkup(
+      <Menu.Root>
+        <Menu.TriggerItem>Share</Menu.TriggerItem>
+      </Menu.Root>,
+    ),
+  ).toThrow("a Menu.TriggerItem must be inside a nested <Menu.Root>");
+});
+
+it("tells an item part where it belongs, outside a list root or its item", () => {
+  expect(() => renderToStaticMarkup(<Listbox.Item value="main">main</Listbox.Item>)).toThrow(
+    "an item part must be inside <Listbox.Root>, <Select.Root> or <Combobox.Root>",
+  );
+  expect(() =>
+    renderToStaticMarkup(
+      <Listbox.Root collection={collection({ items: ["main"] })}>
+        <Listbox.ItemText>main</Listbox.ItemText>
+      </Listbox.Root>,
+    ),
+  ).toThrow("an item's text and indicator must be inside its Item");
+});
+
+it("reads the nearest list root in an item part, whichever of the three it is named for", () => {
+  const markup = renderToStaticMarkup(
+    <Listbox.Root id="mixed" collection={collection({ items: ["main"] })}>
+      <Select.Item value="main">
+        <Combobox.ItemText>main</Combobox.ItemText>
+      </Select.Item>
+    </Listbox.Root>,
+  );
+  const container = document.createElement("div");
+  container.innerHTML = markup;
+  expect(by(container, "item").getAttribute("data-scope")).toBe("listbox");
+  expect(by(container, "item").getAttribute("role")).toBe("option");
+  expect(by(container, "item-text").getAttribute("data-scope")).toBe("listbox");
 });
 
 it("renders a listbox's parts on its own root element, attributes and all", async () => {

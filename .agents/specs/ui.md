@@ -401,8 +401,9 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   absolutely positioned clipped control takes no cells, which is why
   `sr-only` content needs nothing of the engine. Every other
   part renders one element (a `button` for a trigger, an `h2` for a
-  title, an `hr` for a separator, a `span` for a tooltip's, a `div`
-  else) with the API's props for it merged (Zag's `mergeProps`) under
+  title, an `hr` for a separator, a `label` for a select's and a
+  combobox's label, which Zag gives the `htmlFor` a click follows, a
+  `span` for a tooltip's, a `div` else) with the API's props for it merged (Zag's `mergeProps`) under
   the author's own — `class`, handlers, anything — and its children,
   or with `asChild` renders its one child element with those props
   merged onto it; `Positioner` owns the top layer as the function
@@ -412,15 +413,22 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   `submenu` root gets. Callbacks are props in React and Svelte and
   listeners in Vue (`@select`), each framework's idiom, and a
   controlled prop follows that idiom too: a React part takes the props
-  of the element it renders, a Vue root emits `update:open` and its
-  kin for `v-model`, and a Svelte root's are `$bindable()` for
-  `bind:`. A Svelte
+  of the element it renders, as a Vue part's type takes its element's
+  attributes, a Vue root emits `update:open` and its kin for
+  `v-model`, and a Svelte root's are `$bindable()` for `bind:`. A Vue
+  boolean prop, a part's or a machine's, is declared `Boolean`, so a
+  bare attribute (`as-child`, `disabled`) sets it as in HTML. A Svelte
   snippet renders DOM rather than describing it, so Svelte's stand-in
   for `asChild` is a `child` snippet the part hands those props to,
   and its positioner renders its own element, which carries the
-  action. The Svelte parts are `.svelte` files shipped as source under
-  the package's `svelte` condition, as its `.svelte.ts` module is; the
-  peers (Vue 3.5, Svelte 5.20) already carry the id generators.
+  action. The five item parts read the nearest listbox, select or
+  combobox root, whichever of the three they are named for, in every
+  framework — Svelte's are one set over the three lists, exported
+  under each one's names (`ListboxItem`, `SelectItem`,
+  `ComboboxItem`). The Svelte parts are `.svelte`
+  files shipped as source under the package's `svelte` condition, as
+  its `.svelte.ts` module is; the peers (Vue 3.5, Svelte 5.20)
+  already carry the id generators.
 - **Nothing else moves.** The functions stay public and are what the
   components call; the elements work as markup in any framework (Solid
   included, until `@zag-js/solid` runs on Solid 2) and are the whole
@@ -464,51 +472,72 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   engine's, tested in the positioning stories, one of them on a box the
   browser would have flipped itself.
 - Visual: a golden of each component open.
-- Proposed with the component layer: node tests of an element's
-  attributes read as props, a change reaching the machine, `open`
-  reflected both ways, an event per callback, a submenu's own
-  attributes; the React and Vue components rendered in node, the
-  Svelte ones through the Svelte example; a story per element.
+- Node, the elements (`elements.test.ts`): an element's attributes
+  read as props, a change reaching the machine, `open` reflected both
+  ways, an event per callback, a submenu's own attributes; the
+  components rendered in node — React's (`every.test.tsx`), Vue's
+  (`every.test.ts`, `components.test.ts`), Svelte's through harness
+  components (`components.test.ts`) — and Svelte's besides through
+  the Svelte example's smoke test.
 
 ## Touch points on implementation
 
-- The engine, first: ARIA widget roles among the elements that take
-  pointer events in grid mode (cell-model.md), a handled arrow key
-  left to its widget under `focus="arrows"` (focus-navigation.md), and
-  anchor names scoped to their subtree while the engine reads
-  (anchor-positioning.md), so a menu's items highlight under the
-  pointer, its arrows move the highlight, and the browser's own
-  fallback never reaches the values read.
-- `packages/ui-react`, `packages/ui-vue`, `packages/ui-svelte`: one
-  entry each, a function per component over `@monowind/ui` and the
-  adapter, each tested in node through its renderer, the Svelte one
-  besides through the Svelte example's smoke test (its runes compile
-  in the consumer's Svelte plugin; the package ships `.svelte.ts`
-  source, as Svelte libraries do).
-- `packages/ui`: `anchor.ts` (the placement table, the anchor name,
-  the props and their merge, `anchoredApi`), `top-layer.ts`
-  (`syncTopLayer`, its own `./top-layer` subpath for the framework
-  packages), `vanilla.ts` (the parts, the mount, and the anchored mount
-  over it), `items.ts` (the markup's collection and the item parts a
-  listbox, a select and a combobox share), `scroll.ts` (the highlight
-  scrolled into the content box), `menu.ts`, `listbox.ts`,
-  `select.ts`, `combobox.ts`, `dialog.ts`, `popover.ts`, `tooltip.ts`
-  (each `props`, `api`, the mount; `select.ts` also `syncHiddenSelect`
-  and `hiddenSelectOptions`, `combobox.ts` its machine), and
-  `framework.ts` (what the framework packages share: the item API's
-  shape, the trigger options, the props bound both ways, the item,
-  split and defined-prop helpers, the stray-prop and unmarked-item
-  warnings); `@zag-js/vanilla` and the machines as
-  dependencies; `dist/cdn.js` for classic scripts, `monowind.ui`.
-- storybook: `ui.stories.ts` under `Packages / ui`, beside
-  the other packages' elements, a story per component on its element,
-  the menu's on the vanilla mount (`menu(root, props)`).
-- examples: the React, Vue, and Svelte ones carry a menu and a dialog
-  through their packages; the playground's sample carries a
-  `<mono-menu>` and a `<mono-dialog>`.
-- README: the components section; the package's own README.
-- `packages/ui/src/elements/` (a base element over the
-  vanilla mount: attribute parsing, `open` reflection, events, the
-  lifecycle; one subclass per component; `defineMonoUi`), the
-  `./elements` subpath and the CDN bundle; `components/` in each
-  framework package, exported beside the functions.
+- packages/core/src/element.ts: the ARIA widget roles among the
+  interactives, which take pointer events in grid mode (`INTERACTIVE`,
+  cell-model.md "Pointer states"); an arrow key a widget handled
+  (`defaultPrevented`) left to it under `focus="arrows"`
+  (focus-navigation.md).
+- packages/core/src/styles.css: `anchor-scope: all` on an anchor-named
+  element under its measuring flag, so the browser's own fallback
+  never reaches the values read (anchor-positioning.md).
+- packages/ui/src/anchor.ts: the placement table, the anchor name, the
+  props and their merge, `anchoredApi`.
+- packages/ui/src/top-layer.ts: `syncTopLayer`, its own `./top-layer`
+  subpath for the framework packages.
+- packages/ui/src/vanilla.ts: the parts, the mount, and the anchored
+  mount over it.
+- packages/ui/src/items.ts: the markup's collection and the item parts
+  a listbox, a select and a combobox share.
+- packages/ui/src/scroll.ts: the highlight scrolled into the content
+  box.
+- packages/ui/src/menu.ts: the menu's `props`, `api` and mount.
+- packages/ui/src/listbox.ts: the listbox's.
+- packages/ui/src/select.ts: the select's, and `syncHiddenSelect` and
+  `hiddenSelectOptions`.
+- packages/ui/src/combobox.ts: the combobox's, and its machine.
+- packages/ui/src/dialog.ts: the dialog's.
+- packages/ui/src/popover.ts: the popover's.
+- packages/ui/src/tooltip.ts: the tooltip's.
+- packages/ui/src/framework.ts: what the framework packages share —
+  the item API's shape, the trigger options, the props bound both
+  ways, the item, split and defined-prop helpers, the stray-prop and
+  unmarked-item warnings.
+- packages/ui/src/elements/element.ts: the base element over the
+  vanilla mount — attribute parsing, `open` reflection, events, the
+  lifecycle.
+- packages/ui/src/elements/index.ts: one subclass per component and
+  `defineMonoUi`, the `./elements` subpath.
+- packages/ui/src/cdn.ts: the CDN bundle for classic scripts,
+  `monowind.ui`.
+- packages/ui/package.json: `@zag-js/vanilla` and the machines as
+  dependencies.
+- packages/ui-react/src/index.ts: the entry — a hook per component
+  (`hooks.ts`) over `@monowind/ui` and Zag's React adapter, and the
+  components (`components/`) beside them.
+- packages/ui-vue/src/index.ts: the same, a composable per component
+  (`composables.ts`) over Zag's Vue adapter.
+- packages/ui-svelte/src/index.svelte.ts: the same, a function per
+  component over Zag's Svelte adapter and the `.svelte` components,
+  shipped as source, as Svelte libraries do, its runes compiled in the
+  consumer's Svelte plugin.
+- apps/storybook/stories/ui.stories.ts: `Packages / ui`, beside the
+  other packages' elements, a story per component on its element, the
+  menu's on the vanilla mount (`menu(root, props)`).
+- apps/example-react/src/App.tsx: a menu and a dialog through
+  `@monowind/ui-react`.
+- apps/example-vue/src/App.vue: the same through `@monowind/ui-vue`.
+- apps/example-svelte/src/App.svelte: the same through
+  `@monowind/ui-svelte`.
+- apps/play/play.js: the sample's `<mono-menu>` and `<mono-dialog>`.
+- README.md: the "Components" section.
+- packages/ui/README.md: the package's own.

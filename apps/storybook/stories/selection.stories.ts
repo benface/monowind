@@ -1,7 +1,19 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { cellSize, copyText, dragTo, pressAt, readyHost, release, testHooks } from "./helpers.ts";
+import {
+  cellSize,
+  centerOf,
+  copyText,
+  dragTo,
+  expectColor,
+  frames,
+  moveTo,
+  pressAt,
+  readyHost,
+  release,
+  testHooks,
+} from "./helpers.ts";
 import type { Point, PressInit } from "./helpers.ts";
 
 /**
@@ -19,6 +31,12 @@ const meta: Meta = {
   tags: ["!dev", "!golden"],
 };
 export default meta;
+
+/** A highlight's color locked away. */
+const transparent = "rgba(0, 0, 0, 0)";
+
+/** An element's `::selection` style. */
+const selectionStyle = (el: Element): CSSStyleDeclaration => getComputedStyle(el, "::selection");
 
 export const LightText: StoryObj = {
   render: () => html`
@@ -571,12 +589,117 @@ export const NearestUnit: StoryObj = {
   },
 };
 
+/** Test-only (hidden from the sidebar and the visual sweep): the light
+ * DOM's own highlight is locked transparent while a selection is live
+ * in the host, from before it paints — a user's selection from its
+ * `selectstart`, held to a press's release or to a key's first
+ * `selectionchange`, an engine gesture's from the press — and left to
+ * the page otherwise, so no restyle computes a `::selection` for the
+ * host's elements with nothing selected (specs/wide-characters.md). The
+ * word's own `selection:` color shows which: Chromium and WebKit hand
+ * an element without one the slot's transparent highlight. */
+export const HighlightLock: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <p data-test="text">
+        Some <b data-test="word" class="selection:text-red-500">selectable</b> text.
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const selection = document.getSelection()!;
+    const ink = () => selectionStyle(by("word")).color;
+    expect(ink()).not.toBe(transparent);
+    // A script's selection, from its selectionchange.
+    selection.selectAllChildren(by("text"));
+    await waitFor(() => expect(ink()).toBe(transparent));
+    selection.removeAllRanges();
+    await waitFor(() => expect(ink()).not.toBe(transparent));
+    // A press's, from the selectstart before it, through the release.
+    const selectStart = () =>
+      by("text").dispatchEvent(new Event("selectstart", { bubbles: true, cancelable: true }));
+    document.body.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, isPrimary: true, button: 0 }),
+    );
+    selectStart();
+    expect(ink()).toBe(transparent);
+    release();
+    await waitFor(() => expect(ink()).not.toBe(transparent));
+    // A key's (a select-all, a Shift+Arrow), from the selectstart before
+    // it, then as the selection goes, no release to wait for.
+    selectStart();
+    expect(ink()).toBe(transparent);
+    selection.selectAllChildren(by("text"));
+    selection.removeAllRanges();
+    await waitFor(() => expect(ink()).not.toBe(transparent));
+    // A word gesture's, from the press.
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    expect(pressAt(grid, centerOf(by("word")), 2)).toBe(false);
+    expect(ink()).toBe(transparent);
+    release();
+    expect(selection.toString()).toBe("selectable");
+    selection.removeAllRanges();
+    await waitFor(() => expect(ink()).not.toBe(transparent));
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a
+ * selection crossing the host's edge locks the light DOM's highlight
+ * for as long as it lasts — a text-mode drag pressed outside the host
+ * from its first move over the host, before the move's default extends
+ * the selection in, past the release; a select-all; a script's range
+ * across the host (specs/wide-characters.md). */
+export const DragInLock: StoryObj = {
+  render: () => html`
+    <p data-test="outside">Page text a drag starts in.</p>
+    <mono-wind select="text">
+      <p data-test="text">
+        Some <b data-test="word" class="selection:text-red-500">selectable</b> text.
+      </p>
+    </mono-wind>
+    <p data-test="after">Page text after the host.</p>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const selection = document.getSelection()!;
+    const ink = () => selectionStyle(by("word")).color;
+    /** The lock a live selection holds, a few frames on. */
+    const held = async () => {
+      await frames(3);
+      expect(ink()).toBe(transparent);
+      selection.removeAllRanges();
+      await waitFor(() => expect(ink()).not.toBe(transparent));
+    };
+    expect(ink()).not.toBe(transparent);
+    // A move without a press locks nothing, nor does a press outside —
+    // which the window's capture sees, and the document its selectstart
+    // — or its moves there.
+    moveTo(by("word"), centerOf(by("word")));
+    pressAt(by("outside"), centerOf(by("outside")), 1);
+    by("outside").dispatchEvent(new Event("selectstart", { bubbles: true, cancelable: true }));
+    moveTo(by("outside"), centerOf(by("outside")), 1);
+    expect(ink()).not.toBe(transparent);
+    moveTo(by("word"), centerOf(by("word")), 1);
+    expect(ink()).toBe(transparent);
+    // The move's default: the page text's selection extended into the word.
+    selection.setBaseAndExtent(by("outside").firstChild!, 0, by("word").firstChild!, 4);
+    release();
+    await held();
+    selection.selectAllChildren(document.body);
+    await held();
+    selection.setBaseAndExtent(by("outside").firstChild!, 0, by("after").firstChild!, 4);
+    await held();
+  },
+};
+
 /** Test-only (hidden from the sidebar and the visual sweep): an
  * editable region inside a host keeps its native selection in grid
  * mode, in the editables' swapped `::selection`, where the host's other
  * text is locked (specs/wide-characters.md). */
 export const EditableRegion: StoryObj = {
-  tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <p data-test="locked">Grid text.</p>
@@ -588,10 +711,37 @@ export const EditableRegion: StoryObj = {
   play: async ({ canvasElement }) => {
     await readyHost(canvasElement);
     const by = testHooks(canvasElement);
-    const selectionGround = (name: string) =>
-      getComputedStyle(by(name), "::selection").backgroundColor;
-    const transparent = "rgba(0, 0, 0, 0)";
-    expect(selectionGround("locked")).toBe(transparent);
-    expect(selectionGround("editable")).not.toBe(transparent);
+    expect(selectionStyle(by("editable")).backgroundColor).not.toBe(transparent);
+    // The host's other text locked under a selection in it, the region
+    // still swapped.
+    document.getSelection()!.selectAllChildren(by("locked"));
+    await waitFor(() => expect(selectionStyle(by("locked")).color).toBe(transparent));
+    expect(selectionStyle(by("locked")).backgroundColor).toBe(transparent);
+    expect(selectionStyle(by("editable")).backgroundColor).not.toBe(transparent);
+    document.getSelection()!.removeAllRanges();
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): an
+ * editable's `::selection` swaps in the ground the grid paints under it
+ * — the theme's where `bg-clear` cuts through a filled region, as under
+ * an unfilled one. */
+export const EditableGroundCleared: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div contenteditable="true">
+        <p>An <b data-test="plain">unfilled</b> region.</p>
+      </div>
+      <div contenteditable="true" class="bg-red-900">
+        <p class="bg-clear">A <b data-test="cleared">cleared</b> line.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const ground = getComputedStyle(host).getPropertyValue("--mw-bg");
+    expectColor(selectionStyle(by("plain")).color, ground, "the unfilled region's selection ink");
+    expect(selectionStyle(by("cleared")).color).toBe(selectionStyle(by("plain")).color);
   },
 };

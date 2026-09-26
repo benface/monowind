@@ -1,32 +1,37 @@
 import type { GlyphBox, GlyphBoxes } from "./glyph-box.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { applyCellPaint, isBarePaint, renderGridRows, samePaint } from "./plain-text.ts";
-import type { CellSegment, LayerRows, PaintedLayer, RenderOptions } from "./plain-text.ts";
+import {
+  applyCellPaint,
+  isBarePaint,
+  PAINT_FIELDS,
+  renderGridRows,
+  samePaint,
+} from "./plain-text.ts";
+import type {
+  CellPaint,
+  CellSegment,
+  LayerRows,
+  PaintedLayer,
+  RenderOptions,
+} from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
+import { readOpacity } from "./style.ts";
 import type { LayoutNode, Backdrop } from "./types.ts";
 
 /**
- * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`) and
- * the layers' grids (specs/layers.md): each
- * text line is a cell row, same-paint runs coalesce into spans, and a
- * cluster the font draws off its cell count gets a cell-sized box
- * (specs/wide-characters.md).
+ * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`) and the
+ * layers' grids (specs/layers.md): a cell row per line, same-paint runs
+ * coalesced into spans, and a box for a cluster the font draws off its
+ * cell count (specs/wide-characters.md).
  *
- * Node identity is preserved wherever possible (specs/cell-model.md
- * "Selection"): an unchanged paint skips the write entirely, and a row
- * whose STRUCTURE (segment texts and span/bare split) matches the last
- * one only patches span styles in place — no node churn, so live
- * Selections (and an in-flight drag's anchor, which no engine lets us
- * restore) survive animation frames untouched, and a selection paint
- * touches only the rows it changed. A structural change rebuilds that
- * row's nodes: the selection is captured as flat character offsets
- * before the swap and restored after, and while a primary press is
- * down with a selection anchor in the grid the rebuild is HELD for
- * release instead (element.ts) — even restored nodes collapse
- * Chromium's drag.
+ * Node identity survives where it can (specs/cell-model.md
+ * "Selection"), as an in-flight drag's anchor survives nothing else: an
+ * unchanged paint writes nothing, a row of the same structure patches
+ * its spans' styles in place, and a rebuilt row restores the selection
+ * around the swap, or waits for release while a press holds a
+ * selection anchor in the grid (element.ts).
  */
-const lastPaintSignature = new WeakMap<HTMLElement, string>();
 interface PaintedRow {
   nodes: (Text | HTMLElement)[];
   segments: CellSegment[];
@@ -38,32 +43,28 @@ interface PaintedRow {
 interface PaintedRows {
   rows: PaintedRow[];
   cells: string[][];
-  /** The glyph cache's generation the boxes were fit under. */
+  /** The glyph cache's generation the boxes were fit under, and whether
+   * the cells were drawn resampled, which declines some fits. */
   generation: number;
+  resampled: boolean;
 }
 const lastPaint = new WeakMap<HTMLElement, PaintedRows>();
 
 /** What the painter asks of the glyph cache. */
-export type PaintGlyphs = Pick<GlyphBoxes, "box" | "shift" | "generation">;
+type PaintGlyphs = Pick<GlyphBoxes, "box" | "shift" | "generation">;
 
-export interface PaintOptions {
+/** The render's options — its fits the glyph cache's (`glyphs`) — and
+ * the painter's own. */
+interface PaintOptions extends Omit<RenderOptions, "boxed"> {
   /** Defer structural rebuilds while a primary press is down. */
   holdStructural?: boolean;
   glyphs?: PaintGlyphs;
-  selection?: RenderOptions["selection"];
-  cell?: RenderOptions["cell"];
   /** Where the layers' nodes go (specs/layers.md): a positioned box
    * at the grid's origin. */
   layers?: HTMLElement;
   /** False leaves every layer's box as placed, for a caller that
    * places them once the light elements settle (`syncLayers`). */
   placeLayers?: boolean;
-}
-
-/** True when a Selection boundary (a collapsed press anchor counts —
- * the drag it starts must survive) lies inside the grid. */
-function hasSelectionInside(target: HTMLElement): boolean {
-  return captureSelection(target, true) !== null;
 }
 
 /** Returns false when the paint was HELD: the caller asked to defer
@@ -74,37 +75,30 @@ export function paintGrid(
   target: HTMLElement,
   options: PaintOptions = {},
 ): boolean {
-  const glyphs = options.glyphs;
-  const render: RenderOptions = {};
-  // A translucent line or block glyph is boxed too: rows are separate
-  // spans, and its vertical overshoot — what joins rows at full opacity
-  // — would composite twice at the join (specs/cell-model.md "Opacity").
+  const { glyphs, selection, cell, ground, ink, readColor } = options;
+  const render: RenderOptions = { selection, cell, ground, ink, readColor };
+  // A line or block glyph drawn translucent, by its color or its span's
+  // opacity, is boxed too: rows are separate spans, and its vertical
+  // overshoot, what joins rows of an opaque color, would composite
+  // twice at the join (specs/cell-model.md "Opacity and translucency").
   if (glyphs) {
-    render.boxed = (cluster, cells, paint, resampled) => {
-      // In a resampled layer a box's clip edge is antialiased at every
-      // row, a seam the overshooting glyph covers unboxed.
-      const box = glyphs.box(cluster, cells, paint);
-      if (box !== null && (!box.past || !resampled)) {
-        return UNIFORM_BLOCK.test(cluster) ? box : true;
-      }
-      return (paint?.opacity !== undefined || paint?.faded) && isLineGlyph(cluster);
+    render.boxed = (cluster, cells, paint, resampled, translucent) => {
+      const box = fitOf(glyphs, cluster, cells, paint, resampled);
+      // A band's run overdraws its joints, twice over in a translucent color.
+      if (box !== null) return UNIFORM_BLOCK.test(cluster) && !translucent ? box : true;
+      return translucent && isLineGlyph(cluster);
     };
   }
-  if (options.selection) render.selection = options.selection;
-  if (options.cell) render.cell = options.cell;
   const { segments, cells, layers } = renderGridRows(root, render);
   if (!paintRows(target, segments, cells, options)) return false;
   const size = { width: cells[0]?.length ?? 0, height: cells.length };
   return options.layers ? paintLayers(options.layers, layers, options, size) : true;
 }
 
-/** A layer's nodes (specs/layers.md): a positioned box carrying the
- * root's transform and filter, the grid of its cells inside, and — for
- * a layer under a clipping ancestor — a clipping box around it, kept
- * per root element across paints — the grid's node identity survives
- * like the main grid's — with the box's geometry in px of its parent's
- * space, the clip's likewise, and the inverse of its transform, for
- * the pointer. */
+/** A layer's nodes, kept per root element across paints
+ * (specs/layers.md): a box carrying the root's effects around its grid,
+ * a clipping box around that under a clipping ancestor, their geometry
+ * in px of the parent's space, and the inverse transform for the pointer. */
 interface LayerNodes {
   box: HTMLElement;
   grid: HTMLElement;
@@ -229,7 +223,7 @@ function paintLayers(
   set.order = [];
   const last = new Map<HTMLElement, HTMLElement>();
   let held = false;
-  for (const { layer, segments } of layers) {
+  for (const { layer, segments, resampled } of layers) {
     const source = layer.node.source;
     let nodes = set.nodes.get(source);
     if (!nodes) {
@@ -294,7 +288,7 @@ function paintLayers(
     last.set(parent, outer);
     if (nodes.backdrop && backdrop) placeBackdrop(nodes.backdrop, backdrop, size, set.cell);
     if (options.placeLayers !== false) placeLayer(nodes, set.cell);
-    if (!paintRows(nodes.grid, segments, layer.grid, options)) held = true;
+    if (!paintRows(nodes.grid, segments, layer.grid, options, resampled)) held = true;
   }
   const painted = new Set(set.order);
   for (const [source, nodes] of set.nodes) {
@@ -349,6 +343,8 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   const scale = cs.scale || "none";
   const filter = cs.filter || "none";
   const backdropFilter = layer.node.style.visible ? layer.node.style.layer!.backdropFilter : "none";
+  // The root's live opacity, times its faded ancestors' (specs/layers.md).
+  const opacity = layer.alpha * readOpacity(cs.opacity);
   const origin = layer.parent ?? { x: 0, y: 0 };
   nodes.left = (layer.x - origin.x) * cell.width;
   nodes.top = (layer.y - origin.y) * cell.height;
@@ -376,6 +372,7 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
     scale,
     filter,
     backdropFilter,
+    opacity,
   ].join("|");
   if (nodes.placed === placed) return;
   nodes.placed = placed;
@@ -398,13 +395,15 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   style.transform = transform;
   style.filter = filter;
   style.backdropFilter = backdropFilter;
+  style.opacity = opacity < 1 ? String(opacity) : "";
   nodes.inverse = inverseOf(originX, originY, tx, ty, rotate, scale, transform);
 }
 
 /** The inverse of the box's transform, composed as CSS composes the
  * properties — about the origin: the translate, the rotate (about z;
- * another axis flattens to none, deviation 2), the scale, then the
- * transform list — or null where the platform has no matrices. */
+ * another axis flattens to none, layers.md deviation 2), the scale,
+ * then the transform list — or null where the platform has no
+ * matrices. */
 function inverseOf(
   originX: number,
   originY: number,
@@ -435,22 +434,25 @@ function inverseOf(
   }
 }
 
-/** The rows into `target`, a `<pre>`: false when held. */
+/** The rows into `target`, a `<pre>`, its cells drawn `resampled` or
+ * not: false when held. */
 function paintRows(
   target: HTMLElement,
   rows: CellSegment[][],
   cells: string[][],
   options: PaintOptions,
+  resampled = false,
 ): boolean {
   prototypes.clear();
   const glyphs = options.glyphs;
   const generation = glyphs?.generation ?? 0;
   const previous = lastPaint.get(target);
-  // A refit (a font loaded, the cell changed) restyles every box, the
-  // rows unchanged or not.
-  const refit = previous !== undefined && previous.generation !== generation;
-  const signature = signatureOf(rows);
-  if (!refit && lastPaintSignature.get(target) === signature) return true;
+  // A refit (a font loaded, the cell changed, the layer's resampling
+  // turned) restyles every box, the rows unchanged or not.
+  const refit =
+    previous !== undefined &&
+    (previous.generation !== generation || previous.resampled !== resampled);
+  if (previous && !refit && sameRows(previous.rows, rows)) return true;
 
   const rebuild = new Set<number>();
   if (previous && previous.rows.length === rows.length) {
@@ -458,22 +460,23 @@ function paintRows(
       if (!rowStructureMatches(target, previous.rows[y]!.nodes, rows[y]!)) rebuild.add(y);
     }
   }
+  // A Selection boundary in the grid holds the rebuild; a collapsed press
+  // anchor counts, as the drag it starts must survive.
   if (rebuild.size > 0 || !previous || previous.rows.length !== rows.length) {
-    if (options.holdStructural && hasSelectionInside(target)) return false;
+    if (options.holdStructural && captureSelection(target, true) !== null) return false;
   }
-  lastPaintSignature.set(target, signature);
 
   if (!previous || previous.rows.length !== rows.length) {
     const fragment = document.createDocumentFragment();
     const painted: PaintedRow[] = [];
     for (let y = 0; y < rows.length; y++) {
-      const { nodes, units } = rowNodes(rows[y]!, glyphs, y);
+      const { nodes, units } = rowNodes(rows[y]!, glyphs, y, resampled);
       for (const node of nodes) fragment.appendChild(node);
       const newline = y < rows.length - 1 ? document.createTextNode("\n") : null;
       if (newline) fragment.appendChild(newline);
       painted.push({ nodes, segments: rows[y]!, newline, units });
     }
-    lastPaint.set(target, { rows: painted, cells, generation });
+    lastPaint.set(target, { rows: painted, cells, generation, resampled });
     const saved = captureSelection(target, false);
     target.replaceChildren(fragment);
     if (saved) restoreSelection(target, saved);
@@ -488,7 +491,7 @@ function paintRows(
     const row = rows[y]!;
     const painted = previous.rows[y]!;
     if (rebuild.has(y)) {
-      const fresh = rowNodes(row, glyphs, y);
+      const fresh = rowNodes(row, glyphs, y, resampled);
       for (const node of fresh.nodes) target.insertBefore(node, painted.newline);
       for (const node of painted.nodes) node.remove();
       painted.nodes = fresh.nodes;
@@ -498,16 +501,22 @@ function paintRows(
     }
     for (let i = 0; i < row.length; i++) {
       const segment = row[i]!;
+      const last = painted.segments[i]!;
       const stale = refit && segment.box;
-      if (!stale && (isTextSegment(segment) || sameSegment(segment, painted.segments[i]!))) {
+      if (!stale && (isTextSegment(segment) || sameSegment(segment, last))) continue;
+      const span = painted.nodes[i]! as HTMLElement;
+      // A group fading over nothing changes its spans' opacity alone.
+      if (!stale && sameSegment({ ...last, opacity: segment.opacity }, segment)) {
+        span.style.opacity = segment.opacity === undefined ? "" : String(segment.opacity);
         continue;
       }
-      applySegment(painted.nodes[i]! as HTMLElement, segment, glyphs, y, boxOf(segment, glyphs));
+      applySegment(span, segment, glyphs, y, boxOf(segment, glyphs, resampled));
     }
     painted.segments = row;
   }
   previous.cells = cells;
   previous.generation = generation;
+  previous.resampled = resampled;
   if (saved) restoreSelection(target, saved);
   return true;
 }
@@ -531,10 +540,10 @@ function isLineGlyph(cluster: string): boolean {
   return code >= 0x2500 && code <= 0x259f;
 }
 
-/** Boxes repeat: a page of borders is one style over and over, so a
- * span's style is built once and the rest are clones of it. Keyed by
- * a segment's paint, and a shade's row too — all `applySegment` reads.
- * Cleared per paint, the fits being the same throughout one. */
+/** Boxes repeat: a page of borders is one span over and over, so it
+ * is built once and the rest are clones of it. Keyed by its segment,
+ * and a shade's row too; cleared per paint, the fits being the same
+ * throughout one. */
 const prototypes = new Map<string, HTMLElement>();
 
 /** A row's nodes: bare text for unpainted runs, a span per painted one. */
@@ -542,6 +551,7 @@ function rowNodes(
   row: CellSegment[],
   glyphs: PaintGlyphs | undefined,
   y: number,
+  resampled: boolean,
 ): { nodes: (Text | HTMLElement)[]; units: number } {
   const nodes: (Text | HTMLElement)[] = [];
   let units = 0;
@@ -551,7 +561,7 @@ function rowNodes(
       nodes.push(document.createTextNode(segment.text));
       continue;
     }
-    const box = boxOf(segment, glyphs);
+    const box = boxOf(segment, glyphs, resampled);
     // Only a shade's style answers to its row, its lattice shifting with
     // it; every other box is the same on every row, so one prototype
     // serves the page rather than one per row.
@@ -563,13 +573,15 @@ function rowNodes(
     const prototype = key === null ? undefined : prototypes.get(key);
     let span: HTMLElement;
     if (prototype) {
-      span = prototype.cloneNode(false) as HTMLElement;
+      span = prototype.cloneNode(true) as HTMLElement;
     } else {
       span = document.createElement("span");
+      const holder = segment.emojiOpacity === undefined ? span : document.createElement("span");
+      holder.textContent = segment.text;
+      if (holder !== span) span.append(holder);
       applySegment(span, segment, glyphs, y, box);
-      if (key !== null) prototypes.set(key, span.cloneNode(false) as HTMLElement);
+      if (key !== null) prototypes.set(key, span.cloneNode(true) as HTMLElement);
     }
-    span.textContent = segment.text;
     nodes.push(span);
   }
   return { nodes, units };
@@ -583,13 +595,30 @@ export function paintedCell(target: HTMLElement, col: number, row: number): stri
 /** The fit a boxed segment wears: a shared box repeats one single-cell
  * cluster (plain-text.ts), so the fit it holds is the first
  * character's. */
-function boxOf(segment: CellSegment, glyphs: PaintGlyphs | undefined): GlyphBox | null {
+function boxOf(
+  segment: CellSegment,
+  glyphs: PaintGlyphs | undefined,
+  resampled: boolean,
+): GlyphBox | null {
   const clusterCells = segment.box;
-  if (!clusterCells) return null;
+  if (!clusterCells || !glyphs) return null;
   const clusters = (segment.cells ?? 1) / clusterCells;
-  return (
-    glyphs?.box(clusters === 1 ? segment.text : segment.text[0]!, clusterCells, segment) ?? null
-  );
+  const cluster = clusters === 1 ? segment.text : segment.text[0]!;
+  return fitOf(glyphs, cluster, clusterCells, segment, resampled);
+}
+
+/** The glyph cache's fit for a cluster, but a past-the-row one in a
+ * resampled layer: a box's clip edge is antialiased there at every row,
+ * a seam the overshooting glyph covers unboxed (specs/wide-characters.md). */
+function fitOf(
+  glyphs: PaintGlyphs,
+  cluster: string,
+  cells: number,
+  paint: CellPaint | undefined,
+  resampled: boolean,
+): GlyphBox | null {
+  const box = glyphs.box(cluster, cells, paint);
+  return box?.past && resampled ? null : box;
 }
 
 /** A span's paint, and its box when the segment is one: an inline
@@ -607,6 +636,14 @@ function applySegment(
   delete span.dataset.shade;
   delete span.dataset.box;
   applyCellPaint(segment, span.style);
+  // WebKit draws a color emoji whole at any color alpha above 0, so its
+  // groups' opacity goes on its own span, the underline in it to fade too.
+  const emoji = span.firstElementChild;
+  if (emoji instanceof HTMLElement) {
+    span.style.textDecoration = "";
+    emoji.style.opacity = String(segment.emojiOpacity);
+    emoji.style.textDecoration = segment.textDecorationLine ?? "";
+  }
   if (!segment.box) return;
   const cells = segment.cells ?? 1;
   const clusterCells = segment.box;
@@ -615,38 +652,52 @@ function applySegment(
   // Through `--mw-cw`, so a box keeps its cells when a root font size
   // changes them and no row's text changed to repaint it.
   style.width = `calc(${cells} * var(--mw-cw, 1ch))`;
-  // Placed by an indent, not centered: a centered line lands on a
-  // rounded position and, at one joint in six, ends short of the clip's
-  // edge column (specs/wide-characters.md). A box without a fit (a
-  // translucent line's) centers.
+  // An indent places the glyph where centering would round it short of
+  // the clip's edge (specs/wide-characters.md); a box without a fit centers.
   span.dataset.box = box ? "" : "center";
   if (box) {
     const half = clusters === 1 ? "50%" : `50% / ${clusters}`;
     style.textIndent = `calc(${half} - ${box.advance / 2}px)`;
-    // Each cluster on its own cells: the grid's tracking would set
-    // them at the font's advance, not the cell's.
+    // Each cluster on its own cells, where the grid's tracking is the font's.
     if (clusters > 1) {
       style.letterSpacing = `calc(${clusterCells} * var(--mw-cw, 1ch) - ${box.advance}px)`;
     }
   }
   if (box && box.scale !== 1) style.fontSize = `${Math.round(box.scale * 1000) / 10}%`;
-  // A tiling glyph pinned to its row by its own line box, the
-  // overshoot clipped; a shade's line box also moves the glyph by the
-  // row's shift (twice it), and copies a period above and below fill
-  // the box (the shadow's `[data-shade]` rules).
+  // A tiling glyph pinned to its row by its own line box; a shade drawn
+  // by the shadow's `[data-shade]` rules at the row's phase.
   if (box?.lineHeight !== undefined) {
-    let lineHeight = box.lineHeight;
+    style.lineHeight = `${box.lineHeight}px`;
     if (box.period && glyphs) {
       span.dataset.shade = segment.text;
       style.setProperty("--mw-period", `${box.period}px`);
-      lineHeight += 2 * glyphs.shift(box, row);
+      style.setProperty("--mw-phase", `${glyphs.shift(box, row)}px`);
     }
-    style.lineHeight = `${lineHeight}px`;
   }
 }
 
 function sameSegment(a: CellSegment, b: CellSegment): boolean {
   return samePaint(a, b) && a.box === b.box && a.cells === b.cells;
+}
+
+/** A boxed segment's paint as a string, its prototype's key. */
+function segmentKey(segment: CellSegment): string {
+  let key = `${segment.text}\x1f${segment.cells}`;
+  for (const field of PAINT_FIELDS) key += `\x1f${segment[field] ?? ""}`;
+  return key;
+}
+
+function sameRows(painted: PaintedRow[], rows: CellSegment[][]): boolean {
+  return (
+    painted.length === rows.length &&
+    rows.every((row, y) => {
+      const was = painted[y]!.segments;
+      return (
+        was.length === row.length &&
+        row.every((segment, i) => segment.text === was[i]!.text && sameSegment(segment, was[i]!))
+      );
+    })
+  );
 }
 
 function rowStructureMatches(
@@ -660,6 +711,9 @@ function rowStructureMatches(
     const segment = row[i]!;
     if (isTextSegment(segment) !== (node.nodeType === Node.TEXT_NODE)) return false;
     if (node.textContent !== segment.text) return false;
+    if ((segment.emojiOpacity !== undefined) !== node.firstChild instanceof HTMLElement) {
+      return false;
+    }
     // A node detached from the grid can't be patched.
     if (node.parentNode !== target) return false;
   }
@@ -733,32 +787,4 @@ function restoreSelection(target: HTMLElement, saved: SavedSelection): void {
   } catch {
     // Leave whatever the browser collapsed the selection to.
   }
-}
-
-/** A segment's paint as a string: one list of the fields a span is
- * styled from, for the paint's signature and the prototype cache
- * both. */
-function segmentKey(s: CellSegment): string {
-  return [
-    s.text,
-    s.color ?? "",
-    s.backgroundColor ?? "",
-    s.backgrounds?.join(",") ?? "",
-    s.colors?.join(",") ?? "",
-    s.fontWeight ?? "",
-    s.fontStyle ?? "",
-    s.textDecorationLine ?? "",
-    s.opacity ?? "",
-    s.selected ? "s" : "",
-    s.box ? `b${s.cells}` : "",
-  ].join("\x1f");
-}
-
-function signatureOf(rows: CellSegment[][]): string {
-  const parts: string[] = [];
-  for (const row of rows) {
-    for (const s of row) parts.push(segmentKey(s));
-    parts.push("\n");
-  }
-  return parts.join("\x1f");
 }

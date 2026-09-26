@@ -1,10 +1,12 @@
-import { collectGapRuleRuns } from "./borders.ts";
-import { glyphSetFor } from "./glyphs.ts";
+import { gapRuleRuns } from "./borders.ts";
 import type { RuleSegment } from "./borders.ts";
-import { insetSegments } from "./flex.ts";
 import {
   blockCrossOffset,
+  blockStaticSlot,
   collapseMargins,
+  contentOrigin,
+  fixedMargins,
+  isInFlowBox,
   isOutOfFlow,
   layoutNode,
   leafLineMetrics,
@@ -13,15 +15,10 @@ import {
   resolveMargin,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
+import { warnOnce } from "./warn.ts";
 import { clusterAdvances } from "./width.ts";
 import { wrapLineSpans } from "./wrap.ts";
-import type {
-  CellStyle,
-  Insets,
-  LayoutNode,
-  MulticolLeafGeometry,
-  NullableInsets,
-} from "./types.ts";
+import type { CellStyle, LayoutNode, MulticolLeafGeometry, NullableInsets } from "./types.ts";
 
 /**
  * Multi-column layout (specs/multicol.md): css-multicol §3.4 column
@@ -44,14 +41,11 @@ function usedColumnCount(style: CellStyle, available: number, gap: number): numb
   return Math.max(1, style.columnCount ?? 1);
 }
 
-/** Column tracks for an element-children container: base width
- * `floor((available − (count − 1) × gap) / count)` with the remainder
- * distributed one cell per column left to right. */
-export function resolveColumnTracks(style: CellStyle, available: number, gap: number): number[] {
-  const count = usedColumnCount(style, available, gap);
-  const base = Math.max(1, Math.floor((available - (count - 1) * gap) / count));
-  const leftover = Math.max(0, available - (count * base + (count - 1) * gap));
-  return Array.from({ length: count }, (_, i) => base + (i < leftover ? 1 : 0));
+/** Column tracks for an element-children container: the equal columns,
+ * their leftover spread one cell per column from the left. */
+function resolveColumnTracks(style: CellStyle, available: number, gap: number): number[] {
+  const { count, width, leftover } = resolveColumns(style, available, gap);
+  return Array.from({ length: count }, (_, i) => width + (i < leftover ? 1 : 0));
 }
 
 /** Max-content inner width: `count × content + (count − 1) × gap` when
@@ -88,11 +82,25 @@ function minimalHeight(lo: number, hi: number, fits: (height: number) => boolean
   return lo;
 }
 
-/** Column geometry for a TEXT LEAF: all columns equal at the base width,
- * the remainder reported so layout can fold it into the engine-owned
- * right padding — the browser's equal fractional columns then start on
- * the same whole cells as the engine's. */
-export function resolveLeafColumns(
+/** The column fill height: `column-fill: auto` fills a restricted
+ * height, else the `balance`d height stays within it (css-multicol §7). */
+function fillHeight(
+  style: CellStyle,
+  restriction: number | undefined,
+  balance: () => number,
+): number {
+  if (style.columnFill === "auto" && restriction !== undefined) return Math.max(1, restriction);
+  const balanced = balance();
+  return restriction === undefined ? balanced : Math.max(1, Math.min(balanced, restriction));
+}
+
+/** Column geometry: all columns equal at the base width
+ * `floor((available − (count − 1) × gap) / count)`, the remainder
+ * reported — text folds it into the engine-owned right padding, so the
+ * browser's equal fractional columns start on the same whole cells as
+ * the engine's; element children's tracks spread it
+ * (resolveColumnTracks). */
+export function resolveColumns(
   style: CellStyle,
   available: number,
   gap: number,
@@ -123,15 +131,15 @@ function ruleVisible(
  * the fill height — every line box spans its own leading (`height +
  * lineGap` rows, the browser's line-box model), and a line never splits
  * across columns. `balance` packs into the minimal height that needs at
- * most `count` columns (clamped to a definite height); `auto` with a
- * definite height fills each column to it, overflow columns catching
- * the rest.
+ * most `count` columns (clamped to the `restriction`, the definite
+ * height or max-height); `auto` with a restriction fills each column to
+ * it, overflow columns catching the rest.
  */
 export function multicolLeafGeometry(
   node: LayoutNode,
   columns: { count: number; width: number },
   gap: number,
-  definiteHeight: number | undefined,
+  restriction: number | undefined,
 ): MulticolLeafGeometry {
   // Tracked text wraps at `width − tracking`: the browser fits a line
   // into its column COUNTING the phantom trailing letter-spacing gap
@@ -142,18 +150,13 @@ export function multicolLeafGeometry(
   const lineGap = node.style.lineGap;
   const units = lineUnits(heights.map((h) => h + lineGap));
 
-  let height: number;
-  if (node.style.columnFill === "auto" && definiteHeight !== undefined) {
-    height = Math.max(1, definiteHeight);
-  } else {
-    const balanced = minimalHeight(
+  const height = fillHeight(node.style, restriction, () =>
+    minimalHeight(
       units.reduce((max, unit) => Math.max(max, unit.rows - lineGap), 1),
       Math.max(1, units.reduce((sum, unit) => sum + unit.rows, 0) - lineGap),
       (limit) => fillLineColumns(units, lineGap, limit).columns <= columns.count,
-    );
-    height =
-      definiteHeight !== undefined ? Math.max(1, Math.min(balanced, definiteHeight)) : balanced;
-  }
+    ),
+  );
 
   const filled = fillLineColumns(units, lineGap, height);
   return {
@@ -188,16 +191,9 @@ interface FillUnit {
  * - "truncate": a break swallows the margin it lands in (CSS
  *   Fragmentation §5.2) — the spanless forced-height reconstruction,
  *   where the native gaps ARE margins.
- * - "glue": the spanner path, where the companion rewrites each gap as
- *   padding-bottom on the PRECEDING paragraph (`post` rows) —
- *   Chromium/Firefox keep a trailing padding monolithic with its last
- *   line (probed pixel-exact), so the gap sits invisibly at a column
- *   bottom and the next paragraph starts flush at the column top, the
- *   CSS-truncation look. WebKit instead slice-spills padding across
- *   breaks AND adds further in-engine divergences (fractional balance
- *   heights, post-spanner segment misplacement), so
- *   `detectGluedPreBreak` gates it back to the zero-margin constraint —
- *   see the layoutMulticol dispatch. */
+ * - "glue": the spanner path, each gap riding as the PRECEDING
+ *   paragraph's padding-bottom (`post` rows), monolithic with its last
+ *   line (glue mode, detectGluedPreBreak). */
 type PreBreakMode = "truncate" | "glue";
 
 /** Greedy sequential fill of line units into columns at `limit`:
@@ -270,14 +266,20 @@ function lineUnits(rows: number[]): FillUnit[] {
 }
 
 /** Whether the running browser GLUES a trailing padding to its last
- * line at a column break — measured once from a hidden fixture
- * replaying the probes' distinguishing case: a 3-line paragraph with
- * one row of padding-bottom, then a 2-line one, balanced into 2
- * columns. Glue (Chromium/Firefox) keeps the pad in column 0 and the
- * second paragraph starts flush atop column 1; WebKit slice-spills the
- * pad into column 1, pushing the paragraph a row down. An environment
- * that doesn't lay the fixture out (unit tests) measures nothing and
- * counts as glued. */
+ * line at a column break, which glue mode relies on: paragraph flow with
+ * spanners, the companion rewriting each gap as padding-bottom on the
+ * preceding paragraph. Chromium and Firefox keep it monolithic with the
+ * line (probed pixel-exact), so the gap sits invisibly at a column
+ * bottom and the next paragraph starts flush at the column top, the
+ * CSS truncation look. WebKit slice-spills it into the next column, and
+ * balances segments in ink-height sub-pixels that shift the origin of
+ * whatever segment follows (probed live), so there paragraph flow needs
+ * margin-less paragraphs in one segment. Measured once from a hidden
+ * fixture replaying the probes' distinguishing case: a 3-line paragraph
+ * with one row of padding-bottom, then a 2-line one, balanced into 2
+ * columns — glued, the second paragraph starts atop column 1; sliced, a
+ * row down. An environment that doesn't lay the fixture out (unit
+ * tests) measures nothing and counts as glued. */
 let detectedGluedPreBreak: boolean | null = null;
 function detectGluedPreBreak(): boolean {
   if (detectedGluedPreBreak !== null) return detectedGluedPreBreak;
@@ -349,12 +351,7 @@ export function multicolLines(
 /** Column rules for a multicol leaf or paragraph-flow container: one
  * band per gap per SEGMENT (a spanless geometry paints one full-height
  * segment), visibility per the side columns' occupancy. */
-export function multicolLeafRuleRuns(
-  node: LayoutNode,
-  geometry: MulticolLeafGeometry,
-  border: Insets,
-  padding: Insets,
-): void {
+export function multicolLeafRuleRuns(node: LayoutNode, geometry: MulticolLeafGeometry): void {
   const style = node.style;
   if (!style.ruleX) return;
   const contentWidth =
@@ -375,20 +372,7 @@ export function multicolLeafRuleRuns(
       });
     }
   }
-  node.decorationRuns = collectGapRuleRuns({
-    glyphs: glyphSetFor(style.glyphSet),
-    ruleX: style.ruleX,
-    ruleY: null,
-    vertical: insetSegments(vertical, style.ruleInset),
-    horizontal: [],
-    contentWidth,
-    contentHeight: geometry.totalRows,
-    border,
-    borderStyle: style.borderStyle,
-    borderWeight: style.borderWeight,
-    borderColor: style.borderColor,
-    padding,
-  });
+  node.decorationRuns = gapRuleRuns(node, vertical, [], contentWidth, geometry.totalRows);
 }
 
 interface MulticolUnit {
@@ -427,10 +411,10 @@ function isFragmentableLeaf(child: LayoutNode, container: CellStyle): boolean {
     !style.backgroundClear &&
     style.overflow.x === "visible" &&
     style.overflow.y === "visible" &&
-    (style.width === undefined || style.width.kind === "auto") &&
-    (style.height === undefined || style.height.kind === "auto") &&
-    (style.minWidth === "auto" || style.minWidth === 0 || style.minWidth === undefined) &&
-    (style.minHeight === "auto" || style.minHeight === 0 || style.minHeight === undefined) &&
+    style.width === undefined &&
+    style.height === undefined &&
+    (style.minWidth === "auto" || style.minWidth === 0) &&
+    (style.minHeight === "auto" || style.minHeight === 0) &&
     style.maxWidth === undefined &&
     style.maxHeight === undefined
   );
@@ -454,17 +438,14 @@ function layoutMulticolFlow(
   inFlow: LayoutNode[],
   innerWidth: number,
   restriction: number | undefined,
-  border: Insets,
-  padding: Insets,
   cache: IntrinsicCache,
 ): number {
   const style = node.style;
   const gap = resolveGap(style, "x", innerWidth);
-  const columns = resolveLeafColumns(style, innerWidth, gap);
-  padding.right += columns.leftover;
+  const columns = resolveColumns(style, innerWidth, gap);
+  node.resolvedPadding.right += columns.leftover;
   const lineGap = style.lineGap;
-  const originX = border.left + padding.left;
-  const originY = border.top + padding.top;
+  const { x: originX, y: originY } = contentOrigin(node);
   const contentWidth = innerWidth - columns.leftover;
 
   // Split the flow into segments at in-flow spanners.
@@ -479,20 +460,17 @@ function layoutMulticolFlow(
     }
   }
   const hasSpanners = segments.length > 1;
-  // With spanners the native balancer is trusted, and the companion
-  // rewrites inter-paragraph gaps as padding-bottom on the preceding
-  // paragraph (margins derail it — see the spec), glued to its last
-  // line. No detection needed HERE: the dispatch gate keeps non-glue
-  // (WebKit) spanner flow margin-less, and with every gap 0 the two
-  // modes are identical. Spanless flow keeps real native margins under
-  // a forced height, where breaks truncate them.
+  // With spanners the native balancer is trusted and the gaps ride as
+  // padding (glue mode, detectGluedPreBreak), where a browser that
+  // doesn't glue has none (the dispatch). Spanless flow keeps real
+  // native margins under a forced height, where breaks truncate them.
   const preBreakMode: PreBreakMode = hasSpanners ? "glue" : "truncate";
 
   const ruleSegments: { start: number; end: number; columns: number }[] = [];
-  let segTop = 0;
+  let segmentTop = 0;
   let columnsUsed = 0;
-  for (let seg = 0; seg < segments.length; seg++) {
-    const paragraphs = segments[seg]!;
+  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+    const paragraphs = segments[segmentIndex]!;
     // A segment's last bottom margin: the companion zeroes native
     // paragraph bottoms, so it survives by transfer into the following
     // spanner's top margin — a SUM, per css-multicol §6.1 (spanner
@@ -557,21 +535,16 @@ function layoutMulticolFlow(
       }
       trailingBottom = prevBottom ?? 0;
 
-      let height: number;
-      if (style.columnFill === "auto" && restriction !== undefined) {
-        height = Math.max(1, restriction);
-      } else {
-        const balanced = minimalHeight(
+      const height = fillHeight(style, restriction, () =>
+        minimalHeight(
           1,
           Math.max(
             1,
             fillLineColumns(units, lineGap, Number.POSITIVE_INFINITY, preBreakMode).maxUsed,
           ),
           (limit) => fillLineColumns(units, lineGap, limit, preBreakMode).columns <= columns.count,
-        );
-        height =
-          restriction !== undefined ? Math.max(1, Math.min(balanced, restriction)) : balanced;
-      }
+        ),
+      );
       const filled = fillLineColumns(units, lineGap, height, preBreakMode);
 
       for (let c = 0, line = 0; c < children.length; c++) {
@@ -579,7 +552,7 @@ function layoutMulticolFlow(
         const lineY: number[] = [];
         const lineX: number[] = [];
         for (let s = 0; s < spans.length; s++, line++) {
-          lineY.push(segTop + filled.top[line]!);
+          lineY.push(segmentTop + filled.top[line]!);
           lineX.push(filled.column[line]! * (columns.width + gap));
         }
         delete child.decorationRuns;
@@ -588,18 +561,15 @@ function layoutMulticolFlow(
           lineY,
           textY: lineY,
           lineX,
-          totalRows: segTop + filled.maxUsed,
+          totalRows: segmentTop + filled.maxUsed,
           columnCount: columns.count,
           columnWidth: columns.width,
           gap,
           columnsUsed: filled.columns,
         };
-        // Spanner containers: the companion reinterprets the vertical
-        // gaps as padding (engine-collapsed, so native sibling
-        // collapsing can't disagree) — the segment-leading gap as this
-        // child's padding-top, each inter-paragraph gap as the
-        // PRECEDING child's padding-bottom — see the
-        // [data-mw-multicol-balance] child rule.
+        // Glue mode's gaps as padding (detectGluedPreBreak),
+        // engine-collapsed so native sibling collapsing can't disagree:
+        // the [data-mw-multicol-balance] child rule.
         child.multicolFlow = hasSpanners
           ? { top: pre, right: margin.right, bottom: post, left: margin.left }
           : margin;
@@ -607,45 +577,45 @@ function layoutMulticolFlow(
         child.resolvedPadding = { top: 0, right: 0, bottom: 0, left: 0 };
       }
       if (units.length > 0) {
-        ruleSegments.push({ start: segTop, end: segTop + filled.maxUsed, columns: filled.columns });
+        ruleSegments.push({
+          start: segmentTop,
+          end: segmentTop + filled.maxUsed,
+          columns: filled.columns,
+        });
         columnsUsed = Math.max(columnsUsed, filled.columns);
         // The browser stacks a non-final segment's columns as FULL line
         // boxes — its trailing leading stays before the spanner.
-        segTop += filled.maxUsed + (seg < segments.length - 1 ? lineGap : 0);
+        segmentTop += filled.maxUsed + (segmentIndex < segments.length - 1 ? lineGap : 0);
       }
     }
-    const spanner = spannerAfter[seg];
+    const spanner = spannerAfter[segmentIndex];
     if (spanner) {
       // In-flow spanner (css-multicol §6.1, probed): the columns' full
       // extent (the folded content width, so it aligns with the tracks),
       // margins never collapsing with column content, the native
       // balancer handling the segments around it.
       const margin = resolveMargin(spanner.style.margin, contentWidth);
-      const marginX = (margin.left ?? 0) + (margin.right ?? 0);
-      layoutNode(spanner, Math.max(0, contentWidth - marginX), undefined, 0, 0, "fill", cache);
+      const availableWidth = Math.max(0, contentWidth - fixedMargins(margin, "x"));
+      layoutNode(spanner, availableWidth, undefined, 0, 0, "fill", cache);
       const cross = blockCrossOffset(margin, contentWidth, spanner.localRect.width);
       const marginTop = (margin.top ?? 0) + trailingBottom;
-      segTop += marginTop;
-      spanner.localRect = { ...spanner.localRect, x: originX + cross, y: originY + segTop };
+      segmentTop += marginTop;
+      spanner.localRect = { ...spanner.localRect, x: originX + cross, y: originY + segmentTop };
       spanner.multicolFlowSpan = {
         top: marginTop,
         right: 0,
         bottom: margin.bottom ?? 0,
         left: cross,
       };
-      segTop += spanner.localRect.height + (margin.bottom ?? 0);
+      segmentTop += spanner.localRect.height + (margin.bottom ?? 0);
     }
   }
-  const totalRows = segTop;
+  const totalRows = segmentTop;
 
   for (const child of node.children) {
     if (!isOutOfFlow(child.style)) continue;
     const margin = resolveMargin(child.style.margin, innerWidth);
-    child.staticSlot = {
-      kind: "block",
-      x: originX + (margin.left ?? 0),
-      y: originY + (margin.top ?? 0),
-    };
+    child.staticSlot = blockStaticSlot(margin, originX, originY);
   }
   // Spanless container geometry: drives the column rules and the
   // vertical-slack fold in layoutNode, and the native column vars.
@@ -679,11 +649,17 @@ export function layoutMulticol(
   innerWidth: number,
   definiteInnerHeight: number | undefined,
   maxInnerHeight: number | undefined,
-  border: Insets,
-  padding: Insets,
   cache: IntrinsicCache,
 ): number {
   const style = node.style;
+  for (const child of node.children) {
+    if (child.style.float === "none") continue;
+    warnOnce(
+      child.source,
+      "float on a multicol container's own child is ignored — it lays out as a " +
+        "column item; float it inside a child instead (specs/float.md).",
+    );
+  }
   // Only a definite height makes `column-fill: auto` pad segments (and
   // rules) to the full fill; max-height merely restricts.
   const restriction = restrictingHeight(definiteInnerHeight, maxInnerHeight);
@@ -691,16 +667,9 @@ export function layoutMulticol(
   // spanner) → text fragments at line granularity instead of
   // distributing atomically. With spanners the native balancer handles
   // the segments, which the probes pin down for unrestricted heights
-  // and `column-fill: balance`; paragraph margins ride along as
-  // companion-written padding glued to the preceding paragraph. Both
-  // require a browser whose balancer the engine can predict. WebKit
-  // slice-spills padding at breaks (so margins there fall back to
-  // atomic) and balances segments in INK-HEIGHT sub-pixels — the
-  // fractional height corrupts the ORIGIN of whatever segment follows,
-  // flipping its distribution (probed live) — so WebKit flow also
-  // requires all paragraphs in ONE segment (spanners only at the
-  // edges), whose origin is engine-quantized boxes alone.
-  const inFlow = node.children.filter((child) => !isOutOfFlow(child.style));
+  // and `column-fill: balance`, paragraph margins riding as padding
+  // (glue mode, detectGluedPreBreak).
+  const inFlow = node.children.filter(isInFlowBox);
   const paragraphs = inFlow.filter((child) => !child.style.columnSpan);
   const paragraphSegments = inFlow.reduce(
     (count, child, i) =>
@@ -721,7 +690,7 @@ export function layoutMulticol(
                 (child.style.margin.bottom === 0 || child.style.margin.bottom === null),
             )))))
   ) {
-    return layoutMulticolFlow(node, inFlow, innerWidth, restriction, border, padding, cache);
+    return layoutMulticolFlow(node, inFlow, innerWidth, restriction, cache);
   }
   const gap = resolveGap(style, "x", innerWidth);
   const widths = resolveColumnTracks(style, innerWidth, gap);
@@ -729,9 +698,9 @@ export function layoutMulticol(
   const xOffsets: number[] = [];
   {
     let x = 0;
-    for (const w of widths) {
+    for (const width of widths) {
       xOffsets.push(x);
-      x += w + gap;
+      x += width + gap;
     }
   }
   // Overflow columns (css-multicol §7.2) continue past the last track at
@@ -742,8 +711,7 @@ export function layoutMulticol(
   // Children measure at the NARROWEST track so a remainder column never
   // overflows its fill height; placement re-lays out at the real width.
   const measureWidth = widths[count - 1]!;
-  const originX = border.left + padding.left;
-  const originY = border.top + padding.top;
+  const { x: originX, y: originY } = contentOrigin(node);
 
   const vertical: RuleSegment[] = [];
   let y = 0;
@@ -795,22 +763,14 @@ export function layoutMulticol(
       }
       if (place) {
         const child = unit.node;
-        const colWidth = columnWidthAt(c);
-        if (colWidth !== measureWidth) {
-          const marginX = (unit.margin.left ?? 0) + (unit.margin.right ?? 0);
-          layoutNode(
-            child,
-            Math.max(0, colWidth - marginX),
-            definiteInnerHeight,
-            0,
-            0,
-            "fill",
-            cache,
-          );
+        const width = columnWidthAt(c);
+        if (width !== measureWidth) {
+          const availableWidth = Math.max(0, width - fixedMargins(unit.margin, "x"));
+          layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "fill", cache);
         }
         child.localRect = {
           ...child.localRect,
-          x: originX + columnX(c) + blockCrossOffset(unit.margin, colWidth, child.localRect.width),
+          x: originX + columnX(c) + blockCrossOffset(unit.margin, width, child.localRect.width),
           y: originY + y + used + joint,
         };
       }
@@ -826,28 +786,21 @@ export function layoutMulticol(
     if (segment.length === 0) {
       // Out-of-flow children in an empty segment sit at its start.
       for (const pending of pendingSlots) {
-        pending.child.staticSlot = {
-          kind: "block",
-          x: originX + (pending.margin.left ?? 0),
-          y: originY + y + (pending.margin.top ?? 0),
-        };
+        pending.child.staticSlot = blockStaticSlot(pending.margin, originX, originY + y);
       }
       pendingSlots = [];
       return;
     }
-    const availableH = restriction === undefined ? undefined : Math.max(1, restriction - y);
-    const fillsToHeight = style.columnFill === "auto" && availableH !== undefined;
-    let height: number;
-    if (fillsToHeight) {
-      height = availableH!;
-    } else {
-      // Minimal height needing at most `count` columns; forced breaks and
-      // margin collapsing are inside `pack`, so the search runs on it.
-      const balanced = minimalHeight(1, pack(Number.POSITIVE_INFINITY, false).maxUsed, (limit) => {
-        return pack(limit, false).columns <= count;
-      });
-      height = availableH !== undefined ? Math.min(balanced, availableH) : balanced;
-    }
+    const availableHeight = restriction === undefined ? undefined : Math.max(1, restriction - y);
+    // Balanced: the minimal height needing at most `count` columns; forced
+    // breaks and margin collapsing are inside `pack`, so the search runs on it.
+    const height = fillHeight(style, availableHeight, () =>
+      minimalHeight(
+        1,
+        pack(Number.POSITIVE_INFINITY, false).maxUsed,
+        (limit) => pack(limit, false).columns <= count,
+      ),
+    );
     const packed = pack(height, true);
     // A DEFINITE-height sequential fill keeps its column boxes (and
     // rules) at the full fill height; balanced and max-height-restricted
@@ -855,7 +808,7 @@ export function layoutMulticol(
     // taller than the fill height still grows the segment (monolithic
     // overflow).
     const segmentRows =
-      fillsToHeight && definiteInnerHeight !== undefined
+      style.columnFill === "auto" && definiteInnerHeight !== undefined
         ? Math.max(packed.maxUsed, height)
         : packed.maxUsed;
     if (style.ruleX) {
@@ -894,16 +847,8 @@ export function layoutMulticol(
       flushSegment();
       pendingBreak = false;
       const margin = resolveMargin(child.style.margin, innerWidth);
-      const marginX = (margin.left ?? 0) + (margin.right ?? 0);
-      layoutNode(
-        child,
-        Math.max(0, innerWidth - marginX),
-        definiteInnerHeight,
-        0,
-        0,
-        "fill",
-        cache,
-      );
+      const availableWidth = Math.max(0, innerWidth - fixedMargins(margin, "x"));
+      layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "fill", cache);
       y += margin.top ?? 0;
       child.localRect = {
         ...child.localRect,
@@ -914,16 +859,8 @@ export function layoutMulticol(
       continue;
     }
     const columnMargin = resolveMargin(child.style.margin, measureWidth);
-    const marginX = (columnMargin.left ?? 0) + (columnMargin.right ?? 0);
-    layoutNode(
-      child,
-      Math.max(0, measureWidth - marginX),
-      definiteInnerHeight,
-      0,
-      0,
-      "fill",
-      cache,
-    );
+    const availableWidth = Math.max(0, measureWidth - fixedMargins(columnMargin, "x"));
+    layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "fill", cache);
     segment.push({
       node: child,
       margin: columnMargin,
@@ -934,20 +871,7 @@ export function layoutMulticol(
   flushSegment();
 
   if (style.ruleX && vertical.length > 0) {
-    node.decorationRuns = collectGapRuleRuns({
-      glyphs: glyphSetFor(style.glyphSet),
-      ruleX: style.ruleX,
-      ruleY: null,
-      vertical: insetSegments(vertical, style.ruleInset),
-      horizontal: [],
-      contentWidth: innerWidth,
-      contentHeight: y,
-      border,
-      borderStyle: style.borderStyle,
-      borderWeight: style.borderWeight,
-      borderColor: style.borderColor,
-      padding,
-    });
+    node.decorationRuns = gapRuleRuns(node, vertical, [], innerWidth, y);
   }
   return y;
 }

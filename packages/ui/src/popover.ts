@@ -4,8 +4,7 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { anchoredApi, positionedProps, type MachineProps } from "./anchor.ts";
 import { liveProps, mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
 
-/** An interface of this module's own, so a framework package's types
- * reach Zag's through this module, one of its dependencies. */
+/** An interface of its own, for the reason menu.ts's `Props` is. */
 export interface Props extends Popover.Props {}
 export type Api<T extends PropTypes = PropTypes> = Popover.Api<T>;
 export type Service = Popover.Service;

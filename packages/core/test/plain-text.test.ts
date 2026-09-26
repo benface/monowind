@@ -1,16 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  applyCellPaint,
   charIndexAtCell,
+  isBarePaint,
+  PAINT_FIELDS,
   renderGridRows,
   renderPlainText,
   renderCellSegments,
+  samePaint,
 } from "../src/plain-text.ts";
 import { collectBorderRuns } from "../src/borders.ts";
 import type { BorderRun } from "../src/borders.ts";
+import { parseColor } from "../src/color.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { placePainted } from "../src/paint-origin.ts";
 import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
-import { makeNode } from "./helpers.ts";
+import { cells, layered, makeNode, scrollBox } from "./helpers.ts";
+import type { CellPaint, CellSegment } from "../src/plain-text.ts";
 import type { BackgroundClip, LayoutNode } from "../src/types.ts";
 
 /**
@@ -23,6 +30,30 @@ function plainText(root: LayoutNode, availableWidth: number): string {
   layoutRoot(root, availableWidth);
   return renderPlainText(root);
 }
+
+describe("the paint fields", () => {
+  it("are CellPaint's, samePaint and isBarePaint reading each", () => {
+    expectTypeOf<(typeof PAINT_FIELDS)[number]>().toEqualTypeOf<keyof CellPaint>();
+    const values: Required<CellPaint> = {
+      color: "rgb(0 0 0)",
+      backgroundColor: "rgb(0 0 0)",
+      opacity: 0.5,
+      emojiOpacity: 0.5,
+      gradient: "fill",
+      backgrounds: ["rgb(0 0 0)"],
+      colors: ["rgb(0 0 0)"],
+      fontWeight: "700",
+      fontStyle: "italic",
+      textDecorationLine: "underline",
+      selected: true,
+    };
+    const read = PAINT_FIELDS.filter((field) => {
+      const paint = { [field]: values[field] };
+      return !samePaint(paint, {}) && !isBarePaint(paint);
+    });
+    expect(read).toEqual([...PAINT_FIELDS]);
+  });
+});
 
 describe("visible overflow", () => {
   it("paints past the host's in-flow rows, under what follows", () => {
@@ -458,6 +489,7 @@ describe("grid paint order and dedup", () => {
     inline.inlineBox = true;
     const root = makeNode({ children: [block, inline] });
     root.localRect = { x: 0, y: 0, width: 6, height: 2 };
+    placePainted(root);
     const rows = renderCellSegments(root);
     // Cell (2,0) is block's top-right ┐ AND inline's top-left ┌ —
     // inline paints last, so cyan ┌ wins.
@@ -693,77 +725,693 @@ describe("form controls (native-rendered value)", () => {
   });
 });
 
-describe("opacity", () => {
-  it("bakes the ancestor product onto every paint; 0 keeps its glyphs", () => {
-    const half = makeNode({
-      style: { opacity: 0.5, color: "red" },
+/** A box of `width` × `height` cells at `left`, `top` of its positioned
+ * parent, painting over what the parent painted there. */
+const over = (
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  style: Partial<LayoutNode["style"]> = {},
+  text = "",
+): LayoutNode =>
+  makeNode({
+    style: {
+      position: "absolute",
+      insets: { top, right: null, bottom: null, left },
+      width: cells(width),
+      height: cells(height),
+      ...style,
+    },
+    text,
+  });
+
+describe("translucency (specs/cell-model.md)", () => {
+  it("composites a translucent background over the one beneath", () => {
+    const card = makeNode({
+      style: { position: "relative", backgroundColor: "rgb(30 40 60)" },
       children: [
-        makeNode({ style: { opacity: 0.5, color: "blue" }, text: "in", intrinsicWidth: 2 }),
+        makeNode({ text: "    " }),
+        over(0, 0, 2, 1, { backgroundColor: "rgb(255 255 255 / 0.2)" }),
       ],
     });
-    const ghost = makeNode({ style: { opacity: 0 }, text: "go", intrinsicWidth: 2 });
-    const root = makeNode({ children: [half, ghost] });
+    layoutRoot(card, 4);
+    expect(renderCellSegments(card)[0]).toEqual([
+      { text: "  ", backgroundColor: "rgb(75 83 99)" },
+      { text: "  ", backgroundColor: "rgb(30 40 60)" },
+    ]);
+  });
+
+  it("hides the glyph beneath a translucent background, a wide cluster's whole", () => {
+    const root = makeNode({
+      style: { position: "relative", backgroundColor: "rgb(200 0 0)" },
+      children: [
+        makeNode({ text: "ab界" }),
+        over(0, 0, 1, 1, { backgroundColor: "rgb(0 0 0 / 0.5)" }),
+        over(3, 0, 1, 1, { backgroundColor: "rgb(0 0 0 / 0.5)" }),
+      ],
+    });
+    layoutRoot(root, 4);
+    expect(renderPlainText(root)).toBe(" b");
+    const dim = "rgb(100 0 0)";
+    const red = "rgb(200 0 0)";
+    const backgrounds = renderCellSegments(root)[0]!.flatMap((segment) =>
+      Array.from(segment.text, () => segment.backgroundColor),
+    );
+    expect(backgrounds).toEqual([dim, red, red, dim]);
+  });
+
+  it("composites a translucent glyph color over its cell's background, opaque", () => {
+    const leaf = makeNode({
+      style: { backgroundColor: "rgb(0 0 200)", color: "rgb(255 255 255 / 0.4)" },
+      text: "hi",
+    });
+    const root = makeNode({ children: [leaf] });
     layoutRoot(root, 2);
-    const rows = renderCellSegments(root);
-    // Nested opacity multiplies (0.5 × 0.5 = 0.25) — CSS nests, it
-    // doesn't inherit.
-    expect(rows[0]![0]).toMatchObject({ text: "in", color: "blue", opacity: "0.25" });
-    // opacity: 0 still paints its glyphs (transparent spans stay
-    // selectable in grid mode), never drops them.
-    expect(rows[1]![0]).toMatchObject({ text: "go", opacity: "0" });
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "hi", color: "rgb(102 102 222)", backgroundColor: "rgb(0 0 200)" },
+    ]);
   });
 
-  it("carries an inline element's own, times its inline ancestors' and its block's", () => {
-    const host = document.createElement("div");
-    host.innerHTML =
-      '<div><p style="opacity: 0.5">a <span style="opacity: 0.5; background: red">b <em style="opacity: 0.5">c</em></span></p></div>';
-    document.body.appendChild(host);
-    const node = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(node, 20);
-    const segmentOf = (text: string) =>
-      renderCellSegments(node)[0]!.find((segment) => segment.text.includes(text));
-    host.remove();
-    expect(segmentOf("a")?.opacity).toBe("0.5");
-    // Its background fades with its glyphs.
-    expect(segmentOf("b")?.opacity).toBe("0.25");
-    // Without one of its own, the glyphs' color carries its share, 0.125
-    // in all.
-    expect(segmentOf("c")?.opacity).toBe("0.5");
-    expect(segmentOf("c")?.color).toMatch(/ 25%, transparent\)$/);
+  it("keeps a translucent color no opaque background lies under, for the browser to composite", () => {
+    const glyph = makeNode({ style: { color: "rgb(255 255 255 / 0.4)" }, text: "hi" });
+    const fill = makeNode({
+      style: { backgroundColor: "rgb(0 0 0 / 0.5)", width: cells(2), height: cells(1) },
+    });
+    const both = makeNode({
+      style: { backgroundColor: "rgb(0 0 0 / 0.5)", color: "rgb(255 255 255 / 0.4)" },
+      text: "ab",
+    });
+    const root = makeNode({ children: [glyph, fill, both] });
+    layoutRoot(root, 2);
+    const ground = { r: 0, g: 0, b: 200 / 255, a: 1 };
+    expect(renderCellSegments(root, { ground })).toEqual([
+      [{ text: "hi", color: "rgb(255 255 255 / 0.4)" }],
+      [{ text: "  ", backgroundColor: "rgb(0 0 0 / 0.5)" }],
+      [{ text: "ab", color: "rgb(255 255 255 / 0.4)", backgroundColor: "rgb(0 0 0 / 0.5)" }],
+    ]);
   });
 
-  it("fades an inline element's own paint, never the ground beneath it", () => {
+  it("swaps a selected translucent cell's colors as they show over the ground", () => {
+    const leaf = makeNode({
+      style: { backgroundColor: "rgb(0 0 0 / 0.5)", color: "rgb(255 255 255 / 0.4)" },
+      text: "ab",
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 2);
+    const ground = { r: 0, g: 0, b: 200 / 255, a: 1 };
+    const selection = new Map([[leaf, { start: 0, end: 1 }]]);
+    expect(renderCellSegments(root, { ground, selection })[0]![0]).toEqual({
+      text: "a",
+      color: "rgb(102 102 162)",
+      backgroundColor: "rgb(0 0 100)",
+      selected: true,
+    });
+  });
+
+  it("swaps a selected faded cell's own colors at its span's opacity", () => {
+    const leaf = makeNode({
+      style: { opacity: 0.4, backgroundColor: "rgb(0 0 255)", color: "rgb(255 255 0)" },
+      text: "ab",
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 2);
+    const selection = new Map([[leaf, { start: 0, end: 1 }]]);
+    expect(renderCellSegments(root, { selection })[0]![0]).toEqual({
+      text: "a",
+      color: "rgb(255 255 0)",
+      backgroundColor: "rgb(0 0 255)",
+      opacity: 0.4,
+      selected: true,
+    });
+    const span = document.createElement("span");
+    applyCellPaint(renderCellSegments(root, { selection })[0]![0]!, span.style);
+    expect([span.style.color, span.style.backgroundColor, span.style.opacity]).toEqual([
+      "rgb(0 0 255)",
+      "rgb(255 255 0)",
+      "0.4",
+    ]);
+  });
+
+  it("clips a translucent color outside sRGB to blend it, as browsers blend on an sRGB screen", () => {
+    // Tailwind's bg-yellow-400/50 over white: the browser's blue is 127.
+    const leaf = makeNode({
+      style: { backgroundColor: "oklch(0.852 0.199 91.936 / 0.5)" },
+      text: "hi",
+    });
+    const root = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [leaf] });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "hi", backgroundColor: "rgb(254 227 128)" },
+    ]);
+  });
+
+  it("tells the fit a glyph's color translucent where no opaque background lies under it", () => {
+    const stem = (backgroundColor?: string) =>
+      makeNode({ style: { backgroundColor, color: "rgb(0 0 0 / 0.5)" }, text: "│" });
+    const faded = makeNode({ style: { opacity: 0.5, color: "rgb(0 0 0)" }, text: "│" });
+    const root = makeNode({
+      children: [stem("rgb(255 255 255)"), stem(), stem("rgb(0 0 0 / 0.5)"), faded],
+    });
+    layoutRoot(root, 1);
+    const translucent: boolean[] = [];
+    renderCellSegments(root, {
+      boxed: (_cluster, _cells, _paint, _resampled, isTranslucent) => {
+        translucent.push(isTranslucent);
+        return false;
+      },
+    });
+    expect(translucent).toEqual([false, true, true, true]);
+  });
+
+  it("keeps an opaque color's own string, a form the engine never rewrites", () => {
+    const leaf = makeNode({
+      style: { backgroundColor: "oklch(0.3 0.1 250)", color: "oklch(0.9 0.05 100)" },
+      text: "ok",
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "ok", color: "oklch(0.9 0.05 100)", backgroundColor: "oklch(0.3 0.1 250)" },
+    ]);
+  });
+});
+
+describe("opacity (specs/cell-model.md)", () => {
+  /** Each cell of a row, as `[glyph, color, background, opacity]`. */
+  const cellsOf = (row: CellSegment[]) =>
+    row.flatMap((segment) =>
+      Array.from(segment.text, (glyph) => [
+        glyph,
+        segment.color,
+        segment.backgroundColor,
+        segment.opacity,
+      ]),
+    );
+
+  it("blends a faded box as one group: its label over its own fill, over an opaque background beneath", () => {
+    const button = makeNode({
+      style: {
+        opacity: 0.4,
+        backgroundColor: "rgb(0 0 255)",
+        color: "rgb(255 255 0)",
+        width: cells(3),
+      },
+      text: "ok",
+    });
+    const root = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [button] });
+    layoutRoot(root, 3);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "ok", color: "rgb(255 255 153)", backgroundColor: "rgb(153 153 255)" },
+      { text: " ", backgroundColor: "rgb(153 153 255)" },
+    ]);
+  });
+
+  it("fades a group with nothing beneath as its span's opacity, in its own colors", () => {
+    const button = makeNode({
+      style: {
+        opacity: 0.4,
+        backgroundColor: "rgb(0 0 255)",
+        color: "rgb(255 255 0)",
+        width: cells(3),
+      },
+      text: "ok",
+    });
+    const root = makeNode({ children: [button] });
+    layoutRoot(root, 3);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "ok", color: "rgb(255 255 0)", backgroundColor: "rgb(0 0 255)", opacity: 0.4 },
+      { text: " ", backgroundColor: "rgb(0 0 255)", opacity: 0.4 },
+    ]);
+  });
+
+  it("composites a group over a translucent background as one color at the alpha the two reach", () => {
+    const button = makeNode({
+      style: {
+        opacity: 0.4,
+        backgroundColor: "rgb(0 0 255)",
+        color: "rgb(255 255 0)",
+        width: cells(3),
+      },
+      text: "ok",
+    });
+    const veil = makeNode({ style: { backgroundColor: "rgb(0 0 0 / 0.5)" }, children: [button] });
+    const root = makeNode({ children: [veil] });
+    layoutRoot(root, 3);
+    // Blue at 0.4 over black at 0.5 reaches 0.7: 0.4 / 0.7 of blue, the
+    // label likewise, both at 0.7 as the span's opacity.
+    const [label, fill] = renderCellSegments(root)[0]!;
+    expect(label).toEqual({
+      text: "ok",
+      color: "rgb(146 146 0)",
+      backgroundColor: "rgb(0 0 146)",
+      opacity: expect.closeTo(0.7, 9),
+    });
+    expect(fill).toEqual({ text: " ", backgroundColor: "rgb(0 0 146 / 0.7)" });
+  });
+
+  it("keeps a group's authored translucent color over nothing, inside its span's opacity", () => {
+    const leaf = makeNode({ style: { opacity: 0.5, color: "rgb(255 255 255 / 0.4)" }, text: "hi" });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "hi", color: "rgb(255 255 255 / 0.4)", opacity: 0.5 },
+    ]);
+  });
+
+  it("flattens a faded cell a later paint lands on, the later glyph unfaded", () => {
+    const faded = makeNode({
+      style: { opacity: 0.4, backgroundColor: "rgb(0 0 255)", width: cells(2), height: cells(1) },
+    });
+    const root = makeNode({
+      style: { position: "relative", width: cells(2) },
+      children: [faded, over(0, 0, 1, 1, { color: "rgb(0 0 0)" }, "x")],
+    });
+    layoutRoot(root, 2);
+    expect(cellsOf(renderCellSegments(root)[0]!)).toEqual([
+      ["x", "rgb(0 0 0)", "rgb(0 0 255 / 0.4)", undefined],
+      [" ", undefined, "rgb(0 0 255)", 0.4],
+    ]);
+  });
+
+  it("nests groups innermost first, a translucent color in one translucent within it", () => {
+    const outer = makeNode({
+      style: { opacity: 0.4, backgroundColor: "rgb(255 0 0)", width: cells(1) },
+      children: [
+        makeNode({ style: { opacity: 0.4, backgroundColor: "rgb(0 0 255)", height: cells(1) } }),
+        makeNode({ style: { backgroundColor: "rgb(0 0 0 / 0.5)", height: cells(1) } }),
+        makeNode({ style: { height: cells(1) } }),
+      ],
+    });
+    const root = makeNode({ children: [outer] });
+    layoutRoot(root, 1);
+    expect(
+      renderCellSegments(root).map((row) => [row[0]!.backgroundColor, row[0]!.opacity]),
+    ).toEqual([
+      ["rgb(153 0 102)", 0.4],
+      ["rgb(128 0 0)", 0.4],
+      ["rgb(255 0 0)", 0.4],
+    ]);
+  });
+
+  it("carries a group's glyph over its own fill through the groups around it", () => {
+    const outer = () =>
+      makeNode({
+        style: { opacity: 0.5 },
+        children: [
+          makeNode({
+            style: {
+              opacity: 0.5,
+              backgroundColor: "rgb(0 0 255)",
+              color: "rgb(255 255 0 / 0.5)",
+              width: cells(2),
+            },
+            text: "ok",
+          }),
+        ],
+      });
+    const onRed = makeNode({ style: { backgroundColor: "rgb(255 0 0)" }, children: [outer()] });
+    const bare = makeNode({ children: [outer()] });
+    layoutRoot(onRed, 2);
+    expect(renderCellSegments(onRed)[0]).toEqual([
+      { text: "ok", color: "rgb(223 32 32)", backgroundColor: "rgb(191 0 64)" },
+    ]);
+    // With nothing beneath, the groups' opacities multiply on the span.
+    layoutRoot(bare, 2);
+    expect(renderCellSegments(bare)[0]).toEqual([
+      { text: "ok", color: "rgb(128 128 128)", backgroundColor: "rgb(0 0 255)", opacity: 0.25 },
+    ]);
+  });
+
+  it("clips a group's colors outside sRGB to blend them", () => {
+    const box = makeNode({
+      style: {
+        opacity: 0.5,
+        backgroundColor: "oklch(0.7 0.3 30)",
+        color: "oklch(0.9 0.3 140)",
+        width: cells(2),
+      },
+      text: "ok",
+    });
+    const root = makeNode({ style: { backgroundColor: "rgb(0 0 200)" }, children: [box] });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "ok", color: "rgb(37 128 100)", backgroundColor: "rgb(128 0 100)" },
+    ]);
+  });
+
+  it("blends opacity 0 into the colors beneath, its glyphs kept", () => {
+    const ghost = makeNode({ style: { opacity: 0, color: "rgb(255 0 0)" }, text: "go" });
+    const root = makeNode({ style: { backgroundColor: "rgb(0 0 200)" }, children: [ghost] });
+    layoutRoot(root, 2);
+    expect(renderPlainText(root)).toBe("go");
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "go", color: "rgb(0 0 200)", backgroundColor: "rgb(0 0 200)" },
+    ]);
+  });
+
+  it("fades a fixed descendant with its group, past the clip it escapes", () => {
+    const fixed = makeNode({
+      style: {
+        position: "fixed",
+        insets: { top: 1, right: null, bottom: null, left: 0 },
+        color: "rgb(0 0 0)",
+      },
+      text: "fx",
+    });
+    const faded = makeNode({
+      style: {
+        opacity: 0.4,
+        width: cells(2),
+        height: cells(1),
+        overflow: { x: "clip", y: "clip" },
+      },
+      children: [fixed],
+    });
+    const root = makeNode({ style: { minHeight: 2 }, children: [faded] });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[1]).toEqual([
+      { text: "fx", color: "rgb(0 0 0)", opacity: 0.4 },
+    ]);
+  });
+
+  it("wipes bg-clear through its group, the group's paint over it", () => {
+    const cleared = makeNode({
+      style: { opacity: 0.4, backgroundClear: true, color: "rgb(0 0 0)", width: cells(2) },
+      text: "x",
+    });
+    const root = makeNode({
+      style: { backgroundColor: "rgb(0 0 200)", width: cells(4) },
+      children: [cleared],
+    });
+    layoutRoot(root, 4);
+    expect(cellsOf(renderCellSegments(root)[0]!)).toEqual([
+      ["x", "rgb(0 0 0)", undefined, 0.4],
+      [" ", undefined, undefined, undefined],
+      [" ", undefined, "rgb(0 0 200)", undefined],
+      [" ", undefined, "rgb(0 0 200)", undefined],
+    ]);
+  });
+
+  it("covers a layer closed inside a group with the group's ink walked after it alone", () => {
+    const layer = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 0 },
+        width: cells(4),
+        layer: layered(),
+      },
+      text: "cd",
+    });
+    const after = over(2, 0, 2, 1, { backgroundColor: "rgb(0 0 0)" });
+    const group = makeNode({
+      style: { opacity: 0.5, position: "relative", width: cells(4) },
+      children: [makeNode({ text: "ab" }), layer, after],
+    });
+    const root = makeNode({ children: [group] });
+    layoutRoot(root, 4);
+    const painted = renderGridRows(root).layers[0]!.layer;
+    expect([...painted.holes]).toEqual([2, 3]);
+    expect(painted.alpha).toBe(0.5);
+    expect(renderPlainText(root)).toBe("cd");
+  });
+
+  it("fades a color emoji over its group's fill with nothing beneath by the span's opacity", () => {
+    const leaf = makeNode({
+      style: {
+        opacity: 0.4,
+        backgroundColor: "rgb(0 0 255)",
+        color: "rgb(0 0 0)",
+        width: cells(2),
+      },
+      text: "\u{1F600}",
+      intrinsicWidth: 2,
+    });
+    leaf.advances = [2, 0];
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]).toEqual([
+      { text: "\u{1F600}", color: "rgb(0 0 0)", backgroundColor: "rgb(0 0 255)", opacity: 0.4 },
+    ]);
+  });
+
+  it("draws a color emoji at its color's alpha times its groups' opacity, over any background", () => {
+    const emoji = (style: Partial<LayoutNode["style"]>) => {
+      const leaf = makeNode({ style, text: "\u{1F600}", intrinsicWidth: 2 });
+      leaf.advances = [2, 0];
+      return leaf;
+    };
+    const white = "rgb(255 255 255)";
+    const half = "rgb(0 0 0 / 0.5)";
+    const root = makeNode({
+      style: { width: cells(2) },
+      children: [
+        emoji({ backgroundColor: white, color: half }),
+        emoji({ color: half }),
+        emoji({ backgroundColor: white, color: half, opacity: 0.4 }),
+        makeNode({
+          style: { backgroundColor: white },
+          children: [emoji({ color: half, opacity: 0.4 })],
+        }),
+      ],
+    });
+    layoutRoot(root, 2);
+    const alphas = renderCellSegments(root).map((row) => {
+      const segment = row.find(({ text }) => text === "\u{1F600}")!;
+      return parseColor(segment.color!)!.a * (segment.opacity ?? 1) * (segment.emojiOpacity ?? 1);
+    });
+    expect(alphas).toEqual([0.5, 0.5, 0.2, 0.2]);
+  });
+
+  it("swaps a selected blended color emoji's color at its opacity, as its neighbors' blend", () => {
+    const leaf = makeNode({
+      style: { opacity: 0.4, color: "rgb(0 0 0)" },
+      text: "a\u{1F600}",
+      intrinsicWidth: 3,
+    });
+    leaf.advances = [1, 2, 0];
+    const root = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [leaf] });
+    layoutRoot(root, 3);
+    const selection = new Map([[leaf, { start: 0, end: 3 }]]);
+    const swapped = renderCellSegments(root, { selection })[0]!.map((segment) => [
+      segment.text,
+      segment.color,
+      segment.emojiOpacity,
+    ]);
+    expect(swapped).toEqual([
+      ["a", "rgb(153 153 153)", undefined],
+      ["\u{1F600}", "rgb(153 153 153)", 0.4],
+    ]);
+  });
+
+  it("draws a color emoji in a layer at its groups' opacity alone, over a translucent fill", () => {
     const host = document.createElement("div");
     host.innerHTML =
-      '<div><p style="background: blue">xx <span style="opacity: 0.5">yy</span> <span style="opacity: 0.5; background: red">zz</span></p></div>';
+      '<div style="color: rgb(0 0 0)"><p style="translate: 8px 0; background-color: rgba(255, 0, 0, 0.5)">a <span style="opacity: 0.4">\u{1F600}</span></p><div style="translate: 8px 0; background-color: rgba(255, 0, 0, 0.5)"><p style="opacity: 0.4">\u{1F600}</p></div></div>';
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 6);
+    host.remove();
+    const alphas = renderGridRows(root).layers.map(({ segments }) => {
+      const emoji = segments.flat().find((segment) => segment.text.includes("\u{1F600}"))!;
+      return parseColor(emoji.color!)!.a * (emoji.emojiOpacity ?? 1);
+    });
+    expect(alphas).toEqual([0.4, 0.4]);
+  });
+
+  it("leaves the cells beneath an opacity-0 box as they were, its glyphs in their colors", () => {
+    const GREEN_500 = "oklch(0.723 0.219 149.579)";
+    const ghost = () =>
+      makeNode({
+        style: {
+          opacity: 0,
+          backgroundColor: "rgb(255 255 255)",
+          color: "rgb(255 0 0)",
+          width: cells(2),
+        },
+        text: "go",
+      });
+    const green = makeNode({
+      style: { backgroundColor: GREEN_500, width: cells(4) },
+      children: [ghost()],
+    });
+    layoutRoot(green, 4);
+    expect(renderCellSegments(green)[0]).toEqual([
+      { text: "go", color: GREEN_500, backgroundColor: GREEN_500 },
+      { text: "  ", backgroundColor: GREEN_500 },
+    ]);
+    // With nothing beneath, the group is its span's opacity, zero.
+    const bare = makeNode({ style: { width: cells(4) }, children: [ghost()] });
+    layoutRoot(bare, 4);
+    expect(renderCellSegments(bare)[0]).toEqual([
+      { text: "go", color: "rgb(255 0 0)", backgroundColor: "rgb(255 255 255)", opacity: 0 },
+      { text: "  " },
+    ]);
+  });
+
+  it("leaves no background under a glyph over an opacity-0 box's fill with nothing beneath", () => {
+    const ghost = makeNode({
+      style: { opacity: 0, backgroundColor: "rgb(255 255 255)", width: cells(2) },
+      text: "go",
+    });
+    const root = makeNode({
+      style: { position: "relative", width: cells(2) },
+      children: [ghost, over(0, 0, 1, 1, {}, "x")],
+    });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]![0]).toEqual({ text: "x" });
+  });
+
+  it("blanks a faded color emoji under a translucent fill", () => {
+    const leaf = makeNode({ style: { opacity: 0.4 }, text: "\u{1F600}", intrinsicWidth: 2 });
+    leaf.advances = [2, 0];
+    const root = makeNode({
+      style: { position: "relative", width: cells(2) },
+      children: [leaf, over(1, 0, 1, 1, { backgroundColor: "rgb(0 0 0 / 0.5)" })],
+    });
+    layoutRoot(root, 2);
+    expect(renderPlainText(root)).toBe("");
+  });
+
+  it("leaves a faded color emoji's cell a later glyph blanks at its group's color", () => {
+    const leaf = makeNode({
+      style: { opacity: 0.4, color: "rgb(0 0 0)", textDecorationLine: "underline" },
+      text: "\u{1F600}",
+      intrinsicWidth: 2,
+    });
+    leaf.advances = [2, 0];
+    const root = makeNode({
+      style: { position: "relative", width: cells(2) },
+      children: [leaf, over(1, 0, 1, 1, {}, "x")],
+    });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]![0]).toEqual({
+      text: " ",
+      color: "rgb(0 0 0)",
+      textDecorationLine: "underline",
+      opacity: 0.4,
+    });
+  });
+
+  it("blends the cell a later glyph blanks of a faded color emoji over a blended cell", () => {
+    const leaf = makeNode({
+      style: { opacity: 0.4, color: "rgb(0 0 0)", textDecorationLine: "underline" },
+      text: "\u{1F600}",
+      intrinsicWidth: 2,
+    });
+    leaf.advances = [2, 0];
+    const root = makeNode({
+      style: { position: "relative", backgroundColor: "rgb(255 255 255)", width: cells(2) },
+      children: [leaf, over(1, 0, 1, 1, {}, "x")],
+    });
+    layoutRoot(root, 2);
+    expect(renderCellSegments(root)[0]![0]).toEqual({
+      text: " ",
+      color: "rgb(153 153 153)",
+      backgroundColor: "rgb(255 255 255)",
+      textDecorationLine: "underline",
+    });
+  });
+
+  it("fades a lab() color in its group", () => {
+    const leaf = makeNode({ style: { opacity: 0.5, color: "lab(0 0 0)" }, text: "k" });
+    const white = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [leaf] });
+    layoutRoot(white, 1);
+    expect(renderCellSegments(white)[0]).toEqual([
+      { text: "k", color: "rgb(128 128 128)", backgroundColor: "rgb(255 255 255)" },
+    ]);
+  });
+
+  it("blends a color the parser leaves alone through the caller's read", () => {
+    const leaf = makeNode({ style: { opacity: 0.4, color: "var(--mw-ansi-red)" }, text: "r" });
+    const root = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [leaf] });
+    layoutRoot(root, 1);
+    const readColor = (value: string) =>
+      value === "var(--mw-ansi-red)" ? { r: 1, g: 0, b: 0, a: 1 } : null;
+    expect(renderCellSegments(root, { readColor })[0]).toEqual([
+      { text: "r", color: "rgb(255 153 153)", backgroundColor: "rgb(255 255 255)" },
+    ]);
+  });
+
+  /** A paragraph's segment holding `text`, from HTML. */
+  const segmentsOf = (html: string, width = 20) => {
+    const host = document.createElement("div");
+    host.innerHTML = html;
     document.body.appendChild(host);
     const node = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(node, 20);
-    const segmentOf = (text: string) =>
-      renderCellSegments(node)[0]!.find((segment) => segment.text.includes(text));
+    layoutRoot(node, width);
     host.remove();
-    // The paragraph's background stays solid under the faded text.
-    expect(segmentOf("yy")).toMatchObject({ backgroundColor: "blue" });
-    expect(segmentOf("yy")?.opacity).toBeUndefined();
-    expect(segmentOf("yy")?.color).toMatch(/^color-mix\(in oklab, .+ 50%, transparent\)$/);
-    // Its own background fades with it, over the page.
-    expect(segmentOf("zz")).toMatchObject({ backgroundColor: "red", opacity: "0.5" });
+    const segments = renderCellSegments(node).flat();
+    return (text: string) => segments.find((segment) => segment.text.includes(text));
+  };
+
+  it("blends an inline element as a group over its block's cells", () => {
+    const segmentOf = segmentsOf(
+      '<div><p style="color: rgb(255 255 255); background: rgb(0 0 200)">xx <span style="opacity: 0.4">yy</span> <span style="opacity: 0.4; background: rgb(255 0 0)">zz</span></p></div>',
+    );
+    expect(segmentOf("yy")).toMatchObject({
+      color: "rgb(102 102 222)",
+      backgroundColor: "rgb(0 0 200)",
+    });
+    expect(segmentOf("zz")).toMatchObject({
+      color: "rgb(102 102 222)",
+      backgroundColor: "rgb(102 0 120)",
+    });
+  });
+
+  it("nests inline groups, each ancestor's background beneath what it holds", () => {
+    const segmentOf = segmentsOf(
+      '<div><p style="color: rgb(255 255 255); background: rgb(0 0 200)">a <span style="opacity: 0.6; background: rgb(255 0 0)">b <em style="opacity: 0.4">c</em></span></p></div>',
+    );
+    expect(segmentOf("b")).toMatchObject({
+      color: "rgb(153 153 233)",
+      backgroundColor: "rgb(153 0 80)",
+    });
+    expect(segmentOf("c")).toMatchObject({
+      color: "rgb(153 61 141)",
+      backgroundColor: "rgb(153 0 80)",
+    });
+  });
+
+  it("composites a faded inline element over a translucent ancestor's background as one color", () => {
+    const segmentOf = segmentsOf(
+      '<div><p><span style="background: rgba(0, 0, 0, 0.5)">a <em style="opacity: 0.4; background: rgb(0 0 255); color: rgb(255 255 0)">b</em></span></p></div>',
+    );
+    expect(segmentOf("b")).toMatchObject({
+      color: "rgb(146 146 0)",
+      backgroundColor: "rgb(0 0 146)",
+      opacity: expect.closeTo(0.7, 9),
+    });
+  });
+
+  it("fades a color emoji in a faded inline element over its ancestor's fill by its alpha alone", () => {
+    const segmentOf = segmentsOf(
+      '<div><p style="background: rgb(255 255 255)"><span style="background: rgb(0 0 255)">a <em style="opacity: 0.4">\u{1F600}</em></span></p></div>',
+    );
+    const emoji = segmentOf("\u{1F600}")!;
+    expect([emoji.backgroundColor, emoji.color, emoji.emojiOpacity, emoji.opacity]).toEqual([
+      "rgb(0 0 255)",
+      "rgb(0 0 0)",
+      0.4,
+      undefined,
+    ]);
+  });
+
+  it("paints an outer inline element's background under an inner one's characters", () => {
+    const segmentOf = segmentsOf(
+      '<div><p><span style="background: rgb(255 255 0)">a <b>b</b></span></p></div>',
+    );
+    expect(segmentOf("b")?.backgroundColor).toBe("rgb(255 255 0)");
   });
 
   it("fades what a faded inline element holds: an atomic box, an out-of-flow box, a split block", () => {
-    const host = document.createElement("div");
-    host.innerHTML =
-      '<div style="position: relative"><p>a <span style="opacity: 0.5">b <span style="display: inline-block">box</span><span style="position: absolute; right: 0; bottom: 0">abs</span></span></p><div>c <span style="opacity: 0.5">d<div>block</div>e</span></div></div>';
-    document.body.appendChild(host);
-    const node = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(node, 30);
-    const segments = renderCellSegments(node).flat();
-    const opacityOf = (text: string) =>
-      segments.find((segment) => segment.text.includes(text))?.opacity;
-    host.remove();
-    expect(opacityOf("box")).toBe("0.5");
-    expect(opacityOf("abs")).toBe("0.5");
-    expect(opacityOf("block")).toBe("0.5");
+    const segmentOf = segmentsOf(
+      '<div style="position: relative; color: rgb(0 0 0)"><p>a <span style="opacity: 0.4">b <span style="display: inline-block">box</span><span style="position: absolute; right: 0; bottom: 0">abs</span></span></p><div>c <span style="opacity: 0.4">d<div>block</div>e</span></div></div>',
+      30,
+    );
+    for (const text of ["b", "box", "abs", "d", "block", "e"]) {
+      expect([segmentOf(text)?.color, segmentOf(text)?.opacity], text).toEqual(["rgb(0 0 0)", 0.4]);
+    }
   });
 });
 
@@ -839,7 +1487,7 @@ describe("charIndexAtCell (specs/semantic-selection.md)", () => {
     });
     const root = makeNode({ children: [leaf] });
     layoutRoot(root, 4);
-    leaf.scroll = { x: 2, y: 0 };
+    scrollBox(root, leaf, 2, 0);
     expect(renderPlainText(root).split("\n")[0]).toBe("cdef");
     expect(charIndexAtCell(leaf, 0, 0, 0, 0)).toBe(2);
   });

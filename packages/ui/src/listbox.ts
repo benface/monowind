@@ -19,7 +19,8 @@ export { machine } from "@zag-js/listbox";
  * components' props at runtime. */
 export { props as propNames } from "@zag-js/listbox";
 /** Zag's collections, the items a listbox holds: a list, or a grid of
- * items in `columnCount` columns. */
+ * items in `columnCount` columns. A select and a combobox build the
+ * same `ListCollection`, so these serve all three lists. */
 export { collection, gridCollection } from "@zag-js/listbox";
 
 /** The machine's props as it takes them, `props()`'s return, with the
@@ -99,8 +100,6 @@ export function listbox(root: Element, machineProps: MountProps): Mounted<Api> {
     start(Listbox.machine, () => live.machine),
     (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
-      // The root is the element the mount was given, its id the
-      // markup's — the page finds it by that.
       spread(root, omit(current.getRootProps(), "id"));
       spread(label, current.getLabelProps());
       spread(content, current.getContentProps());

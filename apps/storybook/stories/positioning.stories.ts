@@ -3,8 +3,10 @@ import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   cellSize,
+  countLayouts,
   expectOnItsCells,
   expectTouching,
+  frames,
   hasTypedOM,
   readsAutoMinimum,
   readyGrid,
@@ -78,6 +80,33 @@ export const InlineRelative: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): `z-index`
+ * stays on the box it is authored on. A menu raised inside a raised box
+ * paints over the paragraph beside it, and in text mode its link takes
+ * the pointer there. */
+export const ZIndexStaysOwn: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind select="text">
+      <div class="relative z-20 w-40">
+        <div class="absolute top-1 left-2 z-10 border bg-clear px-1">
+          <a data-test="link" href="#">menu link</a>
+        </div>
+        <p data-test="paragraph">${SECTIONS[0]!.text}</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host, by } = await readyGrid(canvasElement);
+    expect(rowsOf(host).some((row) => row.includes("menu link"))).toBe(true);
+    expect(getComputedStyle(by("paragraph")).zIndex).toBe("auto");
+    const link = by("link").getBoundingClientRect();
+    expect(document.elementFromPoint(link.left + link.width / 2, link.top + link.height / 2)).toBe(
+      by("link"),
+    );
+  },
 };
 
 /*
@@ -210,14 +239,12 @@ export const FixedShiftSteady: StoryObj = {
     const writes: MutationRecord[] = [];
     const observer = new MutationObserver((records) => writes.push(...records));
     observer.observe(by("fixed"), { attributes: true, attributeFilter: ["style"] });
-    let layouts = 0;
-    const measuring = new MutationObserver((records) => (layouts += records.length));
-    measuring.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    const layouts = countLayouts(host);
     by("edited").append(" Again.");
-    await waitFor(() => expect(layouts).toBeGreaterThanOrEqual(2));
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await waitFor(() => expect(layouts.count).toBeGreaterThanOrEqual(1));
+    await frames();
     observer.disconnect();
-    measuring.disconnect();
+    layouts.stop();
     expect(cells(by("fixed"), "--mw-sy")).toBe(3);
     expect(writes).toHaveLength(0);
   },
@@ -371,6 +398,142 @@ export const StickyTable: StoryObj = {
     expect(boxOf(corner)).toEqual({ row: top + 1, col: left + 1 });
     expect(boxOf(row2)).toEqual({ row: top + 3, col: left + 1 });
     expect(cells(corner, "--mw-sx")).toBe(4);
+  },
+};
+
+/**
+ * Header cells sticky on their own, `<thead>` not: left at
+ * `z-index: auto`, right at `z-10`. Scrolled four rows, the stuck
+ * cells paint under the body rows, where CSS paints them over
+ * (positioning.md "Paint order": stacking among siblings only).
+ */
+export const StickyHeaderCells: StoryObj = {
+  tags: ["!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex gap-2">
+        ${["", "z-10"].map(
+          (z) => html`
+            <div data-test="scroller" class="h-8 overflow-auto pe-1 scrollbar-y-2">
+              <table class="border-collapse">
+                <thead>
+                  <tr>
+                    ${["#", ...COLUMNS.slice(0, 3)].map(
+                      (c) => html`
+                        <th
+                          class="${z} sticky top-0 border border-neutral-400 bg-clear px-1 text-amber-300"
+                        >
+                          ${c}
+                        </th>
+                      `,
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${ROWS.map(
+                    (r, i) => html`
+                      <tr>
+                        <th class="border border-neutral-400 px-1 text-left text-cyan-300">${r}</th>
+                        ${COLUMNS.slice(0, 3).map(
+                          (_, j) =>
+                            html`<td class="border border-neutral-400 px-1">
+                              ${(i + 1) * (j + 1)}
+                            </td>`,
+                        )}
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `,
+        )}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host } = await readyGrid(canvasElement);
+    for (const scroller of canvasElement.querySelectorAll<HTMLElement>('[data-test="scroller"]'))
+      scroller.scrollTo({ top: 4 * cellSize(host).height, behavior: "instant" });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a sticky
+ * heading in a fixed box and one in a scrolling popover, both inside a
+ * scrolled list. A fixed box escapes the list's scroll, so no scroller
+ * lies between it and its heading, which stays on its first row, and a
+ * fixed box inside it stays on the host's cells; the popover's heading
+ * sticks to the popover's own scroll. The grid and the light elements
+ * on the same cells. */
+export const StickyInFixed: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="list" class="h-6 w-28 overflow-y-auto border">
+        ${Array.from({ length: 12 }, (_, i) => html`<p>Row ${i + 1}</p>`)}
+        <div data-test="fixed" class="fixed top-0 left-32 w-20 border">
+          <p data-test="fixed-heading" class="sticky top-0 bg-clear">Fixed heading</p>
+          ${["One", "Two", "Three", "Four"].map((word) => html`<p>${word}</p>`)}
+          <p data-test="inner-fixed" class="fixed top-2 left-54">Inner fixed</p>
+        </div>
+        <div data-test="popover" popover class="h-6 w-24 overflow-y-auto border bg-clear">
+          <p data-test="popover-heading" class="sticky top-0 bg-clear">Popover heading</p>
+          ${Array.from({ length: 8 }, (_, i) => html`<p>Item ${i + 1}</p>`)}
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, measure } = await readyGrid(canvasElement);
+    const cellHeight = cellSize(host).height;
+    const rowOf = (text: string) => measure().rows.findIndex((row) => row.includes(text));
+    const expectBelowTop = (box: HTMLElement, heading: HTMLElement, text: string) => {
+      const { boxOf } = measure();
+      expect(rowOf(text)).toBe(boxOf(box).row + 1);
+      expect(boxOf(heading).row).toBe(boxOf(box).row + 1);
+    };
+    by("list").scrollTo({ top: 3 * cellHeight, behavior: "instant" });
+    await waitFor(() => expect(cells(by("fixed"), "--mw-sy")).toBe(3));
+    expectBelowTop(by("fixed"), by("fixed-heading"), "Fixed heading");
+    expect(cells(by("fixed-heading"), "--mw-sy")).toBe(0);
+    expect(rowOf("Inner fixed")).toBe(2);
+    expect(measure().boxOf(by("inner-fixed")).row).toBe(2);
+    by("popover").showPopover();
+    await waitFor(() => expect(rowOf("Popover heading")).toBeGreaterThanOrEqual(0));
+    expectBelowTop(by("popover"), by("popover-heading"), "Popover heading");
+    by("popover").scrollTo({ top: 2 * cellHeight, behavior: "instant" });
+    await waitFor(() => expect(cells(by("popover-heading"), "--mw-sy")).toBe(2));
+    expectBelowTop(by("popover"), by("popover-heading"), "Popover heading");
+    expect(rowOf("Item 3")).toBe(rowOf("Popover heading") + 1);
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a sticky
+ * heading among its scroller's runs of text — a box the browser's flow
+ * places — held on the scrollport's first row, its light element with
+ * it. */
+export const StickyAmongText: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="scroller" class="h-4 max-w-40 overflow-y-auto">
+        ${SECTIONS[0]!.text}
+        <h2 data-test="heading" class="sticky top-0 bg-clear font-bold">Heading</h2>
+        ${SECTIONS[1]!.text} ${SECTIONS[2]!.text}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, measure } = await readyGrid(canvasElement);
+    const heading = by("heading");
+    expect(heading.hasAttribute("data-mw-flow")).toBe(true);
+    const top = measure().boxOf(by("scroller")).row;
+    const slot = measure().boxOf(heading).row - top;
+    by("scroller").scrollTo({ top: (slot + 3) * cellSize(host).height, behavior: "instant" });
+    await waitFor(() => expect(cells(heading, "--mw-sy")).toBe(3));
+    expect(measure().rows[top]!.startsWith("Heading")).toBe(true);
+    expect(measure().boxOf(heading).row).toBe(top);
+    measure().expectNativeOnGrid(heading);
   },
 };
 
@@ -683,6 +846,13 @@ export const AnchorFallbackIsTheEngines: StoryObj = {
       () => by("note").getBoundingClientRect().bottom,
       () => by("word").getBoundingClientRect().top,
     );
+    // An anchor named since the last layout is kept out of the read in
+    // the layout that first reads it.
+    by("word").classList.remove("[anchor-name:--pinned]");
+    await waitFor(() => expect(by("note")).not.toHaveAttribute("data-mw-area"));
+    by("word").classList.add("[anchor-name:--pinned]");
+    await waitFor(() => expect(by("note")).toHaveAttribute("data-mw-area"));
+    expect(by("note").getAttribute("data-mw-area")).toBe("span-all top");
   },
 };
 

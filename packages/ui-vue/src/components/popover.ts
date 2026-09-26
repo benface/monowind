@@ -4,17 +4,17 @@ import type { PropTypes } from "@zag-js/vue";
 import { usePopover, type Composed } from "../composables.ts";
 import {
   defineContext,
-  definePart,
   defineRoot,
   defineRootProvider,
   partsOf,
+  positionerPart,
   triggerPart,
 } from "./part.ts";
 
 /** Zag's popover as a compound component (specs/ui.md "Component
  * layer"). */
 
-export type Api = Composed<popover.Api<PropTypes>, popover.Service>;
+type Api = Composed<popover.Api<PropTypes>, popover.Service>;
 
 const context = defineContext<Api>("Popover");
 
@@ -34,12 +34,7 @@ export const PopoverRootProvider = defineRootProvider<Api>("PopoverRootProvider"
 
 const part = partsOf<popover.Api<PropTypes>, Api>("Popover", context);
 
-/** The floating part, carrying the ref that keeps it in the top layer
- * with the machine. */
-export const PopoverPositioner = definePart<Api>("PopoverPositioner", context, (value) => ({
-  ...value.api.value.getPositionerProps(),
-  ref: value.positioner,
-}));
+export const PopoverPositioner = positionerPart("Popover", context);
 
 export const PopoverTrigger = triggerPart<popover.Api<PropTypes>, Api>("Popover", context);
 export const PopoverIndicator = part("Indicator", (api) => api.getIndicatorProps(), "span");

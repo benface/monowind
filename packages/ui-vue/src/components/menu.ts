@@ -1,17 +1,21 @@
-import { computed, defineComponent, useId, type ComputedRef } from "vue";
+import { computed, defineComponent, useId } from "vue";
+import type { ComponentObjectPropsOptions, ComputedRef } from "vue";
 import { defined, warnStray } from "@monowind/ui/framework";
 import { asSubmenuOf, propNames } from "@monowind/ui/menu";
 import type * as menu from "@monowind/ui/menu";
 import type { PropTypes } from "@zag-js/vue";
 import { useMenu, type Composed } from "../composables.ts";
 import {
+  BOOLEAN,
+  declarationsOf,
   defineContext,
   definePart,
   partsOf,
-  renderPart,
+  positionerPart,
   triggerPart,
   updatesOf,
   withUpdates,
+  type RootProps,
 } from "./part.ts";
 
 /**
@@ -22,7 +26,7 @@ import {
  * item that opens it.
  */
 
-export type Api = Composed<menu.Api<PropTypes>, menu.Service>;
+type Api = Composed<menu.Api<PropTypes>, menu.Service>;
 
 /** What a menu's parts inject: its API, the menu it is nested in, and
  * the props it was given, which its own submenus take the behavior
@@ -41,7 +45,7 @@ export const useMenuContext = (): Api => context.use();
 /** A menu over its own machine, an id generated where none is given.
  * Nested in another, it is that menu's submenu. */
 export const MenuRoot = defineComponent(
-  (props: Omit<menu.Props, "id"> & { id?: string }, { slots, attrs, emit }) => {
+  (props: RootProps<menu.Props>, { slots, attrs, emit }) => {
     const parent = context.useOptional();
     const generated = useId();
     const own = computed<menu.Props>(
@@ -52,8 +56,6 @@ export const MenuRoot = defineComponent(
           emit,
         ) as unknown as menu.Props,
     );
-    // A submenu opens beside its item on the reading side and takes
-    // the behavior its parent shares, exactly as a marked one does.
     const machineProps = computed<menu.Props>(() =>
       parent ? asSubmenuOf(parent.props?.value ?? { id: own.value.id }, own.value) : own.value,
     );
@@ -69,7 +71,12 @@ export const MenuRoot = defineComponent(
     }
     return () => slots["default"]?.();
   },
-  { name: "MenuRoot", inheritAttrs: false, props: [...propNames], emits: updatesOf(propNames) },
+  {
+    name: "MenuRoot",
+    inheritAttrs: false,
+    props: declarationsOf(propNames) as ComponentObjectPropsOptions<RootProps<menu.Props>>,
+    emits: updatesOf(propNames),
+  },
 );
 
 /** A menu over an API the caller holds, for reaching it from outside
@@ -89,50 +96,40 @@ export const MenuTrigger = triggerPart<menu.Api<PropTypes>, Value>("Menu", conte
 
 /** The item of the menu above that opens this one: the submenu's own
  * trigger, which is why it goes inside the nested `MenuRoot`. */
-export const MenuTriggerItem = defineComponent({
-  name: "MenuTriggerItem",
-  inheritAttrs: false,
-  props: ["asChild"] as string[],
-  setup(props: Record<string, unknown>, { slots, attrs }) {
-    const own = context.use();
-    const { parent } = own;
-    if (!parent) throw new Error("a MenuTriggerItem must be inside a nested <MenuRoot>");
-    return () =>
-      renderPart(
-        "div",
-        parent.api.value.getTriggerItemProps(own.api.value),
-        attrs as Record<string, unknown>,
-        Boolean(props["asChild"]),
-        slots["default"]?.(),
-        "MenuTriggerItem",
-      );
+export const MenuTriggerItem = definePart<Value & { parent: Value }>(
+  "MenuTriggerItem",
+  {
+    use: () => {
+      const value = context.use();
+      if (!value.parent) throw new Error("a MenuTriggerItem must be inside a nested <MenuRoot>");
+      return { ...value, parent: value.parent };
+    },
   },
-});
+  ({ api, parent }) => parent.api.value.getTriggerItemProps(api.value),
+);
 
-/** The floating part, carrying the ref that keeps it in the top
- * layer with the machine. */
-export const MenuPositioner = definePart<Value>("MenuPositioner", context, (value) => ({
-  ...value.api.value.getPositionerProps(),
-  ref: value.positioner,
-}));
+export const MenuPositioner = positionerPart("Menu", context);
 
 export const MenuContent = part("Content", (api) => api.getContentProps());
-export const MenuItem = part(
-  "Item",
-  (api, own) => api.getItemProps(own as { value: string }),
+export const MenuItem = part<
   "div",
-  ["value", "disabled", "closeOnSelect", "valueText"],
-);
-export const MenuItemGroup = part(
+  { value: string; disabled?: boolean; closeOnSelect?: boolean; valueText?: string }
+>("Item", (api, own) => api.getItemProps(own as { value: string }), "div", {
+  value: null,
+  disabled: BOOLEAN,
+  closeOnSelect: BOOLEAN,
+  valueText: null,
+});
+export const MenuItemGroup = part<"div", { id: string }>(
   "ItemGroup",
   (api, own) => api.getItemGroupProps(own as { id: string }),
   "div",
-  ["id"],
+  { id: null },
 );
-export const MenuItemGroupLabel = part(
+export const MenuItemGroupLabel = part<"div", { htmlFor: string }>(
   "ItemGroupLabel",
   (api, own) => api.getItemGroupLabelProps(own as { htmlFor: string }),
   "div",
-  ["htmlFor"],
+  { htmlFor: null },
 );
 export const MenuSeparator = part("Separator", (api) => api.getSeparatorProps(), "hr");

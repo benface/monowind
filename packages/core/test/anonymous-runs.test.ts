@@ -5,7 +5,7 @@ import { focusableRects } from "../src/focus.ts";
 import { render } from "../src/render.ts";
 import { hitChain } from "../src/pointer.ts";
 import { leafExtent, selectedRanges, serializeSelection } from "../src/selection.ts";
-import { buildChildren, buildTree, hostLeafStyle } from "../src/tree.ts";
+import { buildRoot, buildTree } from "../src/tree.ts";
 import type { LayoutNode } from "../src/types.ts";
 
 /** Anonymous runs (specs/cell-model.md "Inline content"): a container's
@@ -247,15 +247,7 @@ describe("anonymous runs", () => {
     host.style.cssText = "line-height: 32px; letter-spacing: 0.4px; color: red";
     host.innerHTML = "foo<div>bar</div>";
     document.body.appendChild(host);
-    const style = hostLeafStyle(host, 16);
-    const children = buildChildren(
-      host,
-      Array.from(host.childNodes),
-      16,
-      undefined,
-      undefined,
-      style,
-    );
+    const { children } = buildRoot(host, 16);
     expect(children.map((child) => child.text)).toEqual(["foo", "bar"]);
     expect(children[0]!.anonymous).toBe(true);
     expect(children[0]!.source).toBe(host);

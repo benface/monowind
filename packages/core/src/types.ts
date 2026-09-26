@@ -7,25 +7,15 @@ export interface Rect {
   height: number;
 }
 
-export interface Insets {
-  top: number;
-  right: number;
-  bottom: number;
-  left: number;
-}
+export type Insets = PerSide<number>;
 
 /** Insets where any side can be `null` to signal `auto` (used for margins). */
-export interface NullableInsets {
-  top: number | null;
-  right: number | null;
-  bottom: number | null;
-  left: number | null;
-}
+export type NullableInsets = PerSide<number | null>;
 
+/** A width, height or flex basis; `auto` is undefined. */
 export type Size =
   | { kind: "cells"; value: number }
   | { kind: "percent"; value: number }
-  | { kind: "auto" }
   /** Intrinsic sizing keywords (`w-min` / `w-max` / `w-fit`). Resolved
    * against content: min-content = longest unbreakable unit, max-content =
    * unwrapped size, fit-content = shrink-to-fit within the available space.
@@ -50,25 +40,30 @@ export type TableRole =
   | "caption"
   | "column"
   | "column-group";
-export type FlexDirection = "row" | "column";
-export type FlexWrap = "nowrap" | "wrap";
+type FlexDirection = "row" | "column";
+type FlexWrap = "nowrap" | "wrap";
+/** A flex line's edges, which a reversed axis swaps, `start` and `end`
+ * elsewhere; a baseline is one for an item in its baseline group. */
+type FlexEdge = "flex-start" | "flex-end";
+type Baseline = "baseline" | "last baseline";
 export type JustifyContent =
   | "start"
   | "center"
   | "end"
+  | FlexEdge
   | "space-between"
   | "space-around"
   | "space-evenly"
-  /** CSS `normal` / `stretch`. In flex both behave as `start` (per
+  /** CSS `normal` / `stretch`. In flex both behave as `flex-start` (per
    * css-align); in grid they stretch auto-sized tracks over leftover space
    * (CSS Grid §11.8) and otherwise behave as `start`. */
   | "stretch";
-export type AlignItems = "start" | "center" | "end" | "stretch";
+export type AlignItems = "start" | "center" | "end" | FlexEdge | Baseline | "stretch";
 /** Multi-line cross distribution (`content-*`); `stretch` (the CSS
  * default `normal`) grows flex lines / grid tracks instead of offsetting
  * them. */
-export type AlignContent = JustifyContent;
-export type AlignSelf = "auto" | "start" | "center" | "end" | "stretch";
+type AlignContent = JustifyContent;
+type AlignSelf = "auto" | AlignItems;
 export type BorderStyle = "solid" | "double" | "dashed" | "dotted";
 /** Per-axis overflow state. `hidden` reads as `"clip"` (no scroll
  * container, cheaper — the precise semantic for what the engine
@@ -100,7 +95,7 @@ export interface LineBand {
 /** `nowrap` disables soft wrapping; `pre` additionally preserves the
  * source's spaces and newlines (specs/cell-model.md). Everything else
  * (`pre-wrap` included) behaves as `normal`. */
-export type WhiteSpace = "normal" | "nowrap" | "pre";
+type WhiteSpace = "normal" | "nowrap" | "pre";
 
 /** A length in whole cells, or a percentage kept symbolic until layout.
  * Percentages resolve against the CSS-appropriate basis at layout time:
@@ -225,7 +220,7 @@ export type Gradient =
       at: GradientPoint;
     })
   | (GradientBase & { kind: "conic"; from: number; at: GradientPoint });
-export type TextOverflow = "clip" | "ellipsis";
+type TextOverflow = "clip" | "ellipsis";
 
 /** One bound of a grid track size (specs/grid.md). `fr` is only valid as a
  * max (the reader normalizes bare `<n>fr` to `minmax(auto, <n>fr)`, per
@@ -374,16 +369,9 @@ export interface BorderRun {
   color: string | undefined;
 }
 
-/** A collapsed lattice segment: the border that won one piece of a line. */
-export interface LatticeSegment {
-  /** Cells: the line's thickness. */
-  width: number;
-  /** The weight it draws with and carries into junctions: its px
-   * width where the set has a band for it, else 1 (junctionWeight). */
-  weight: number;
-  style: BorderStyle;
-  color: string | undefined;
-}
+/** A collapsed lattice segment: the border that won one piece of a
+ * line, drawn as a gap rule is. */
+export type LatticeSegment = GapRule;
 
 /** A collapsed table's border geometry (specs/table.md), resolved into
  * glyphs at paint (lattice.ts) so a sticky part's lines follow it
@@ -463,31 +451,40 @@ export interface CellStyle {
   display: Display;
   flexDirection: FlexDirection;
   /** True for `row-reverse` / `column-reverse`: the main axis runs
-   * backwards — items lay out in reverse order and `justify-content`
-   * start/end swap meaning. */
+   * backwards — items lay out in reverse order and `justify-content`'s
+   * `flex-start`/`flex-end` swap meaning. */
   flexReverse: boolean;
   flexWrap: FlexWrap;
   /** True for `wrap-reverse`: lines stack from the cross-end (bottom-up). */
   wrapReverse: boolean;
   flexGrow: number;
   flexShrink: number;
-  /** CSS `flex-basis`: the flex base size when not `auto`/undefined —
+  /** CSS `flex-basis`: the flex base size when not `auto` —
    * notably `0%` from Tailwind's `flex-1`, which makes grow distribute ALL
    * the space (equal columns) instead of just the extra. */
   flexBasis: Size | undefined;
   /** CSS `order` — flex items sort by it (stable, document order ties). */
   order: number;
   justifyContent: JustifyContent;
+  /** `safe` in the value, css-align's overflow position; each alignment
+   * field has its flag. Layout aligns every overflow as `safe`
+   * (specs/cell-model.md deviation 21). */
+  justifyContentSafe: boolean;
   /** Flex: multi-line (wrap-enabled) containers only, per CSS. Grid: row
    * track distribution. */
   alignContent: AlignContent;
+  alignContentSafe: boolean;
   alignItems: AlignItems;
+  alignItemsSafe: boolean;
   alignSelf: AlignSelf;
+  alignSelfSafe: boolean;
   /** Grid container inline-axis item alignment (`justify-items`); the CSS
    * default `normal` behaves as `stretch` in grid. */
   justifyItems: AlignItems;
+  justifyItemsSafe: boolean;
   /** Grid item inline-axis self-alignment override (`justify-self`). */
   justifySelf: AlignSelf;
+  justifySelfSafe: boolean;
   /** Parsed track templates (specs/grid.md). `none` for non-grid elements. */
   gridTemplateColumns: GridTemplate;
   gridTemplateRows: GridTemplate;
@@ -520,7 +517,7 @@ export interface CellStyle {
    * width where the margin is consumed. */
   margin: PerSide<CellLength | null>;
   /** See specs/positioning.md: fixed behaves as absolute anchored to the
-   * host; sticky behaves as relative until the scrolling milestone. */
+   * host; sticky shifts within its scroll container (specs/sticky.md). */
   position: Position;
   /** specs/float.md: honored on the in-flow children of a block
    * container, `none` on an out-of-flow box as CSS computes it. */
@@ -578,19 +575,14 @@ export interface CellStyle {
   /** Paint-only: with `nowrap` + clipping, the browser draws the ellipsis.
    * The engine only needs it for the plain-text renderer's mirror of that. */
   textOverflow: TextOverflow;
-  /**
-   * Paint-only colors, reserved for the visual-system milestone. `color` will
-   * feed decoration glyphs that visually belong to the text (control framing
-   * like `[ Save ]`, cursors, selection carets); `backgroundColor` will feed
-   * cell-level highlights (selection ranges, decoration backgrounds). Read
-   * from the source element now so the future work has the data available.
-   */
+  /** Computed colors: the text's ink, and the box's fill (undefined
+   * where transparent). */
   color: string | undefined;
   backgroundColor: string | undefined;
-  /** `bg-clear` marker (`--mw-bg-clear: 1`): occlude ancestor decoration
-   * glyphs under this element's border box WITHOUT painting a bg color.
-   * `backgroundColor` stays undefined; the renderer fills with plain
-   * spaces instead of colored spaces. */
+  /** `bg-clear` marker (`--mw-bg-clear: 1`): the border box is wiped to
+   * the ground, background and glyph, through every group it sits in
+   * (specs/cell-model.md "The ground"), before the element's own fill;
+   * `backgroundColor` stays undefined. */
   backgroundClear: boolean;
   /** Gradient layers, first declared first (specs/gradients.md). */
   backgroundImage: Gradient[];
@@ -630,11 +622,9 @@ export interface CellStyle {
    * only `end` (bottom) acts — it drops the line's text to the box's
    * last row (specs/cell-model.md). */
   verticalAlign: "start" | "center" | "end";
-  /** Effective element opacity input (0..1). Ancestors MULTIPLY down
-   * the paint walk (CSS opacity nests, it doesn't inherit); the product
-   * rides on every emitted grid span, which composites against the
-   * page — translucency blends with what's behind the host, never with
-   * covered cells (deviation; front paint wins a cell as always). */
+  /** Computed `opacity` (0..1): below 1, the element paints as a group
+   * the walk blends into the cells beneath (specs/cell-model.md
+   * "Opacity and translucency"). */
   opacity: number;
   /** `visibility: visible` (specs/visibility.md): a hidden box — `hidden`,
    * or `collapse` — keeps its space and paints none of its own ink, and
@@ -752,6 +742,41 @@ export interface TopLayerEntry {
   ancestors: LayoutNode[];
 }
 
+/** An inline descendant of a leaf (`LayoutNode.inlineElements`). */
+export interface InlineElement {
+  element: Element;
+  tracking: number;
+  padLeft: number;
+  padRight: number;
+  insets: PerSide<number | null> | null;
+  /** A sticky element's insets, constraints for its shift
+   * (specs/sticky.md), and the shift for the current scroll offsets. */
+  sticky?: PerSide<number | null>;
+  stickyShift?: { x: number; y: number };
+  /** Its `anchor-name`s, for the boxes anchored to it
+   * (specs/anchor-positioning.md). */
+  anchorNames: string[];
+  /** Paint-only styling mirrored into the grid (the browser's own
+   * ink is transparent-locked). `backgroundColor` fills the run's
+   * cells — how a focus-inverted inline link shows its highlight. */
+  color: string | undefined;
+  backgroundColor: string | undefined;
+  fontWeight: string;
+  fontStyle: string;
+  textDecorationLine: string;
+  /** Its computed `visibility` is `visible`: a hidden one's cells stay
+   * blank, their space kept. */
+  visible: boolean;
+  /** Its computed `pointer-events` is other than `none`. */
+  pointerEvents: boolean;
+  /** Its own opacity — times that of the inline elements a block
+   * split left above it, which are no entries — and its parent
+   * entry's index, -1 for none: the paint folds the chain as groups
+   * nest (specs/cell-model.md "Opacity and translucency"). */
+  opacity: number;
+  parent: number;
+}
+
 export interface LayoutNode {
   source: Element;
   style: CellStyle;
@@ -765,6 +790,10 @@ export interface LayoutNode {
   intrinsicWidth: number;
   intrinsicHeight: number;
   localRect: Rect;
+  /** The border box's origin where it paints, in the host's cells, for
+   * the current scroll offsets (paint-origin.ts `placePainted`): what the
+   * paint, hit-testing and focus read. */
+  paintOrigin: { x: number; y: number };
   /** Where an out-of-flow (absolute) box would have sat in normal flow —
    * its CSS "static position", parent-relative, recorded by the parent's
    * flow pass and consumed by the absolute-positioning pass for inset-less
@@ -795,36 +824,7 @@ export interface LayoutNode {
    * real padding via engine-owned vars), and — for the positioned ones —
    * its relative insets rewritten to whole cells (specs/positioning.md);
    * `null` insets = not positioned. */
-  inlineElements?: {
-    element: Element;
-    tracking: number;
-    padLeft: number;
-    padRight: number;
-    insets: PerSide<number | null> | null;
-    /** A sticky element's insets, constraints for its shift
-     * (specs/sticky.md), and the shift for the current scroll offsets. */
-    sticky?: PerSide<number | null>;
-    stickyShift?: { x: number; y: number };
-    /** Its `anchor-name`s, for the boxes anchored to it
-     * (specs/anchor-positioning.md). */
-    anchorNames: string[];
-    /** Paint-only styling mirrored into the grid (the browser's own
-     * ink is transparent-locked). `backgroundColor` fills the run's
-     * cells — how a focus-inverted inline link shows its highlight. */
-    color: string | undefined;
-    backgroundColor: string | undefined;
-    fontWeight: string;
-    fontStyle: string;
-    textDecorationLine: string;
-    /** Its computed `visibility` is `visible`: a hidden one's cells stay
-     * blank, their space kept. */
-    visible: boolean;
-    /** Its computed `pointer-events` is other than `none`. */
-    pointerEvents: boolean;
-    /** Its opacity times its inline ancestors' (CSS nests it); the
-     * leaf's own rides the paint walk. */
-    opacity: number;
-  }[];
+  inlineElements?: InlineElement[];
   /** Per-character index into `inlineElements` (-1 = direct leaf text);
    * present only when the run contains inline elements. Plain-text
    * rendering maps colors, font styling, and relative inset shifts from
@@ -847,7 +847,8 @@ export interface LayoutNode {
   inlineBox?: boolean;
   /** The product of the opacities of the inline elements between the box
    * and its leaf or container, which the paint walk multiplies into the
-   * box's own (specs/cell-model.md "Opacity"); absent at 1. */
+   * box's own (specs/cell-model.md "Opacity and translucency"); absent
+   * at 1. */
   inlineOpacity?: number;
   /** Set by a grid parent on a child whose template is `subgrid` in at
    * least one axis: the child's span in each axis (its explicit track
@@ -868,10 +869,8 @@ export interface LayoutNode {
    * container's inline content beside its block children, `source` the
    * container, its DOM the run's own nodes (selection.ts `runNodes`). */
   anonymous?: boolean;
-  /** Engine-generated glyph runs in this node's local coordinates
-   * (offset by its absolute position at paint time). Today: a collapsed
-   * table's border lattice; future producers (css-gaps rules,
-   * specs/gap-decorations.md) plug in here with no renderer changes. */
+  /** The node's gap rules (specs/gap-decorations.md) as glyph runs in its
+   * local coordinates, offset by its absolute position at paint time. */
   decorationRuns?: BorderRun[];
   /** A collapsed table's border lattice, resolved at paint (lattice.ts). */
   lattice?: TableLattice;
@@ -885,10 +884,6 @@ export interface LayoutNode {
   /** True on an anchored box `position-visibility` hides, its subtree
    * with it, whatever their own `visibility` (specs/anchor-positioning.md). */
   forceHidden?: boolean;
-  /** Outer height before min/max clamping — written by layoutNode; the
-   * column flex algorithm's base main size (CSS distributes from unclamped
-   * bases; limits apply via its freeze loop). */
-  unclampedHeight: number;
   /** Content-derived outer height, whatever height or min-height floor
    * the box has (a flex/grid text leaf's alignment padding left out) —
    * written by layoutNode. A flex column sizes an item's intrinsic basis
@@ -912,8 +907,7 @@ export interface LayoutNode {
    * element from native scrollTop/scrollLeft; absent = 0/0). */
   scroll?: { x: number; y: number };
   /** A sticky box's shift for the current scroll offsets (specs/sticky.md),
-   * a paint-time input like `scroll`, added by every walk where it adds
-   * the box's own position; absent = none. */
+   * part of its `paintOrigin`; absent = none. */
   stickyShift?: { x: number; y: number };
   /** A text leaf's last line's row from its border-box top: the
    * baseline its box aligns by natively, for a middle-aligned inline
@@ -926,8 +920,8 @@ export interface LayoutNode {
    * (specs/anchor-positioning.md); written onto the light element. */
   anchorArea?: PositionArea;
   /** A fixed box's origin in the host's cells (specs/positioning.md),
-   * written by the positioning pass: the walks paint and hit it from
-   * here, outside its ancestors' scroll and clips. */
+   * written by the positioning pass: its `paintOrigin`, outside its
+   * ancestors' scroll and clips. */
   hostRect?: { x: number; y: number };
   /** The box's place in the host's top-layer stack
    * (specs/top-layer.md), assigned per layout: the walks skip it in
@@ -1050,11 +1044,17 @@ export function defaultCellStyle(): CellStyle {
     // The CSS initial value `normal` reads as `stretch` (flex treats it
     // as `start`; grid stretches auto tracks).
     justifyContent: "stretch",
+    justifyContentSafe: false,
     alignContent: "stretch",
+    alignContentSafe: false,
     alignItems: "stretch",
+    alignItemsSafe: false,
     alignSelf: "auto",
+    alignSelfSafe: false,
     justifyItems: "stretch",
+    justifyItemsSafe: false,
     justifySelf: "auto",
+    justifySelfSafe: false,
     gridTemplateColumns: { kind: "none" },
     gridTemplateRows: { kind: "none" },
     gridAutoColumns: [autoTrack()],
@@ -1149,6 +1149,29 @@ export function defaultCellStyle(): CellStyle {
 
 export function zeroInsets(): Insets {
   return { top: 0, right: 0, bottom: 0, left: 0 };
+}
+
+/** A node as the tree builder makes it: laid out at its intrinsic size. */
+export function createNode(
+  source: Element,
+  style: CellStyle,
+  children: LayoutNode[] = [],
+  text = "",
+  intrinsicWidth = 0,
+  intrinsicHeight = 0,
+): LayoutNode {
+  return {
+    source,
+    style,
+    children,
+    text,
+    intrinsicWidth,
+    intrinsicHeight,
+    localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
+    paintOrigin: { x: 0, y: 0 },
+    naturalContentHeight: 0,
+    resolvedPadding: zeroInsets(),
+  };
 }
 
 /** The CSS initial implicit-track size: `minmax(auto, auto)`. */

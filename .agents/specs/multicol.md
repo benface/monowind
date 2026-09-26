@@ -257,8 +257,9 @@ definite height, `column-fill: auto` fills each column to it
 sequentially, and the segment (and its rules) keeps the full fill
 height. Content that doesn't fit in `count` columns continues into
 **overflow columns** laid inline after the last track (css-multicol
-§7.2); they render past the content box and clip or show per
-`overflow`, like any overflowing content. `balance` clamps its `H` to
+§7.2); they render past the content box, clip or show per
+`overflow`, and count in the scrollable overflow (a scroll container's
+range, the host's ink), a text leaf's lines as any box's content. `balance` clamps its `H` to
 the restriction, overflow columns catching the rest. A `max-height`
 restriction alone caps `H` the same way, but the container's height
 stays content-driven (the tallest column).

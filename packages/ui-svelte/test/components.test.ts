@@ -5,8 +5,9 @@ import Provided from "./Provided.svelte";
 import Bound from "./Bound.svelte";
 import Hidden from "./Hidden.svelte";
 import Triggered from "./Triggered.svelte";
-import type { createSelect } from "../src/index.svelte.ts";
-import { posted, resetByClick, settle } from "../../ui/test/helpers.ts";
+import Mixed from "./Mixed.svelte";
+import { ListboxItem, type createSelect } from "../src/index.svelte.ts";
+import { by, popoverApi, posted, resetByClick, settle } from "../../ui/test/helpers.ts";
 
 /** The compound components (specs/ui.md "Component layer"): the parts
  * over the same `create…` functions, a nested `MenuRoot` the submenu
@@ -17,10 +18,6 @@ import { posted, resetByClick, settle } from "../../ui/test/helpers.ts";
 let container: HTMLElement;
 let tree: Record<string, unknown>;
 
-const by = (part: string, value?: string) =>
-  container.querySelector<HTMLElement>(
-    value ? `[data-part="${part}"][data-value="${value}"]` : `[data-part="${part}"]`,
-  )!;
 const all = (selector: string) => Array.from(container.querySelectorAll<HTMLElement>(selector));
 
 beforeEach(async () => {
@@ -36,12 +33,12 @@ beforeEach(async () => {
 
 describe("a menu", () => {
   it("wires every part, and a nested root is its submenu", () => {
-    expect(by("trigger").getAttribute("aria-haspopup")).toBe("menu");
-    expect(by("trigger").style.getPropertyValue("anchor-name")).toBe("--mw-ui-file");
-    expect(by("content").getAttribute("role")).toBe("menu");
-    expect(by("item", "new").getAttribute("role")).toBe("menuitem");
-    expect(by("separator").getAttribute("role")).toBe("separator");
-    const triggerItem = by("trigger-item");
+    expect(by(container, "trigger").getAttribute("aria-haspopup")).toBe("menu");
+    expect(by(container, "trigger").style.getPropertyValue("anchor-name")).toBe("--mw-ui-file");
+    expect(by(container, "content").getAttribute("role")).toBe("menu");
+    expect(by(container, "item", "new").getAttribute("role")).toBe("menuitem");
+    expect(by(container, "separator").getAttribute("role")).toBe("separator");
+    const triggerItem = by(container, "trigger-item");
     expect(triggerItem.getAttribute("aria-haspopup")).toBe("menu");
     expect(triggerItem.style.getPropertyValue("anchor-name")).toBe("--mw-ui-share");
     // The submenu takes the side it opens on from the menu above it.
@@ -70,6 +67,13 @@ describe("a dialog", () => {
     expect(close.getAttribute("data-part")).toBe("close-trigger");
     // Scoped: a popover has a close trigger of its own.
     expect(all('[data-scope="dialog"][data-part="close-trigger"]')).toHaveLength(1);
+  });
+
+  it("passes every HTML attribute through, a form's action included", () => {
+    const form = container.querySelector<HTMLFormElement>("[data-test='form']")!;
+    expect(form.getAttribute("data-part")).toBe("content");
+    expect(form.getAttribute("action")).toBe("/delete");
+    expect(form.getAttribute("method")).toBe("post");
   });
 });
 
@@ -111,22 +115,21 @@ describe("an API the caller holds", () => {
       props: { ready: (held: ReturnType<typeof createSelect>) => (api = held) },
     });
     await tick();
-    const at = (part: string, value?: string) =>
-      container.querySelector<HTMLElement>(
-        value ? `[data-part="${part}"][data-value="${value}"]` : `[data-part="${part}"]`,
-      )!;
     // The placeholder until something is chosen, as the mount writes it.
-    expect(at("value-text").textContent?.trim()).toBe("branch…");
+    expect(by(container, "value-text").textContent?.trim()).toBe("branch…");
+    const positioner = popoverApi(by(container, "positioner"));
     api.api.setOpen(true);
     await tick();
-    expect(at("content").getAttribute("data-state")).toBe("open");
-    at("item", "next").click();
+    expect(by(container, "content").getAttribute("data-state")).toBe("open");
+    // The positioner's action puts it in the top layer as it opens.
+    expect(positioner.isOpen()).toBe(true);
+    by(container, "item", "next").click();
     await tick();
     expect(api.api.value).toEqual(["next"]);
-    expect(at("value-text").textContent?.trim()).toBe("next");
+    expect(by(container, "value-text").textContent?.trim()).toBe("next");
     // The selection marked as a listbox's items and the mount's are.
-    expect(at("item", "next").hasAttribute("data-selected")).toBe(true);
-    expect(at("item", "main").hasAttribute("data-selected")).toBe(false);
+    expect(by(container, "item", "next").hasAttribute("data-selected")).toBe(true);
+    expect(by(container, "item", "main").hasAttribute("data-selected")).toBe(false);
     expect(container.querySelector<HTMLSelectElement>("select")!.value).toBe("next");
     await unmount(tree);
     container.remove();
@@ -135,12 +138,36 @@ describe("an API the caller holds", () => {
 
 describe("a listbox", () => {
   it("selects on a click, the state and the indicator following", async () => {
-    by("item", "next").click();
+    by(container, "item", "next").click();
     await tick();
-    expect(by("item", "next").getAttribute("data-state")).toBe("checked");
-    expect(by("item", "main").getAttribute("data-state")).toBe("unchecked");
-    const indicator = by("item", "next").querySelector('[data-part="item-indicator"]')!;
+    expect(by(container, "item", "next").getAttribute("data-state")).toBe("checked");
+    expect(by(container, "item", "main").getAttribute("data-state")).toBe("unchecked");
+    const indicator = by(container, "item", "next").querySelector('[data-part="item-indicator"]')!;
     expect(indicator.getAttribute("data-state")).toBe("checked");
+  });
+});
+
+describe("an item part", () => {
+  it("reads the nearest list root, whichever of the three it is named for", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const tree = mount(Mixed, { target: container });
+    await tick();
+    const item = by(container, "item");
+    expect(item.getAttribute("data-scope")).toBe("listbox");
+    expect(item.getAttribute("role")).toBe("option");
+    await unmount(tree);
+    container.remove();
+  });
+
+  it("says where it belongs, outside a list root or its item", () => {
+    const container = document.createElement("div");
+    expect(() => mount(ListboxItem, { target: container, props: { value: "main" } })).toThrow(
+      "an item part must be inside <ListboxRoot>, <SelectRoot> or <ComboboxRoot>",
+    );
+    expect(() => mount(Mixed, { target: container, props: { stray: true } })).toThrow(
+      "an item's text and indicator must be inside its Item",
+    );
   });
 });
 
@@ -168,14 +195,10 @@ describe("a bound prop", () => {
       props: { read: (next: { open: boolean; value: string[] }) => (state = next) },
     });
     await tick();
-    const at = (part: string, value?: string) =>
-      container.querySelector<HTMLElement>(
-        value ? `[data-part="${part}"][data-value="${value}"]` : `[data-part="${part}"]`,
-      )!;
-    at("trigger").click();
+    by(container, "trigger").click();
     await tick();
     expect(state.open).toBe(true);
-    at("item", "next").click();
+    by(container, "item", "next").click();
     await tick();
     expect(state.value).toEqual(["next"]);
     expect(state.open).toBe(false);

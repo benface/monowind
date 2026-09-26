@@ -2,8 +2,8 @@ import { propNames } from "@monowind/ui/combobox";
 import type * as combobox from "@monowind/ui/combobox";
 import type { PropTypes } from "@zag-js/react";
 import { useCombobox, type Connected, type Positioned } from "../hooks.ts";
-import { defineItemParts } from "./items.tsx";
-import { defineContext, defineRoot, defineRootProvider, partsOf, type PartProps } from "./part.tsx";
+import { defineItemParts, defineListContext } from "./items.tsx";
+import { defineRoot, defineRootProvider, partsOf, type PartProps } from "./part.tsx";
 
 /**
  * Zag's combobox as a compound component (specs/ui.md "Component
@@ -16,7 +16,7 @@ import { defineContext, defineRoot, defineRootProvider, partsOf, type PartProps 
 
 export type Api = Connected<Positioned<combobox.Api<PropTypes>>, combobox.Service>;
 
-const context = defineContext<Api>("Combobox");
+const context = defineListContext<Api>("Combobox");
 
 /** The combobox a part is in, as `useCombobox()` returns it. */
 export const useComboboxContext = context.use;
@@ -28,7 +28,7 @@ export const Root = defineRoot<combobox.Props, Api, PartProps<"div">>(
   useCombobox,
   context,
   propNames,
-  { propsOf: (api) => api.getRootProps() },
+  (api) => api.getRootProps(),
 );
 
 /** A combobox over an API the caller holds, for reaching it from
@@ -53,4 +53,4 @@ export const {
   ItemIndicator,
   ItemGroup,
   ItemGroupLabel,
-} = defineItemParts("Combobox", context);
+} = defineItemParts("Combobox");

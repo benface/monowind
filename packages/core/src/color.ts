@@ -1,14 +1,10 @@
 /**
- * Computed colors as numbers (specs/gradients.md): the forms engines
- * serialize — `rgb()`/`rgba()`, `oklab()`, `oklch()`, `color(srgb …)`,
- * `transparent` — read to extended sRGB with alpha, mixed in oklab,
- * oklch, srgb, srgb-linear, or hsl as CSS interpolates gradients (alpha
- * premultiplied, a polar hue turned the named way), and clipped to sRGB
- * only as they composite or are written back as `rgb()`.
+ * Computed colors as numbers: the forms engines serialize read to
+ * extended sRGB, mixed as CSS interpolates gradients (specs/gradients.md),
+ * and composited as specs/cell-model.md "Opacity and translucency" does.
  */
 
-/** Gamma-encoded sRGB components, past 0..1 for a color outside sRGB,
- * and alpha, 0..1. */
+/** Gamma-encoded sRGB components, past 0..1 outside sRGB, and alpha. */
 export interface Rgba {
   r: number;
   g: number;
@@ -83,9 +79,109 @@ const fromLinear = (r: number, g: number, b: number, a: number): Rgba => ({
 const fromOklab = (L: number, a: number, b: number, alpha: number): Rgba =>
   fromLinear(...oklabToLinear(L, a, b), alpha);
 
-/** Parse a computed color; null for a form outside the ones engines
- * serialize (a `var()`, a name, a keyword), `hsl()` among them: engines
- * serialize it as `rgb()`. */
+type Matrix = readonly [readonly number[], readonly number[], readonly number[]];
+
+const transform = (m: Matrix, x: number, y: number, z: number): [number, number, number] =>
+  m.map((row) => row[0]! * x + row[1]! * y + row[2]! * z) as [number, number, number];
+
+// css-color-4's conversions (its sample code).
+const XYZ_TO_LINEAR_SRGB: Matrix = [
+  [12831 / 3959, -329 / 214, -1974 / 3959],
+  [-851781 / 878810, 1648619 / 878810, 36519 / 878810],
+  [705 / 12673, -2585 / 12673, 705 / 667],
+];
+/** Bradford's adaptation of XYZ from the D50 white to D65. */
+const D50_TO_D65: Matrix = [
+  [0.955473421488075, -0.02309845494876471, 0.06325924320057072],
+  [-0.0283697093338637, 1.0099953980813041, 0.021041441191917323],
+  [0.012314014864481998, -0.020507649298898964, 1.330365926242124],
+];
+const LINEAR_P3_TO_XYZ: Matrix = [
+  [608311 / 1250200, 189793 / 714400, 198249 / 1000160],
+  [35783 / 156275, 247089 / 357200, 198249 / 2500400],
+  [0, 32229 / 714400, 5220557 / 5000800],
+];
+const LINEAR_A98_TO_XYZ: Matrix = [
+  [573536 / 994567, 263643 / 1420810, 187206 / 994567],
+  [591459 / 1989134, 6239551 / 9945670, 374412 / 4972835],
+  [53769 / 1989134, 351524 / 4972835, 4929758 / 4972835],
+];
+/** To XYZ, its white D50's. */
+const LINEAR_PROPHOTO_TO_XYZ: Matrix = [
+  [0.7977666449006423, 0.13518129740053308, 0.0313477341283922],
+  [0.2880748288194013, 0.711835234241873, 0.00008993693872564],
+  [0, 0, 0.8251046025104602],
+];
+const LINEAR_REC2020_TO_XYZ: Matrix = [
+  [63426534 / 99577255, 20160776 / 139408157, 47086771 / 278816314],
+  [26158966 / 99577255, 472592308 / 697040785, 8267143 / 139408157],
+  [0, 19567812 / 697040785, 295819943 / 278816314],
+];
+const REC2020_ALPHA = 1.09929682680944;
+const REC2020_BETA = 0.018053968510807;
+
+const D50_WHITE = [0.3457 / 0.3585, 1, (1 - 0.3457 - 0.3585) / 0.3585] as const;
+
+type FromSpace = (x: number, y: number, z: number, alpha: number) => Rgba;
+
+/** From XYZ, its white D65's. */
+const fromXyz: FromSpace = (x, y, z, alpha) =>
+  fromLinear(...transform(XYZ_TO_LINEAR_SRGB, x, y, z), alpha);
+
+const fromXyzD50: FromSpace = (x, y, z, alpha) => fromXyz(...transform(D50_TO_D65, x, y, z), alpha);
+
+/** An RGB space through XYZ: its transfer to linear light, then its matrix. */
+const throughXyz =
+  (toLinear: (c: number) => number, matrix: Matrix, from: FromSpace): FromSpace =>
+  (r, g, b, alpha) =>
+    from(...transform(matrix, toLinear(r), toLinear(g), toLinear(b)), alpha);
+
+/** Each space `color()` names. */
+const COLOR_SPACES = new Map<string, FromSpace>([
+  ["srgb", (r, g, b, a) => ({ r, g, b, a })],
+  ["srgb-linear", fromLinear],
+  ["xyz", fromXyz],
+  ["xyz-d65", fromXyz],
+  ["xyz-d50", fromXyzD50],
+  ["display-p3", throughXyz(srgbToLinear, LINEAR_P3_TO_XYZ, fromXyz)],
+  [
+    "a98-rgb",
+    throughXyz((c) => Math.sign(c) * Math.abs(c) ** (563 / 256), LINEAR_A98_TO_XYZ, fromXyz),
+  ],
+  [
+    "prophoto-rgb",
+    throughXyz(
+      (c) => (Math.abs(c) <= 16 / 512 ? c / 16 : Math.sign(c) * Math.abs(c) ** 1.8),
+      LINEAR_PROPHOTO_TO_XYZ,
+      fromXyzD50,
+    ),
+  ],
+  [
+    "rec2020",
+    throughXyz(
+      (c) =>
+        Math.abs(c) < REC2020_BETA * 4.5
+          ? c / 4.5
+          : Math.sign(c) * ((Math.abs(c) + REC2020_ALPHA - 1) / REC2020_ALPHA) ** (1 / 0.45),
+      LINEAR_REC2020_TO_XYZ,
+      fromXyz,
+    ),
+  ],
+]);
+
+/** From CIE Lab, its white D50's. */
+function fromLab(L: number, a: number, b: number, alpha: number): Rgba {
+  const kappa = 24389 / 27;
+  const epsilon = 216 / 24389;
+  const fy = (L + 16) / 116;
+  const cubeOrLinear = (f: number): number => (f ** 3 > epsilon ? f ** 3 : (116 * f - 16) / kappa);
+  const x = cubeOrLinear(fy + a / 500) * D50_WHITE[0];
+  const y = L > kappa * epsilon ? fy ** 3 : L / kappa;
+  return fromXyzD50(x, y, cubeOrLinear(fy - b / 200) * D50_WHITE[2], alpha);
+}
+
+/** Parse a computed color; null for a form engines serialize as
+ * another (a `var()`, a name, `hsl()`). */
 export function parseColor(value: string): Rgba | null {
   const text = value.trim().toLowerCase();
   if (text === "transparent") return { r: 0, g: 0, b: 0, a: 0 };
@@ -102,39 +198,38 @@ export function parseColor(value: string): Rgba | null {
         ? null
         : { r: clamp01(r), g: clamp01(g!), b: clamp01(b!), a: alpha };
     }
-    case "oklab": {
-      const [L, a, b] = [
-        component(tokens[0] ?? ""),
-        component(tokens[1] ?? "", 0.4),
-        component(tokens[2] ?? "", 0.4),
+    case "oklab":
+    case "oklch":
+    case "lab":
+    case "lch": {
+      // A percentage's scale: lightness, then chroma or a, then b.
+      const ok = fn.startsWith("ok");
+      const polar = fn.endsWith("ch");
+      const [L, second, third] = [
+        component(tokens[0] ?? "", ok ? 1 : 100),
+        component(tokens[1] ?? "", ok ? 0.4 : polar ? 150 : 125),
+        component(tokens[2] ?? "", ok ? 0.4 : 125),
       ];
-      return [L, a, b].some((c) => !Number.isFinite(c)) ? null : fromOklab(L, a, b, alpha);
-    }
-    case "oklch": {
-      const [L, C, H] = [
-        component(tokens[0] ?? ""),
-        component(tokens[1] ?? "", 0.4),
-        component(tokens[2] ?? ""),
-      ];
-      if ([L, C, H].some((c) => !Number.isFinite(c))) return null;
-      const rad = (H * Math.PI) / 180;
-      return fromOklab(L, C * Math.cos(rad), C * Math.sin(rad), alpha);
+      if ([L, second, third].some((c) => !Number.isFinite(c))) return null;
+      const rad = (third * Math.PI) / 180;
+      const a = polar ? second * Math.cos(rad) : second;
+      const b = polar ? second * Math.sin(rad) : third;
+      return ok ? fromOklab(L, a, b, alpha) : fromLab(L, a, b, alpha);
     }
     case "color": {
-      const [space, ...rest] = tokens;
+      const [space = "", ...rest] = tokens;
       const [r, g, b] = rest.map((t) => component(t));
-      if (r === undefined || [r, g, b].some((c) => !Number.isFinite(c))) return null;
-      if (space === "srgb-linear") return fromLinear(r, g!, b!, alpha);
-      // srgb; the wider spaces read by their srgb-like coordinates.
-      return { r, g: g!, b: b!, a: alpha };
+      const from = COLOR_SPACES.get(space);
+      if (!from || r === undefined || [r, g, b].some((c) => !Number.isFinite(c))) return null;
+      return from(r, g!, b!, alpha);
     }
     default:
       return null;
   }
 }
 
-/** Whether a color is written in a legacy syntax: CSS interpolates a
- * gradient of legacy colors alone in srgb, anything else in oklab. */
+/** Whether a color is written in a legacy syntax: CSS interpolates
+ * legacy colors alone in srgb, anything else in oklab. */
 export const isLegacyColor = (value: string): boolean =>
   /^(?:rgba?|hsla?)\(|^transparent$|^#|^[a-z]+$/i.test(value.trim());
 
@@ -147,7 +242,7 @@ export interface Prepared {
 }
 
 /** HSL from sRGB; a color outside sRGB can take a saturation below 0,
- * kept as Chromium and Firefox keep it (specs/gradients.md, deviation 7). */
+ * kept as Chromium and Firefox keep it (specs/gradients.md, deviation 6). */
 const toHsl = (r: number, g: number, b: number): [number, number, number] => {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
@@ -169,8 +264,7 @@ const fromHsl = (h: number, s: number, l: number, a: number): Rgba => {
   return { r: f(0), g: f(8), b: f(4), a };
 };
 
-/** A color ready to mix in a space — once per stop, since a gradient
- * mixes its stops at every cell. */
+/** A color ready to mix in a space, once per gradient stop. */
 export function prepareColor({ r, g, b, a }: Rgba, space: ColorSpace): Prepared {
   if (space === "srgb") return { c: [r, g, b], a };
   if (space === "hsl") return { c: toHsl(r, g, b), a };
@@ -183,9 +277,8 @@ export function prepareColor({ r, g, b, a }: Rgba, space: ColorSpace): Prepared 
   return { c: [L, chroma, hue], a };
 }
 
-/** Ready a pair of stops to mix, as CSS readies each pair on its own:
- * a missing component takes the other stop's, and `to`'s hue turns
- * the named way round from `from`'s. Both are changed in place. */
+/** Ready a pair of stops to mix in place, as CSS readies each pair: a
+ * missing component takes the other's, `to`'s hue turned the named way. */
 export function alignPair(from: Prepared, to: Prepared, space: ColorSpace, mode: HueMode): void {
   for (let i = 0; i < 3; i++) {
     if (Number.isNaN(from.c[i]!)) from.c[i] = Number.isNaN(to.c[i]!) ? 0 : to.c[i]!;
@@ -208,8 +301,7 @@ export function alignPair(from: Prepared, to: Prepared, space: ColorSpace, mode:
 }
 
 /** Mix two prepared colors at `t` (0 → `from`, 1 → `to`), alpha
- * premultiplied as CSS interpolates, a hue turned as the stops were
- * aligned. */
+ * premultiplied as CSS interpolates. */
 export function mixColors(from: Prepared, to: Prepared, t: number, space: ColorSpace): Rgba {
   const a = from.a + (to.a - from.a) * t;
   if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
@@ -237,11 +329,13 @@ export function mixColors(from: Prepared, to: Prepared, t: number, space: ColorS
   }
 }
 
-/** `over` composited onto `under` (source-over), each as painted:
- * clipped to sRGB. */
+/** `over` composited onto `under` (source-over), each clipped to sRGB
+ * first, as browsers blend on an sRGB screen; a zero-alpha `over` is no
+ * paint. */
 export function compositeColors(over: Rgba, under: Rgba): Rgba {
+  if (over.a === 0) return under;
+  if (over.a >= 1 || under.a === 0) return over;
   const a = over.a + under.a * (1 - over.a);
-  if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
   const channel = (x: number, y: number): number =>
     (clamp01(x) * over.a + clamp01(y) * under.a * (1 - over.a)) / a;
   return {
@@ -252,38 +346,36 @@ export function compositeColors(over: Rgba, under: Rgba): Rgba {
   };
 }
 
-/** A color as `rgb()`, the alpha written only when it is not 1. */
+/** A color as `rgb()` where its channels round into sRGB, else as
+ * `color(srgb …)`, the alpha written only when it is not 1. */
 export function serializeColor({ r, g, b, a }: Rgba): string {
-  const channel = (c: number): number => Math.round(clamp01(c) * 255);
-  const rgb = `${channel(r)} ${channel(g)} ${channel(b)}`;
-  return a >= 1 ? `rgb(${rgb})` : `rgb(${rgb} / ${Math.round(a * 1000) / 1000})`;
+  const alpha = a >= 1 ? "" : ` / ${Math.round(a * 1000) / 1000}`;
+  const channels = [r, g, b].map((c) => Math.round(c * 255));
+  if (channels.every((c) => c >= 0 && c <= 255)) return `rgb(${channels.join(" ")}${alpha})`;
+  return `color(srgb ${[r, g, b].map((c) => Math.round(c * 1e5) / 1e5).join(" ")}${alpha})`;
 }
 
-/** A computed color's alpha: its parsed one; for a form the parser
- * leaves alone, its `/ a` when written, else 1. */
-export function colorAlpha(color: string): number {
-  const parsed = parseColor(color);
-  if (parsed) return parsed.a;
-  const slash = /\/\s*([\d.]+%?)\s*\)$/.exec(color.trim());
-  const alpha = slash ? component(slash[1]!) : 1;
-  return Number.isFinite(alpha) ? clamp01(alpha) : 1;
-}
+/** A computed color's alpha, 1 for a form the parser cannot read. */
+export const colorAlpha = (color: string): number => parseColor(color)?.a ?? 1;
 
-/** A value's comma-separated parts, commas inside parentheses kept —
- * a gradient's, a shadow list's, a timing-function list's. */
-export function splitCommas(value: string): string[] {
+/** A value's parts between top-level commas or white space, blank
+ * parts dropped. */
+export function splitTopLevel(value: string, separator: "," | " "): string[] {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
-  for (let i = 0; i < value.length; i++) {
+  for (let i = 0; i <= value.length; i++) {
     const char = value[i];
-    if (char === "(") depth++;
-    else if (char === ")") depth--;
-    else if (char === "," && depth === 0) {
-      parts.push(value.slice(start, i));
+    if (char === "(" || char === "[") depth++;
+    else if (char === ")" || char === "]") depth--;
+    else if (
+      char === undefined ||
+      (depth === 0 && (separator === "," ? char === "," : /\s/.test(char)))
+    ) {
+      const part = value.slice(start, i);
+      if (part.trim() !== "") parts.push(part);
       start = i + 1;
     }
   }
-  parts.push(value.slice(start));
-  return parts.filter((part) => part.trim() !== "");
+  return parts;
 }

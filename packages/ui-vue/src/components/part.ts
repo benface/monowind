@@ -1,7 +1,16 @@
 import { Comment, cloneVNode, computed, defineComponent, h, inject, provide, useId } from "vue";
-import type { ComputedRef, DefineSetupFnComponent, InjectionKey, VNode } from "vue";
+import type {
+  ComponentObjectPropsOptions,
+  ComputedRef,
+  DefineSetupFnComponent,
+  InjectionKey,
+  IntrinsicElementAttributes,
+  Prop,
+  Ref,
+  VNode,
+} from "vue";
 import { mergeProps } from "@zag-js/vue";
-import { BOUND, defined, warnStray, type TriggerApi } from "@monowind/ui/framework";
+import { BOUND, defined, warnStray, type Defined, type TriggerApi } from "@monowind/ui/framework";
 
 /**
  * What every part of a compound component is (specs/ui.md "Component
@@ -11,6 +20,73 @@ import { BOUND, defined, warnStray, type TriggerApi } from "@monowind/ui/framewo
  */
 
 type Props = Record<string, unknown>;
+
+/** An element a part renders. */
+export type Tag = keyof IntrinsicElementAttributes;
+
+/** What a part takes: its own props, and its element's attributes,
+ * which Vue leaves in `attrs` for the part to merge onto that element
+ * — but `class` and `style`, which Vue types for every component. */
+export type PartProps<T extends Tag, Own = {}> = Omit<
+  IntrinsicElementAttributes[T],
+  keyof Own | "class" | "style"
+> &
+  Own;
+
+/** A part as a template's type-check reads it. */
+export type Part<T extends Tag, Own = {}> = DefineSetupFnComponent<
+  PartProps<T, Own & { asChild?: boolean }>,
+  {},
+  {}
+>;
+
+/** A boolean prop's declaration: a bare attribute sets it, as in HTML,
+ * and an absent one stays `undefined`, the machine's default. */
+export const BOOLEAN = { type: Boolean, default: undefined } as const;
+
+/** The machines' boolean props, which the coverage test holds to their
+ * types; `openOnChange` takes a function as well. */
+export const BOOLEANS = {
+  allowCustomValue: BOOLEAN,
+  alwaysSubmitOnEnter: BOOLEAN,
+  autoFocus: BOOLEAN,
+  closeOnClick: BOOLEAN,
+  closeOnEscape: BOOLEAN,
+  closeOnInteractOutside: BOOLEAN,
+  closeOnPointerDown: BOOLEAN,
+  closeOnScroll: BOOLEAN,
+  closeOnSelect: BOOLEAN,
+  composite: BOOLEAN,
+  defaultOpen: BOOLEAN,
+  deselectable: BOOLEAN,
+  disableLayer: BOOLEAN,
+  disabled: BOOLEAN,
+  disallowSelectAll: BOOLEAN,
+  interactive: BOOLEAN,
+  invalid: BOOLEAN,
+  loopFocus: BOOLEAN,
+  modal: BOOLEAN,
+  multiple: BOOLEAN,
+  open: BOOLEAN,
+  openOnChange: { type: [Boolean, Function], default: undefined },
+  openOnClick: BOOLEAN,
+  openOnKeyPress: BOOLEAN,
+  portalled: BOOLEAN,
+  preventScroll: BOOLEAN,
+  readOnly: BOOLEAN,
+  required: BOOLEAN,
+  restoreFocus: BOOLEAN,
+  selectOnHighlight: BOOLEAN,
+  trapFocus: BOOLEAN,
+  typeahead: BOOLEAN,
+} satisfies Record<string, Prop<unknown>>;
+
+/** A machine's props as Vue declares them: each boolean one typed, so
+ * a bare attribute sets it. */
+export const declarationsOf = (names: readonly string[]): ComponentObjectPropsOptions =>
+  Object.fromEntries(
+    names.map((prop) => [prop, (BOOLEANS as Record<string, Prop<unknown>>)[prop] ?? null]),
+  );
 
 /** The `update:…` events a component's own props allow, which Vue
  * wants declared. */
@@ -39,19 +115,20 @@ export function withUpdates(
 
 /** A component's context: what its parts inject, and the reader that
  * fails loudly outside a root rather than on an undefined API. */
-export function defineContext<V>(name: string): {
-  key: InjectionKey<V>;
+export function defineContext<V>(
+  name: string,
+  outside = `a ${name} part must be inside <${name}Root>`,
+): {
   provide: (value: V) => void;
   use: () => V;
   useOptional: () => V | undefined;
 } {
   const key = Symbol(name) as InjectionKey<V>;
   return {
-    key,
     provide: (value) => provide(key, value),
     use: () => {
       const value = inject(key, undefined);
-      if (value === undefined) throw new Error(`a ${name} part must be inside <${name}Root>`);
+      if (value === undefined) throw new Error(outside);
       return value;
     },
     useOptional: () => inject(key, undefined),
@@ -85,25 +162,23 @@ export function renderPart(
 }
 
 /** A part over a context's API: the getter's props on the element, the
- * declared props handed to the getter instead. */
-export function definePart<V>(
+ * declared props (`Own`, typed by the caller) handed to the getter
+ * instead. */
+export function definePart<V, T extends Tag = "div", Own extends Props = {}>(
   name: string,
   context: { use: () => V },
-  propsOf: (value: V, own: Props) => object,
-  tag = "div",
-  own: readonly string[] = [],
-) {
-  return defineComponent({
-    name,
-    inheritAttrs: false,
-    props: ["asChild", ...own] as string[],
-    setup(props: Props, { slots, attrs }) {
+  propsOf: (value: V, own: Defined<Own>) => object,
+  tag: T = "div" as T,
+  own?: ComponentObjectPropsOptions<Own>,
+): Part<T, Own> {
+  const component = defineComponent(
+    (props: Props, { slots, attrs }) => {
       const value = context.use();
       return () => {
         const { asChild, ...mine } = props;
         return renderPart(
           tag,
-          propsOf(value, defined(mine)),
+          propsOf(value, defined(mine) as Defined<Own>),
           attrs as Props,
           Boolean(asChild),
           slots["default"]?.(),
@@ -111,7 +186,9 @@ export function definePart<V>(
         );
       };
     },
-  });
+    { name, inheritAttrs: false, props: { asChild: BOOLEAN, ...own } },
+  );
+  return component as unknown as Part<T, Own>;
 }
 
 /** The parts of one component, each over the API its context holds
@@ -120,13 +197,13 @@ export function partsOf<A, V extends { api: ComputedRef<A> }>(
   prefix: string,
   context: { use: () => V },
 ) {
-  return (
+  return <T extends Tag = "div", Own extends Props = {}>(
     name: string,
-    propsOf: (api: A, own: Props) => object,
-    tag?: string,
-    own?: readonly string[],
+    propsOf: (api: A, own: Defined<Own>) => object,
+    tag?: T,
+    own?: ComponentObjectPropsOptions<Own>,
   ) =>
-    definePart<V>(
+    definePart<V, T, Own>(
       `${prefix}${name}`,
       context,
       (value, given) => propsOf(value.api.value, given),
@@ -142,34 +219,61 @@ export function triggerPart<A extends TriggerApi, V extends { api: ComputedRef<A
   prefix: string,
   context: { use: () => V },
 ) {
-  return partsOf<A, V>(prefix, context)(
+  return partsOf<A, V>(prefix, context)<"button", { value?: string }>(
     "Trigger",
     (api, own) => api.getTriggerProps(own),
     "button",
-    ["value"],
+    { value: null },
   );
 }
 
-/** The element a root renders, where its component has a root part.
- * A menu, a dialog, a popover and a tooltip have none in Zag, so
- * their root is the provider alone: it renders nothing, and a
- * wrapper invented for it would put a box in the grid's layout. */
-export interface RootPart<V> {
-  propsOf: (value: V) => object;
-  tag?: string;
+/** The floating part, carrying the ref that keeps it in the top layer
+ * with the machine. */
+export function positionerPart<
+  V extends {
+    api: ComputedRef<{ getPositionerProps(): object }>;
+    positioner: Ref<HTMLElement | null>;
+  },
+  T extends Tag = "div",
+>(prefix: string, context: { use: () => V }, tag?: T) {
+  return definePart<V, T>(
+    `${prefix}Positioner`,
+    context,
+    (value) => ({ ...value.api.value.getPositionerProps(), ref: value.positioner }),
+    tag,
+  );
 }
 
+/** A root's props: its machine's, the id optional. */
+export type RootProps<P> = Omit<P, "id"> & { id?: string };
+
 /** A root over its own machine: the composable on its props, an id
- * generated where none is given, provided to the parts under it.
- * Vue's own overloads do not see through the generic props, so the
- * component is typed here rather than inferred. */
+ * generated where none is given, provided to the parts under it —
+ * inside the element `rootProps` gives the props of where Zag names a
+ * root part, and taking its attributes, around the parts alone
+ * elsewhere (`warnStray`). Vue's own overloads do not see through the
+ * generic props, so the component is typed here rather than inferred. */
 export function defineRoot<P extends { id: string }, V extends object>(
   name: string,
   names: readonly string[],
   context: { provide: (value: V) => void },
   create: (props: () => P) => V,
-  root?: RootPart<V>,
-): DefineSetupFnComponent<Omit<P, "id"> & { id?: string }> {
+): DefineSetupFnComponent<RootProps<P>>;
+export function defineRoot<P extends { id: string }, V extends object>(
+  name: string,
+  names: readonly string[],
+  context: { provide: (value: V) => void },
+  create: (props: () => P) => V,
+  rootProps: (value: V) => object,
+): Part<"div", RootProps<P>>;
+export function defineRoot<P extends { id: string }, V extends object>(
+  name: string,
+  names: readonly string[],
+  context: { provide: (value: V) => void },
+  create: (props: () => P) => V,
+  rootProps?: (value: V) => object,
+): DefineSetupFnComponent<RootProps<P>> | Part<"div", RootProps<P>> {
+  const declared = declarationsOf(names);
   const component = defineComponent(
     (props: Record<string, unknown>, { slots, attrs, emit }) => {
       const generated = useId();
@@ -183,14 +287,14 @@ export function defineRoot<P extends { id: string }, V extends object>(
       // Vue leaves every prop the component did not declare in
       // `attrs`, which is exactly what a root with no element of its
       // own has nowhere to put.
-      if (!root) warnStray(name, Object.keys(attrs), value);
+      if (!rootProps) warnStray(name, Object.keys(attrs), value);
       // A declared prop is the machine's; everything else Vue leaves
       // in `attrs`, which is exactly the element's own.
       return () =>
-        root
+        rootProps
           ? renderPart(
-              root.tag ?? "div",
-              root.propsOf(value),
+              "div",
+              rootProps(value),
               attrs as Props,
               Boolean(props["asChild"]),
               slots["default"]?.(),
@@ -201,11 +305,11 @@ export function defineRoot<P extends { id: string }, V extends object>(
     {
       name,
       inheritAttrs: false,
-      props: root ? [...names, "asChild"] : [...names],
+      props: rootProps ? { ...declared, asChild: BOOLEAN } : declared,
       emits: updatesOf(names),
     },
   );
-  return component as unknown as DefineSetupFnComponent<Omit<P, "id"> & { id?: string }>;
+  return component as unknown as DefineSetupFnComponent<RootProps<P>>;
 }
 
 /** A root over an API the caller holds, for reaching it from outside

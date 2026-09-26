@@ -2,14 +2,15 @@ import { leafRendererFor } from "./leaf.ts";
 
 /** The attributes that render, past every `data-*` (specs/cell-model.md
  * "Observation"): HTML's states and presentation, `id` (a popover's
- * implicit anchor, and a `#id` style), `role` (the interactives and the
- * focus invert), an invoker's target, and the ARIA states an `aria-*`
- * variant styles. */
+ * implicit anchor, and a `#id` style), `role` and `tabindex` (the
+ * interactives and the focus invert), an invoker's target, and the ARIA
+ * states an `aria-*` variant styles. */
 const RENDERING = new Set([
   "class",
   "style",
   "id",
   "role",
+  "tabindex",
   "hidden",
   "open",
   "popover",

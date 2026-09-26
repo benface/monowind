@@ -3,11 +3,9 @@
   import { hiddenSelectOptions, syncHiddenSelect } from "@monowind/ui/select";
   import { selectContext } from "./context.ts";
 
-  /** The native select a form submits, `display: none` so the layout
-   * skips it and a form still posts it. Its first options are markup
-   * Svelte writes once, for a server's page; after each change
-   * `syncHiddenSelect` owns them, the selection and Zag's `value`
-   * (specs/ui.md "A select is a listbox on a trigger"). */
+  /** The native select a form submits (specs/ui.md "A select is a
+   * listbox on a trigger"), its selection `syncHiddenSelect`'s after
+   * each change. */
   let rest: Record<string, unknown> = $props();
 
   const select = selectContext.use();

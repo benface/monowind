@@ -1,15 +1,16 @@
-import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
-import { glyphSetFor } from "./glyphs.ts";
-import type { GapStrip } from "./borders.ts";
-import type { RuleSegment } from "./borders.ts";
+import { gapRuleRuns, ruleBandSegments } from "./borders.ts";
+import type { GapStrip, RuleSegment } from "./borders.ts";
 import { percentToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack } from "./types.ts";
 import {
   boxChrome,
   clampSize,
+  contentOrigin,
+  fixedMargins,
+  intrinsicOuterWidth,
+  isInFlowBox,
   isOutOfFlow,
   layoutNode,
-  minContentOuterWidth,
   resolveGap,
   resolveLength,
   resolveLimit,
@@ -31,7 +32,6 @@ import type {
   GridLine,
   GridTemplate,
   InheritedTracks,
-  Insets,
   JustifyContent,
   LayoutNode,
   NullableInsets,
@@ -53,11 +53,11 @@ export function layoutGrid(
   innerWidth: number,
   innerHeight: number,
   definiteInnerHeight: number | undefined,
-  border: Insets,
-  padding: Insets,
   cache: IntrinsicCache,
 ): number {
   const style = node.style;
+  const { border } = style;
+  const padding = node.resolvedPadding;
   // The column axis is always definite (width fills); the row axis uses
   // any bounded inner height — a `min-height` floor included, same as
   // flex lines — so rows stretch and align inside `min-h-*` containers.
@@ -98,12 +98,12 @@ export function layoutGrid(
     : sizeTracks(
         colTracks,
         colCollapsed,
-        columnSizingItems(structure, subs, margins, cache),
+        sizingItems(structure, subs, margins, "cols", cache),
         innerWidth,
         gapX,
         style.justifyContent === "stretch",
       );
-  const colPos = inheritedCols
+  const columnPositions = inheritedCols
     ? inheritedCols.positions
     : trackPositions(colSizing, innerWidth, style.justifyContent);
 
@@ -116,21 +116,21 @@ export function layoutGrid(
   for (let i = 0; i < children.length; i++) {
     const child = children[i]!;
     const p = placed.items[i]!;
-    const areaW = areaExtent(colPos, colSizing.sizes, p.col.start, p.col.span);
+    const areaWidth = areaExtent(columnPositions, colSizing.sizes, p.col.start, p.col.span);
     const margin = margins[i]!;
-    const availW = Math.max(0, areaW - fixedX(margin));
+    const availableWidth = Math.max(0, areaWidth - fixedMargins(margin, "x"));
     const sub = subs[i]!;
     // A child that subgrids either axis carries a subgrid record — the
     // column half fills in now (rows follow after row sizing).
     if (sub.cols || sub.rows) {
       const cols = sub.cols
         ? inheritTracks(
-            colPos,
+            columnPositions,
             colSizing,
             gapX,
             p.col.start,
             p.col.span,
-            subgridChrome(child, "cols", margin, areaW),
+            subgridChrome(child, "cols", margin, areaWidth),
           )
         : undefined;
       child.subgrid = { colSpan: p.col.span, rowSpan: p.row.span, cols, rows: undefined };
@@ -139,26 +139,25 @@ export function layoutGrid(
     }
     const justify = justifies[i]!;
     const hasAutoX = margin.left === null || margin.right === null;
-    const hasExplicitWidth = child.style.width !== undefined && child.style.width.kind !== "auto";
     if (sub.cols) {
-      layoutNode(child, areaW, undefined, 0, 0, "fill", cache, { width: availW });
-    } else if (justify === "stretch" && !hasAutoX && !hasExplicitWidth) {
-      const maxW = resolveWidthLimit(child.style.maxWidth, areaW, child, cache);
-      const minW =
+      layoutNode(child, areaWidth, undefined, 0, 0, "fill", cache, { width: availableWidth });
+    } else if (justify === "stretch" && !hasAutoX && child.style.width === undefined) {
+      const maxWidth = resolveWidthLimit(child.style.maxWidth, areaWidth, child, cache);
+      const minWidth =
         child.style.minWidth === "auto"
           ? stretchMinimum(
               colSizing,
               p.col,
               child.style.overflow.x,
-              () => minContentOuterWidth(child, cache),
-              maxW,
-              fixedX(margin),
+              () => intrinsicOuterWidth(child, "min", cache),
+              maxWidth,
+              fixedMargins(margin, "x"),
             )
-          : (resolveWidthLimit(child.style.minWidth, areaW, child, cache) ?? 0);
-      const stretched = clampSize(availW, minW, maxW);
-      layoutNode(child, areaW, undefined, 0, 0, "fill", cache, { width: stretched });
+          : (resolveWidthLimit(child.style.minWidth, areaWidth, child, cache) ?? 0);
+      const stretched = clampSize(availableWidth, minWidth, maxWidth);
+      layoutNode(child, areaWidth, undefined, 0, 0, "fill", cache, { width: stretched });
     } else {
-      layoutNode(child, availW, undefined, 0, 0, "shrink", cache);
+      layoutNode(child, availableWidth, undefined, 0, 0, "shrink", cache);
     }
     usedWidths.push(child.localRect.width);
   }
@@ -169,7 +168,7 @@ export function layoutGrid(
   // axis is subgridded. A min-height floor sizes the rows only when their
   // max-content extent comes out smaller, and a percent row resolves
   // against the height that results (specs/grid.md step 7).
-  const rowItems = inheritedRows ? [] : rowSizingItems(structure, subs, margins);
+  const rowItems = inheritedRows ? [] : sizingItems(structure, subs, margins, "rows", cache);
   const sizeRows = (space: number | "max-content"): SizingResult =>
     sizeTracks(rowTracks, rowCollapsed, rowItems, space, gapY, style.alignContent === "stretch");
   const naturalRows = inheritedRows
@@ -186,54 +185,51 @@ export function layoutGrid(
         : undefined;
   const rowSizing = rowSpace === undefined ? naturalRows : sizeRows(rowSpace);
   const contentRows = totalExtent(rowSizing);
-  const rowPos = inheritedRows
+  const rowPositions = inheritedRows
     ? inheritedRows.positions
     : trackPositions(rowSizing, rowSpace ?? contentRows, style.alignContent);
 
   // Second item pass: block-axis stretch and final placement (a row
   // subgrid gets its inherited rows now and is laid out for real).
-  const originX = border.left + padding.left;
-  const originY = border.top + padding.top;
+  const { x: originX, y: originY } = contentOrigin(node);
   for (let i = 0; i < children.length; i++) {
     const child = children[i]!;
     const p = placed.items[i]!;
     const margin = margins[i]!;
-    const areaW = areaExtent(colPos, colSizing.sizes, p.col.start, p.col.span);
-    const areaH = areaExtent(rowPos, rowSizing.sizes, p.row.start, p.row.span);
-    const availH = Math.max(0, areaH - fixedY(margin));
+    const areaWidth = areaExtent(columnPositions, colSizing.sizes, p.col.start, p.col.span);
+    const areaHeight = areaExtent(rowPositions, rowSizing.sizes, p.row.start, p.row.span);
+    const availableHeight = Math.max(0, areaHeight - fixedMargins(margin, "y"));
     const align = effectiveAlign(child, node);
     const hasAutoY = margin.top === null || margin.bottom === null;
-    const hasExplicitHeight =
-      child.style.height !== undefined && child.style.height.kind !== "auto";
     if (subs[i]!.rows) {
       child.subgrid!.rows = inheritTracks(
-        rowPos,
+        rowPositions,
         rowSizing,
         gapY,
         p.row.start,
         p.row.span,
-        subgridChrome(child, "rows", margin, areaW),
+        subgridChrome(child, "rows", margin, areaWidth),
       );
-      layoutNode(child, areaW, areaH, 0, 0, "fill", cache, {
+      layoutNode(child, areaWidth, areaHeight, 0, 0, "fill", cache, {
         width: usedWidths[i]!,
-        height: availH,
+        height: availableHeight,
       });
-    } else if (align === "stretch" && !hasAutoY && !hasExplicitHeight) {
-      const maxH = resolveLimit(child.style.maxHeight, areaH);
-      const minH =
+    } else if (align === "stretch" && !hasAutoY && child.style.height === undefined) {
+      const maxHeight = resolveLimit(child.style.maxHeight, areaHeight);
+      const minHeight =
         child.style.minHeight === "auto"
           ? stretchMinimum(
               rowSizing,
               p.row,
               child.style.overflow.y,
               () => child.localRect.height,
-              maxH,
-              fixedY(margin),
+              maxHeight,
+              fixedMargins(margin, "y"),
             )
-          : (resolveLimit(child.style.minHeight, areaH) ?? 0);
-      const stretched = clampSize(availH, minH, maxH);
+          : (resolveLimit(child.style.minHeight, areaHeight) ?? 0);
+      const stretched = clampSize(availableHeight, minHeight, maxHeight);
       if (stretched !== child.localRect.height) {
-        layoutNode(child, areaW, areaH, 0, 0, "fill", cache, {
+        layoutNode(child, areaWidth, areaHeight, 0, 0, "fill", cache, {
           width: usedWidths[i]!,
           height: stretched,
         });
@@ -242,18 +238,18 @@ export function layoutGrid(
       // A percent height resolves against the item's grid area, per the
       // cyclic-percentage rule: it contributed as `auto` to the row
       // sizing above, and resolves against the resulting area now.
-      layoutNode(child, areaW, areaH, 0, 0, "fill", cache, { width: usedWidths[i]! });
+      layoutNode(child, areaWidth, areaHeight, 0, 0, "fill", cache, { width: usedWidths[i]! });
     }
     child.localRect = {
       ...child.localRect,
       x:
         originX +
-        colPos[p.col.start]! +
-        alignedOffset(justifies[i]!, margin.left, margin.right, areaW, child.localRect.width),
+        columnPositions[p.col.start]! +
+        alignedOffset(justifies[i]!, margin.left, margin.right, areaWidth, child.localRect.width),
       y:
         originY +
-        rowPos[p.row.start]! +
-        alignedOffset(align, margin.top, margin.bottom, areaH, child.localRect.height),
+        rowPositions[p.row.start]! +
+        alignedOffset(align, margin.top, margin.bottom, areaHeight, child.localRect.height),
     };
   }
 
@@ -320,47 +316,40 @@ export function layoutGrid(
           stripsFor(i - 1),
           style.ruleBreak,
           style.ruleVisibilityItems,
-          style.ruleInset,
+          style.ruleInset === "overlap-join",
         )) {
           bands.push({ bandStart, bandSize, ...segment });
         }
       }
       return bands;
     };
-    const vertical = bandSegments(colPos, colSizing.sizes, (gap) =>
+    const vertical = bandSegments(columnPositions, colSizing.sizes, (gap) =>
       strips(
         gap,
-        rowPos,
+        rowPositions,
         rowSizing.sizes,
         crossesCol,
         (r) => occupied[gap]?.[r] ?? false,
         (r) => occupied[gap + 1]?.[r] ?? false,
       ),
     );
-    const horizontal = bandSegments(rowPos, rowSizing.sizes, (gap) =>
+    const horizontal = bandSegments(rowPositions, rowSizing.sizes, (gap) =>
       strips(
         gap,
-        colPos,
+        columnPositions,
         colSizing.sizes,
         crossesRow,
         (c) => occupied[c]?.[gap] ?? false,
         (c) => occupied[c]?.[gap + 1] ?? false,
       ),
     );
-    node.decorationRuns = collectGapRuleRuns({
-      glyphs: glyphSetFor(style.glyphSet),
-      ruleX: style.ruleX,
-      ruleY: style.ruleY,
+    node.decorationRuns = gapRuleRuns(
+      node,
       vertical,
       horizontal,
-      contentWidth: innerWidth,
-      contentHeight,
-      border,
-      borderStyle: style.borderStyle,
-      borderWeight: style.borderWeight,
-      borderColor: style.borderColor,
-      padding,
-    });
+      innerWidth,
+      definiteInnerHeight ?? contentHeight,
+    );
   }
 
   // Out-of-flow children (specs/grid.md §10.1): the child's grid area —
@@ -383,7 +372,7 @@ export function layoutGrid(
         child.style.gridColumnEnd,
         colLines,
         placed.colOrigin,
-        colPos,
+        columnPositions,
         colSizing.sizes,
         -padding.left,
         innerWidth + padding.right,
@@ -393,7 +382,7 @@ export function layoutGrid(
         child.style.gridRowEnd,
         rowLines,
         placed.rowOrigin,
-        rowPos,
+        rowPositions,
         rowSizing.sizes,
         -padding.top,
         contentHeight + padding.bottom,
@@ -464,104 +453,98 @@ function sizingResultFromInherited(t: InheritedTracks): SizingResult {
   return { sizes: t.sizes, gapBefore: t.gapBefore, limits: t.sizes, functions };
 }
 
-/** An item's column contributions, `margin` included (a subgrid's edge
- * chrome counts as margin): min-/max-content, and its minimum
- * contribution (specs/grid.md step 2), a percent width counting as
- * `auto`. */
-function columnContributions(
-  child: LayoutNode,
-  margin: number,
-  cache: IntrinsicCache,
-): Omit<SizingItem, "start" | "span"> {
-  const { width, minWidth, overflow } = child.style;
-  const min = widthContribution(child, "min", cache) + margin;
-  const max = widthContribution(child, "max", cache) + margin;
-  if (width !== undefined && width.kind !== "auto" && width.kind !== "percent") {
-    return { min, max, minimum: min, contentFloor: undefined };
-  }
-  const chrome = boxChrome(child.style, "x") + margin;
-  if (minWidth !== "auto") {
-    const floor = (resolveWidthLimit(minWidth, 0, child, cache) ?? 0) + margin;
-    return { min, max, minimum: Math.max(floor, chrome), contentFloor: undefined };
-  }
-  return { min, max, minimum: margin, contentFloor: overflow.x === "visible" ? chrome : undefined };
+/** What an item's contributions read on one axis. */
+interface AxisReading {
+  min: number;
+  max: number;
+  /** A specified size fixes the minimum contribution at `min`. */
+  specified: boolean;
+  /** `auto` for the automatic minimum. */
+  minSize: number | "auto";
+  /** Border and padding. */
+  chrome: number;
+  visible: boolean;
 }
 
-/** An item's row contributions from its laid-out height (min = max at
- * the final width), `margin` included; the minimum contribution as for
- * columns, with only a cell height counting as specified. */
-function rowContributions(child: LayoutNode, margin: number): Omit<SizingItem, "start" | "span"> {
-  const { height, minHeight, overflow } = child.style;
-  const outer = child.localRect.height + margin;
-  if (height?.kind === "cells") {
-    return { min: outer, max: outer, minimum: outer, contentFloor: undefined };
-  }
-  const chrome = boxChrome(child.style, "y") + margin;
-  if (minHeight !== "auto") {
-    const floor = (resolveLimit(minHeight, undefined) ?? 0) + margin;
-    return { min: outer, max: outer, minimum: Math.max(floor, chrome), contentFloor: undefined };
-  }
+/** A column's reading: the intrinsic width contributions, a percent
+ * width, which depends on the area's, counting as `auto`. */
+function columnReading(child: LayoutNode, cache: IntrinsicCache): AxisReading {
+  const { style } = child;
+  const { width } = style;
   return {
-    min: outer,
-    max: outer,
-    minimum: margin,
-    contentFloor: overflow.y === "visible" ? chrome : undefined,
+    min: widthContribution(child, "min", cache),
+    max: widthContribution(child, "max", cache),
+    specified: width !== undefined && width.kind !== "percent",
+    minSize:
+      style.minWidth === "auto"
+        ? "auto"
+        : (resolveWidthLimit(style.minWidth, 0, child, cache) ?? 0),
+    chrome: boxChrome(style, "x"),
+    visible: style.overflow.x === "visible",
   };
 }
 
-/** Column sizing contributions for a resolved grid: each item's
- * contributions plus fixed margins; a column-subgrid child is replaced
- * by its own items, mapped onto the parent's tracks. */
-function columnSizingItems(
+/** A row's reading: the laid-out height as both contributions (min =
+ * max at the final width), only a cell height specified. */
+function rowReading(child: LayoutNode): AxisReading {
+  const { style } = child;
+  const height = child.localRect.height;
+  return {
+    min: height,
+    max: height,
+    specified: style.height?.kind === "cells",
+    minSize: style.minHeight === "auto" ? "auto" : (resolveLimit(style.minHeight, undefined) ?? 0),
+    chrome: boxChrome(style, "y"),
+    visible: style.overflow.y === "visible",
+  };
+}
+
+/** An item's contributions on one axis, `margin` included (a subgrid's
+ * edge chrome counts as margin), with its minimum contribution
+ * (specs/grid.md step 2). */
+function contributions(
+  child: LayoutNode,
+  axis: "cols" | "rows",
+  margin: number,
+  cache: IntrinsicCache,
+): Omit<SizingItem, "start" | "span"> {
+  const reading = axis === "cols" ? columnReading(child, cache) : rowReading(child);
+  const min = reading.min + margin;
+  const max = reading.max + margin;
+  if (reading.specified) return { min, max, minimum: min, contentFloor: undefined };
+  const chrome = reading.chrome + margin;
+  if (reading.minSize !== "auto") {
+    const minimum = Math.max(reading.minSize + margin, chrome);
+    return { min, max, minimum, contentFloor: undefined };
+  }
+  return { min, max, minimum: margin, contentFloor: reading.visible ? chrome : undefined };
+}
+
+/** Sizing contributions on one axis of a resolved grid: each item's
+ * contributions plus fixed margins; a subgrid child in that axis is
+ * replaced by its own items, mapped onto the parent's tracks. Rows read
+ * the items' laid-out heights. */
+function sizingItems(
   structure: GridStructure,
   subs: { cols: boolean; rows: boolean }[],
   margins: NullableInsets[],
+  axis: "cols" | "rows",
   cache: IntrinsicCache,
 ): SizingItem[] {
   const items: SizingItem[] = [];
   structure.children.forEach((child, i) => {
     const p = structure.placed.items[i]!;
+    const { start, span } = axis === "cols" ? p.col : p.row;
     const margin = margins[i]!;
-    if (subs[i]!.cols) {
-      const chrome = subgridChrome(child, "cols", margin, 0);
-      for (const item of subgridContributions(child, "cols", p, chrome, cache)) {
-        items.push({ ...item, start: item.start + p.col.start });
+    if (subs[i]![axis]) {
+      const chrome = subgridChrome(child, axis, margin, 0);
+      for (const item of subgridContributions(child, axis, p, chrome, cache)) {
+        items.push({ ...item, start: item.start + start });
       }
       return;
     }
-    items.push({
-      start: p.col.start,
-      span: p.col.span,
-      ...columnContributions(child, fixedX(margin), cache),
-    });
-  });
-  return items;
-}
-
-/** Row sizing contributions: each laid-out item's contributions plus
- * fixed margins; a row-subgrid child is replaced by its own items,
- * mapped onto the parent's tracks. */
-function rowSizingItems(
-  structure: GridStructure,
-  subs: { cols: boolean; rows: boolean }[],
-  margins: NullableInsets[],
-): SizingItem[] {
-  const items: SizingItem[] = [];
-  structure.children.forEach((child, i) => {
-    const p = structure.placed.items[i]!;
-    const margin = margins[i]!;
-    if (subs[i]!.rows) {
-      const chrome = subgridChrome(child, "rows", margin, 0);
-      for (const item of subgridContributions(child, "rows", p, chrome)) {
-        items.push({ ...item, start: item.start + p.row.start });
-      }
-      return;
-    }
-    items.push({
-      start: p.row.start,
-      span: p.row.span,
-      ...rowContributions(child, fixedY(margin)),
-    });
+    const marginTotal = fixedMargins(margin, axis === "cols" ? "x" : "y");
+    items.push({ start, span, ...contributions(child, axis, marginTotal, cache) });
   });
   return items;
 }
@@ -595,20 +578,16 @@ function subgridChrome(
  * track coordinates for the subgridded `axis` (the caller shifts them
  * onto the parent's tracks). Items in the subgrid's first/last track
  * also carry the subgrid's chrome on that side; nested subgrids compose
- * recursively. A subgrid without items still claims its chrome. `cache`
- * is needed for column (intrinsic) contributions only — rows use the
- * heights the provisional first pass laid out.
- *
- * `child.subgrid` is NOT written here — placement span is passed
- * explicitly to `resolveGridStructure`, keeping that field owned solely
- * by the parent's item passes.
+ * recursively. A subgrid without items still claims its chrome. Rows
+ * use the heights the provisional first pass laid out.
+ * `child.subgrid` belongs to the parent's item passes.
  */
 function subgridContributions(
   child: LayoutNode,
   axis: "cols" | "rows",
   placement: { col: PlacedAxis; row: PlacedAxis },
   chrome: { start: number; end: number },
-  cache?: IntrinsicCache,
+  cache: IntrinsicCache,
 ): SizingItem[] {
   const span = axis === "cols" ? placement.col.span : placement.row.span;
   const structure = resolveGridStructure(child, undefined, undefined, 0, 0, {
@@ -635,13 +614,8 @@ function subgridContributions(
       for (const c of nested) items.push({ ...c, start: c.start + a.start });
       return;
     }
-    items.push({
-      start: a.start,
-      span: a.span,
-      ...(axis === "cols"
-        ? columnContributions(item, fixedX(margin) + extra, cache!)
-        : rowContributions(item, fixedY(margin) + extra)),
-    });
+    const marginTotal = fixedMargins(margin, axis === "cols" ? "x" : "y") + extra;
+    items.push({ start: a.start, span: a.span, ...contributions(item, axis, marginTotal, cache) });
   });
   if (items.length === 0) {
     const total = chrome.start + chrome.end;
@@ -724,7 +698,7 @@ export function gridIntrinsicInnerWidths(
   const sizing = sizeTracks(
     structure.colTracks,
     structure.colCollapsed,
-    columnSizingItems(structure, subs, margins, cache),
+    sizingItems(structure, subs, margins, "cols", cache),
     "min-content",
     gapX,
     false,
@@ -871,17 +845,7 @@ function clampToExplicit(placed: PlacementResult, axis: "col" | "row", count: nu
 /** Grid item order: stable sort by CSS `order` (document order ties) —
  * `order` participates in auto-placement, per CSS. */
 function gridOrderedChildren(node: LayoutNode): LayoutNode[] {
-  return node.children
-    .filter((child) => !isOutOfFlow(child.style) && !child.inlineBox)
-    .sort((a, b) => a.style.order - b.style.order);
-}
-
-function fixedX(margin: NullableInsets): number {
-  return (margin.left ?? 0) + (margin.right ?? 0);
-}
-
-function fixedY(margin: NullableInsets): number {
-  return (margin.top ?? 0) + (margin.bottom ?? 0);
+  return node.children.filter(isInFlowBox).sort((a, b) => a.style.order - b.style.order);
 }
 
 // ---------------------------------------------------------------------------
@@ -950,9 +914,6 @@ function resolveTemplate(
   return { tracks, lineNames };
 }
 
-/** A fixed track breadth in cells, or undefined for intrinsic/fr (percent
- * is fixed only when the axis is definite, per CSS). A `min()`/`max()`
- * resolves when every argument does, else behaves as intrinsic. */
 /** Whether a row track has a percent, which only a definite height
  * resolves. */
 function resolvesAgainstHeight(track: TrackSize): boolean {
@@ -961,6 +922,9 @@ function resolvesAgainstHeight(track: TrackSize): boolean {
   return percent(track.min) || percent(track.max);
 }
 
+/** A fixed track breadth in cells, or undefined for intrinsic/fr (percent
+ * is fixed only when the axis is definite, per CSS). A `min()`/`max()`
+ * resolves when every argument does, else behaves as intrinsic. */
 function fixedBreadth(breadth: TrackBreadth, available: number | undefined): number | undefined {
   if (breadth.kind === "cells") return breadth.value;
   if (breadth.kind === "percent" && available !== undefined) {
@@ -1179,32 +1143,44 @@ export function placeItems(
   let minorOrigin = 0;
   let minorEnd = Math.max(explicitMinor, 1);
   for (let i = 0; i < specs.length; i++) {
-    const m = minor[i]!;
-    if (m.start !== null) {
-      minorOrigin = Math.min(minorOrigin, m.start);
-      minorEnd = Math.max(minorEnd, m.start + m.span);
+    const minorSpec = minor[i]!;
+    if (minorSpec.start !== null) {
+      minorOrigin = Math.min(minorOrigin, minorSpec.start);
+      minorEnd = Math.max(minorEnd, minorSpec.start + minorSpec.span);
     }
   }
   for (let i = 0; i < specs.length; i++) {
-    const m = minor[i]!;
-    if (m.start === null) minorEnd = Math.max(minorEnd, minorOrigin + m.span);
+    const minorSpec = minor[i]!;
+    if (minorSpec.start === null) minorEnd = Math.max(minorEnd, minorOrigin + minorSpec.span);
   }
   let majorOrigin = 0;
   for (let i = 0; i < specs.length; i++) {
-    const mj = major[i]!;
-    if (mj.start !== null) majorOrigin = Math.min(majorOrigin, mj.start);
+    const majorSpec = major[i]!;
+    if (majorSpec.start !== null) majorOrigin = Math.min(majorOrigin, majorSpec.start);
   }
 
   const occupied = new Set<string>();
-  const fits = (mj: number, mn: number, mjSpan: number, mnSpan: number): boolean => {
-    for (let a = mj; a < mj + mjSpan; a++) {
-      for (let b = mn; b < mn + mnSpan; b++) if (occupied.has(`${a}:${b}`)) return false;
+  const fits = (
+    majorStart: number,
+    minorStart: number,
+    majorSpan: number,
+    minorSpan: number,
+  ): boolean => {
+    for (let a = majorStart; a < majorStart + majorSpan; a++) {
+      for (let b = minorStart; b < minorStart + minorSpan; b++) {
+        if (occupied.has(`${a}:${b}`)) return false;
+      }
     }
     return true;
   };
-  const mark = (mj: number, mn: number, mjSpan: number, mnSpan: number): void => {
-    for (let a = mj; a < mj + mjSpan; a++) {
-      for (let b = mn; b < mn + mnSpan; b++) occupied.add(`${a}:${b}`);
+  const mark = (
+    majorStart: number,
+    minorStart: number,
+    majorSpan: number,
+    minorSpan: number,
+  ): void => {
+    for (let a = majorStart; a < majorStart + majorSpan; a++) {
+      for (let b = minorStart; b < minorStart + minorSpan; b++) occupied.add(`${a}:${b}`);
     }
   };
 
@@ -1212,67 +1188,67 @@ export function placeItems(
 
   // Step 1: fully definite items.
   for (let i = 0; i < specs.length; i++) {
-    const mj = major[i]!;
-    const mn = minor[i]!;
-    if (mj.start === null || mn.start === null) continue;
-    result[i] = { major: mj.start, minor: mn.start };
-    mark(mj.start, mn.start, mj.span, mn.span);
+    const majorSpec = major[i]!;
+    const minorSpec = minor[i]!;
+    if (majorSpec.start === null || minorSpec.start === null) continue;
+    result[i] = { major: majorSpec.start, minor: minorSpec.start };
+    mark(majorSpec.start, minorSpec.start, majorSpec.span, minorSpec.span);
   }
 
   // Step 2: items locked to a major-axis position. Sparse keeps a per-line
   // minor cursor so later items on the same line only move forward.
   const lineCursor = new Map<number, number>();
   for (let i = 0; i < specs.length; i++) {
-    const mj = major[i]!;
-    const mn = minor[i]!;
-    if (mj.start === null || mn.start !== null) continue;
+    const majorSpec = major[i]!;
+    const minorSpec = minor[i]!;
+    if (majorSpec.start === null || minorSpec.start !== null) continue;
     const from = flow.dense
       ? minorOrigin
-      : Math.max(minorOrigin, lineCursor.get(mj.start) ?? minorOrigin);
+      : Math.max(minorOrigin, lineCursor.get(majorSpec.start) ?? minorOrigin);
     let position = from;
-    while (!fits(mj.start, position, mj.span, mn.span)) position++;
-    result[i] = { major: mj.start, minor: position };
-    mark(mj.start, position, mj.span, mn.span);
-    if (!flow.dense) lineCursor.set(mj.start, position + mn.span);
-    minorEnd = Math.max(minorEnd, position + mn.span);
+    while (!fits(majorSpec.start, position, majorSpec.span, minorSpec.span)) position++;
+    result[i] = { major: majorSpec.start, minor: position };
+    mark(majorSpec.start, position, majorSpec.span, minorSpec.span);
+    if (!flow.dense) lineCursor.set(majorSpec.start, position + minorSpec.span);
+    minorEnd = Math.max(minorEnd, position + minorSpec.span);
   }
 
   // Steps 3–4: the auto-placement cursor.
-  let curMajor = majorOrigin;
-  let curMinor = minorOrigin;
+  let cursorMajor = majorOrigin;
+  let cursorMinor = minorOrigin;
   for (let i = 0; i < specs.length; i++) {
     if (result[i] !== null) continue;
-    const mj = major[i]!;
-    const mn = minor[i]!;
+    const majorSpec = major[i]!;
+    const minorSpec = minor[i]!;
     if (flow.dense) {
-      curMajor = majorOrigin;
-      curMinor = minorOrigin;
+      cursorMajor = majorOrigin;
+      cursorMinor = minorOrigin;
     }
-    if (mn.start !== null) {
+    if (minorSpec.start !== null) {
       // Definite minor position: overflowing the cursor's minor position
       // wraps to the next major line, then the item slides down until it
       // fits.
-      if (mn.start < curMinor) curMajor++;
-      while (!fits(curMajor, mn.start, mj.span, mn.span)) curMajor++;
-      result[i] = { major: curMajor, minor: mn.start };
-      mark(curMajor, mn.start, mj.span, mn.span);
-      curMinor = mn.start + mn.span;
+      if (minorSpec.start < cursorMinor) cursorMajor++;
+      while (!fits(cursorMajor, minorSpec.start, majorSpec.span, minorSpec.span)) cursorMajor++;
+      result[i] = { major: cursorMajor, minor: minorSpec.start };
+      mark(cursorMajor, minorSpec.start, majorSpec.span, minorSpec.span);
+      cursorMinor = minorSpec.start + minorSpec.span;
     } else {
-      let mjPos = curMajor;
-      let mnPos = curMinor;
+      let majorPosition = cursorMajor;
+      let minorPosition = cursorMinor;
       for (;;) {
-        if (mnPos + mn.span > minorEnd) {
-          mjPos++;
-          mnPos = minorOrigin;
+        if (minorPosition + minorSpec.span > minorEnd) {
+          majorPosition++;
+          minorPosition = minorOrigin;
           continue;
         }
-        if (fits(mjPos, mnPos, mj.span, mn.span)) break;
-        mnPos++;
+        if (fits(majorPosition, minorPosition, majorSpec.span, minorSpec.span)) break;
+        minorPosition++;
       }
-      result[i] = { major: mjPos, minor: mnPos };
-      mark(mjPos, mnPos, mj.span, mn.span);
-      curMajor = mjPos;
-      curMinor = mnPos + mn.span;
+      result[i] = { major: majorPosition, minor: minorPosition };
+      mark(majorPosition, minorPosition, majorSpec.span, minorSpec.span);
+      cursorMajor = majorPosition;
+      cursorMinor = minorPosition + minorSpec.span;
     }
   }
 
@@ -1417,27 +1393,34 @@ interface TrackState {
   collapsed: boolean;
 }
 
+function effectiveLimit(t: TrackState): number {
+  return t.collapsed ? 0 : t.limitKind === "fixed" ? t.limit! : Math.max(t.base, t.limit ?? t.base);
+}
+
+/** Grow the receivers' bases (or hard bases), shared by `weights`, until
+ * the spanned tracks cover `contribution`. */
+function growBases(
+  receivers: TrackState[],
+  weights: number[],
+  spanned: TrackState[],
+  gaps: number,
+  contribution: number,
+  field: "base" | "hardBase" = "base",
+): void {
+  const needed = contribution - spanned.reduce((s, t) => s + t[field], 0) - gaps;
+  if (receivers.length === 0 || needed <= 0) return;
+  const shares = distributeInteger(weights, needed);
+  receivers.forEach((t, k) => {
+    t[field] += shares[k]!;
+  });
+}
+
 /**
- * Size one axis's tracks. `space` is the definite inner size in the axis,
- * or the intrinsic sizing constraint when the axis is indefinite:
- * `"max-content"` for actual layout of an unbounded axis (rows of an
- * auto-height container), `"min-content"` for the container's min-content
- * measure. Steps: initialize from the minmax pairs; grow intrinsic
- * bases/limits from item contributions in ascending span order
- * (equal-weight integer distribution — specs/grid.md deviation), bases
- * from the items' minimum contributions (css-grid §6.6 decides where an
- * automatic minimum is content-based); keep what content grew an
- * `auto`-min base by within a fixed limit, raise every limit to its base
- * (§11.4). Definite: maximize bases up to limits
- * (§11.6), distribute the leftover to fr tracks floored at their bases
- * (§11.7), stretch auto-limited tracks over any remainder when the axis's
- * content-distribution is `stretch` (§11.8). Indefinite: fr tracks size
- * to the shared flex fraction (§11.7 with indefinite space), and under
- * the max-content constraint every track maximizes to its growth limit —
- * a fixed minmax max fills even without content, per CSS (§11.6's
- * infinite free space; all three browser engines agree).
+ * Size one axis's tracks (specs/grid.md "Track sizing algorithm"):
+ * `space` is the definite size, or the intrinsic constraint on an
+ * indefinite axis.
  */
-export function sizeTracks(
+function sizeTracks(
   trackSizes: TrackSize[],
   collapsed: boolean[],
   items: SizingItem[],
@@ -1447,89 +1430,46 @@ export function sizeTracks(
 ): SizingResult {
   const available = typeof space === "number" ? space : undefined;
   const functions = trackSizes.map((size) => trackFunctions(size, available));
-  const tracks: TrackState[] = trackSizes.map((size, i) => {
-    if (collapsed[i]) {
-      return {
-        base: 0,
-        hardBase: 0,
-        limit: 0,
-        baseIntrinsic: false,
-        autoMin: false,
-        limitKind: "fixed",
-        frFactor: 0,
-        collapsed: true,
-      };
-    }
-    const fixedMin = fixedBreadth(size.min, available);
-    const base = fixedMin ?? 0;
-    const baseIntrinsic = fixedMin === undefined;
+  // A collapsed track is a fixed 0.
+  const tracks = trackSizes.map((size, i): TrackState => {
+    const isCollapsed = collapsed[i]!;
+    const fixedMin = isCollapsed ? 0 : fixedBreadth(size.min, available);
     const { autoMin, fixedMax } = functions[i]!;
-    const max = size.max;
-    if (max.kind === "fr") {
-      return {
-        base,
-        hardBase: base,
-        limit: null,
-        baseIntrinsic,
-        autoMin,
-        limitKind: "fr",
-        frFactor: max.value,
-        collapsed: false,
-      };
-    }
-    if (fixedMax !== undefined) {
-      return {
-        base,
-        hardBase: base,
-        limit: fixedMax,
-        baseIntrinsic,
-        autoMin,
-        limitKind: "fixed",
-        frFactor: 0,
-        collapsed: false,
-      };
-    }
+    const { max } = size;
+    const limitKind = isCollapsed
+      ? "fixed"
+      : max.kind === "fr"
+        ? "fr"
+        : fixedMax === undefined
+          ? max.kind === "min-content"
+            ? "intrinsic-min"
+            : "intrinsic-max"
+          : "fixed";
     return {
-      base,
-      hardBase: base,
-      limit: null,
-      baseIntrinsic,
-      autoMin,
-      limitKind: max.kind === "min-content" ? "intrinsic-min" : "intrinsic-max",
-      frFactor: 0,
-      collapsed: false,
+      base: fixedMin ?? 0,
+      hardBase: fixedMin ?? 0,
+      limit: isCollapsed ? 0 : limitKind === "fixed" ? fixedMax! : null,
+      baseIntrinsic: fixedMin === undefined,
+      autoMin: !isCollapsed && autoMin,
+      limitKind,
+      frFactor: !isCollapsed && max.kind === "fr" ? max.value : 0,
+      collapsed: isCollapsed,
     };
   });
 
-  const gapBefore: number[] = tracks.map((t, i) => {
-    if (i === 0 || t.collapsed) return 0;
-    return tracks.slice(0, i).some((p) => !p.collapsed) ? gap : 0;
+  // A gap precedes each open track after the first open one.
+  let opened = false;
+  const gapBefore: number[] = tracks.map((t) => {
+    if (t.collapsed) return 0;
+    const before = opened ? gap : 0;
+    opened = true;
+    return before;
   });
   const internalGaps = (start: number, span: number): number => {
     let sum = 0;
     for (let i = start + 1; i < start + span; i++) sum += gapBefore[i]!;
     return sum;
   };
-  const effectiveLimit = (t: TrackState): number =>
-    t.collapsed ? 0 : t.limitKind === "fixed" ? t.limit! : Math.max(t.base, t.limit ?? t.base);
-  // Grow the receivers' bases (or hard bases), shared by `weights`, until
-  // the spanned tracks cover `contribution`.
-  const growBases = (
-    receivers: TrackState[],
-    weights: number[],
-    spanned: TrackState[],
-    gaps: number,
-    contribution: number,
-    field: "base" | "hardBase" = "base",
-  ): void => {
-    const needed = contribution - spanned.reduce((s, t) => s + t[field], 0) - gaps;
-    if (receivers.length === 0 || needed <= 0) return;
-    const shares = distributeInteger(weights, needed);
-    receivers.forEach((t, k) => {
-      t[field] += shares[k]!;
-    });
-  };
-
   // Step 2: intrinsic contributions, ascending span order (specs/grid.md
   // step 2): bases grow to the item's minimum contribution, then for
   // min-/max-content minimums to its min-content contribution; an item
@@ -1725,16 +1665,16 @@ export function sizeTracks(
 // ---------------------------------------------------------------------------
 // Geometry
 
-/** Track start positions relative to the content-box origin, including
- * the content-distribution offsets when the tracks underfill the axis
- * (`stretch` already consumed the space in sizing; it offsets as start). */
+/** Track start positions relative to the content-box origin, with the
+ * content-distribution offsets (`stretch` already consumed the space in
+ * sizing; it offsets as start). */
 function trackPositions(
   sizing: SizingResult,
   available: number,
   distribute: JustifyContent,
 ): number[] {
   const { sizes, gapBefore } = sizing;
-  const leftover = Math.max(0, available - totalExtent(sizing));
+  const leftover = available - totalExtent(sizing);
   const offsets = mainAxisOffsets(distribute === "stretch" ? "start" : distribute, sizes, leftover);
   const positions: number[] = [];
   let gapSum = 0;

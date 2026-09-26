@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 import { itemOf, itemProps, type ItemApi } from "@monowind/ui/framework";
-import { defineContext, partsOf, renderPart, type PartProps } from "./part.tsx";
+import { defineContext, definePart, renderPart, type PartProps } from "./part.tsx";
 
 /**
- * The parts a listbox and a select share (specs/ui.md "Component
- * layer"): the items of their collection, the text and the indicator
- * inside one, and the groups around them. Zag gives both the same
- * five getters, so both build their parts here.
+ * The item parts a listbox, a select and a combobox share (specs/ui.md
+ * "Component layer", `ItemApi`): the items, the text and the indicator
+ * inside one, and the groups around them.
  */
 
 /** An item is named either by the collection's own item or by the
@@ -16,14 +15,34 @@ export interface ItemProps extends PartProps {
   value?: string | undefined;
 }
 
-export function defineItemParts<A extends ItemApi>(prefix: string, context: { use: () => A }) {
-  /** The item an `Item` holds, for the text and the indicator inside
-   * it: whatever the collection holds, which is the author's shape. */
-  const held = defineContext<unknown>(`${prefix}.Item`);
-  const part = partsOf(prefix, context.use);
+const list = defineContext<ItemApi>(
+  "List",
+  "an item part must be inside <Listbox.Root>, <Select.Root> or <Combobox.Root>",
+);
 
+/** The item an `Item` holds, for the text and the indicator inside
+ * it: whatever the collection holds, which is the author's shape. */
+const held = defineContext<unknown>("Item", "an item's text and indicator must be inside its Item");
+
+/** A list component's context, whose root provides the item parts'
+ * list as well. */
+export function defineListContext<V extends ItemApi>(name: string) {
+  const own = defineContext<V>(name);
+  return {
+    ...own,
+    Provider: ({ value, children }: { value: V; children?: ReactNode }): ReactNode => (
+      <own.Provider value={value}>
+        <list.Provider value={value}>{children}</list.Provider>
+      </own.Provider>
+    ),
+  };
+}
+
+const useItem = () => ({ api: list.use(), item: held.use() });
+
+export function defineItemParts(prefix: string) {
   function Item({ item, value, children, ...rest }: ItemProps): ReactNode {
-    const api = context.use();
+    const api = list.use();
     const own = itemOf(api, { item, value });
     return renderPart(`${prefix}.Item`, "div", itemProps(api, own), {
       ...rest,
@@ -32,39 +51,32 @@ export function defineItemParts<A extends ItemApi>(prefix: string, context: { us
   }
   Item.displayName = `${prefix}.Item`;
 
-  function ItemText(props: PartProps): ReactNode {
-    const api = context.use();
-    const item = held.use();
-    return renderPart(`${prefix}.ItemText`, "span", api.getItemTextProps({ item }), props);
-  }
-  ItemText.displayName = `${prefix}.ItemText`;
-
-  function ItemIndicator(props: PartProps): ReactNode {
-    const api = context.use();
-    const item = held.use();
-    return renderPart(
-      `${prefix}.ItemIndicator`,
-      "span",
-      api.getItemIndicatorProps({ item }),
-      props,
-    );
-  }
-  ItemIndicator.displayName = `${prefix}.ItemIndicator`;
-
   return {
     /** The collection's item the part is inside. */
     useItemContext: held.use,
     Item,
-    ItemText,
-    ItemIndicator,
-    ItemGroup: part<"div", { id: string }>(
-      "ItemGroup",
+    ItemText: definePart(
+      `${prefix}.ItemText`,
+      useItem,
+      ({ api, item }) => api.getItemTextProps({ item }),
+      "span",
+    ),
+    ItemIndicator: definePart(
+      `${prefix}.ItemIndicator`,
+      useItem,
+      ({ api, item }) => api.getItemIndicatorProps({ item }),
+      "span",
+    ),
+    ItemGroup: definePart<ItemApi, "div", { id: string }>(
+      `${prefix}.ItemGroup`,
+      list.use,
       (api, own) => api.getItemGroupProps(own as { id: string }),
       "div",
       ["id"],
     ),
-    ItemGroupLabel: part<"div", { htmlFor: string }>(
-      "ItemGroupLabel",
+    ItemGroupLabel: definePart<ItemApi, "div", { htmlFor: string }>(
+      `${prefix}.ItemGroupLabel`,
+      list.use,
       (api, own) => api.getItemGroupLabelProps(own as { htmlFor: string }),
       "div",
       ["htmlFor"],

@@ -4,8 +4,9 @@ Status: **implemented** (2026-09-13; `plain-text.ts` opens a layer per
 root, `paint.ts` gives it nodes and maps the pointer, `element.ts`
 samples its transitions). Cell-unit
 fundamentals live in `cell-model.md`; the paint walk and the grid in
-`wide-characters.md` "The grid paints the selection"; opacity, which
-this may later absorb, in `cell-model.md` "Opacity".
+`wide-characters.md` "The grid paints the selection"; opacity, a
+layer root's on its box, in `cell-model.md` "Opacity and
+translucency".
 
 ## Motivation
 
@@ -93,15 +94,19 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   as it covers everything else — the front paint wins a cell
   outright, as always. A covered cell is see-through for the pointer,
   and the transcript shows the covering ink.
-- **Animation is sampled**, like color and opacity today: `transform`,
-  `translate`, `rotate`, `scale`, and `filter` join the sampled
-  transition properties, so a `transition-transform` re-copies the
-  computed values every frame and the layer follows the browser's own
-  easing; a layout at the transition's start opens the layer, on the
-  identity it may leave from, and one at the settle when it ends lands
-  it. A keyframe animation of an effect samples the same way; either
+- **Animation is sampled** (cell-model.md "Animation"): `transform`,
+  `translate`, `rotate`, `scale`, and `filter` are sampled transition
+  properties, their computed values copied onto the box every frame
+  with no layout, so a `transition-transform` follows the browser's
+  own easing; a layout at the transition's start opens the layer, on the
+  identity it may leave from, for an element the last layout did not
+  make a layer root (one that is already starts with no layout: its box
+  is there to copy onto), and its end is the next frame's copy, the
+  loop's last layout landing a resting identity. A keyframe animation of an effect samples the same way; either
   keeps its element a layer root through identity frames
-  (specs/animations.md).
+  (specs/animations.md). A layer root's opacity, in transition or
+  animation, is copied onto its box the same way, its cells as they
+  are.
 - **Selection and copy see the grid, not the transform.** A layer's
   cells are grid cells at their layout positions: the text-mode
   selection paints on them, the transcript reads them, copy yields
@@ -141,9 +146,16 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   border box (a shadow's, an overflowing child's) is see-through
   likewise. A point that lands on no layer is the main grid's, where no
   layer's subtree answers for the cell — its untransformed box included.
-- **Opacity is unchanged in this milestone.** It stays a per-cell
-  paint field; making an opacity root a layer, for true group
-  compositing, is a possible follow-up on the same mechanism.
+- **Opacity is the box's.** A layer root's `opacity`, times that
+  of the faded ancestors between it and the enclosing layer's root
+  (or the grid), goes on its box natively beside the effects, and
+  its cells paint unfaded: the browser composites the layer as one
+  group, as CSS composites an opacity root. A layer's grid blends as
+  the main grid does (cell-model.md "Opacity and translucency"): its
+  unpainted cells show what lies beneath the box, a translucent color
+  over one keeps its alpha and a group its opacity, on its span, and
+  a `bg-clear` inside it wipes its cells to transparent, the main
+  grid's paint showing through.
 
 ## Deviations from CSS (summary)
 
@@ -154,8 +166,10 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 2. A 3D transform draws as the browser draws it on the box, the
    pointer mapping flattened to 2D (a rotate about x or y is ignored
    there).
-3. Where `user-select: contain` is unsupported, a grid-mode drag that
-   crosses a layer's edge selects in DOM order.
+3. Where `user-select: contain` is unsupported — every engine probed
+   (Chromium, Firefox, WebKit), so everywhere for now — a grid-mode
+   drag that crosses a layer's edge selects in DOM order; the
+   declaration stands for the engines that will support it.
 4. A form control's native ink follows the browser's transform of the
    control itself, which coincides with the layer's while the two
    transforms agree (they are the same computed value).
@@ -165,18 +179,11 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 6. A `backdrop-filter` transition snaps to its target at the next
    layout: the companion's lock on the light element keeps it off the
    sampled list, or every layout's lock toggle would ease.
-7. A `bg-clear` inside a layer is transparent: the layer's box shows
-   the main grid through its unpainted cells, as a transformed box
-   shows what is behind it, so the wipe of ancestor decorations the
-   marker means on the main grid has nothing to wipe there.
-8. No engine probed (Chromium, Firefox, WebKit) supports a contained
-   `user-select`, so deviation 3 is the shipped behavior everywhere
-   for now: the declaration stands for the engines that will.
-9. Later ink covers a layer's cells whole, on their layout positions,
-   before the transform: a translucent overlay hides them where CSS
-   dims them (as the grid hides any covered cell), a partial cover
-   cuts on cell boundaries and turns with the layer, and a later text
-   run's blank spaces cover too.
+7. Later ink covers a layer's cells on their layout positions, before
+   the transform: a partial cover cuts on cell boundaries and turns
+   with the layer. That it covers them whole — a translucent overlay
+   hiding them, a later text run's blank spaces covering too — is the
+   grid's one glyph per cell (cell-model.md deviation 13).
 
 ## Testing
 
@@ -185,7 +192,9 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   absent from the main grid and present in its layer at the layer's
   origin, with its extent grown by an overflowing child and kept past
   a clipping ancestor, the clip carried through every one and a
-  nested layer's the clips inside its parent alone; nested layers; a
+  nested layer's the clips inside its parent alone; the box's opacity,
+  the root's times its faded ancestors', its cells unfaded and a
+  blend's alpha kept over its unpainted cells; nested layers; a
   layer in and as a scroll container, one scrolled out of view left
   empty; later ink covering a layer's cells, a nested layer's through
   its parent's, and ink walked before it left beneath; the transcript
@@ -215,25 +224,32 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 
 ## Touch points on implementation
 
-- style.ts / types.ts: `readLayer` and `CellStyle.layer` (`Layer`
-  carries the `backdrop-filter`, and whether the effects resample the
-  cells — `resampled`, which the tiling fit reads,
-  specs/wide-characters.md); styles.css carries the leading lift
-  in `top` so the transforms and `filter` stay the author's, and locks
-  `backdrop-filter` on the light element.
-- plain-text.ts `walk` / paint.ts `paintGrid`: the layer open/close
-  around a root's subtree; per-layer grids and node reuse; the boxes'
-  geometry and copied properties (`placeLayer`, `syncLayers`) and the
-  pointer mapping (`layersAt`, every layer's cell under a point).
+- style.ts: `readLayer`, a root's effects read into `CellStyle.layer`.
+- types.ts: `Layer`, carrying the `backdrop-filter` and whether the
+  effects resample the cells (`resampled`, which the tiling fit reads,
+  specs/wide-characters.md).
+- styles.css: the leading lift in `top`, so the transforms and
+  `filter` stay the author's; `backdrop-filter` locked on the light
+  element.
+- plain-text.ts: `walk`'s layer open and close around a root's
+  subtree, on the `recorder` a group shares, the opacity of the groups
+  it opened under kept (`PaintedLayer.alpha`).
+- paint.ts: `paintGrid`'s per-layer grids and node reuse; the boxes'
+  geometry and copied properties (`placeLayer`, `syncLayers`, the
+  box's `opacity` among them); the pointer mapping (`layersAt`, every
+  layer's cell under a point).
 - pointer.ts: `cellAtPoint`, the layer a point lands on and takes —
   nothing painted after it covering the point, by the layout's paint
   order (`indexTree`) — else the main grid's cell, with the hit stack
   it found; `hitStack` through a layer (`through`): its root's
   ancestor path, then its subtree; `pointKey`, what a hit is a
   function of.
-- element.ts: the layer container in the shadow viewport; the sampled
-  transition regex gains `transform`, `translate`, `rotate`, `scale`,
-  and `filter`; `#cellAt` hands a client point to `cellAtPoint`, and
-  the hover's same-cell skip compares `pointKey`s, no hit test run.
-- cell-model.md: "Animation" lists the new sampled properties; an
-  "Effects" pointer to this spec.
+- element.ts: the layer container in the shadow viewport; a
+  transition of an effect starting the sampling loop, its start
+  laying out only for an element not yet a layer root
+  (`#onTransitionRun`); `#cellAt` hands a client point to
+  `cellAtPoint`, and the hover's same-cell skip compares `pointKey`s,
+  no hit test run.
+- animation.ts: `EFFECTS`, the properties a layer's box samples.
+- cell-model.md's "Animation" names these properties among the
+  sampled ones, and its "Effects" points here.

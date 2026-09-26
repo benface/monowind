@@ -1,13 +1,15 @@
 import {
   cornerGlyph,
   glyphSetFor,
-  junctionRole,
+  JUNCTION_ROLES,
   junctionWeight,
   shadowRamp,
   weightBand,
 } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { colorAlpha } from "./color.ts";
+import { contentOrigin } from "./layout.ts";
+import { SIDES, zeroInsets } from "./types.ts";
 import type {
   RuleBreak,
   RuleVisibilityItems,
@@ -27,34 +29,30 @@ export type { BorderRun } from "./types.ts";
 
 type RingSides = Record<Side, boolean>;
 
-/**
- * Emit runs of border glyphs for the box's engine-allocated border cells.
- *
- * A weight band of N cells (a set's rings, specs/theming.md) allocates N
- * cells per edge; we render them as N concentric rings. Styles, weights,
- * and colors are per-side (see paintRing); every ring repeats them.
- *
- * A single-cell-thin box (width < 2 or height < 2) has no interior; we draw
- * only vertical/horizontal runs and skip corners that would overlap.
- */
+/** A ring's corners: role, then the sides giving its row (and color) and its column. */
+const CORNERS = [
+  ["tl", "top", "left"],
+  ["tr", "top", "right"],
+  ["bl", "bottom", "left"],
+  ["br", "bottom", "right"],
+] as const;
+
+/** Border glyph runs for the box's border cells: a weight band of N
+ * cells (specs/theming.md) paints N concentric rings of the per-side
+ * styles, weights and colors (paintRing); a box under 2 cells thin gets
+ * straight runs only, no overlapping corners. */
 export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[]): void {
   const border = style.border;
   if (border.top === 0 && border.right === 0 && border.bottom === 0 && border.left === 0) return;
   const rings = Math.max(border.top, border.right, border.bottom, border.left);
   for (let ring = 0; ring < rings; ring++) {
-    const sides = {
-      top: ring < border.top,
-      right: ring < border.right,
-      bottom: ring < border.bottom,
-      left: ring < border.left,
-    };
+    const sides: RingSides = { top: false, right: false, bottom: false, left: false };
     // A ring starts past a thinner edge's cells, which keep their glyphs.
-    const inset = {
-      top: Math.min(ring, border.top),
-      right: Math.min(ring, border.right),
-      bottom: Math.min(ring, border.bottom),
-      left: Math.min(ring, border.left),
-    };
+    const inset = zeroInsets();
+    for (const side of SIDES) {
+      sides[side] = ring < border[side];
+      inset[side] = Math.min(ring, border[side]);
+    }
     const ringRect = {
       x: box.x + inset.left,
       y: box.y + inset.top,
@@ -63,12 +61,8 @@ export function collectBorderRuns(style: CellStyle, box: Rect, out: BorderRun[])
     };
     if (ringRect.width <= 0 || ringRect.height <= 0) continue;
     // A ring inside loses a cell of radius, as CSS's inner edge does.
-    const radii = {
-      tl: Math.max(0, style.borderRadius.tl - ring),
-      tr: Math.max(0, style.borderRadius.tr - ring),
-      bl: Math.max(0, style.borderRadius.bl - ring),
-      br: Math.max(0, style.borderRadius.br - ring),
-    };
+    const radii = { ...style.borderRadius };
+    for (const [role] of CORNERS) radii[role] = Math.max(0, radii[role] - ring);
     paintRing(
       out,
       style.borderStyle,
@@ -165,16 +159,10 @@ export function collectShadowRuns(
   }
 }
 
-/**
- * Paint one ring, honoring per-side styles, weights, and colors. Each
- * edge uses its own style's glyphs at its weight. A corner where both
- * adjacent edges share a style uses that style's corner glyph;
- * mixed-style corners fall back to the light corners (Unicode has no
- * mixed junction glyphs for most pairs — same convention as
- * dashed/dotted), and a corner between weights draws the heavier
- * (junctionWeight). Corner color comes from the horizontal (top/bottom)
- * edge. A corner's radius picks its glyph (cornerGlyph).
- */
+/** Paint one ring, each edge in its own style and weight. A corner takes
+ * the style its edges share, else the light one (Unicode lacks most
+ * mixed junctions), the heavier weight (junctionWeight), its radius's
+ * glyph (cornerGlyph) and the horizontal edge's color. */
 function paintRing(
   out: BorderRun[],
   styles: PerSide<BorderStyle>,
@@ -204,7 +192,6 @@ function paintRing(
   const interiorStartY = y + (sides.top ? 1 : 0);
   const interiorEndY = y + height - (sides.bottom ? 1 : 0);
 
-  // Horizontal edges
   if (sides.top && interiorEndX > interiorStartX) {
     out.push({
       glyph: top.h,
@@ -223,7 +210,6 @@ function paintRing(
       color: colors.bottom,
     });
   }
-  // Vertical edges
   if (sides.left) {
     for (let vy = interiorStartY; vy < interiorEndY; vy++)
       out.push({ glyph: left.v, x, y: vy, length: 1, color: colors.left });
@@ -233,39 +219,16 @@ function paintRing(
       out.push({ glyph: right.v, x: x + width - 1, y: vy, length: 1, color: colors.right });
   }
   // Corners (only when we have interior room to distinguish them)
-  if (hasCorners) {
-    if (sides.top && sides.left)
-      out.push({
-        glyph: corner("top", "left", "tl"),
-        x,
-        y,
-        length: 1,
-        color: colors.top,
-      });
-    if (sides.top && sides.right)
-      out.push({
-        glyph: corner("top", "right", "tr"),
-        x: x + width - 1,
-        y,
-        length: 1,
-        color: colors.top,
-      });
-    if (sides.bottom && sides.left)
-      out.push({
-        glyph: corner("bottom", "left", "bl"),
-        x,
-        y: y + height - 1,
-        length: 1,
-        color: colors.bottom,
-      });
-    if (sides.bottom && sides.right)
-      out.push({
-        glyph: corner("bottom", "right", "br"),
-        x: x + width - 1,
-        y: y + height - 1,
-        length: 1,
-        color: colors.bottom,
-      });
+  if (!hasCorners) return;
+  for (const [role, row, column] of CORNERS) {
+    if (!sides[row] || !sides[column]) continue;
+    out.push({
+      glyph: corner(row, column, role),
+      x: column === "left" ? x : x + width - 1,
+      y: row === "top" ? y : y + height - 1,
+      length: 1,
+      color: colors[row],
+    });
   }
 }
 
@@ -348,7 +311,7 @@ export function junctionGlyph(
   right: boolean,
   set?: BorderGlyphSet,
 ): string {
-  const role = junctionRole((up ? 8 : 0) | (down ? 4 : 0) | (left ? 2 : 0) | (right ? 1 : 0));
+  const role = JUNCTION_ROLES[(up ? 8 : 0) | (down ? 4 : 0) | (left ? 2 : 0) | (right ? 1 : 0)];
   return role ? weightBand(style, weight, set).roles[role] : " ";
 }
 
@@ -392,13 +355,15 @@ export interface GapSegment {
  * Split one gap band into painted segments (specs/gap-decorations.md
  * "Segments", probed in Chromium 151): track strips kept per spanning
  * occupancy and rule-visibility-items, crossing-gap strips joined per
- * rule-break, contiguous runs merged, endpoints retracted by the inset.
+ * rule-break, contiguous runs merged — under `overlap-join`, their
+ * junction endpoints extended into the crossing gaps, else the empty
+ * ones dropped. A numeric rule-inset applies in gapRuleRuns.
  */
 export function ruleBandSegments(
   strips: GapStrip[],
   ruleBreak: RuleBreak,
   visibility: RuleVisibilityItems,
-  inset: number | "overlap-join",
+  overlapJoin: boolean,
 ): GapSegment[] {
   const covered = strips.map((strip) => {
     if (strip.spanned) return false;
@@ -426,7 +391,7 @@ export function ruleBandSegments(
     if (last && last.end === piece.start) last.end = piece.end;
     else segments.push({ start: piece.start, end: piece.end });
   }
-  if (inset === "overlap-join") {
+  if (overlapJoin) {
     // Junction endpoints extend into the crossing gap to its centerline
     // (half the gap plus half the crossing rule, probed — Chromium
     // extends whether or not a crossing rule paints there); segments
@@ -452,12 +417,48 @@ export function ruleBandSegments(
       };
     });
   }
+  return segments.filter((segment) => segment.end > segment.start);
+}
+
+/** A flex, grid or multicol container's gap rules as glyph runs
+ * (specs/gap-decorations.md), in its resolved box — `contentWidth` and
+ * `contentHeight` its content box's, which overflowing tracks pass: its
+ * bands' segments, retracted by a numeric rule-inset. */
+export function gapRuleRuns(
+  node: LayoutNode,
+  vertical: RuleSegment[],
+  horizontal: RuleSegment[],
+  contentWidth: number,
+  contentHeight: number,
+): BorderRun[] {
+  const { style } = node;
+  return collectGapRuleRuns({
+    glyphs: glyphSetFor(style.glyphSet),
+    ruleX: style.ruleX,
+    ruleY: style.ruleY,
+    vertical: insetSegments(vertical, style.ruleInset),
+    horizontal: insetSegments(horizontal, style.ruleInset),
+    contentWidth,
+    contentHeight,
+    border: style.border,
+    borderStyle: style.borderStyle,
+    borderWeight: style.borderWeight,
+    borderColor: style.borderColor,
+    padding: node.resolvedPadding,
+    origin: contentOrigin(node),
+  });
+}
+
+/** Segments retracted by a numeric inset at both ends, those it empties
+ * dropped. */
+function insetSegments(segments: RuleSegment[], inset: number | "overlap-join"): RuleSegment[] {
+  if (typeof inset !== "number" || inset <= 0) return segments;
   return segments
-    .map((segment) => ({ start: segment.start + inset, end: segment.end - inset }))
+    .map((segment) => ({ ...segment, start: segment.start + inset, end: segment.end - inset }))
     .filter((segment) => segment.end > segment.start);
 }
 
-export interface GapRuleContext {
+interface GapRuleContext {
   ruleX: GapRule | null;
   ruleY: GapRule | null;
   /** Column-gap bands (vertical lines) and row-gap bands (horizontal). */
@@ -472,6 +473,7 @@ export interface GapRuleContext {
   borderWeight: PerSide<number>;
   borderColor: PerSide<string | undefined>;
   padding: Insets;
+  origin: { x: number; y: number };
   /** The owning container's resolved glyph set (specs/theming.md). */
   glyphs?: BorderGlyphSet | undefined;
 }
@@ -479,24 +481,23 @@ export interface GapRuleContext {
 /**
  * Paint gap rules as node-local glyph runs: each rule centers in its
  * band (floor on the leading side), crossings get junction glyphs from
- * their arms, and a rule that reaches the content edge through zero
- * padding tees into the container's innermost border ring. Mixed styles
- * fall back to the light set; all-double crossings use the double set;
- * a crossing of weights draws the heavier.
+ * their arms, and a rule that reaches the container's innermost border
+ * ring joins it (collectRuleBorderJunctions). Mixed styles fall back to
+ * the light set; all-double crossings use the double set; a crossing of
+ * weights draws the heavier.
  */
-export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
+function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
   const out: BorderRun[] = [];
-  const originX = ctx.border.left + ctx.padding.left;
-  const originY = ctx.border.top + ctx.padding.top;
-  const placed = (rule: GapRule, seg: RuleSegment) => ({
-    line: seg.bandStart + Math.floor((seg.bandSize - rule.width) / 2),
-    start: seg.start,
-    end: seg.end,
-    startHalf: seg.startHalf === true,
-    endHalf: seg.endHalf === true,
+  const { x: originX, y: originY } = ctx.origin;
+  const placed = (rule: GapRule, segment: RuleSegment) => ({
+    line: segment.bandStart + Math.floor((segment.bandSize - rule.width) / 2),
+    start: segment.start,
+    end: segment.end,
+    startHalf: segment.startHalf === true,
+    endHalf: segment.endHalf === true,
   });
-  const vLines = ctx.ruleX ? ctx.vertical.map((seg) => placed(ctx.ruleX!, seg)) : [];
-  const hLines = ctx.ruleY ? ctx.horizontal.map((seg) => placed(ctx.ruleY!, seg)) : [];
+  const vLines = ctx.ruleX ? ctx.vertical.map((segment) => placed(ctx.ruleX!, segment)) : [];
+  const hLines = ctx.ruleY ? ctx.horizontal.map((segment) => placed(ctx.ruleY!, segment)) : [];
   const vWidth = ctx.ruleX?.width ?? 0;
   const hWidth = ctx.ruleY?.width ?? 0;
   /** Junction arms come from INK AT CELL BOUNDARIES over the union of
@@ -531,7 +532,7 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
             color: ctx.ruleX.color,
           });
         }
-      collectRuleBorderTees(ctx, out, "x", line.line, line.start, line.end);
+      collectRuleBorderJunctions(ctx, out, "x", line.line, line.start, line.end);
     }
   }
   if (ctx.ruleY) {
@@ -563,15 +564,18 @@ export function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
           });
         }
       }
-      collectRuleBorderTees(ctx, out, "y", line.line, line.start, line.end);
+      collectRuleBorderJunctions(ctx, out, "y", line.line, line.start, line.end);
     }
   }
   return out;
 }
 
-/** Tee a full-extent rule into the container's own innermost border
- * ring (only through ZERO padding — otherwise they don't touch). */
-function collectRuleBorderTees(
+/** Join a rule to the container's own innermost border ring where its
+ * cells [start, end) reach the ring's straight run — through zero
+ * padding, or across the padding over overflowing tracks: a tee where
+ * it ends there, a cross where it runs on past, as CSS paints a rule
+ * over the border. */
+function collectRuleBorderJunctions(
   ctx: GapRuleContext,
   out: BorderRun[],
   axis: "x" | "y",
@@ -580,11 +584,10 @@ function collectRuleBorderTees(
   end: number,
 ): void {
   const rule = axis === "x" ? ctx.ruleX! : ctx.ruleY!;
-  const originX = ctx.border.left + ctx.padding.left;
-  const originY = ctx.border.top + ctx.padding.top;
-  const nodeWidth = originX + ctx.contentWidth + ctx.padding.right + ctx.border.right;
-  const nodeHeight = originY + ctx.contentHeight + ctx.padding.bottom + ctx.border.bottom;
-  const tee = (
+  const { border, padding, origin } = ctx;
+  const nodeWidth = origin.x + ctx.contentWidth + padding.right + border.right;
+  const nodeHeight = origin.y + ctx.contentHeight + padding.bottom + border.bottom;
+  const junction = (
     x: number,
     y: number,
     side: Side,
@@ -607,21 +610,28 @@ function collectRuleBorderTees(
       color: ctx.borderColor[side],
     });
   };
+  // The innermost ring's cells, content-relative.
   if (axis === "x") {
+    const top = -padding.top - 1;
+    const bottom = ctx.contentHeight + padding.bottom;
     for (let t = 0; t < rule.width; t++) {
-      const x = originX + line + t;
-      if (start <= 0 && ctx.padding.top === 0 && ctx.border.top > 0)
-        tee(x, ctx.border.top - 1, "top", false, true, true, true);
-      if (end >= ctx.contentHeight && ctx.padding.bottom === 0 && ctx.border.bottom > 0)
-        tee(x, nodeHeight - ctx.border.bottom, "bottom", true, false, true, true);
+      const x = origin.x + line + t;
+      if (x < border.left || x >= nodeWidth - border.right) continue;
+      if (border.top > 0 && start <= top + 1)
+        junction(x, origin.y + top, "top", start < top, true, true, true);
+      if (border.bottom > 0 && end >= bottom)
+        junction(x, origin.y + bottom, "bottom", true, end > bottom + 1, true, true);
     }
   } else {
+    const left = -padding.left - 1;
+    const right = ctx.contentWidth + padding.right;
     for (let t = 0; t < rule.width; t++) {
-      const y = originY + line + t;
-      if (start <= 0 && ctx.padding.left === 0 && ctx.border.left > 0)
-        tee(ctx.border.left - 1, y, "left", true, true, false, true);
-      if (end >= ctx.contentWidth && ctx.padding.right === 0 && ctx.border.right > 0)
-        tee(nodeWidth - ctx.border.right, y, "right", true, true, true, false);
+      const y = origin.y + line + t;
+      if (y < border.top || y >= nodeHeight - border.bottom) continue;
+      if (border.left > 0 && start <= left + 1)
+        junction(origin.x + left, y, "left", true, true, start < left, true);
+      if (border.right > 0 && end >= right)
+        junction(origin.x + right, y, "right", true, true, true, end > right + 1);
     }
   }
 }

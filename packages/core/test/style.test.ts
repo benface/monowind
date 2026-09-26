@@ -90,7 +90,7 @@ describe("viewport-relative sizing", () => {
     (el as unknown as { computedStyleMap: () => unknown }).computedStyleMap = () => ({
       get: (property: string) => (property === "height" ? "auto" : null),
     });
-    expect(readCellStyle(el, 16, metrics).height).toEqual({ kind: "auto" });
+    expect(readCellStyle(el, 16, metrics).height).toBeUndefined();
   });
 });
 
@@ -98,7 +98,7 @@ describe("sizing fallbacks", () => {
   it("reads inline width/height in px, %, and auto", () => {
     expect(read({ style: "width: 80px" }).width).toEqual({ kind: "cells", value: 20 });
     expect(read({ style: "width: 50%" }).width).toEqual({ kind: "percent", value: 50 });
-    expect(read({ style: "width: auto" }).width).toEqual({ kind: "auto" });
+    expect(read({ style: "width: auto" }).width).toBeUndefined();
     expect(read({ style: "height: 12px" }).height).toEqual({ kind: "cells", value: 3 });
   });
 
@@ -110,7 +110,7 @@ describe("sizing fallbacks", () => {
   });
 
   it("treats an element without sizing utilities or inline size as auto", () => {
-    expect(read({ class: "border px-2 text-red-500" }).width).toEqual({ kind: "auto" });
+    expect(read({ class: "border px-2 text-red-500" }).width).toBeUndefined();
   });
 
   it("reads inline intrinsic keywords too", () => {
@@ -408,6 +408,22 @@ describe("mixed-unit calc()", () => {
       sheet.remove();
     }
   });
+
+  it("yields to an inline viewport length, which wins by cascade", () => {
+    // Typed OM resolves the inline 90vh to px: near enough the class's
+    // calc to pass its active-check, which must not come first.
+    const el = document.createElement("div");
+    el.className = "max-h-[calc(100vh-2rem)]";
+    el.style.maxHeight = "90vh";
+    document.body.appendChild(el);
+    (el as unknown as { computedStyleMap: () => unknown }).computedStyleMap = () => ({
+      get: (property: string) =>
+        property === "max-height" ? `${0.9 * window.innerHeight}px` : null,
+    });
+    expect(readCellStyle(el, 16, metrics).maxHeight).toBe(
+      Math.floor((0.9 * window.innerHeight) / 18),
+    );
+  });
 });
 
 describe("float and clear (specs/float.md)", () => {
@@ -423,5 +439,79 @@ describe("float and clear (specs/float.md)", () => {
     expect(read({ style: "float: left; position: fixed" }).float).toBe("none");
     // Its `clear` stays readable; layout ignores it off the block flow.
     expect(read({ style: "clear: left; position: absolute" }).clear).toBe("left");
+  });
+});
+
+describe("alignment keywords", () => {
+  it("reads an overflow position beside the keyword", () => {
+    // justify-center-safe, items-end-safe, justify-items-end-safe
+    expect(read({ style: "justify-content: safe center" })).toMatchObject({
+      justifyContent: "center",
+      justifyContentSafe: true,
+    });
+    expect(read({ style: "align-items: safe flex-end" })).toMatchObject({
+      alignItems: "flex-end",
+      alignItemsSafe: true,
+    });
+    expect(read({ style: "justify-items: safe end" })).toMatchObject({
+      justifyItems: "end",
+      justifyItemsSafe: true,
+    });
+    expect(read({ style: "align-content: unsafe center" })).toMatchObject({
+      alignContent: "center",
+      alignContentSafe: false,
+    });
+    expect(read({ style: "justify-content: flex-end" })).toMatchObject({
+      justifyContent: "flex-end",
+      justifyContentSafe: false,
+    });
+  });
+
+  it("reads start and end apart from flex-start and flex-end", () => {
+    // place-items-start, items-start, self-start
+    expect(read({ style: "align-items: start" }).alignItems).toBe("start");
+    expect(read({ style: "align-items: flex-start" }).alignItems).toBe("flex-start");
+    expect(read({ style: "align-self: self-end" }).alignSelf).toBe("end");
+    expect(read({ style: "justify-content: left" }).justifyContent).toBe("start");
+  });
+
+  it("reads a safe self-alignment as its keyword, not the start", () => {
+    // self-center-safe, justify-self-end-safe
+    expect(read({ style: "align-self: safe center" })).toMatchObject({
+      alignSelf: "center",
+      alignSelfSafe: true,
+    });
+    expect(read({ style: "justify-self: safe flex-end" })).toMatchObject({
+      justifySelf: "flex-end",
+      justifySelfSafe: true,
+    });
+  });
+
+  it("reads a baseline as itself, safe, and legacy as its keyword", () => {
+    expect(read({ style: "align-items: baseline" })).toMatchObject({
+      alignItems: "baseline",
+      alignItemsSafe: true,
+    });
+    expect(read({ style: "align-self: last baseline" })).toMatchObject({
+      alignSelf: "last baseline",
+      alignSelfSafe: true,
+    });
+    expect(read({ style: "justify-items: legacy center" }).justifyItems).toBe("center");
+    expect(read({ style: "justify-items: legacy" }).justifyItems).toBe("stretch");
+  });
+
+  it("warns once on a value it cannot read, which reads as the initial value", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const style = read({ style: "align-self: sideways; justify-content: sideways" });
+      expect(style.alignSelf).toBe("auto");
+      expect(style.justifyContent).toBe("stretch");
+      expect(warn).toHaveBeenCalledTimes(2);
+      warn.mockClear();
+      read({ style: "align-self: safe center; justify-items: legacy left" });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

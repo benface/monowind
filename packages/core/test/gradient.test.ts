@@ -32,6 +32,7 @@ const CYAN = "oklch(0.715 0.143 215.221)";
 const BLUE = "oklch(0.546 0.245 262.881)";
 // Outside sRGB.
 const EMERALD_400 = "oklch(0.765 0.177 163.223)";
+const YELLOW_400 = "oklch(0.852 0.199 91.936)";
 const GRAY_800 = "oklch(0.278 0.033 256.848)";
 const BLUE_500 = "oklch(0.623 0.214 259.815)";
 
@@ -46,7 +47,7 @@ describe("background-image read", () => {
     });
     expect(toRight!.stops.map((stop) => stop.position)).toEqual([{ fraction: 0 }, { fraction: 1 }]);
     // Tailwind v4's cyan-500 and blue-600 in sRGB, through oklch.
-    expect(serializeColor(toRight!.stops[0]!.color)).toBe("rgb(0 184 219)");
+    expect(serializeColor(toRight!.stops[0]!.color)).toBe("color(srgb -0.23018 0.72187 0.85734)");
     expect(serializeColor(toRight!.stops[1]!.color)).toBe("rgb(21 93 252)");
     expect(read(`linear-gradient(45deg, ${CYAN} 0%, ${BLUE} 100%)`)[0]).toMatchObject({
       direction: { angle: 45 },
@@ -212,9 +213,73 @@ describe("colors", () => {
     expect(rgb("transparent")).toBe("rgb(0 0 0 / 0)");
     expect(parseColor("var(--mw-fg)")).toBeNull();
     expect(parseColor("red")).toBeNull();
-    // A shadow's alpha still reads off a form the parser skips.
-    expect(colorAlpha("lab(50% 40 30 / 0.5)")).toBe(0.5);
+    // A form the parser cannot read is taken as opaque, a written alpha
+    // too: engines serialize every color as one it reads.
+    expect(colorAlpha("color(rec2020 0.6 0.4 0.2 / 0.5)")).toBe(0.5);
     expect(colorAlpha("var(--mw-fg)")).toBe(1);
+    expect(colorAlpha("hsl(200 50% 50% / 0.25)")).toBe(1);
+  });
+
+  it("parses lab(), lch(), display-p3 and xyz as the browsers convert them to sRGB", () => {
+    // Firefox's and WebKit's `color-mix(in srgb, …)` of each, to their
+    // six digits: css-color-4's conversions.
+    const expectSrgb = (color: string, r: number, g: number, b: number, a = 1) => {
+      const parsed = parseColor(color)!;
+      for (const [got, want] of [
+        [parsed.r, r],
+        [parsed.g, g],
+        [parsed.b, b],
+      ] as const) {
+        expect(Math.abs(got - want), color).toBeLessThan(5e-6);
+      }
+      expect(parsed.a).toBe(a);
+    };
+    expectSrgb("lab(50 40 30)", 0.734269, 0.344108, 0.276346);
+    expectSrgb("lab(50% 40 30)", 0.734269, 0.344108, 0.276346);
+    expectSrgb("lab(75 -20 60 / 0.5)", 0.680115, 0.76036, 0.247683, 0.5);
+    expectSrgb("lab(10 5 -80)", -0.30915, 0.13419, 0.565955);
+    expectSrgb("lab(4 0 0)", 0.0552846, 0.0552846, 0.0552846);
+    expectSrgb("lab(100 0 0)", 1, 1, 1);
+    expectSrgb("lch(50 60 40)", 0.769217, 0.317044, 0.219645);
+    expectSrgb("lch(70 50 250 / 0.25)", 0.199737, 0.717109, 1.00452, 0.25);
+    expectSrgb("lch(80 120 90)", 0.902069, 0.768308, -0.307071);
+    expectSrgb("color(display-p3 1 0 0)", 1.09307, -0.226742, -0.150135);
+    expectSrgb("color(display-p3 0.2 0.4 0.6 / 0.5)", 0.104057, 0.405933, 0.617002, 0.5);
+    expectSrgb("color(xyz 0.2 0.3 0.4)", -0.114744, 0.654239, 0.644299);
+    expectSrgb("color(xyz-d65 0.5 0.5 0.5)", 0.799209, 0.71806, 0.704423);
+    expectSrgb("color(xyz-d50 0.3 0.2 0.1)", 0.7783, 0.337075, 0.375484);
+  });
+
+  it("parses a98-rgb, prophoto-rgb and rec2020 as the browsers convert them to sRGB", () => {
+    // Firefox's and WebKit's `color-mix(in srgb, …)` of each, to their
+    // six digits (css-color-4's transfer functions and matrices): WebKit's
+    // where Firefox's D50 adaptation parts at the sixth, and a component
+    // past 0..1 extended by its sign as Firefox and Chromium extend it.
+    const expectSrgb = (color: string, r: number, g: number, b: number, a = 1) => {
+      const parsed = parseColor(color)!;
+      for (const [got, want] of [
+        [parsed.r, r],
+        [parsed.g, g],
+        [parsed.b, b],
+      ] as const) {
+        expect(Math.abs(got - want), color).toBeLessThan(5e-6);
+      }
+      expect(parsed.a).toBe(a);
+    };
+    expectSrgb("color(a98-rgb 1 0 0)", 1.158183, 0, 0);
+    expectSrgb("color(a98-rgb 0.2 0.6 0.3 / 0.5)", -0.329927, 0.605638, 0.271444, 0.5);
+    expectSrgb("color(a98-rgb 0.5 0.5 0.5)", 0.503993, 0.503993, 0.503993);
+    expectSrgb("color(a98-rgb -0.2 0.4 1.1)", -0.338367, 0.400621, 1.11445);
+    expectSrgb("color(prophoto-rgb 1 0 0)", 1.363293, -0.515663, -0.09013);
+    expectSrgb("color(prophoto-rgb 0.4 0.5 0.6)", 0.271023, 0.591387, 0.678214);
+    expectSrgb("color(prophoto-rgb 0.7 0.2 0.9 / 25%)", 0.894535, -0.259707, 0.976856, 0.25);
+    expectSrgb("color(prophoto-rgb 0.02 0.03 0.01)", 0.012751, 0.02612, 0.005531);
+    expectSrgb("color(prophoto-rgb 1 1 1)", 1, 1, 1);
+    expectSrgb("color(rec2020 0.6 0.4 0.2)", 0.736612, 0.423677, 0.21524);
+    expectSrgb("color(rec2020 1 0 0)", 1.24822, -0.387908, -0.143514);
+    expectSrgb("color(rec2020 0.05 0.07 0.02)", 0.093099, 0.134338, 0.041397);
+    expectSrgb("color(rec2020 0.3 0.8 0.5 / 0.75)", -0.506488, 0.859585, 0.510902, 0.75);
+    expectSrgb("color(rec2020 -0.1 0.5 0.5)", -0.49439, 0.579256, 0.551499);
   });
 
   const black = parseColor("rgb(0, 0, 0)")!;
@@ -236,13 +301,34 @@ describe("colors", () => {
     expect(serializeColor(compositeColors(clear, white))).toBe("rgb(255 255 255)");
   });
 
-  it("carries a color outside sRGB through the mix, clipped where written or composited", () => {
+  it("carries a color outside sRGB through the mix, written as color(srgb) past it", () => {
     const emerald = parseColor(EMERALD_400)!;
     // OKLab's own values mixed: the synthesized fade's too.
-    expect(mix(emerald, parseColor(GRAY_800)!, 0.25, "oklab")).toBe("rgb(0 166 124)");
+    expect(mix(emerald, parseColor(GRAY_800)!, 0.25, "oklab")).toBe(
+      "color(srgb -0.00758 0.65098 0.48455)",
+    );
     const bright = parseColor("color(srgb 1.5 0 0)")!;
     expect(mix(bright, black, 0.75, "srgb")).toBe("rgb(96 0 0)");
-    expect(serializeColor(compositeColors({ ...emerald, a: 0.5 }, white))).toBe("rgb(128 234 200)");
+    expect(serializeColor(bright)).toBe("color(srgb 1.5 0 0)");
+    expect(serializeColor({ ...bright, a: 0.5 })).toBe("color(srgb 1.5 0 0 / 0.5)");
+  });
+
+  it("clips each color to sRGB to composite it, as browsers blend on an sRGB screen", () => {
+    // Tailwind's yellow-400, its blue −0.27: half over white is the
+    // browser's 127 within a unit, where the unclipped blend gives 93.
+    const yellow = parseColor(YELLOW_400)!;
+    expect(serializeColor(compositeColors({ ...yellow, a: 0.5 }, white))).toBe("rgb(254 227 128)");
+    const bright = parseColor("color(srgb 1.5 0 -0.5)")!;
+    expect(serializeColor(compositeColors({ ...bright, a: 0.5 }, black))).toBe("rgb(128 0 0)");
+    expect(serializeColor(compositeColors({ ...white, a: 0.5 }, bright))).toBe("rgb(255 128 128)");
+    // No blend: an opaque color, or one over transparent, as it is.
+    const clear = parseColor("rgba(0, 0, 0, 0)")!;
+    expect(serializeColor(compositeColors(bright, white))).toBe("color(srgb 1.5 0 -0.5)");
+    expect(serializeColor(compositeColors({ ...bright, a: 0.5 }, clear))).toBe(
+      "color(srgb 1.5 0 -0.5 / 0.5)",
+    );
+    // A zero-alpha color is no paint: the color beneath, unclipped.
+    expect(serializeColor(compositeColors(clear, bright))).toBe("color(srgb 1.5 0 -0.5)");
   });
 });
 
@@ -478,19 +564,31 @@ describe("gradient paint", () => {
     expect(paint([linear(across, [stop(BLACK), stop(WHITE)], "oklab")], 2, 1).colors).toEqual([
       [34, 174].map(grey),
     ]);
-    // Stops outside sRGB mix as they are, each cell clipped.
+    // Stops outside sRGB mix as they are, each cell written unclipped.
     const deep = [stop(EMERALD_400), stop(GRAY_800)];
-    expect(paint([linear(across, deep, "oklab")], 2, 1).colors[0]![0]).toBe("rgb(0 166 124)");
-    // In hsl too: Firefox's cells, Chromium's within a level (probed
-    // 2026-09-23).
+    expect(paint([linear(across, deep, "oklab")], 2, 1).colors[0]![0]).toBe(
+      "color(srgb -0.00758 0.65098 0.48455)",
+    );
+    // In hsl too: Firefox's cells, Chromium's within a level, as an
+    // sRGB screen clips them (probed 2026-09-23).
     const toBlue = [stop(EMERALD_400), stop(BLUE_500)];
     expect(paint([linear(across, toBlue, "hsl")], 4, 1).colors).toEqual([
-      ["rgb(0 229 189)", "rgb(0 237 255)", "rgb(0 192 255)", "rgb(17 142 255)"],
+      [
+        "color(srgb -0.19042 0.8984 0.74051)",
+        "color(srgb -0.16943 0.9303 1.01575)",
+        "color(srgb -0.12941 0.75445 1.11406)",
+        "color(srgb 0.06805 0.55527 1.05494)",
+      ],
     ]);
     // A lightness past 1 gives a saturation below 0, mixed as it is.
     const glare = [stop("color(srgb 1.5 1.2 0.9)"), stop("rgb(0, 0, 255)")];
     expect(paint([linear(across, glare, "hsl")], 4, 1).colors).toEqual([
-      ["rgb(255 255 250)", "rgb(230 248 240)", "rgb(198 191 198)", "rgb(123 77 222)"],
+      [
+        "color(srgb 1.24609 1.029 0.97891)",
+        "rgb(230 248 240)",
+        "rgb(198 191 198)",
+        "rgb(123 77 222)",
+      ],
     ]);
   });
 
@@ -500,13 +598,47 @@ describe("gradient paint", () => {
     expect(paint([fade], 2, 1, { backgroundColor: "rgb(255, 0, 0)" }).colors).toEqual([
       ["rgb(255 64 64)", "rgb(255 191 191)"],
     ]);
-    // Without a plain color the cell stays translucent.
-    expect(paint([fade], 2, 1).colors).toEqual([
-      ["rgb(255 255 255 / 0.25)", "rgb(255 255 255 / 0.75)"],
+    // Without a plain color, over a cell no background has reached, a
+    // cell keeps its alpha for the browser to composite.
+    const bare = renderCellSegments(paint([fade], 2, 1).root, { ground: parseColor(BLACK)! });
+    expect(bare[0]!.flatMap(cellBackgrounds)).toEqual([
+      "rgb(255 255 255 / 0.25)",
+      "rgb(255 255 255 / 0.75)",
     ]);
     const veil = linear(across, [stop("rgba(255, 0, 0, 0.5)"), stop("rgba(255, 0, 0, 0.5)")]);
     const white = linear(across, [stop(WHITE), stop(WHITE)]);
     expect(paint([veil, white], 2, 1).colors).toEqual([["rgb(255 128 128)", "rgb(255 128 128)"]]);
+  });
+
+  it("blends a translucent fill over gradient cells, one run of their colors still", () => {
+    const layers = [linear({ toX: 1, toY: 0 }, [stop(BLACK), stop(WHITE)])];
+    const veil = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 0 },
+        width: { kind: "cells", value: 2 },
+        height: { kind: "cells", value: 1 },
+        backgroundColor: "rgb(255 255 255 / 0.2)",
+      },
+    });
+    const box = makeNode({
+      style: {
+        position: "relative",
+        width: { kind: "cells", value: 2 },
+        height: { kind: "cells", value: 1 },
+        backgroundImage: layers,
+      },
+      children: [veil],
+    });
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 2);
+    const row = renderCellSegments(root)[0]!;
+    expect(row).toHaveLength(1);
+    expect(row[0]).toMatchObject({
+      text: "  ",
+      gradient: "fill",
+      backgrounds: [grey(102), grey(204)],
+    });
   });
 
   it("keeps the fill's colors under a leaf's own text, plain color or not", () => {
@@ -529,7 +661,7 @@ describe("gradient paint", () => {
     ]);
   });
 
-  it("clips to text: an inline element's opacity fades its glyph's tint", () => {
+  it("clips to text: an inline element's opacity blends its glyph's tint as a group", () => {
     // Firefox's rendering: the glyph takes the gradient, then the fade
     // (Chromium draws it whole, WebKit not at all; probed 2026-09-23).
     const layers = [linear({ toX: 1, toY: 0 }, [stop(BLACK), stop(WHITE)])];
@@ -561,17 +693,17 @@ describe("gradient paint", () => {
         textDecorationLine: "none",
         visible: true,
         pointerEvents: true,
-        opacity: 0.5,
+        opacity: 0.4,
+        parent: -1,
       },
     ];
     const root = makeNode({ children: [box] });
     layoutRoot(root, 4);
-    const [first, second] = renderCellSegments(root)[0]!;
-    expect(first).toMatchObject({ text: "a", color: grey(32) });
-    expect(second).toMatchObject({
-      text: "b",
-      color: `color-mix(in oklab, ${grey(96)} 50%, transparent)`,
-    });
+    // The tint at the span's opacity, 0.4, nothing lying beneath.
+    expect(renderCellSegments(root)[0]!.slice(0, 2)).toMatchObject([
+      { text: "a", color: grey(32), gradient: "text" },
+      { text: "b", color: grey(96), gradient: "text", opacity: 0.4 },
+    ]);
   });
 
   it("clips to text: glyphs take the gradient through a transparent color", () => {
@@ -593,6 +725,19 @@ describe("gradient paint", () => {
     // An opaque color hides the gradient; a translucent one blends.
     expect(glyphs("rgb(255, 0, 0)")[0]).toEqual(["ab", "rgb(255, 0, 0)", undefined]);
     expect(glyphs("rgba(255, 0, 0, 0.5)")[0]![1]![0]).toBe("rgb(144 16 16)");
+    // Past sRGB, the gradient's color shows through unclipped.
+    const emerald = [linear({ toX: 1, toY: 0 }, [stop(EMERALD_400), stop(EMERALD_400)])];
+    const tinted = paint(
+      emerald,
+      2,
+      1,
+      { backgroundClip: "text", color: "rgba(0, 0, 0, 0)" },
+      "ab",
+    );
+    expect(renderCellSegments(tinted.root)[0]![0]).toMatchObject({
+      text: "ab",
+      color: rgb(EMERALD_400),
+    });
     const style = {} as CSSStyleDeclaration;
     applyCellPaint(
       renderCellSegments(

@@ -7,11 +7,12 @@ import {
   registerBorderGlyphs,
   weightBand,
 } from "../src/glyphs.ts";
+import { junctionGlyph } from "../src/borders.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { buildTree } from "../src/tree.ts";
 import { makeNode } from "./helpers.ts";
-import type { CellStyle } from "../src/types.ts";
+import type { BorderStyle, CellStyle } from "../src/types.ts";
 
 /** Border glyph sets (specs/theming.md): styles resolve through the
  * owner's set, per-glyph fallback to the defaults. */
@@ -245,6 +246,38 @@ describe("border weight bands", () => {
     expect(() => {
       table.weights![0]!.cells = 3;
     }).toThrow();
+  });
+});
+
+describe("junction glyphs", () => {
+  /** A style's junction glyph at every arm mask (up 8 / down 4 / left 2 /
+   * right 1), in mask order. */
+  const junctions = (style: BorderStyle, weight: number, set?: string) =>
+    Array.from({ length: 16 }, (_, mask) =>
+      junctionGlyph(
+        style,
+        weight,
+        !!(mask & 8),
+        !!(mask & 4),
+        !!(mask & 2),
+        !!(mask & 1),
+        glyphSetFor(set),
+      ),
+    ).join("");
+
+  it("draws each mask's role from the style's table at its weight, stubs as lines", () => {
+    expect(junctions("solid", 1)).toBe(" ───│┌┐┬│└┘┴│├┤┼");
+    expect(junctions("double", 1)).toBe(" ═══║╔╗╦║╚╝╩║╠╣╬");
+    expect(junctions("solid", 2)).toBe(" ━━━┃┏┓┳┃┗┛┻┃┣┫╋");
+    expect(junctions("dashed", 1)).toBe(" ╌╌╌╎┌┐┬╎└┘┴╎├┤┼");
+    expect(junctions("dotted", 2)).toBe(" ┉┉┉┋┏┓┳┋┗┛┻┋┣┫╋");
+  });
+
+  it("draws them through a set, per glyph", () => {
+    expect(junctions("double", 1, "ascii")).toBe(" ===|+++|+++|+++");
+    expect(junctions("solid", 2, "cp437")).toBe(" ═══║╔╗╦║╚╝╩║╠╣╬");
+    expect(junctions("double", 1, "single")).toBe(" ───│┌┐┬│└┘┴│├┤┼");
+    expect(junctions("dashed", 1, "blocks")).toBe(` ${"▒".repeat(15)}`);
   });
 });
 

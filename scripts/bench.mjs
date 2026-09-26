@@ -1,14 +1,13 @@
 /**
- * Time to interactive on a page the grid finds hard, in two shapes:
- * bordered boxes, where every border cell is a stroke the font may
- * draw off its row, and rows of block glyphs, where a run shares one
- * box (specs/wide-characters.md). Reports the median of several runs
- * so a number is comparable across commits; record what it gives in
+ * Time to interactive on a page the grid finds hard, in one of four
+ * shapes (`SHAPES` below). Reports the median of several runs so a
+ * number is comparable across commits; record what it gives in
  * .agents/architecture/performance.md when it moves.
  *
  *   pnpm bench                 300 bordered boxes, no throttling
  *   pnpm bench --shape blocks  a field of block glyphs instead
  *   pnpm bench --shape prose   paragraphs of nested inline elements
+ *   pnpm bench --shape faded   filled boxes, every other at half opacity
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
@@ -26,12 +25,61 @@ const flag = (name, fallback) => {
   const at = args.indexOf(`--${name}`);
   return at === -1 ? fallback : args[at + 1];
 };
-// Bordered boxes, or rows of blocks.
+// Boxes, rows or paragraphs, by the shape.
 const count = Number(flag("count", 300));
 const runs = Number(flag("runs", 5));
 const rate = Number(flag("rate", 1));
 const shape = flag("shape", "boxes");
 const given = flag("bundle", null);
+
+const BANDS = ["\u2588", "\u2580", "\u2584", "\u2591", "\u2592", "\u2593"];
+const repeat = (render, separator = "") =>
+  Array.from({ length: count }, (_, i) => render(i)).join(separator);
+
+/** Each shape's page body and the words the report names it by. */
+const SHAPES = {
+  // Every border cell is a stroke the font may draw off its row.
+  boxes: {
+    label: "bordered boxes",
+    body: () =>
+      `<div class="flex flex-wrap gap-1">${repeat(
+        (i) => `<div class="border px-1 rounded-sm"><span>item ${i}</span></div>`,
+      )}</div>`,
+  },
+  // A run of block glyphs shares one box, and the fills take a
+  // different fit and share of the row (specs/wide-characters.md).
+  blocks: {
+    label: "rows of blocks",
+    body: () => `<div>${repeat((i) => BANDS[i % BANDS.length].repeat(40), "<br>")}</div>`,
+  },
+  // The run walk, its paragraphs nesting the inline elements a page
+  // really has.
+  prose: {
+    label: "paragraphs",
+    body: () =>
+      `<div>${repeat(
+        (i) =>
+          `<p>Paragraph ${i} of the page, with <span>a <b>bold <i>and italic</i></b> run</span> in it, ` +
+          `<em>an <code>inline code</code> span</em>, and <a href="#">a link <strong>inside</strong></a>.</p>`,
+      )}</div>`,
+  },
+  // The blending (specs/cell-model.md "Opacity and translucency"):
+  // half of them groups, on a translucent card, under a translucent
+  // overlay.
+  faded: {
+    label: "boxes, half faded",
+    body: () =>
+      `<div class="relative bg-slate-900 p-1 text-slate-100"><div class="flex flex-wrap gap-1 bg-white/10 p-1">${repeat(
+        (i) =>
+          `<div class="border bg-slate-700 px-1 rounded-sm${i % 2 ? " opacity-50" : ""}"><span>item ${i}</span></div>`,
+      )}</div><div class="absolute inset-x-0 top-0 h-8 bg-black/50"></div></div>`,
+  },
+};
+if (!Object.hasOwn(SHAPES, shape)) {
+  console.error(`Unknown --shape ${shape}: one of ${Object.keys(SHAPES).join(", ")}`);
+  process.exit(1);
+}
+const body = SHAPES[shape].body();
 
 // The bundle under test: built here so the number always belongs to
 // the working tree, unless `--bundle` names one built elsewhere (an
@@ -44,24 +92,6 @@ if (!given) {
   if (built.status !== 0) process.exit(built.status ?? 1);
 }
 const bundle = readFileSync(given ?? resolve(repoRoot, "packages/core/dist/cdn.js"), "utf8");
-
-/** Bordered boxes stress the strokes; a field of blocks stresses the
- * fills, which take a different fit and a different share of the row
- * (specs/wide-characters.md); prose stresses the run walk, its
- * paragraphs nesting the inline elements a page really has. */
-const BANDS = ["\u2588", "\u2580", "\u2584", "\u2591", "\u2592", "\u2593"];
-const prose = (i) =>
-  `<p>Paragraph ${i} of the page, with <span>a <b>bold <i>and italic</i></b> run</span> in it, ` +
-  `<em>an <code>inline code</code> span</em>, and <a href="#">a link <strong>inside</strong></a>.</p>`;
-const body =
-  shape === "blocks"
-    ? `<div>${Array.from({ length: count }, (_, i) => BANDS[i % BANDS.length].repeat(40)).join("<br>")}</div>`
-    : shape === "prose"
-      ? `<div>${Array.from({ length: count }, (_, i) => prose(i)).join("")}</div>`
-      : `<div class="flex flex-wrap gap-1">${Array.from(
-          { length: count },
-          (_, i) => `<div class="border px-1 rounded-sm"><span>item ${i}</span></div>`,
-        ).join("")}</div>`;
 
 const page = `<!doctype html><html><head><meta charset="utf-8">
 <style>html{background:#fff;color:#000}body{margin:0;padding:8px}</style>
@@ -117,7 +147,7 @@ const median = (of) => {
 };
 const ms = (value) => `${value.toFixed(1)} ms`;
 console.log(
-  `\n${given ?? "working tree"}: ${count} ${shape === "blocks" ? "rows of blocks" : shape === "prose" ? "paragraphs" : "bordered boxes"},` +
+  `\n${given ?? "working tree"}: ${count} ${SHAPES[shape].label},` +
     ` ${runs} runs at ${rate}x CPU — medians\n` +
     `  interactive  ${ms(median((s) => s.interactive))}\n` +
     `  style recalc ${ms(median((s) => s.style))}\n` +

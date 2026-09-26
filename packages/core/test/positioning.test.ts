@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
+import { buildTree } from "../src/tree.ts";
 import { makeNode } from "./helpers.ts";
+import type { CellStyle } from "../src/types.ts";
 
 /**
  * Integration tests for the positioning pass (specs/positioning.md) —
@@ -174,6 +176,68 @@ describe("positioning (specs/positioning.md)", () => {
     // Sole-item: centered on the main axis, end on the cross axis.
     expect(abs.localRect.x).toBe(9); // (20-2)/2
     expect(abs.localRect.y).toBe(3); // 4-1
+  });
+
+  it("flex static position follows reversed axes with the flex-relative keywords only", () => {
+    // Probed: every engine; stretch falls back to flex-start.
+    const place = (style: Partial<CellStyle>) => {
+      const abs = makeNode({
+        style: {
+          position: "absolute",
+          width: { kind: "cells", value: 3 },
+          height: { kind: "cells", value: 1 },
+          insets: { top: null, right: null, bottom: null, left: null },
+        },
+      });
+      const container = makeNode({
+        style: {
+          display: "flex",
+          position: "relative",
+          width: { kind: "cells", value: 10 },
+          height: { kind: "cells", value: 4 },
+          ...style,
+        },
+        children: [abs],
+      });
+      layoutRoot(makeNode({ children: [container] }), 20);
+      return [abs.localRect.x, abs.localRect.y];
+    };
+    const wrapReverse = { flexWrap: "wrap", wrapReverse: true } as const;
+    const aligned = ["flex-start", "start", "end", "stretch"] as const;
+    expect(aligned.map((alignItems) => place({ ...wrapReverse, alignItems })[1])).toEqual([
+      3, 0, 3, 3,
+    ]);
+    const column = { ...wrapReverse, flexDirection: "column" } as const;
+    expect(aligned.map((alignItems) => place({ ...column, alignItems })[0])).toEqual([7, 0, 7, 7]);
+    const justified = ["flex-start", "flex-end", "start", "end", "space-between"] as const;
+    expect(
+      justified.map((justifyContent) => place({ flexReverse: true, justifyContent })[0]),
+    ).toEqual([7, 0, 0, 7, 7]);
+  });
+
+  it("puts a baseline's flex static position at its fallback start or end", () => {
+    // Probed: every engine (WebKit puts last baseline at the top too). An
+    // in-flow item takes its baseline group's line edge instead.
+    const place = (style: string) => {
+      const container = document.createElement("div");
+      container.setAttribute(
+        "style",
+        `display: flex; flex-wrap: wrap-reverse; position: relative; width: 40px; height: 16px; ${style}`,
+      );
+      const abs = document.createElement("div");
+      abs.setAttribute("style", "position: absolute; width: 12px; height: 4px");
+      const item = document.createElement("div");
+      item.setAttribute("style", "height: 4px");
+      item.textContent = "a";
+      container.append(abs, item);
+      document.body.appendChild(container);
+      const node = buildTree(container, 16)!;
+      layoutRoot(node, 20);
+      const [absNode, itemNode] = node.children;
+      return [absNode!.localRect.y, itemNode!.localRect.y];
+    };
+    expect(place("align-items: baseline")).toEqual([0, 3]);
+    expect(place("align-items: last baseline")).toEqual([3, 0]);
   });
 
   it("fixed anchors to the host even inside a positioned ancestor", () => {
@@ -444,5 +508,39 @@ describe("containing block and constraint edge cases", () => {
     // Sole item: main (y) = end → 6-1 = 5; cross (x) = center → (10-1)/2 = 4.
     expect(abs.localRect.y).toBe(5);
     expect(abs.localRect.x).toBe(4);
+  });
+
+  it("starts an overflowing flex static position, both axes", () => {
+    // As an overflowing line does, a 20 × 4 box in a 10 × 2 row
+    // (specs/cell-model.md deviation 23); CSS centers or ends it past the
+    // start edge, space-around and space-evenly centering it (probed:
+    // every engine).
+    const place = (style: Partial<CellStyle>) => {
+      const abs = makeNode({
+        style: {
+          position: "absolute",
+          width: { kind: "cells", value: 20 },
+          height: { kind: "cells", value: 4 },
+          insets: { top: null, right: null, bottom: null, left: null },
+        },
+      });
+      const row = makeNode({
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          position: "relative",
+          width: { kind: "cells", value: 10 },
+          height: { kind: "cells", value: 2 },
+          ...style,
+        },
+        children: [abs],
+      });
+      layoutRoot(makeNode({ children: [row] }), 30);
+      return [abs.localRect.x, abs.localRect.y];
+    };
+    expect(place({ justifyContent: "center", alignItems: "center" })).toEqual([0, 0]);
+    expect(place({ justifyContent: "end", alignItems: "end" })).toEqual([0, 0]);
+    const x = (justifyContent: CellStyle["justifyContent"]) => place({ justifyContent })[0];
+    expect([x("space-around"), x("space-evenly"), x("space-between")]).toEqual([0, 0, 0]);
   });
 });

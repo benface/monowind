@@ -118,8 +118,6 @@ export function combobox(root: Element, machineProps: MountProps): Mounted<Api> 
     start(machine, () => live.machine),
     (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
-      // The root is the element the mount was given, its id the
-      // markup's — the page finds it by that.
       spread(root, omit(current.getRootProps(), "id"));
       spread(label, current.getLabelProps());
       spread(control, current.getControlProps());

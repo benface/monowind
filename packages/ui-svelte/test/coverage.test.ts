@@ -1,21 +1,109 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { expect, it } from "vitest";
+import { unrendered } from "../../ui/test/helpers.ts";
 import * as index from "../src/index.svelte.ts";
 
-/** Every component the package ships is mounted by a test: Svelte
- * compiles a `.svelte` file only where something instantiates it, so
- * a part no test mounts is a part nothing compiles. */
-
-const here = import.meta.dirname;
-const source = readdirSync(here)
-  .filter((file) => /\.(ts|svelte)$/.test(file) && file !== "coverage.test.ts")
-  .map((file) => readFileSync(join(here, file), "utf8"))
-  .join("\n");
-
+/** Svelte compiles a `.svelte` file only where something instantiates
+ * it, so a part no test mounts is a part nothing compiles. */
 it("renders every component it exports", () => {
   const components = Object.keys(index).filter((name) => /^[A-Z]/.test(name));
   expect(components.length).toBeGreaterThan(50);
-  const missing = components.filter((name) => !new RegExp(`<${name}[\\s/>]`).test(source));
-  expect(missing.join(", ")).toBe("");
+  const rendered = (name: string) => new RegExp(`<${name}[\\s/>]`);
+  expect(unrendered(import.meta.dirname, components, rendered)).toBe("");
+});
+
+it("exports its public names", () => {
+  expect(Object.keys(index).sort()).toMatchInlineSnapshot(`
+    [
+      "ComboboxClearTrigger",
+      "ComboboxContent",
+      "ComboboxControl",
+      "ComboboxInput",
+      "ComboboxItem",
+      "ComboboxItemGroup",
+      "ComboboxItemGroupLabel",
+      "ComboboxItemIndicator",
+      "ComboboxItemText",
+      "ComboboxLabel",
+      "ComboboxList",
+      "ComboboxPositioner",
+      "ComboboxRoot",
+      "ComboboxRootProvider",
+      "ComboboxTrigger",
+      "DialogCloseTrigger",
+      "DialogContent",
+      "DialogDescription",
+      "DialogPositioner",
+      "DialogRoot",
+      "DialogRootProvider",
+      "DialogTitle",
+      "DialogTrigger",
+      "ListboxContent",
+      "ListboxItem",
+      "ListboxItemGroup",
+      "ListboxItemGroupLabel",
+      "ListboxItemIndicator",
+      "ListboxItemText",
+      "ListboxLabel",
+      "ListboxRoot",
+      "ListboxRootProvider",
+      "MenuContent",
+      "MenuItem",
+      "MenuItemGroup",
+      "MenuItemGroupLabel",
+      "MenuPositioner",
+      "MenuRoot",
+      "MenuRootProvider",
+      "MenuSeparator",
+      "MenuTrigger",
+      "MenuTriggerItem",
+      "PopoverCloseTrigger",
+      "PopoverContent",
+      "PopoverDescription",
+      "PopoverIndicator",
+      "PopoverPositioner",
+      "PopoverRoot",
+      "PopoverRootProvider",
+      "PopoverTitle",
+      "PopoverTrigger",
+      "SelectClearTrigger",
+      "SelectContent",
+      "SelectControl",
+      "SelectHiddenSelect",
+      "SelectIndicator",
+      "SelectItem",
+      "SelectItemGroup",
+      "SelectItemGroupLabel",
+      "SelectItemIndicator",
+      "SelectItemText",
+      "SelectLabel",
+      "SelectList",
+      "SelectPositioner",
+      "SelectRoot",
+      "SelectRootProvider",
+      "SelectTrigger",
+      "SelectValueText",
+      "TooltipContent",
+      "TooltipPositioner",
+      "TooltipRoot",
+      "TooltipRootProvider",
+      "TooltipTrigger",
+      "collection",
+      "createCombobox",
+      "createDialog",
+      "createListbox",
+      "createMenu",
+      "createPopover",
+      "createSelect",
+      "createTooltip",
+      "gridCollection",
+      "useComboboxContext",
+      "useDialogContext",
+      "useItemContext",
+      "useListboxContext",
+      "useMenuContext",
+      "usePopoverContext",
+      "useSelectContext",
+      "useTooltipContext",
+    ]
+  `);
 });

@@ -97,8 +97,8 @@
   }
 
   /* Form controls render their value/caret/selection natively — the
-   * color-transparent rule below excludes them via `:not()`, so this
-   * visible color and themed caret actually stick. */
+   * fill lock below excludes them via `:not()`, so this visible color
+   * and themed caret actually stick. */
   mono-wind :is(input, textarea, select) {
     color: var(--mw-fg);
     caret-color: var(--mw-fg);
@@ -156,25 +156,14 @@
    * (they'd clip against grid glyphs). Where each declaration lands:
    * bg only shows via the grid (engine reads it during [measuring];
    * the light-DOM bg is transparent-locked below); color/caret-color
-   * paint on editables (they're the ones exempted from the
-   * color-transparent lock), and get grid-mirrored by the engine for
-   * everyone else. A composite's container (a menu, a listbox) has its
-   * items for its focus indication; interactive.test.ts holds the list
-   * equal to COMPOSITE in element.ts. */
+   * paint on editables (they're the ones exempted from the fill
+   * lock), and get grid-mirrored by the engine for everyone else. A
+   * composite's container (a menu, a listbox, `data-mw-composite`,
+   * element.ts) has its items for its focus indication. */
   mono-wind :focus-visible {
     outline: none;
   }
-  mono-wind
-    :focus-visible:not(
-      [role="grid"],
-      [role="listbox"],
-      [role="menu"],
-      [role="menubar"],
-      [role="radiogroup"],
-      [role="tablist"],
-      [role="tree"],
-      [role="treegrid"]
-    ) {
+  mono-wind :focus-visible:not([data-mw-composite]) {
     background-color: var(--mw-fg);
     color: var(--mw-bg);
     caret-color: var(--mw-bg);
@@ -182,42 +171,9 @@
   /* Grid-mode light elements carry the grid's text cursor: Firefox
    * hit-tests a multicol spanner's anonymous wrapper as its container
    * despite `pointer-events: none`, and would show an arrow there. The
-   * interactives (specs/cell-model.md "Pointer states") keep their own;
-   * interactive.test.ts holds this list equal to INTERACTIVE in
-   * element.ts. */
+   * interactives (specs/cell-model.md "Pointer states") keep their own. */
   mono-wind[select="grid"]
-    :is([data-mw-laid-out], [data-mw-flow], [data-mw-float]):not(
-      a,
-      button,
-      input,
-      select,
-      textarea,
-      label,
-      summary,
-      [contenteditable]:not([contenteditable="false"]),
-      [tabindex]:not(
-        [tabindex="-1"],
-        [role="grid"],
-        [role="listbox"],
-        [role="menu"],
-        [role="menubar"],
-        [role="radiogroup"],
-        [role="tablist"],
-        [role="tree"],
-        [role="treegrid"]
-      ),
-      [role="button"],
-      [role^="menuitem"],
-      [role="option"],
-      [role="tab"],
-      [role="treeitem"],
-      [role="checkbox"],
-      [role="radio"],
-      [role="switch"],
-      [role="slider"],
-      [role="link"],
-      [role="combobox"]
-    ) {
+    :is([data-mw-laid-out], [data-mw-flow], [data-mw-float]):not([data-mw-interactive]) {
     cursor: text;
   }
 }
@@ -225,56 +181,29 @@
 /* === Modes and selection (engine-owned from here down) =============== */
 
 /* select="grid": pointer events pass through the light DOM so a drag
- * lands on the grid <pre>; the interactives opt back in for clicks,
- * except during a grid drag, so the selection sweeps through their
- * cells, and except where the grid covers one (`data-mw-covered`,
- * element.ts): the box painted over it takes the pointer, hover and
- * cursor included (specs/cell-model.md "Pointer states"), its own
- * subtree with it. The list repeats the cursor rule's: these rules
- * must be important (a library writes inline pointer-events on its layers) and
+ * lands on the grid <pre>; the interactives (`data-mw-interactive`,
+ * element.ts) opt back in for clicks, except during a grid drag, so the
+ * selection sweeps through their cells, and except where the grid
+ * covers one (`data-mw-covered`, element.ts): the box painted over it
+ * takes the pointer, hover and cursor included (specs/cell-model.md
+ * "Pointer states"), its own subtree with it. These rules must be
+ * important (a library writes inline pointer-events on its layers) and
  * unlayered, out of the lock layer (an author's `pointer-events-none!`
  * or `pointer-events-auto!` still wins), the cursor rule layered and
- * plain (an author's cursor wins). interactive.test.ts holds the two
- * lists equal to INTERACTIVE in element.ts. An authored `none` stays
- * one: the engine reads it with the locks off, under each element's
- * measuring flag, and marks it `data-mw-pointer-none`, which every
- * opt-in here leaves be. */
+ * plain (an author's cursor wins). An authored `none` stays one: the
+ * engine reads it with the locks off, under each element's measuring
+ * flag, and marks it `data-mw-pointer-none`, which every opt-in here
+ * leaves be. */
 mono-wind[select="grid"] *:not([data-mw-measuring]) {
   pointer-events: none !important;
 }
 mono-wind[select="grid"]:not([data-mw-dragging])
-  :is(
-    a,
-    button,
-    input,
-    select,
-    textarea,
-    label,
-    summary,
-    [contenteditable]:not([contenteditable="false"]),
-    [tabindex]:not(
-      [tabindex="-1"],
-      [role="grid"],
-      [role="listbox"],
-      [role="menu"],
-      [role="menubar"],
-      [role="radiogroup"],
-      [role="tablist"],
-      [role="tree"],
-      [role="treegrid"]
-    ),
-    [role="button"],
-    [role^="menuitem"],
-    [role="option"],
-    [role="tab"],
-    [role="treeitem"],
-    [role="checkbox"],
-    [role="radio"],
-    [role="switch"],
-    [role="slider"],
-    [role="link"],
-    [role="combobox"]
-  ):not([data-mw-covered], [data-mw-covered] *, [data-mw-measuring], [data-mw-pointer-none]) {
+  [data-mw-interactive]:not(
+    [data-mw-covered],
+    [data-mw-covered] *,
+    [data-mw-measuring],
+    [data-mw-pointer-none]
+  ) {
   pointer-events: auto !important;
 }
 /* A modal dialog blocks the page, the grid included (specs/top-layer.md
@@ -307,11 +236,13 @@ mono-wind[select="grid"] dialog:modal * {
  * (architecture/performance.md). */
 mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))[data-mw-leaf],
 mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
-  :where(:not(input, textarea, [contenteditable])) {
+  :where(:not(input, textarea, [contenteditable]:not([contenteditable="false"]))) {
   user-select: none;
   -webkit-user-select: none;
 }
-mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])) [contenteditable] * {
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
+  [contenteditable]:not([contenteditable="false"])
+  * {
   user-select: revert-layer;
   -webkit-user-select: revert-layer;
 }
@@ -365,7 +296,9 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])) [contentedita
  * past the max would latch a native (text-mode) gesture to an
  * invisible scroll. Rounding can still put the ceiling a pixel either
  * side of max, so the engine reads "at the ceiling" as "at max". An
- * axis without range parks the spacer in the first cell (render.ts). */
+ * axis without range parks the spacer in the first cell: at −1px,
+ * outside the padding box, it would leave the overflow area on both
+ * axes. */
 mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   content: "";
   position: absolute;
@@ -418,23 +351,31 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
  * live range (specs/wide-characters.md "The grid paints the selection")
  * — so the browser's own highlight on the invisible native text stays
  * invisible: every field, as some engines keep an OS default background
- * when only `color` is set, and Safari's text-shadow ink. Shadow scopes
- * can't share the rule: element.ts (the slot) and @monowind/ascii's
- * transcript restate it — update all three together. Forced colors
- * paint selections themselves and strip backgrounds, so the native
- * highlight stays there. */
+ * when only `color` is set, and Safari's text-shadow ink. Only while one
+ * is live or starting, under the host's `data-mw-selection` (element.ts;
+ * why, architecture/performance.md). Shadow scopes can't share the
+ * rule: element.ts (the slot) and the transcripts of @monowind/ascii
+ * and @monowind/qr-code
+ * restate it, on one element each and so ungated — update them
+ * together. Forced colors paint selections themselves and strip
+ * backgrounds, so the native highlight stays there. */
 @media (forced-colors: none) {
   @layer theme {
-    mono-wind:not([measuring])[data-mw-leaf]::selection,
-    mono-wind
-      :where(:not(input, textarea, select, [contenteditable])):not([data-mw-measuring])::selection {
+    mono-wind:where([data-mw-selection]):not([measuring])[data-mw-leaf]::selection,
+    mono-wind:where([data-mw-selection])
+      :where(:not(input, textarea, select, [contenteditable]:not([contenteditable="false"]))):not(
+        [data-mw-measuring]
+      )::selection {
       color: transparent !important;
       text-shadow: none !important;
       background: transparent !important;
     }
     /* An editable's subtree takes the swap below, in a plain descendant
-     * rule as the user-select lock's. */
-    mono-wind [contenteditable] :not([data-mw-measuring])::selection {
+     * rule as the user-select lock's, over the lock on specificity (its
+     * `:where()`s). */
+    mono-wind
+      [contenteditable]:not([contenteditable="false"])
+      :not([data-mw-measuring])::selection {
       color: var(--mw-ground, var(--mw-bg, canvas)) !important;
       background: var(--mw-ink, var(--mw-fg, canvastext)) !important;
     }
@@ -448,7 +389,7 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   mono-wind input:not([data-mw-measuring])::selection,
   mono-wind textarea:not([data-mw-measuring])::selection,
   mono-wind select:not([data-mw-measuring])::selection,
-  mono-wind [contenteditable]:not([data-mw-measuring])::selection {
+  mono-wind [contenteditable]:not([contenteditable="false"]):not([data-mw-measuring])::selection {
     color: var(--mw-ground, var(--mw-bg, canvas));
     background: var(--mw-ink, var(--mw-fg, canvastext));
   }
@@ -457,13 +398,14 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
 /* === Typography locks and measuring gates ============================ */
 
 /* A gate on a light element is the element's own flag — `data-mw-measuring`,
- * then `data-mw-settling`, which the layout sets on every light element
- * as it sets the host's `measuring` and `settling` — never the host's
- * attribute read through a descendant combinator: that would make each
- * flip of the host's attribute invalidate its whole subtree, the shadow
- * grid's every span walked four times a layout. The host's attributes
- * gate the host's own rules alone. An element inserted since the last
- * layout has no flag, and so takes the locks until its first. */
+ * which the layout sets on every light element as it sets the host's
+ * `measuring`, and `data-mw-settling`, on an element with a transition
+ * to mask as the host's `settling` is — never the host's attribute read
+ * through a descendant combinator: that would make each flip of the
+ * host's attribute invalidate its whole subtree, the shadow grid's
+ * every span walked at each flip. The host's attributes gate the host's
+ * own rules alone. An element inserted since the last layout has no
+ * flag, and so takes the locks until its first. */
 @layer theme {
   /* Lock the font on descendants so the grid metrics stay consistent —
    * `!important` because user classes (`.text-2xl` etc.) would otherwise beat
@@ -484,12 +426,14 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * opacity, or a layer's transforms and filter) snaps everything
    * lock-owned (backgrounds, geometry, backdrop-filter) while keeping
    * in-flight fades
-   * of the sampled properties alive ACROSS measuring passes. The engine
-   * swaps `[measuring]` for `[settling]` and forces one style flush
-   * before unmasking, so the snap-back delta always commits masked;
-   * outside both attributes the authored list is live and fully
-   * respected — background fades, which can never run natively, are
-   * synthesized by the engine instead. */
+   * of the sampled properties alive ACROSS measuring passes. On an
+   * element (or the host) with a non-zero transition duration or delay
+   * the engine swaps `[measuring]` for `[settling]` and forces one style
+   * flush before unmasking, so the snap-back delta always commits
+   * masked; an element with neither has no transition to start and
+   * drops its flag alone. Outside both attributes the authored list is
+   * live and fully respected — background fades, which can never run
+   * natively, are synthesized by the engine instead. */
   mono-wind[measuring],
   mono-wind [data-mw-measuring],
   mono-wind[settling],
@@ -502,8 +446,11 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * anchored box then resolves no anchor natively, so the browser applies
    * no position-try fallback of its own (from its pixel geometry, not the
    * cells') and `position-area` reads as authored
-   * (specs/anchor-positioning.md). */
-  mono-wind [data-mw-measuring] {
+   * (specs/anchor-positioning.md). On the elements that name one alone
+   * (`data-mw-anchor`, element.ts): on every element the property keeps
+   * Chromium from sharing any read style between them
+   * (architecture/performance.md). */
+  mono-wind [data-mw-anchor][data-mw-measuring] {
     anchor-scope: all !important;
   }
 
@@ -566,15 +513,27 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
      * a native one would draw off the grid, and an inline element's, which
      * the engine ignores, would shift its line's native text. */
     border-width: 0 !important;
+    /* Engine variables a rule can read on an element that didn't write
+     * them, reset plainly (specs/cell-model.md "Engine variables"). */
+    --mw-z: initial;
+    --mw-it: initial;
+    --mw-ir: initial;
+    --mw-ib: initial;
+    --mw-il: initial;
+    --mw-ipl: 0;
+    --mw-ipr: 0;
+    --mw-sx: 0;
+    --mw-sy: 0;
+    --mw-vb: 0;
     /* Inline-element horizontal padding, quantized: the engine writes
      * `--mw-ipl`/`--mw-ipr` (whole cells) on inline elements whose authored
      * padding it reserved in the run; everything else gets 0, so raw
      * off-grid padding never renders. Laid-out elements and atomic inline
-     * boxes override this with their own engine-owned padding rule (higher
-     * specificity). Vertical inline padding never moves layout, per CSS,
-     * and passes through untouched. */
-    padding-left: calc(var(--mw-ipl, 0) * var(--mw-cw, 1px)) !important;
-    padding-right: calc(var(--mw-ipr, 0) * var(--mw-cw, 1px)) !important;
+     * boxes override this with their own engine-owned padding rule
+     * (higher specificity). Vertical inline padding never moves layout,
+     * per CSS, and passes through untouched. */
+    padding-left: calc(var(--mw-ipl) * var(--mw-cw, 1px)) !important;
+    padding-right: calc(var(--mw-ipr) * var(--mw-cw, 1px)) !important;
   }
 
   /* A top-layer element's backdrop is a box of the grid's beneath its
@@ -664,22 +623,19 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * Owned via `--mw-p{t,r,b,l}` (padding) and `--mw-b{t,r,b,l}` (border cells):
    * both must land on whole cells. The browser applies the sum as native
    * padding since we've zeroed native border-width — this way, content sits
-   * inset by exactly the (border + padding) cells the engine planned for.
-   *
-   * Left alone: flex/grid/gap/justify/align — laid-out children are all
-   * position:absolute (out of flow), so nothing consumes them anyway. */
+   * inset by exactly the (border + padding) cells the engine planned for. */
   mono-wind [data-mw-laid-out]:not([data-mw-measuring]) {
     position: absolute !important;
     /* An anchored box is the engine's to place (specs/anchor-positioning.md):
      * the browser's own anchored placement stays off. */
     position-area: none !important;
-    /* A sticky box's shift for the scroll rides beside its position
-     * (specs/sticky.md). */
-    left: calc((var(--mw-x, 0) + var(--mw-sx, 0)) * var(--mw-cw, 1px)) !important;
+    /* A sticky box's shift for the scroll, and the scroll a fixed box
+     * takes back, ride beside its position (render.ts `writeShift`). */
+    left: calc((var(--mw-x, 0) + var(--mw-sx)) * var(--mw-cw, 1px)) !important;
     /* `leading-*` on the grid: `--mw-lh` rows per wrapped line. CSS puts half
      * the extra leading ABOVE the first line; `--mw-lhs` (−(rows − 1)/2)
      * lifts the box back so every line starts on its own row. */
-    top: calc((var(--mw-y, 0) + var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
+    top: calc((var(--mw-y, 0) + var(--mw-sy) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
     /* Neutralize the browser's residual grid machinery (specs/grid.md).
      * grid-area: per CSS §10.1 an ABSOLUTE child of a grid container with
      * placement properties uses its grid area as containing block — our
@@ -703,11 +659,9 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * shadow's in px, kept current through page scrolls. */
   mono-wind [data-mw-laid-out][data-mw-top]:not([data-mw-measuring]) {
     position: fixed !important;
-    left: calc(
-      var(--mw-ox, 0px) + (var(--mw-x, 0) + var(--mw-sx, 0)) * var(--mw-cw, 1px)
-    ) !important;
+    left: calc(var(--mw-ox, 0px) + var(--mw-x, 0) * var(--mw-cw, 1px)) !important;
     top: calc(
-      var(--mw-oy, 0px) + (var(--mw-y, 0) + var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)
+      var(--mw-oy, 0px) + (var(--mw-y, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)
     ) !important;
   }
 
@@ -720,12 +674,6 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   mono-wind [data-mw-flow]:not([data-mw-measuring]),
   mono-wind [data-mw-float]:not([data-mw-measuring]) {
     box-sizing: border-box !important;
-    /* A sticky shift (specs/sticky.md) belongs to the box the engine wrote
-     * it on: custom properties inherit, so every box resets them, plainly,
-     * and only the engine's inline value — which beats a plain rule — moves
-     * a box. */
-    --mw-sx: 0;
-    --mw-sy: 0;
     /* Trailing-gap allowance: a tracked box's lines end with a phantom
      * `--mw-ls`-cell gap the engine doesn't count. Give the content box that
      * room by carving it out of the engine-owned right padding/border cells;
@@ -755,8 +703,9 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     row-rule-style: none !important;
     /* Authored z-index applies only where CSS says (positioned, flex/grid
      * items) — absolutization would otherwise activate it everywhere. The
-     * engine writes --mw-z in exactly those cases; without it the calc()
-     * is invalid at computed-value time and z-index falls back to auto. */
+     * engine writes --mw-z in exactly those cases; elsewhere the reset
+     * leaves the calc() invalid at computed-value time and z-index falls
+     * back to auto. */
     z-index: calc(var(--mw-z)) !important;
     /* A layer root's backdrop filter goes on its layer (specs/layers.md):
      * the element's own would take in the layer's cells beneath it. */
@@ -781,13 +730,13 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * line) — a box taller than one row grows its line, per CSS. */
   mono-wind [data-mw-inline-box]:not([data-mw-measuring]) {
     position: relative !important;
-    /* A sticky inline box's shift for the scroll (specs/sticky.md; the
-     * vars are absent otherwise) and the same half-leading lift as
+    /* A sticky inline box's shift for the scroll (specs/sticky.md; zero
+     * otherwise) and the same half-leading lift as
      * laid-out elements — without it an inline box's NATIVE ink (a
      * textarea's value under leading-*) sits centered in its line boxes
      * instead of on its rows. */
-    top: calc((var(--mw-sy, 0) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
-    left: calc(var(--mw-sx, 0) * var(--mw-cw, 1px)) !important;
+    top: calc((var(--mw-sy) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
+    left: calc(var(--mw-sx) * var(--mw-cw, 1px)) !important;
     vertical-align: top !important;
     /* Its advance in the line is its cells: the right margin gives back
      * the shared rule's widening, else two boxes on an exactly full line
@@ -814,7 +763,7 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * lands on the box's middle row in every engine (probed). */
   mono-wind [data-mw-inline-box][data-mw-vmiddle]:not([data-mw-measuring]) {
     vertical-align: calc(
-      var(--mw-va, 0) * var(--mw-ch, 1px) + var(--mw-vb, 0) * var(--mw-base, 0px)
+      var(--mw-va, 0) * var(--mw-ch, 1px) + var(--mw-vb) * var(--mw-base, 0px)
     ) !important;
   }
 
@@ -898,16 +847,17 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * land on their rows (specs/cell-model.md "Inline content"), and an
    * in-flow multicol SPANNER (specs/multicol.md), which paragraphs
    * fragment around. `relative` makes them the containing block for
-   * their absolutized descendants and carries the half-leading lift;
-   * the engine owns every inset, so an authored one stays inert. */
+   * their absolutized descendants and carries a sticky box's shift and
+   * the half-leading lift; the engine owns every inset, so an authored
+   * one stays inert. */
   mono-wind [data-mw-flow]:not([data-mw-measuring]),
   mono-wind [data-mw-float]:not([data-mw-measuring]),
   mono-wind [data-mw-multicol-flow-span]:not([data-mw-measuring]) {
     position: relative !important;
-    top: calc(var(--mw-lhs, 0) * var(--mw-ch, 1px)) !important;
+    top: calc((var(--mw-sy) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
     right: auto !important;
     bottom: auto !important;
-    left: auto !important;
+    left: calc(var(--mw-sx) * var(--mw-cw, 1px)) !important;
     margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
     margin-right: 0 !important;
     margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
@@ -957,16 +907,11 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   }
 
   /* Paragraph gaps under a spanner-split (balance) container: margins
-   * derail the native balancers (probed), so the engine-collapsed gaps
-   * ride as PADDING — each inter-paragraph gap as the preceding
-   * paragraph's padding-bottom (`--mw-mb`), the segment-leading gap as
-   * the first paragraph's padding-top (`--mw-mt`). Chromium and Firefox
-   * keep a trailing padding monolithic with its last line at a column
-   * break (probed), so a gap sits invisibly at a column bottom and the
-   * next paragraph starts flush at the column top — the CSS-truncation
-   * look. WebKit slice-spills padding at breaks instead, and its gate
-   * (multicol.ts detectGluedPreBreak) keeps margined spanner containers
-   * on atomic distribution there. */
+   * derail the native balancers, so the engine-collapsed gaps ride as
+   * PADDING — each inter-paragraph gap as the preceding paragraph's
+   * padding-bottom (`--mw-mb`), the segment-leading gap as the first
+   * paragraph's padding-top (`--mw-mt`); how each engine breaks it:
+   * specs/multicol.md "Fragmenting text-leaf children". */
   mono-wind [data-mw-multicol-balance] > [data-mw-multicol-flow]:not([data-mw-measuring]) {
     margin-top: 0 !important;
     margin-bottom: 0 !important;
@@ -984,11 +929,12 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   /* Inline (relative/sticky) elements with authored relative insets
    * (specs/positioning.md): the engine writes the cell-rounded offsets into
    * `--mw-it/ir/ib/il` and this rule applies them on the grid. A side
-   * without its var is invalid at computed-value time and falls back to
-   * `auto` — so authored subsets work and the author's raw off-grid values
-   * never apply. Gated on the measuring flag so the style reader sees the
-   * authored values (no echo loop). Also pins `position: relative` — sticky behaves
-   * as relative until the scrolling milestone. */
+   * the engine leaves unwritten keeps the reset, is invalid at
+   * computed-value time and falls back to `auto` — so authored subsets
+   * work and the author's raw off-grid values never apply. Gated on the
+   * measuring flag so the style reader sees the authored values (no echo
+   * loop). Also pins `position: relative`: an inline sticky element's
+   * shift rides these vars (specs/sticky.md). */
   mono-wind [data-mw-inline-inset]:not([data-mw-measuring]) {
     position: relative !important;
     top: calc(var(--mw-it) * var(--mw-ch, 1px)) !important;

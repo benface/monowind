@@ -89,22 +89,27 @@ export function clusterWidth(cluster: string): 0 | 1 | 2 {
   const first = cluster.codePointAt(0);
   if (first === undefined) return 0;
   if (first < 0x80 && cluster.length === 1) return first < 0x20 || first === 0x7f ? 0 : 1;
-  if (PICTOGRAPHIC.test(cluster)) {
-    if (cluster.includes(VARIATION_TEXT)) return 1;
-    if (
-      cluster.includes(VARIATION_EMOJI) ||
-      cluster.includes(ZERO_WIDTH_JOINER) ||
-      EMOJI_PRESENTATION.test(cluster)
-    )
-      return 2;
-    return 1;
-  }
-  if (cluster.includes(KEYCAP)) return 2;
-  // A flag is a pair; a lone indicator is a letter in a box.
-  if (REGIONAL.test(cluster)) return REGIONAL_PAIR.test(cluster) ? 2 : 1;
-  if (isWide(first) || EMOJI_PRESENTATION.test(cluster)) return 2;
+  if (isWide(first) || isColorEmoji(cluster)) return 2;
   if (IGNORABLE.test(cluster)) return 0;
   return 1;
+}
+
+/** Whether a cluster draws as a color emoji: a two-cell cluster in
+ * emoji presentation — a pictograph presented so by default, by
+ * U+FE0F or in a joined sequence, a keycap, a flag's pair of regional
+ * indicators — which takes an alpha from CSS and no hue
+ * (specs/cell-model.md "Opacity and translucency"). */
+export function isColorEmoji(cluster: string): boolean {
+  if (PICTOGRAPHIC.test(cluster)) {
+    return (
+      !cluster.includes(VARIATION_TEXT) &&
+      (cluster.includes(VARIATION_EMOJI) ||
+        cluster.includes(ZERO_WIDTH_JOINER) ||
+        EMOJI_PRESENTATION.test(cluster))
+    );
+  }
+  if (REGIONAL.test(cluster)) return REGIONAL_PAIR.test(cluster);
+  return cluster.includes(KEYCAP) || EMOJI_PRESENTATION.test(cluster);
 }
 
 // oxlint-disable-next-line no-control-regex -- the ASCII range itself

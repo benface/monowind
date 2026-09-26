@@ -54,7 +54,7 @@ export const HostWidth: StoryObj = {
       <div data-test="sidebar" class="w-64 shrink-0 bg-neutral-800 p-2 text-neutral-400">
         sidebar
       </div>
-      <mono-wind data-test="host" class="mx-auto min-w-0 flex-1 bg-neutral-900 text-neutral-200">
+      <mono-wind class="mx-auto min-w-0 flex-1 bg-neutral-900 text-neutral-200">
         <div class="border border-emerald-400 px-1">
           As wide as the columns that fit — the border ends on the last cell.
         </div>

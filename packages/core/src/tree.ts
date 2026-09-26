@@ -3,6 +3,7 @@ import { leafRendererFor, renderLeafContent } from "./leaf.ts";
 import type { LeafRegistration } from "./leaf.ts";
 import { pxToCells } from "./metrics.ts";
 import {
+  computedDisplay,
   isTransparentColor,
   lineGapRows,
   readAnchorNames,
@@ -13,7 +14,7 @@ import {
   readTextStyle,
   trackingCells,
 } from "./style.ts";
-import { defaultCellStyle, zeroInsets } from "./types.ts";
+import { createNode, defaultCellStyle } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import { clusterAdvance, clusterAdvances, graphemes, textCells } from "./width.ts";
 import {
@@ -34,26 +35,11 @@ import type { CellMetrics, CellStyle, CharSourceRun, LayoutNode, PerSide } from 
 export type TextareaWidths = Map<HTMLTextAreaElement, number>;
 
 /**
- * Build a LayoutNode tree from an element subtree.
- *
- * Rules (specs/cell-model.md "Inline detection"):
- * - Elements with computed `display: none` are skipped entirely (their
- *   text never joins a run).
- * - An element is a **leaf** when no IN-FLOW block-level element lies
- *   below it through inline ones: in-flow inline children (computed
- *   `inline`/`inline-*`/`contents`) are part of the text run, and
- *   out-of-flow children (absolute/fixed — blockified per CSS) hang
- *   off the leaf as layout nodes for the positioning pass. The leaf's
- *   `text` is its combined in-flow text, so text nodes interleaved
- *   with inline elements (`<div>hello <span>world</span></div>`)
- *   participate in the wrap calculation and render correctly.
- * - Elements with an in-flow block-level element among their children,
- *   or below an inline one, become **containers** and recurse; the text
- *   beside those children forms anonymous runs, and an inline element
- *   around a block is split there as CSS splits it (`buildChildren`,
- *   `hidesBlock`, specs/cell-model.md "Inline content").
- * - The host follows the same rule through `buildRootLeaf`
- *   (specs/host-leaf.md).
+ * Build a LayoutNode tree from an element subtree (specs/cell-model.md
+ * "Inline detection"): an element with no in-flow block below it
+ * through inline ones is a text leaf, any other a container whose
+ * children recurse, the text beside them in anonymous runs ("Inline
+ * content"). The host goes through `buildRoot` (specs/host-leaf.md).
  *
  * `cellMetrics` (measured by the host) is the basis for leading and
  * tracking; absent in headless tests (see readCellStyle).
@@ -64,7 +50,18 @@ export function buildTree(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
 ): LayoutNode | null {
-  const style = readCellStyle(root, rootFontSizePx, cellMetrics);
+  return buildNode(root, { rootFontSizePx, cellMetrics, textareaWidths });
+}
+
+/** What every node of a tree is built with (buildTree). */
+interface BuildContext {
+  rootFontSizePx: number;
+  cellMetrics: CellMetrics | undefined;
+  textareaWidths: TextareaWidths | undefined;
+}
+
+function buildNode(root: Element, context: BuildContext): LayoutNode | null {
+  const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics);
   if (style.display === "none") return null;
 
   // Registered leaf renderers (specs/leaf-renderers.md) supply their
@@ -76,7 +73,6 @@ export function buildTree(
 
   const elementChildren = Array.from(root.children);
   const roles = elementChildren.map(childRole);
-  const context = { rootFontSizePx, cellMetrics, textareaWidths };
 
   // Form controls are always leaves — descending into a <select>'s
   // <option>s would leak that text into the grid.
@@ -86,25 +82,7 @@ export function buildTree(
   ) {
     return buildLeaf(root, style, elementChildren, roles, context);
   }
-
-  return {
-    source: root,
-    style,
-    children: buildChildren(
-      root,
-      Array.from(root.childNodes),
-      rootFontSizePx,
-      cellMetrics,
-      textareaWidths,
-    ),
-    text: "",
-    intrinsicWidth: 0,
-    intrinsicHeight: 0,
-    localRect: { x: 0, y: 0, width: 0, height: 0 },
-    unclampedHeight: 0,
-    naturalContentHeight: 0,
-    resolvedPadding: zeroInsets(),
-  };
+  return createNode(root, style, buildChildren(root, Array.from(root.childNodes), context));
 }
 
 /** A container's children in document order (specs/cell-model.md
@@ -112,21 +90,19 @@ export function buildTree(
  * run of inline content between them — text, inline elements, atomic
  * boxes, any out-of-flow element among them — an anonymous leaf in
  * `runStyle`, the container's own text style unless given (the host's,
- * specs/host-leaf.md). A stretch of nothing but whitespace and
+ * specs/host-leaf.md), over exactly the run's nodes, which are its DOM
+ * (selection.ts `runNodes`). A stretch of nothing but whitespace and
  * out-of-flow elements is no run: those elements are the container's
  * own positioned children. */
-export function buildChildren(
+function buildChildren(
   container: Element,
   nodes: ChildNode[],
-  rootFontSizePx: number,
-  cellMetrics?: CellMetrics,
-  textareaWidths?: TextareaWidths,
+  context: BuildContext,
   runStyle?: CellStyle,
 ): LayoutNode[] {
-  const context = { rootFontSizePx, cellMetrics, textareaWidths };
   const children: LayoutNode[] = [];
   const build = (el: Element): void => {
-    const node = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
+    const node = buildNode(el, context);
     if (node) children.push(fadedBy(node, splitOpacity(el, container)));
   };
   let style = runStyle;
@@ -138,8 +114,10 @@ export function buildChildren(
     if (!inline) {
       for (const el of elements) build(el);
     } else {
-      style ??= leafStyleOf(container, rootFontSizePx, cellMetrics);
-      children.push(buildAnonymousLeaf(container, run, elements, roles, context, style));
+      style ??= leafStyleOf(container, context);
+      const leaf = buildLeaf(container, style, elements, roles, context, run);
+      leaf.anonymous = true;
+      children.push(leaf);
     }
     run = [];
     roles = [];
@@ -181,78 +159,48 @@ export function buildChildren(
   return children;
 }
 
-/** A run's leaf over exactly the run's nodes, which are its DOM
- * (selection.ts `runNodes`). */
-function buildAnonymousLeaf(
-  container: Element,
-  nodes: ChildNode[],
-  elements: Element[],
-  roles: ChildRole[],
-  context: BuildContext,
-  style: CellStyle,
-): LayoutNode {
-  const leaf = buildLeaf(container, style, elements, roles, context, nodes);
-  leaf.anonymous = true;
-  return leaf;
-}
-
-interface BuildContext {
-  rootFontSizePx: number;
-  cellMetrics: CellMetrics | undefined;
-  textareaWidths: TextareaWidths | undefined;
-}
-
-/** The host's own inline content as the ROOT leaf (specs/host-leaf.md):
- * null when an element child is block-level (the host is a container)
- * or there is no inline content at all (the empty root). The metrics
- * probe is never part of the run. */
-export function buildRootLeaf(
+/** The host's tree (specs/host-leaf.md) over its child nodes but the
+ * metrics probe: its own inline content as the root leaf, else — a
+ * block-level child, or no inline content — a container over them, its
+ * text beside its children as anonymous runs. Either root takes the
+ * host's text properties, which key its native locks (render.ts
+ * `markRoot`), on no box, with no tracking or line gap (the host's
+ * letter-spacing and line-height are the cell), and pointer events
+ * whatever the host's value, as its top-level elements read them
+ * (element.ts). */
+export function buildRoot(
   host: Element,
   rootFontSizePx: number,
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
-): LayoutNode | null {
+): LayoutNode {
+  const context = { rootFontSizePx, cellMetrics, textareaWidths };
   const nodes = Array.from(host.childNodes).filter(
     (node) => !(node instanceof Element && node.hasAttribute("data-mw-probe")),
   );
   const elementChildren = nodes.filter((node): node is Element => node instanceof Element);
   const roles = elementChildren.map(childRole);
-  if (roles.includes("block") || splitsForBlock(elementChildren, roles)) return null;
-  if (!hasDirectText(host) && !roles.includes("inline")) return null;
-  const style = hostLeafStyle(host, rootFontSizePx, cellMetrics);
-  const context = { rootFontSizePx, cellMetrics, textareaWidths };
-  return buildLeaf(host, style, elementChildren, roles, context, nodes);
-}
-
-/** The style of the host's own text (specs/host-leaf.md): its text
- * properties on no box, with no tracking or line gap — the host's
- * letter-spacing and line-height are the cell — taking pointer events
- * whatever the host's own value, as the host's top-level elements read
- * them (element.ts). */
-export function hostLeafStyle(
-  host: Element,
-  rootFontSizePx: number,
-  metrics?: CellMetrics,
-): CellStyle {
-  return {
-    ...leafStyleOf(host, rootFontSizePx, metrics),
-    tracking: 0,
-    lineGap: 0,
-    pointerEvents: true,
-  };
+  const style = { ...leafStyleOf(host, context), tracking: 0, lineGap: 0, pointerEvents: true };
+  const isLeaf =
+    !roles.includes("block") &&
+    !splitsForBlock(elementChildren, roles) &&
+    (hasDirectText(host) || roles.includes("inline"));
+  return isLeaf
+    ? buildLeaf(host, style, elementChildren, roles, context, nodes)
+    : createNode(host, style, buildChildren(host, nodes, context, style));
 }
 
 /** A leaf's style from an element's text and inherited paint
  * properties, on no box of its own (padding, border, margin, and size
  * stay the element's): the root leaf's and an anonymous run's. */
-function leafStyleOf(el: Element, rootFontSizePx: number, metrics?: CellMetrics): CellStyle {
+function leafStyleOf(el: Element, { rootFontSizePx, cellMetrics }: BuildContext): CellStyle {
   const cs = getComputedStyle(el);
   const fontSizePx = parseFloat(cs.fontSize) || rootFontSizePx;
   const style: CellStyle = {
     ...defaultCellStyle(),
     ...readTextStyle(el, cs, rootFontSizePx),
     lineGap: lineGapRows(cs.lineHeight, fontSizePx),
-    tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
+    tracking: trackingCells(cs.letterSpacing, fontSizePx, cellMetrics?.letterSpacing ?? 0),
     color: cs.color,
     fontWeight: cs.fontWeight,
     fontStyle: cs.fontStyle,
@@ -276,20 +224,12 @@ function buildLeaf(
   context: BuildContext,
   nodes?: ChildNode[],
 ): LayoutNode {
-  const { rootFontSizePx, cellMetrics, textareaWidths } = context;
   const tag = root.tagName;
   const formControl = isFormControlTag(tag);
   const run = extractLeafRun(
     root,
     style.tracking,
-    {
-      rootFontSizePx,
-      rootLetterSpacingPx: cellMetrics?.letterSpacing ?? 0,
-      cellMetrics,
-      textareaWidths,
-      preserve: style.whiteSpace === "pre",
-      tabSize: style.tabSize,
-    },
+    { ...context, preserve: style.whiteSpace === "pre", tabSize: style.tabSize },
     nodes,
   );
   const text = run.chars.join("");
@@ -337,15 +277,11 @@ function buildLeaf(
   if (tag === "TEXTAREA") {
     const textarea = root as HTMLTextAreaElement;
     const value = textarea.value ?? "";
-    // Row count = wrap the value against the textarea's current
-    // content-area width in cells (captured by the host pre-
-    // measuring so it reflects the engine-assigned width, not the
-    // browser default that applies while measuring is on). Pure
-    // and monotonic, so the box grows AND shrinks as the width
-    // changes — max-w-full under viewport resize, flex reflow,
-    // typing that wraps. Fallback for the first-ever layout (no
-    // snapshot yet): hard-line count only.
-    const contentCells = textareaWidths?.get(textarea);
+    // The value wrapped at its width snapshot (TextareaWidths): pure
+    // and monotonic, so the box grows and shrinks with its width.
+    // Without a snapshot, its hard lines, the host laying out again at
+    // the width it gives.
+    const contentCells = context.textareaWidths?.get(textarea);
     // Unlike `<br>` (whose trailing break is dropped, per CSS),
     // a textarea SHOWS the empty line after a trailing `\n` — that
     // extra visible row is where the caret sits after Enter.
@@ -396,7 +332,7 @@ function buildLeaf(
     const box = directBoxes.get(el);
     if (box) children.push(box);
     else if (roles[i] === "out-of-flow") {
-      const child = buildTree(el, rootFontSizePx, cellMetrics, textareaWidths);
+      const child = buildNode(el, context);
       if (child) children.push(fadedBy(child, splitOpacity(el, root)));
     }
   }
@@ -406,18 +342,7 @@ function buildLeaf(
       a.source.compareDocumentPosition(b.source) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
     );
   }
-  const node: LayoutNode = {
-    source: root,
-    style,
-    children,
-    text,
-    intrinsicWidth,
-    intrinsicHeight,
-    localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
-    unclampedHeight: 0,
-    naturalContentHeight: 0,
-    resolvedPadding: zeroInsets(),
-  };
+  const node = createNode(root, style, children, text, intrinsicWidth, intrinsicHeight);
   if (advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = advances;
   if (run.inlineElements.length > 0) {
     node.inlineElements = run.inlineElements;
@@ -446,27 +371,13 @@ function buildRendererLeaf(
   // not stretch — and it must live HERE, not in companion CSS, because
   // Gecko's computed styles never surface intrinsic keywords (only the
   // class scan would see a `w-max`, and a stylesheet rule has neither).
-  if (style.width === undefined || style.width.kind === "auto") {
-    style.width = { kind: "max-content" };
-  }
+  style.width ??= { kind: "max-content" };
   // Cluster widths plus tracking, applied uniformly so the art
   // stretches coherently (columns stay aligned across rows, like
   // letter-spacing on a pre).
   const advances = clusterAdvances(text, style.tracking);
   const intrinsicWidth = longestLineAdvance(text, advances, style.tracking);
-  const intrinsicHeight = lines.length;
-  const node: LayoutNode = {
-    source: root,
-    style,
-    children: [],
-    text,
-    intrinsicWidth,
-    intrinsicHeight,
-    localRect: { x: 0, y: 0, width: intrinsicWidth, height: intrinsicHeight },
-    unclampedHeight: 0,
-    naturalContentHeight: 0,
-    resolvedPadding: zeroInsets(),
-  };
+  const node = createNode(root, style, [], text, intrinsicWidth, lines.length);
   if (advances.some((a) => a !== 1)) node.advances = advances;
   const runs = content?.runs ?? [];
   if (runs.length > 0 && text.length > 0) {
@@ -490,6 +401,7 @@ function buildRendererLeaf(
       visible: node.style.visible,
       pointerEvents: node.style.pointerEvents,
       opacity: 1,
+      parent: -1,
     }));
     runs.forEach((run, index) => {
       const line = lines[run.line];
@@ -503,62 +415,17 @@ function buildRendererLeaf(
   return node;
 }
 
-/**
- * HTML tags whose default display is inline — a FALLBACK for environments
- * whose getComputedStyle returns "" for un-styled elements (happy-dom in
- * the headless tests). Real browsers always resolve a computed display,
- * so there this list is never consulted: computed display decides, and
- * CSS blockification (flex/grid children, absolute positioning) is
- * honored (specs/cell-model.md "Inline detection").
- */
-const FALLBACK_INLINE_TAGS = new Set([
-  "A",
-  "ABBR",
-  "B",
-  "BDI",
-  "BDO",
-  "BR",
-  "CITE",
-  "CODE",
-  "DATA",
-  "DFN",
-  "EM",
-  "I",
-  "KBD",
-  "MARK",
-  "Q",
-  "S",
-  "SAMP",
-  "SMALL",
-  "SPAN",
-  "STRONG",
-  "SUB",
-  "SUP",
-  "TIME",
-  "U",
-  "VAR",
-  "WBR",
-]);
-
-/** Resolve a computed display, falling back per tag for environments
- * that return "" (happy-dom). */
-function resolvedDisplay(el: Element, display: string): string {
-  return display || (FALLBACK_INLINE_TAGS.has(el.tagName) ? "inline" : "block");
-}
-
 /** True for content that flows WITH the surrounding text (computed
  * `inline` or `contents`). */
-function isRunInline(el: Element, display: string): boolean {
-  const resolved = resolvedDisplay(el, display);
-  return resolved === "inline" || resolved === "contents";
+function isRunInline(display: string): boolean {
+  return display === "inline" || display === "contents";
 }
 
 /** Atomic inline-level boxes (`inline-flex`/`inline-block`/`inline-grid`)
  * ride the line as single unbreakable units with their own internal
  * layout (specs/cell-model.md). */
-function isAtomicInline(el: Element, display: string): boolean {
-  const resolved = resolvedDisplay(el, display);
-  return resolved.startsWith("inline") && resolved !== "inline";
+function isAtomicInline(display: string): boolean {
+  return display.startsWith("inline") && display !== "inline";
 }
 
 /** Classify a direct child: skipped, out-of-flow box, text-run content
@@ -576,7 +443,7 @@ type ChildRole = "none" | "out-of-flow" | "inline" | "block";
  * style. */
 function hidesBlock(el: Element): boolean {
   if (el.children.length === 0) return false;
-  if (!isRunInline(el, getComputedStyle(el).display)) return false;
+  if (!isRunInline(computedDisplay(el, getComputedStyle(el)))) return false;
   for (const child of el.children) {
     const role = childRole(child);
     if (role === "block") return true;
@@ -593,7 +460,8 @@ function splitsForBlock(children: Element[], roles: ChildRole[]): boolean {
 
 function childRole(el: Element): ChildRole {
   const cs = getComputedStyle(el);
-  const { display, position } = cs;
+  const display = computedDisplay(el, cs);
+  const { position } = cs;
   if (display === "none") return "none";
   if (position === "absolute" || position === "fixed") return "out-of-flow";
   // A float is block-level whatever its display (specs/float.md): it
@@ -603,7 +471,7 @@ function childRole(el: Element): ChildRole {
   // unstyled custom element computes to `inline`, which would fold
   // its semantic text into the parent's run instead of rendering.
   if (leafRendererFor(el.tagName)) return "block";
-  if (isRunInline(el, display) || isAtomicInline(el, display)) return "inline";
+  if (isRunInline(display) || isAtomicInline(display)) return "inline";
   return "block";
 }
 
@@ -628,11 +496,7 @@ interface LeafRun {
   positioned: LayoutNode[];
 }
 
-interface RunContext {
-  rootFontSizePx: number;
-  rootLetterSpacingPx: number;
-  cellMetrics: CellMetrics | undefined;
-  textareaWidths: TextareaWidths | undefined;
+interface RunContext extends BuildContext {
   /** Leaf-level `white-space: pre`: keep the source's spaces and newlines
    * (tabs expand to `tabSize` stops from each hard line's start) instead
    * of collapsing. Applies to the whole run — a `white-space` override on
@@ -647,14 +511,13 @@ interface RunContext {
  * — plus per-character advances and the inline elements the renderer must
  * write grid typography (and rewritten relative insets) onto.
  *
- * Whitespace inside text nodes (including literal newlines from source
- * formatting) collapses to single spaces, exactly like the browser under
- * `white-space: normal` — ONLY `<br>` produces a hard `\n`. Whitespace
- * around a hard break is stripped (the browser strips it at line edges too).
- * CSS collapsible white space only (space/tab/CR/LF/FF) — NOT `\s`, which
- * would also eat NBSP (U+00A0); the browser preserves NBSP and never breaks
- * at it. A `white-space: pre` leaf skips all of that: spaces and newlines
- * survive as authored and tabs expand to tab stops (see RunContext).
+ * White space CSS collapses (wrap.ts `COLLAPSIBLE`) folds to single
+ * spaces, source newlines included, as the browser folds it under
+ * `white-space: normal` — ONLY `<br>` produces a hard `\n` — and is
+ * stripped around a hard break (the browser strips it at line edges
+ * too). A `white-space: pre` leaf skips all of that: spaces and
+ * newlines survive as authored and tabs expand to tab stops (see
+ * RunContext).
  */
 function extractLeafRun(
   el: Element,
@@ -701,24 +564,27 @@ function collectRunNodes(
     if (!owner || owner === container) {
       collectNodes(group, tracking, ctx, run);
     } else {
-      const outer = splitOpacity(owner, container);
-      const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx, outer);
-      collectOwned(run, entry, () => collectNodes(group, entry.tracking, ctx, run, entry.opacity));
+      const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx, -1);
+      entry.opacity *= splitOpacity(owner, container);
+      collectOwned(run, entry, (index) =>
+        collectNodes(group, entry.tracking, ctx, run, entry.opacity, index),
+      );
     }
     i = end;
   }
 }
 
-/** An inline element's entry, and the characters it collects: those a
- * deeper element has not claimed are the entry's. */
+/** An inline element's entry, and the characters it collects, told
+ * the entry's index: those a deeper element has not claimed are the
+ * entry's. */
 function collectOwned(
   run: LeafRun,
   entry: LeafRun["inlineElements"][number],
-  collect: () => void,
+  collect: (index: number) => void,
 ): void {
   const inlineIndex = run.inlineElements.push(entry) - 1;
   const start = run.chars.length;
-  collect();
+  collect(inlineIndex);
   for (let i = start; i < run.chars.length; i++) {
     if (run.inlineIndex[i] === undefined) run.inlineIndex[i] = inlineIndex;
   }
@@ -742,15 +608,15 @@ function fadedBy(node: LayoutNode, opacity: number): LayoutNode {
   return node;
 }
 
-/** An inline element's entry in its run, from its computed style, its
- * opacity times `outer`, its inline ancestors'. */
+/** An inline element's entry in its run, from its computed style, under
+ * the entry at `parent`. */
 function inlineEntry(
   element: Element,
   cs: CSSStyleDeclaration,
   padLeft: number,
   padRight: number,
   ctx: RunContext,
-  outer: number,
+  parent: number,
 ): LeafRun["inlineElements"][number] {
   const { position, backgroundColor } = cs;
   return {
@@ -758,7 +624,7 @@ function inlineEntry(
     tracking: trackingCells(
       cs.letterSpacing,
       parseFloat(cs.fontSize) || ctx.rootFontSizePx,
-      ctx.rootLetterSpacingPx,
+      ctx.cellMetrics?.letterSpacing ?? 0,
     ),
     padLeft,
     padRight,
@@ -772,22 +638,26 @@ function inlineEntry(
     textDecorationLine: cs.textDecorationLine,
     visible: readVisible(cs, element),
     pointerEvents: cs.pointerEvents !== "none",
-    opacity: outer * readOpacity(cs.opacity),
+    opacity: readOpacity(cs.opacity),
+    parent,
   };
 }
 
+/** `opacity` is the product of the inline elements' the nodes sit in,
+ * `parent` the innermost's entry. */
 function collectRun(
   el: Element,
   tracking: number,
   ctx: RunContext,
   run: LeafRun,
   opacity = 1,
+  parent = -1,
 ): void {
   // Form controls render their value / caret / selection natively —
   // leave the leaf empty so the grid doesn't double-render, and skip
   // descending into their internals (e.g. <select>'s <option>s).
   if (isFormControlTag(el.tagName)) return;
-  collectNodes(Array.from(el.childNodes), tracking, ctx, run, opacity);
+  collectNodes(Array.from(el.childNodes), tracking, ctx, run, opacity, parent);
 }
 
 function collectNodes(
@@ -796,6 +666,7 @@ function collectNodes(
   ctx: RunContext,
   run: LeafRun,
   opacity = 1,
+  parent = -1,
 ): void {
   // Cells since the current hard line began — the tab-stop basis.
   const column = (): number => {
@@ -829,8 +700,8 @@ function collectNodes(
           }
         }
       } else {
-        // Collapsible white space (space/tab/CR/LF/FF) folds to one
-        // space that keeps the first collapsed character's offset.
+        // Collapsible white space folds to one space that keeps the
+        // first collapsed character's offset.
         let offset = 0;
         let inSpace = false;
         for (const ch of graphemes(node.textContent ?? "")) {
@@ -850,7 +721,8 @@ function collectNodes(
       }
       // Reads happen during the measure pass, so authored values are visible.
       const cs = getComputedStyle(child);
-      const { display, position } = cs;
+      const display = computedDisplay(child, cs);
+      const { position } = cs;
       // A hidden span's text must not render.
       if (display === "none") continue;
       // Out-of-flow content leaves the run but not the tree: it takes
@@ -858,14 +730,14 @@ function collectNodes(
       // (a popover inside an inline element is one, and so is every
       // positioner a custom element wraps).
       if (position === "absolute" || position === "fixed") {
-        const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics, ctx.textareaWidths);
+        const box = buildNode(child, ctx);
         if (box) run.positioned.push(fadedBy(box, opacity));
         continue;
       }
       // An atomic inline box rides the run as ONE unbreakable unit: a
       // U+FFFC marker whose advance layout resolves to the box's width.
-      if (isAtomicInline(child, display)) {
-        const box = buildTree(child, ctx.rootFontSizePx, ctx.cellMetrics, ctx.textareaWidths);
+      if (isAtomicInline(display)) {
+        const box = buildNode(child, ctx);
         if (box) {
           box.inlineBox = true;
           pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
@@ -875,7 +747,7 @@ function collectNodes(
       }
       // A BLOCK-level element nested inside the run can't be laid out
       // from here — skip its subtree and warn.
-      if (!isRunInline(child, display)) {
+      if (!isRunInline(display)) {
         warnSkippedRunContent(child);
         continue;
       }
@@ -888,11 +760,11 @@ function collectNodes(
       const padLeft = inlinePadCells(cs.paddingLeft, ctx.rootFontSizePx);
       const padRight = inlinePadCells(cs.paddingRight, ctx.rootFontSizePx);
       warnInlineBorder(child, cs);
-      const entry = inlineEntry(child, cs, padLeft, padRight, ctx, opacity);
+      const entry = inlineEntry(child, cs, padLeft, padRight, ctx, parent);
       // Pad cells belong to the element too (its bg must fill them).
-      collectOwned(run, entry, () => {
+      collectOwned(run, entry, (index) => {
         for (let i = 0; i < padLeft; i++) pushChar(run, INLINE_PAD, 1, null, -1);
-        collectRun(child, entry.tracking, ctx, run, entry.opacity);
+        collectRun(child, entry.tracking, ctx, run, opacity * entry.opacity, index);
         for (let i = 0; i < padRight; i++) pushChar(run, INLINE_PAD, 1, null, -1);
       });
     }
@@ -1085,6 +957,6 @@ function isFloated(value: string): boolean {
 
 /** True for tags whose value/caret/selection are handled by the browser
  * natively — the tree builder treats them as empty leaves. */
-export function isFormControlTag(tag: string): boolean {
+function isFormControlTag(tag: string): boolean {
   return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
 }

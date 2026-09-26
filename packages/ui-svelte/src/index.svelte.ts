@@ -16,9 +16,7 @@ import type { Action } from "svelte/action";
  * (specs/ui.md "Component layer"). Both read from the same machines,
  * so a page may mix them.
  */
-/** The collections a listbox and a select take, Zag's own: `items`
- * and, for a grid of them, `columnCount`. Both components build the
- * same `ListCollection`, so one export serves each. */
+/** The three lists' collections, `@monowind/ui/listbox`'s. */
 export { collection, gridCollection } from "@monowind/ui/listbox";
 export {
   useComboboxContext,
@@ -34,11 +32,11 @@ export { default as ComboboxClearTrigger } from "./components/ComboboxClearTrigg
 export { default as ComboboxContent } from "./components/ComboboxContent.svelte";
 export { default as ComboboxControl } from "./components/ComboboxControl.svelte";
 export { default as ComboboxInput } from "./components/ComboboxInput.svelte";
-export { default as ComboboxItem } from "./components/ComboboxItem.svelte";
-export { default as ComboboxItemGroup } from "./components/ComboboxItemGroup.svelte";
-export { default as ComboboxItemGroupLabel } from "./components/ComboboxItemGroupLabel.svelte";
-export { default as ComboboxItemIndicator } from "./components/ComboboxItemIndicator.svelte";
-export { default as ComboboxItemText } from "./components/ComboboxItemText.svelte";
+export { default as ComboboxItem } from "./components/ListItem.svelte";
+export { default as ComboboxItemGroup } from "./components/ListItemGroup.svelte";
+export { default as ComboboxItemGroupLabel } from "./components/ListItemGroupLabel.svelte";
+export { default as ComboboxItemIndicator } from "./components/ListItemIndicator.svelte";
+export { default as ComboboxItemText } from "./components/ListItemText.svelte";
 export { default as ComboboxLabel } from "./components/ComboboxLabel.svelte";
 export { default as ComboboxList } from "./components/ComboboxList.svelte";
 export { default as ComboboxPositioner } from "./components/ComboboxPositioner.svelte";
@@ -54,11 +52,11 @@ export { default as DialogRootProvider } from "./components/DialogRootProvider.s
 export { default as DialogTitle } from "./components/DialogTitle.svelte";
 export { default as DialogTrigger } from "./components/DialogTrigger.svelte";
 export { default as ListboxContent } from "./components/ListboxContent.svelte";
-export { default as ListboxItem } from "./components/ListboxItem.svelte";
-export { default as ListboxItemGroup } from "./components/ListboxItemGroup.svelte";
-export { default as ListboxItemGroupLabel } from "./components/ListboxItemGroupLabel.svelte";
-export { default as ListboxItemIndicator } from "./components/ListboxItemIndicator.svelte";
-export { default as ListboxItemText } from "./components/ListboxItemText.svelte";
+export { default as ListboxItem } from "./components/ListItem.svelte";
+export { default as ListboxItemGroup } from "./components/ListItemGroup.svelte";
+export { default as ListboxItemGroupLabel } from "./components/ListItemGroupLabel.svelte";
+export { default as ListboxItemIndicator } from "./components/ListItemIndicator.svelte";
+export { default as ListboxItemText } from "./components/ListItemText.svelte";
 export { default as ListboxLabel } from "./components/ListboxLabel.svelte";
 export { default as ListboxRoot } from "./components/ListboxRoot.svelte";
 export { default as ListboxRootProvider } from "./components/ListboxRootProvider.svelte";
@@ -86,11 +84,11 @@ export { default as SelectContent } from "./components/SelectContent.svelte";
 export { default as SelectControl } from "./components/SelectControl.svelte";
 export { default as SelectHiddenSelect } from "./components/SelectHiddenSelect.svelte";
 export { default as SelectIndicator } from "./components/SelectIndicator.svelte";
-export { default as SelectItem } from "./components/SelectItem.svelte";
-export { default as SelectItemGroup } from "./components/SelectItemGroup.svelte";
-export { default as SelectItemGroupLabel } from "./components/SelectItemGroupLabel.svelte";
-export { default as SelectItemIndicator } from "./components/SelectItemIndicator.svelte";
-export { default as SelectItemText } from "./components/SelectItemText.svelte";
+export { default as SelectItem } from "./components/ListItem.svelte";
+export { default as SelectItemGroup } from "./components/ListItemGroup.svelte";
+export { default as SelectItemGroupLabel } from "./components/ListItemGroupLabel.svelte";
+export { default as SelectItemIndicator } from "./components/ListItemIndicator.svelte";
+export { default as SelectItemText } from "./components/ListItemText.svelte";
 export { default as SelectLabel } from "./components/SelectLabel.svelte";
 export { default as SelectList } from "./components/SelectList.svelte";
 export { default as SelectPositioner } from "./components/SelectPositioner.svelte";

@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { createApp, createSSRApp, h, nextTick, reactive, shallowRef } from "vue";
 import { renderToString } from "vue/server-renderer";
 import { collection } from "@monowind/ui/listbox";
-import { posted, resetByClick } from "../../ui/test/helpers.ts";
+import { by, posted, resetByClick } from "../../ui/test/helpers.ts";
 import {
   ComboboxContent,
   ComboboxControl,
@@ -13,6 +13,7 @@ import {
   ComboboxPositioner,
   ComboboxRoot,
   ComboboxTrigger,
+  DialogCloseTrigger,
   DialogContent,
   DialogPositioner,
   DialogRoot,
@@ -62,10 +63,7 @@ function mountSetup(setup: () => () => unknown) {
   app.mount(container);
   return {
     container,
-    by: (part: string, value?: string) =>
-      container.querySelector<HTMLElement>(
-        value ? `[data-part="${part}"][data-value="${value}"]` : `[data-part="${part}"]`,
-      )!,
+    by: (part: string, value?: string) => by(container, part, value),
     unmount: () => {
       app.unmount();
       container.remove();
@@ -140,12 +138,124 @@ it("merges a part's props onto the one element the slot gives with as-child", as
   tree.unmount();
 });
 
-it("tells a part it is outside its root", () => {
+it("reads a bare boolean attribute in a template as true, and an absent one as the machine's default", async () => {
+  const tree = mount(() =>
+    h({
+      components: {
+        DialogRoot,
+        DialogCloseTrigger,
+        MenuRoot,
+        MenuTrigger,
+        MenuPositioner,
+        MenuContent,
+        MenuItem,
+      },
+      template: `
+        <DialogRoot>
+          <DialogCloseTrigger as-child><a data-test="close">Delete</a></DialogCloseTrigger>
+        </DialogRoot>
+        <MenuRoot>
+          <MenuTrigger>File</MenuTrigger>
+          <MenuPositioner>
+            <MenuContent>
+              <MenuItem value="cut">Cut</MenuItem>
+              <MenuItem value="copy" disabled>Copy</MenuItem>
+            </MenuContent>
+          </MenuPositioner>
+        </MenuRoot>
+      `,
+    }),
+  );
+  await nextTick();
+  // The part's props on the author's element, not around it.
+  const close = tree.by("close-trigger");
+  expect(close.tagName).toBe("A");
+  expect(close.dataset["test"]).toBe("close");
+  expect(tree.by("item", "copy").getAttribute("aria-disabled")).toBe("true");
+  expect(tree.by("item", "cut").hasAttribute("aria-disabled")).toBe(false);
+  // `closeOnSelect` left out stays the machine's own, which closes.
+  tree.by("trigger").click();
+  await nextTick();
+  expect(tree.by("content").getAttribute("data-state")).toBe("open");
+  tree.by("item", "cut").click();
+  await nextTick();
+  expect(tree.by("content").getAttribute("data-state")).toBe("closed");
+  tree.unmount();
+});
+
+it("reads a machine's bare boolean attribute on a root as true", async () => {
+  const items = collection({ items: ["main", "next"] });
+  const tree = mount(() =>
+    h({
+      components: { ListboxRoot, ListboxContent, SelectRoot, SelectContent },
+      setup: () => ({ items }),
+      template: `
+        <ListboxRoot :collection="items" disabled><ListboxContent /></ListboxRoot>
+        <SelectRoot :collection="items" multiple><SelectContent /></SelectRoot>
+      `,
+    }),
+  );
+  await nextTick();
+  expect(
+    tree.container.querySelector("[data-scope='listbox']")!.hasAttribute("data-disabled"),
+  ).toBe(true);
+  const content = tree.container.querySelector("[data-scope='select'][data-part='content']")!;
+  expect(content.getAttribute("aria-multiselectable")).toBe("true");
+  tree.unmount();
+});
+
+/** The first error a tree throws as it mounts, and the phase Vue's
+ * error handler names for it. */
+function failure(render: () => unknown): { message: string; info: string } | undefined {
+  let first: { message: string; info: string } | undefined;
+  const app = createApp({ setup: () => render });
+  app.config.errorHandler = (error, _, info) => {
+    first ??= { message: (error as Error).message, info };
+  };
+  app.mount(document.createElement("div"));
+  app.unmount();
+  return first;
+}
+
+it("tells a part it is outside its root, from its setup", () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const container = document.createElement("div");
-  const app = createApp({ setup: () => () => h(MenuItem, { value: "lost" }) });
-  expect(() => app.mount(container)).toThrow(/inside <MenuRoot>/);
+  expect(failure(() => h(MenuItem, { value: "lost" }))).toEqual({
+    message: "a Menu part must be inside <MenuRoot>",
+    info: "setup function",
+  });
+  expect(failure(() => h(MenuRoot, () => h(MenuTriggerItem)))).toEqual({
+    message: "a MenuTriggerItem must be inside a nested <MenuRoot>",
+    info: "setup function",
+  });
   warn.mockRestore();
+});
+
+it("tells an item part where it belongs, outside a list root or its item", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  expect(failure(() => h(ListboxItem, { value: "main" }))).toEqual({
+    message: "an item part must be inside <ListboxRoot>, <SelectRoot> or <ComboboxRoot>",
+    info: "setup function",
+  });
+  const items = collection({ items: ["main"] });
+  expect(
+    failure(() => h(ListboxRoot, { collection: items }, () => h(ListboxItemText, () => "main"))),
+  ).toEqual({
+    message: "an item's text and indicator must be inside its Item",
+    info: "setup function",
+  });
+  warn.mockRestore();
+});
+
+it("reads the nearest list root in an item part, whichever of the three it is named for", () => {
+  const tree = mount(() =>
+    h(ListboxRoot, { id: "mixed", collection: collection({ items: ["main"] }) }, () =>
+      h(SelectItem, { value: "main" }, () => h(ComboboxItemText, () => "main")),
+    ),
+  );
+  expect(tree.by("item").getAttribute("data-scope")).toBe("listbox");
+  expect(tree.by("item").getAttribute("role")).toBe("option");
+  expect(tree.by("item-text").getAttribute("data-scope")).toBe("listbox");
+  tree.unmount();
 });
 
 it("renders a listbox's parts on its own root element, attributes and all", async () => {

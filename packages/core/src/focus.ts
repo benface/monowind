@@ -81,28 +81,19 @@ function rank(direction: Direction, current: Rect, rect: Rect): Rank | null {
 }
 
 /** Every focusable element the layout knows, with its painted cells
- * (ancestor scroll offsets applied, as the paint walk descends; a
- * fixed box's from the host's origin), in tree order: laid-out boxes
- * and atomic inline boxes at their border boxes, a text leaf's inline
- * elements one rect per line they cover (a wrapped link is reachable
- * from each of its lines). The root itself — the host — is the
- * navigation's container, never a candidate. */
+ * (`paintOrigin`), in tree order: laid-out boxes and atomic inline
+ * boxes at their border boxes, a text leaf's inline elements one rect
+ * per line they cover (a wrapped link is reachable from each of its
+ * lines). The root itself — the host — is the navigation's container,
+ * never a candidate. */
 export function focusableRects(root: LayoutNode): Focusable[] {
   const out: Focusable[] = [];
-  const walk = (
-    node: LayoutNode,
-    parentX: number,
-    parentY: number,
-    isRoot: boolean,
-    forced: boolean,
-  ) => {
+  const walk = (node: LayoutNode, isRoot: boolean, forced: boolean) => {
     if (node.tableHidden) return;
     // A box position-visibility hides takes its subtree with it, a
     // top-layer element inside aside (specs/anchor-positioning.md).
     const hidden = node.forceHidden === true || (forced && node.topLayerRank === undefined);
-    const hoisted = node.hostRect;
-    const x = hoisted ? hoisted.x : parentX + node.localRect.x + (node.stickyShift?.x ?? 0);
-    const y = hoisted ? hoisted.y : parentY + node.localRect.y + (node.stickyShift?.y ?? 0);
+    const { x, y } = node.paintOrigin;
     // A hidden box takes no focus; a visible descendant still does
     // (specs/visibility.md).
     if (!hidden && !isRoot && !node.anonymous && node.style.visible && isFocusable(node.source)) {
@@ -119,11 +110,9 @@ export function focusableRects(root: LayoutNode): Focusable[] {
         if (!hidden.has(inline.element) && isFocusable(inline.element)) out.push(inline);
       }
     }
-    const scrollX = node.scroll?.x ?? 0;
-    const scrollY = node.scroll?.y ?? 0;
-    for (const child of node.children) walk(child, x - scrollX, y - scrollY, false, hidden);
+    for (const child of node.children) walk(child, false, hidden);
   };
-  walk(root, 0, 0, true, false);
+  walk(root, true, false);
   return out;
 }
 

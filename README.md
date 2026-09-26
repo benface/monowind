@@ -42,11 +42,12 @@ wrap, and gap decorations (`rule-*` separators with junction glyphs).
 
 **Paint** — rounded corners (`rounded-*` picks a theme's corner
 glyphs), box shadows (`shadow-*` as shade glyphs), gradients
-(`bg-linear-*`, `bg-radial-*`, `bg-conic-*`, `bg-clip-text`), opacity,
-visibility (`invisible`, a box keeping its space), and transforms and
-filters (`rotate-*`, `scale-*`, `translate-*`,
-`blur-*`, `grayscale`, `backdrop-blur-*`, … — the element's cells in a
-layer of their own, which the browser transforms).
+(`bg-linear-*`, `bg-radial-*`, `bg-conic-*`, `bg-clip-text`), opacity
+and translucent colors (blended into the cells), visibility
+(`invisible`, a box keeping its space), and transforms and filters
+(`rotate-*`, `scale-*`, `translate-*`, `blur-*`, `grayscale`,
+`backdrop-blur-*`, … — the element's cells in a layer of their own,
+which the browser transforms).
 
 **Motion** — CSS transitions and animations (`animate-spin`,
 `animate-pulse`, keyframe enters and exits) sampled onto the grid.

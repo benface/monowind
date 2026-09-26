@@ -1,7 +1,16 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { paintedSpan, pressAt, readyHost, release, testHooks } from "./helpers.ts";
+import {
+  centerOf,
+  frames,
+  paintedBackground,
+  paintedSpan,
+  pressAt,
+  readyHost,
+  release,
+  testHooks,
+} from "./helpers.ts";
 
 /**
  * Synthesized pointer states (specs/cell-model.md "Pointer states"):
@@ -20,9 +29,10 @@ const meta: Meta = {
 };
 export default meta;
 
+/** A pointer event's coordinates on an element's middle. */
 const at = (el: Element): { clientX: number; clientY: number } => {
-  const rect = el.getBoundingClientRect();
-  return { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+  const { x, y } = centerOf(el);
+  return { clientX: x, clientY: y };
 };
 
 export const SynthesizedPointerStates: StoryObj = {
@@ -104,19 +114,58 @@ export const SynthesizedPointerStates: StoryObj = {
   },
 };
 
+/** The grid moving under a pointer held still — a box above the host
+ * growing, in a box that keeps its size, so no width around the host
+ * changes — moves the hover and the press with it (specs/cell-model.md
+ * "Pointer states"). */
+export const GridMoved: StoryObj = {
+  render: () => html`
+    <div class="h-24 overflow-hidden">
+      <div data-test="above"></div>
+      <mono-wind>
+        <div class="flex max-w-max flex-col">
+          <div data-test="first" class="px-1">first</div>
+          <div data-test="second" class="px-1">second</div>
+        </div>
+      </mono-wind>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const pointer = at(by("second"));
+    host.dispatchEvent(new PointerEvent("pointermove", { ...pointer, bubbles: true }));
+    await waitFor(() => expect(by("second")).toHaveAttribute("data-mw-hover"));
+    // The layout the hover's restyle asks for, which reads the grid anew.
+    await frames(3);
+    // A row down: the pointer is over the first.
+    by("above").style.height = `${by("first").getBoundingClientRect().height}px`;
+    await waitFor(() => expect(by("first")).toHaveAttribute("data-mw-hover"));
+    expect(by("second")).not.toHaveAttribute("data-mw-hover");
+    const press = { ...pointer, bubbles: true, isPrimary: true, button: 0 };
+    host.dispatchEvent(new PointerEvent("pointerdown", press));
+    await waitFor(() => expect(by("first")).toHaveAttribute("data-mw-active"));
+    host.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, isPrimary: true }));
+    await waitFor(() => expect(by("first")).not.toHaveAttribute("data-mw-active"));
+  },
+};
+
 /** In grid mode the ARIA widgets take pointer events like buttons
  * (specs/cell-model.md "Pointer states"): a menu item is hit under the
- * pointer, a plain box is the grid's. */
+ * pointer, a plain box and a composite's container are the grid's, and
+ * an element follows what makes it interactive, or a composite the
+ * focus invert skips, from the next layout's read on. */
 export const Widgets: StoryObj = {
   render: () => html`
     <mono-wind>
       <div class="flex max-w-max flex-col gap-1">
-        <div role="menu" tabindex="0" class="border px-1">
+        <div role="menu" tabindex="0" data-test="menu" class="border px-1">
           <div role="menuitem" data-test="item">item</div>
           <div role="menuitemcheckbox" aria-checked="false" data-test="check">check</div>
         </div>
         <div role="tab" data-test="tab" class="px-1">tab</div>
         <div data-test="plain" class="px-1">plain</div>
+        <div data-test="region" tabindex="0" class="px-1">region</div>
       </div>
     </mono-wind>
   `,
@@ -124,15 +173,35 @@ export const Widgets: StoryObj = {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const under = (name: string) => {
-      const { clientX, clientY } = at(by(name));
-      return document.elementFromPoint(clientX, clientY);
+      const { x, y } = centerOf(by(name));
+      return document.elementFromPoint(x, y);
     };
+    const pointerEvents = (name: string) => getComputedStyle(by(name)).pointerEvents;
     for (const name of ["item", "check", "tab"]) {
-      expect(getComputedStyle(by(name)).pointerEvents).toBe("auto");
+      expect(pointerEvents(name)).toBe("auto");
       expect(under(name)).toBe(by(name));
     }
-    expect(getComputedStyle(by("plain")).pointerEvents).toBe("none");
+    expect(pointerEvents("menu")).toBe("none");
+    expect(pointerEvents("plain")).toBe("none");
     expect(under("plain")).toBe(host);
+    // A focus target, a composite's container, a widget, and plain again.
+    by("plain").tabIndex = 0;
+    await waitFor(() => expect(pointerEvents("plain")).toBe("auto"));
+    by("plain").setAttribute("role", "listbox");
+    await waitFor(() => expect(pointerEvents("plain")).toBe("none"));
+    by("plain").setAttribute("role", "option");
+    await waitFor(() => expect(pointerEvents("plain")).toBe("auto"));
+    by("plain").removeAttribute("role");
+    by("plain").tabIndex = -1;
+    await waitFor(() => expect(pointerEvents("plain")).toBe("none"));
+    // Focused, then made a composite: the layout that follows reads it
+    // without the invert.
+    by("region").focus();
+    expect(by("region").matches(":focus-visible")).toBe(true);
+    await waitFor(() => expect(paintedBackground(host, "region")).not.toBe(""));
+    by("region").setAttribute("role", "listbox");
+    await waitFor(() => expect(paintedBackground(host, "region")).toBe(""));
+    by("region").blur();
   },
 };
 

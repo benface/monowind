@@ -1,6 +1,6 @@
 import { getContext, setContext } from "svelte";
 import type { Snippet } from "svelte";
-import { BOUND } from "@monowind/ui/framework";
+import { BOUND, type ItemApi } from "@monowind/ui/framework";
 export { defined, itemOf, itemProps, splitProps, warnStray } from "@monowind/ui/framework";
 import type * as combobox from "@monowind/ui/combobox";
 import type * as dialog from "@monowind/ui/dialog";
@@ -29,7 +29,10 @@ export interface PartProps {
 
 /** A component's context: what its parts read, and the reader that
  * fails loudly outside a root rather than on an undefined API. */
-export function defineContext<V>(name: string): {
+export function defineContext<V>(
+  name: string,
+  outside = `a ${name} part must be inside <${name}Root>`,
+): {
   set: (value: V) => void;
   use: () => V;
   useOptional: () => V | undefined;
@@ -41,7 +44,7 @@ export function defineContext<V>(name: string): {
     },
     use: () => {
       const value = getContext<V | undefined>(key);
-      if (value === undefined) throw new Error(`a ${name} part must be inside <${name}Root>`);
+      if (value === undefined) throw new Error(outside);
       return value;
     },
     useOptional: () => getContext<V | undefined>(key),
@@ -73,6 +76,12 @@ export const comboboxContext = defineContext<ComboboxApi>("Combobox");
 export const dialogContext = defineContext<DialogApi>("Dialog");
 export const popoverContext = defineContext<PopoverApi>("Popover");
 export const tooltipContext = defineContext<TooltipApi>("Tooltip");
+/** What the item parts read: the nearest listbox, select or combobox,
+ * whose item getters take the same props. */
+export const listContext = defineContext<{ readonly api: ItemApi }>(
+  "List",
+  "an item part must be inside <ListboxRoot>, <SelectRoot> or <ComboboxRoot>",
+);
 
 /** The menu a part is in, as `createMenu()` returns it. */
 export const useMenuContext = (): MenuApi => menuContext.use().menu;
@@ -92,7 +101,10 @@ export const useComboboxContext = (): ComboboxApi => comboboxContext.use();
 /** The item an `Item` holds, for the text and the indicator inside
  * it: whatever the collection holds, which is the author's shape. A
  * getter, so the parts read the item the props currently name. */
-export const itemContext = defineContext<() => unknown>("Item");
+export const itemContext = defineContext<() => unknown>(
+  "Item",
+  "an item's text and indicator must be inside its Item",
+);
 
 /** The collection's item the part is inside. */
 export const useItemContext = (): unknown => itemContext.use()();
@@ -122,17 +134,22 @@ type Binding = (typeof BOUND)[number];
 /** The key a bound prop's callback carries its new value under. */
 type KeyOf<P extends Binding["prop"]> = Extract<Binding, { prop: P }>["key"];
 
-/** A callback that first writes the prop a `bind:` follows, then runs
- * the author's own — Svelte's two-way binding over an uncontrolled
- * machine, the value read where the callback's detail carries it. */
-export function bound<D extends object, P extends Binding["prop"]>(
+/** A prop a `bind:` follows, as the machine takes it: given only when
+ * the author names it, its callback writing the new value back — read
+ * where the callback's detail carries it — before running the
+ * author's own. Svelte's two-way binding over an uncontrolled machine. */
+export function binding<D extends object, P extends Binding["prop"]>(
   prop: P,
+  value: unknown,
   write: (value: D[KeyOf<P> & keyof D]) => void,
   authored: ((detail: D) => void) | undefined,
-): (detail: D) => void {
-  const { key } = BOUND.find((binding) => binding.prop === prop)!;
-  return (detail) => {
-    write(detail[key as KeyOf<P> & keyof D]);
-    authored?.(detail);
+): object {
+  const { callback, key } = BOUND.find((entry) => entry.prop === prop)!;
+  return {
+    ...(value === undefined ? {} : { [prop]: value }),
+    [callback]: (detail: D) => {
+      write(detail[key as KeyOf<P> & keyof D]);
+      authored?.(detail);
+    },
   };
 }

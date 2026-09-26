@@ -92,6 +92,10 @@ describe("wrapLineCount / wrapLines", () => {
     expect(wrapLines("ab\uFFFCcd", 3, { advances })).toEqual(["ab", "\uFFFC", "cd"]);
   });
 
+  it("ends the text on an overflowing box's line, no empty line after it", () => {
+    expect(wrapLines("ab \uFFFC", 3, { advances: [1, 1, 1, 5] })).toEqual(["ab", "\uFFFC"]);
+  });
+
   it("measures min-content by advances", () => {
     expect(longestSegmentAdvance("aa bbb")).toBe(3);
     // Tracked ×2 inline element in an untracked leaf: its gap is kept → 6.

@@ -100,16 +100,20 @@
 <DialogRoot id="confirm">
   <DialogTrigger>Delete</DialogTrigger>
   <DialogPositioner>
-    <DialogContent>
-      <DialogTitle>Delete the file?</DialogTitle>
-      <DialogDescription>This cannot be undone.</DialogDescription>
-      <DialogCloseTrigger class="from-part">
-        {#snippet child(props)}
-          <button {...props} data-test="close" class={[props["class"], "from-child"]}>
-            Cancel
-          </button>
-        {/snippet}
-      </DialogCloseTrigger>
+    <DialogContent action="/delete" method="post">
+      {#snippet child(props)}
+        <form {...props} data-test="form">
+          <DialogTitle>Delete the file?</DialogTitle>
+          <DialogDescription>This cannot be undone.</DialogDescription>
+          <DialogCloseTrigger class="from-part">
+            {#snippet child(props)}
+              <button {...props} data-test="close" class={[props["class"], "from-child"]}>
+                Cancel
+              </button>
+            {/snippet}
+          </DialogCloseTrigger>
+        </form>
+      {/snippet}
     </DialogContent>
   </DialogPositioner>
 </DialogRoot>

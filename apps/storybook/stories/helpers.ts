@@ -2,6 +2,7 @@ import { ref } from "lit/directives/ref.js";
 import { useCallback, useEffect, useRef } from "storybook/preview-api";
 import { expect, waitFor } from "storybook/test";
 import { wrapLines, type MonoWindElement } from "monowind";
+import { roundUpToLayoutUnit } from "../../../packages/core/src/metrics.ts";
 
 /** Firefox breaks BEFORE hyphens (documented divergence, cell-model.md);
  * hyphen-sensitive assertions gate on this. */
@@ -118,10 +119,78 @@ export function mountedOn(mount: (root: Element) => { destroy(): void }): Return
   return ref(onElement);
 }
 
+/** An element's middle, in client coordinates. */
+export function centerOf(element: Element): Point {
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
 /** A pointer move onto an element's middle, as a mouse makes it. */
 export function hoverOver(element: Element): void {
-  const rect = element.getBoundingClientRect();
-  moveTo(element, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  moveTo(element, centerOf(element));
+}
+
+/** `count` animation frames: the last one's timestamp. */
+export async function frames(count = 1): Promise<number> {
+  let time = performance.now();
+  for (let i = 0; i < count; i++) {
+    time = await new Promise<number>((next) => requestAnimationFrame(next));
+  }
+  return time;
+}
+
+/** A tally of a host's layouts, each of which sets its `measuring` flag
+ * once, read with the records not yet delivered. */
+export interface LayoutCount {
+  readonly count: number;
+  stop(): void;
+}
+
+export function countLayouts(host: Element): LayoutCount {
+  let count = 0;
+  const tally = (records: MutationRecord[]) => {
+    count += records.filter((record) => record.oldValue === null).length;
+  };
+  const observer = new MutationObserver(tally);
+  observer.observe(host, { attributeFilter: ["measuring"], attributeOldValue: true });
+  return {
+    get count() {
+      tally(observer.takeRecords());
+      return count;
+    },
+    stop: () => observer.disconnect(),
+  };
+}
+
+/** The frames after a change where its own layout and a transition's
+ * start land, left out of the transition's layouts. */
+const CHANGE_FRAMES = 3;
+
+/** The most frames a transition runs before `transitionLayouts` fails. */
+const TRANSITION_FRAME_LIMIT = 120;
+
+/** A change's transition, frame by frame to `ended`: the layouts past
+ * the change's own frames to `settle` frames past the end, and the
+ * frames it ran, `sample` read at each. An end not reached in
+ * `TRANSITION_FRAME_LIMIT` frames fails. */
+export async function transitionLayouts(
+  layouts: LayoutCount,
+  change: () => void,
+  ended: () => boolean,
+  { sample, settle = 0 }: { sample?: () => void; settle?: number } = {},
+): Promise<{ during: number; frames: number }> {
+  change();
+  await frames(CHANGE_FRAMES);
+  const start = layouts.count;
+  let ran = 0;
+  while (!ended() && ran < TRANSITION_FRAME_LIMIT) {
+    ran++;
+    sample?.();
+    await frames();
+  }
+  expect(ended(), `the transition's end within ${TRANSITION_FRAME_LIMIT} frames`).toBe(true);
+  await frames(settle);
+  return { during: layouts.count - start, frames: ran };
 }
 
 /** The host's cell, in px, as the engine measured it. */
@@ -133,6 +202,12 @@ export const cellSize = (host: HTMLElement): { width: number; height: number } =
 /** The host's shadow grid, and its text as rows. */
 export const gridOf = (host: HTMLElement): HTMLElement => host.shadowRoot!.getElementById("grid")!;
 export const rowsOf = (host: HTMLElement): string[] => gridOf(host).textContent!.split("\n");
+
+/** The layer box whose own grid holds `text` (specs/layers.md). */
+export const layerBox = (host: HTMLElement, text: string): HTMLElement | undefined =>
+  Array.from(host.shadowRoot!.querySelectorAll<HTMLElement>(".layer")).find((box) =>
+    box.querySelector("pre")!.textContent!.includes(text),
+  );
 
 /** Whether the grid painted a row holding `text`. */
 export const showsRow = (host: HTMLElement, text: string): boolean =>
@@ -150,6 +225,57 @@ export const paintedSpan = (host: HTMLElement, text: string): HTMLElement | unde
  * "" for none or no span. */
 export const paintedBackground = (host: HTMLElement, text: string): string =>
   paintedSpan(host, text)?.style.backgroundColor ?? "";
+
+let colorContext: CanvasRenderingContext2D | undefined;
+
+/** A color's red, green, blue, and alpha, 0..255, as a detached sRGB
+ * canvas draws it — any form but one an element resolves
+ * (`currentcolor`, a `var()`), so a `waitFor` sees no mutation from
+ * it. A value the canvas ignores throws, where it would draw the last
+ * fill. */
+export function channels(color: string): number[] {
+  colorContext ??= document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+  const context = colorContext;
+  const over = (fill: string) => {
+    context.fillStyle = fill;
+    context.fillStyle = color;
+    return context.fillStyle;
+  };
+  if (over("#000") !== over("#fff")) throw new Error(`not a color a canvas draws: "${color}"`);
+  context.clearRect(0, 0, 1, 1);
+  context.fillRect(0, 0, 1, 1);
+  return Array.from(context.getImageData(0, 0, 1, 1).data);
+}
+
+/** Whether two colors land within 2/255 a channel, alpha included, as
+ * an engine's 8-bit blend does (specs/cell-model.md "Opacity and
+ * translucency"). */
+export function nearColor(actual: string, expected: string): boolean {
+  const [a, b] = [channels(actual), channels(expected)];
+  return a.every((channel, i) => Math.abs(channel - b[i]!) <= 2);
+}
+
+export function expectColor(actual: string, expected: string, message = "color"): void {
+  expect(
+    nearColor(actual, expected),
+    `${message}: ${actual} (${channels(actual)}) against ${expected} (${channels(expected)})`,
+  ).toBe(true);
+}
+
+/** `color` at `alpha`, as the grid keeps a translucent color no opaque
+ * background lies under, for the browser to composite. */
+export const faded = (color: string, alpha: number): string =>
+  `color-mix(in srgb, ${color} ${alpha * 100}%, transparent)`;
+
+/** A painted span's color, or its background, at the span's opacity:
+ * what the browser composites over what lies beneath the grid. */
+export const shown = (
+  span: HTMLElement | undefined,
+  property: "color" | "backgroundColor" = "color",
+): string | undefined => {
+  const value = span?.style[property];
+  return value && span.style.opacity ? faded(value, Number(span.style.opacity)) : value;
+};
 
 /** The story's `data-test` hooks, by name. */
 export const testHooks =
@@ -178,23 +304,49 @@ export function expectOnItsCells(host: HTMLElement, el: HTMLElement): Promise<vo
   });
 }
 
+/** The cell a host's probe measures now, its 100 characters' advance
+ * rounded as the engine rounds it; none for a host in no box. */
+function probeCell(host: HTMLElement): { width: number; height: number } | undefined {
+  const rect = host.querySelector(":scope > [data-mw-probe]")?.getBoundingClientRect();
+  if (!rect || rect.width === 0) return undefined;
+  return { width: roundUpToLayoutUnit(rect.width / 100), height: rect.height };
+}
+
+/** The most two-frame rounds `readyHosts` waits for the cell to settle. */
+const SETTLE_ROUNDS = 60;
+
 /** The story's hosts once laid out, the fonts loaded, and the cell
- * settled: the engine relays out two frames after the fonts land, and a
- * cell read before that is the fallback font's. */
+ * settled: the same two frames apart, and the one each probe measures —
+ * the engine lays out again where they differ. A font that swaps in
+ * late reaches the engine as the probe's resize, reported the frame the
+ * swap renders, and its layout runs in the next frame's callbacks,
+ * after this loop's own. A cell unsettled after `SETTLE_ROUNDS` fails,
+ * naming the hosts' cells and their probes'. */
 export async function readyHosts(canvasElement: HTMLElement): Promise<MonoWindElement[]> {
   const hosts = Array.from(canvasElement.querySelectorAll<MonoWindElement>("mono-wind"));
   await waitFor(() => {
     for (const host of hosts) expect(host).toHaveAttribute("data-mw-ready");
   });
   await document.fonts.ready;
-  const cells = () =>
-    hosts.map((host) => `${cellSize(host).width}x${cellSize(host).height}`).join();
-  let was: string;
-  do {
-    was = cells();
-    await new Promise((settle) => requestAnimationFrame(() => requestAnimationFrame(settle)));
-  } while (was !== cells());
-  return hosts;
+  const size = (cell?: { width: number; height: number }) =>
+    cell ? `${cell.width}x${cell.height}` : "none";
+  const cells = () => hosts.map((host) => size(cellSize(host))).join();
+  const probesAgree = () =>
+    hosts.every((host) => {
+      const probe = probeCell(host);
+      return !probe || size(probe) === size(cellSize(host));
+    });
+  for (let round = 1; ; round++) {
+    const was = cells();
+    await frames(2);
+    if (was === cells() && probesAgree()) return hosts;
+    if (round === SETTLE_ROUNDS) {
+      const report = hosts.map(
+        (host, i) => `host ${i} at ${size(cellSize(host))}, its probe ${size(probeCell(host))}`,
+      );
+      throw new Error(`the cell unsettled after ${SETTLE_ROUNDS} rounds: ${report.join("; ")}`);
+    }
+  }
 }
 
 /** The story's host once laid out and its fonts loaded. */

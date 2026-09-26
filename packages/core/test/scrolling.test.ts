@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { quantizeScroll } from "../src/element.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderPlainText, thumbSpan } from "../src/plain-text.ts";
-import { makeNode } from "./helpers.ts";
+import { makeNode, scrollBox } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
 /** Scroll containers (specs/scrolling.md): gutter reservation, the
@@ -215,7 +215,7 @@ describe("scrolled paint", () => {
     // Overflowing auto reserves its gutter: content box is 7 wide, so
     // the rows wrap as "aa bb", "cc dd", … — offset 1 shows row two on
     // top.
-    box.scroll = { x: 0, y: 1 };
+    scrollBox(root, box, 0, 1);
     const rows = renderPlainText(root).split("\n");
     expect(rows[0]!.startsWith("cc dd")).toBe(true);
   });
@@ -292,7 +292,7 @@ describe("scrolled paint", () => {
       .map((row) => row[2])
       .join("");
     expect(bar).toBe("█████░");
-    box.scroll = { x: 0, y: 1 };
+    scrollBox(root, box, 0, 1);
     const scrolled = renderPlainText(root)
       .split("\n")
       .map((row) => row[2])

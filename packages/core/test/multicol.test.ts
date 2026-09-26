@@ -325,6 +325,20 @@ describe("column-fill: auto with a definite height", () => {
     );
     expect(art).toBe("aaa  bbb  ccc");
   });
+
+  it("counts a text leaf's overflow columns in its scrollable extent and its ink", () => {
+    const leaf = (overflow: string) => {
+      const host = document.createElement("div");
+      host.innerHTML = `<div style="column-count: 2; column-gap: 8px; column-fill: auto; width: 32px; height: 8px; overflow-x: ${overflow}; scrollbar-width: none">aa bb cc dd ee ff gg hh</div>`;
+      document.body.appendChild(host);
+      const node = buildTree(host.firstElementChild!, 16)!;
+      layoutRoot(node, 60);
+      return node;
+    };
+    // Columns 3 wide at x 0, 5, 10 and 15: the last line ends at 17.
+    expect(leaf("auto").scrollRange).toMatchObject({ sizeX: 17, maxX: 9 });
+    expect(leaf("visible").localRect.width).toBe(17);
+  });
 });
 
 describe("spanners", () => {

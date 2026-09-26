@@ -25,7 +25,11 @@ element. Behavior:
   containing block, and painted and hit-tested from the host's origin,
   outside its ancestors' clips and scroll offsets, as CSS paints a
   fixed box outside its scrollers; a layer root above it captures it
-  (specs/layers.md), as a transformed ancestor does in CSS.
+  (specs/layers.md), as a transformed ancestor does in CSS. Its light
+  element, placed from its parent's, takes back the scroll and sticky
+  shifts its parent paints with (`--mw-sx`/`--mw-sy`, sticky.md
+  "Native agreement"), so it sits on the cells the grid paints it on,
+  a fixed box inside it taking back none.
   **Deviation** (CSS anchors to the viewport) — a component shouldn't
   escape its host. A top-layer element is the one exception, and only
   for its placement: it resolves in the cells of the host the viewport
@@ -88,10 +92,17 @@ content box (its containing block in flow).
   - Block parent: the flow cursor position at its DOM slot (x: content
     origin + margin; y: where the next in-flow sibling starts).
   - Flex parent: as if it were the **sole flex item** of the container —
-    `justify-content` (reverse-aware) / `align-items` (with its own
-    `align-self`) applied to its hypothetical box (css-flexbox §4.1),
-    whose outer size includes the box's fixed margins (`auto` margins
-    count as 0 in the static position).
+    `justify-content` / `align-items` (with its own `align-self`,
+    `stretch` as its fallback `flex-start`) applied to its hypothetical
+    box as to a line spanning the container (css-flexbox §4.1), reversed
+    axes swapping `flex-start` and `flex-end` (flex.md steps 7–8;
+    `align-content` moves it in no engine, probed 2026-09-25), its outer
+    size including the box's fixed margins (`auto` margins
+    count as 0 in the static position). An overflowing box sits at the
+    start edge on either axis, as an overflowing line does
+    (cell-model.md deviation 21; CSS centers or ends it past the start
+    edge, and centers it under `space-around` / `space-evenly`, probed
+    2026-09-24, all three engines).
 - Margins apply between the inset edges and the box, per CSS. `auto`
   margins center within the inset-defined space when the size is definite
   (the `inset-0 m-auto` centering idiom). Per CSS 2 §10.3.7 and §10.6.4,
@@ -131,11 +142,13 @@ All laid-out elements are browser-positioned; stacking is DOM order by
 default, with `z-*` honored exactly where CSS applies it — positioned
 elements and flex/grid items; inert on static block-flow children (the
 engine gates the browser side through `--mw-z`, since absolutization
-would otherwise activate it everywhere). The renderers walk children in
-the same order (stable effective-z sort, document-order ties) so
-decoration glyphs and `renderPlainText` agree with the browser at
-overlaps — a simplified model: no stacking contexts, and a negative
-`z-*` still paints over its parent's own glyphs. Relative/absolute
+would otherwise activate it everywhere, reset on every element so
+each box reads its own — cell-model.md "Engine variables"). The
+renderers walk children in the same order (stable effective-z sort,
+document-order ties) so decoration glyphs and `renderPlainText` agree
+with the browser at overlaps — a simplified model: no stacking
+contexts, and a negative `z-*` still paints over its parent's own
+glyphs. Relative/absolute
 elements may overlap anything; `overflow` clipping applies natively.
 
 ## Plain-text renderer

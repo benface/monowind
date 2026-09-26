@@ -81,7 +81,7 @@ describe("the paint", () => {
         `<p style="visibility: ${visibility}; background-color: rgb(255, 0, 0); background-clip: text; color: transparent">gone <span style="visibility: visible">here</span></p>`,
       );
       return renderCellSegments(root)[0]!.some((segment) =>
-        [segment.color, ...(segment.colors ?? [])].some((color) => color?.includes("255")),
+        [segment.color, ...(segment.colors ?? [])].some((color) => color === "rgb(255 0 0)"),
       );
     };
     expect(tinted("visible")).toBe(true);

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { charIndexAt, positionOf } from "../src/selection.ts";
-import { buildTree, hostLeafStyle } from "../src/tree.ts";
+import { buildRoot, buildTree } from "../src/tree.ts";
 import { INLINE_PAD } from "../src/wrap.ts";
 import { inlineBoxesOf } from "../src/types.ts";
 import type { PerSide } from "../src/types.ts";
@@ -190,6 +190,16 @@ describe("buildTree", () => {
     )!;
     expect(node.text).toBe("a b \uFFFC c");
     expect(node.children[0]!.inlineBox).toBe(true);
+  });
+
+  it("counts a w-fit atomic inline box at its max-content in the run's width", () => {
+    const node = buildTree(
+      el(
+        '<div>ab <span style="display: inline-block; width: fit-content">Save changes</span></div>',
+      ),
+      16,
+    )!;
+    expect(node.intrinsicWidth).toBe(15);
   });
 
   it("splits through `contents`, a float, and keeps an out-of-flow child of the split", () => {
@@ -524,6 +534,6 @@ describe("the host's own text", () => {
     // body), is the page's.
     const host = el('<div style="pointer-events: none">foo<div>bar</div></div>');
     expect(getComputedStyle(host).pointerEvents).toBe("none");
-    expect(hostLeafStyle(host, 16).pointerEvents).toBe(true);
+    expect(buildRoot(host, 16).style.pointerEvents).toBe(true);
   });
 });

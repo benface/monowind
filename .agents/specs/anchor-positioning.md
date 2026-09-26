@@ -15,8 +15,9 @@ beside its item: CSS anchor positioning (`anchor-name`,
 `position-anchor`, `position-area`, `position-try-fallbacks`) says
 this without JavaScript, and the browsers position the light elements
 by it — but in pixels of the companion's boxes, off the grid, and not
-in every engine (probed 2026-09-13: Firefox parses the properties and
-positions nothing). The engine already owns every positioned box's
+in every release (Firefox before 155 parsed the properties and
+positioned nothing, probed 2026-09-13; Firefox 155 anchors natively).
+The engine already owns every positioned box's
 place, in cells, and writes it onto the light element, so the native
 box and the grid box coincide; anchored placement joins that: the
 engine resolves the anchor and the area in cells, the browser's own
@@ -51,6 +52,19 @@ too; `anchors-visible` is the initial value in all three engines), and
 the inline style or an arbitrary-value utility (`top-[anchor(bottom)]`,
 `min-w-[anchor-size(width)]`): the browsers resolve them against the
 anchor's pre-grid box, px the grid cannot use.
+
+No anchor name resolves natively while the engine reads: the
+companion scopes each element naming one to its own subtree
+(`anchor-scope: all`) under its measuring flag, an element the engine
+marks `data-mw-anchor` from the `anchor-name` it read, so the browser
+applies no fallback of its own to what the read sees. An element
+named since the last layout, or whose mark a script took off (a
+DOM-morphing library's), is read unscoped the first time: that
+layout marks it and, where a box in the tree is anchored by name,
+reads the tree again before laying it out, so the layout that first
+meets a new anchor places by it as authored. An invoker's name,
+synthesized for its popover (`--mw:` and the popover's id), is the
+engine's alone and takes no mark.
 
 ## Locked decisions
 
@@ -278,7 +292,9 @@ anchor's pre-grid box, px the grid cannot use.
   every element, the anchoring for out-of-flow boxes, `normal`'s
   implicit anchor in `readPositionAnchor`, the tactics in
   `parsePositionTryFallbacks`); `readAnchorNames` shared with tree.ts,
-  which names inline elements' entries; `readAnchorSizes` and
+  which names inline elements' entries; `IMPLICIT_ANCHOR`, the start
+  of an invoker's synthesized name, by which positioning.ts tells it
+  from an author's; `readAnchorSizes` and
   `readAnchorInsets` the authored `anchor-size()`s and `anchor()`s
   (`authoredAnchorFunction`), the first of a property's utilities the
   cascade can leave in effect (`inEffect`, against the function's
@@ -290,7 +306,9 @@ anchor's pre-grid box, px the grid cannot use.
 - types.ts: the anchoring on `CellStyle`, `AnchorFallback` and `Flip`,
   `AnchorSize` and `AnchorInset`, and a placed box's `anchorArea` and
   `forceHidden` on `LayoutNode`.
-- positioning.ts: `positionOutOfFlow` runs the pass, carrying each
+- positioning.ts: `namedAnchors`, the elements a tree reads as naming
+  an anchor and whether a box in it is anchored by name;
+  `positionOutOfFlow` runs the pass, carrying each
   box's last successful placement (`Remembered`); `walkPositioned`
   syncs a placed box's scroll offsets before reading the anchors
   inside it, and `recordAnchors` records each anchor's rect, the
@@ -320,7 +338,10 @@ anchor's pre-grid box, px the grid cannot use.
   positioning passes, and `layoutRoot` hands their sync and the host's
   placements to the positioning pass.
 - element.ts: the host's placements (`#placements`) from one layout to
-  the next, the scroll sync for whichever subtree the layout hands it,
+  the next; the anchors' marks (`#scopeAnchors`), which have the tree
+  read again when one joined and a box is anchored by name — a second
+  read that animate.ts's `trackBackground` answers as the first; the
+  scroll sync for whichever subtree the layout hands it,
   a scroll of an anchor scroller schedules a layout, and the metrics
   probe's minimum held at `auto` against the page's CSS.
 - render.ts: the resolved cells written onto the light element as for
@@ -330,17 +351,19 @@ anchor's pre-grid box, px the grid cannot use.
 - styles.css: `position-area: none` locked on laid-out elements
   outside their `data-mw-measuring` flag, so an engine that positions
   by it natively leaves the placement to the engine;
-  `anchor-scope: all` on every element under its flag, so no named
-  anchor resolves natively while the engine reads and the browser
-  applies no fallback of its own — Chromium otherwise reports the
-  fallback it chose from pixel geometry as the computed
-  `position-area`. The implicit anchor of a
+  `anchor-scope: all` on every element marked `data-mw-anchor`, under
+  its flag, so no named anchor resolves natively while the engine
+  reads and the browser applies no fallback of its own — every engine
+  otherwise reports the fallback it chose from pixel geometry as the
+  computed `position-area` (probed 2026-09-23). On every element, the
+  property would keep Chromium from sharing any read style between
+  elements (architecture/performance.md). The implicit anchor of a
   popover is out of `anchor-scope`'s reach, and needs none: Chromium
   reports an implicitly anchored popover's `position-area` as authored
   whatever its native placement (probed 2026-09-19). A box
-  `position-visibility` hides takes `visibility: hidden` outside
-  `[measuring]`, its subtree with it, a `data-mw-top-shown` element
-  `visible` over the hidden it would inherit. The browsers' own
+  `position-visibility` hides takes `visibility: hidden` outside its
+  `data-mw-measuring` flag, its subtree with it, a `data-mw-top-shown`
+  element `visible` over the hidden it would inherit. The browsers' own
   `position-visibility` hides at paint alone — the computed
   `visibility` stays `visible` (probed 2026-09-22) — so the read is
   untouched by it.

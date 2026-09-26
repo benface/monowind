@@ -1,0 +1,136 @@
+:host {
+  display: block;
+  position: relative;
+  contain: layout style;
+}
+#viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: inherit;
+}
+/* Positioned, so the light DOM paints over the grid from its origin; a
+ * block formatting context, so a flow child's top margin stays where
+ * the engine put it (specs/cell-model.md "Inline content"). */
+slot {
+  display: flow-root;
+  position: relative;
+}
+/* Sized to the ink extent, the host's background carried past the host
+ * (specs/cell-model.md "Overflow"); the text fill undoes the host's
+ * invisibility lock (specs/host-leaf.md). */
+.grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  background: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: pre;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-text-fill-color: currentColor;
+}
+#layers,
+.layer,
+.clip,
+.backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.clip {
+  overflow: clip;
+}
+.layer > .grid {
+  background: transparent;
+}
+/* A background reaches the row's edges where the font leaves a gap
+ * (specs/cell-model.md), outranking the box rule's padding. */
+:host([data-mw-bgpad]) .grid span:not([data-box]) {
+  padding-block: var(--mw-bgpad, 0px);
+}
+.grid span[data-box] {
+  display: inline-block;
+  padding: 0;
+  height: var(--mw-ch, 1lh);
+  overflow: clip;
+  vertical-align: top;
+  text-align: start;
+}
+.grid span[data-box="center"] {
+  text-align: center;
+}
+/* A shade drawn at the row's phase and a period above, each clipped to
+ * its strip; the span's own glyph selects and copies
+ * (specs/wide-characters.md). */
+.grid span[data-shade] {
+  position: relative;
+  -webkit-text-fill-color: transparent;
+}
+.grid span[data-shade]::selection {
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+}
+.grid span[data-shade]::before,
+.grid span[data-shade]::after {
+  position: absolute;
+  inset-inline: 0;
+  overflow: clip;
+  -webkit-text-fill-color: currentColor;
+}
+.grid span[data-shade]::before {
+  top: calc(var(--mw-phase) - var(--mw-period));
+  height: var(--mw-period);
+}
+.grid span[data-shade]::after {
+  top: var(--mw-phase);
+  bottom: 0;
+}
+:host([select="grid"]) .grid {
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* A grid-mode drag stays in its own grid (specs/layers.md, deviation 3). */
+:host([select="grid"]) .layer > .grid {
+  user-select: contain;
+  -webkit-user-select: contain;
+}
+:host([select="grid"]) slot {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* A read under measuring sees the pointer-events written in the host
+ * (specs/cell-model.md "Pointer states"); only the slot rule keys on it,
+ * as a slotted one restyles the shadow tree at each flip
+ * (architecture/performance.md). */
+:host([select="grid"]) ::slotted(*) {
+  pointer-events: auto;
+}
+:host([measuring]:not([select="grid"])) slot {
+  pointer-events: auto;
+}
+/* specs/semantic-selection.md */
+:host([select="grid"][data-mw-semantic-selection]) slot {
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* The grid's own selection keeps the theme invert; the engine paints
+ * the light DOM's on the grid (specs/wide-characters.md). */
+.grid::selection,
+.grid *::selection {
+  color: var(--mw-bg, canvas);
+  text-shadow: 0 0 0 var(--mw-bg, canvas);
+  background: var(--mw-fg, canvastext);
+}
+slot::selection {
+  color: transparent;
+  text-shadow: none;
+  background: transparent;
+}

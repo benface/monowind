@@ -17,19 +17,24 @@ export function percentToCells(percent: number, containerCells: number): number 
   return roundHalfAwayFromZero((containerCells * percent) / 100);
 }
 
+/** `px` up to the next whole 1/64 px, the layout unit Chromium and
+ * WebKit snap boxes to (text staying in floats). */
+export function roundUpToLayoutUnit(px: number): number {
+  return Math.ceil(px * 64 - 1e-6) / 64;
+}
+
 /** How Typed OM reads an `auto` minimum, a per-engine constant read once
  * off a probe (see measureCellMetrics). */
 let autoMinimum: string | undefined;
 
-/** Measure the root's cell from the host's PERSISTENT shadow probe (100
+/** Measure the root's cell from the host's PERSISTENT light-DOM probe (100
  * "M"s inheriting the host's font): the advance of a monospace character
  * (with the root's own letter-spacing) and the line-box height. Root
  * leading/tracking thus size the grid; descendants' are quantized to it
  * (specs/cell-model.md). The probe must be long-lived: a throwaway node
  * created at measure time can transiently resolve the FALLBACK font even
- * after the real font has loaded (observed on CI Chromium), whereas a
- * persistent node is re-font-matched by the same machinery as real
- * content. */
+ * after the real font has loaded, whereas a persistent node is
+ * re-font-matched by the same machinery as real content. */
 export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellMetrics {
   const rect = probe.getBoundingClientRect();
   const letterSpacing = parseFloat(getComputedStyle(host).letterSpacing) || 0;
@@ -44,12 +49,11 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
   // Mono, 16.5px in 17) is all an inline background covers, so rows of
   // background would show a hairline between them.
   const backgroundGap = Math.max(0, rect.height - contentHeight);
-  // The cell is the next whole 1/64 px (the layout unit Chromium and
-  // WebKit snap boxes to, text staying in floats); the grid's
+  // The cell is the advance rounded up to a layout unit; the grid's
   // letter-spacing carries the remainder and the light DOM keeps its
   // natural advance (specs/cell-model.md "Typography").
   const measured = rect.width / 100;
-  const width = Math.ceil(measured * 64 - 1e-6) / 64;
+  const width = roundUpToLayoutUnit(measured);
   // The probe's mark — an empty inline-block the host appends last —
   // sits on the baseline.
   const mark = probe.lastElementChild;

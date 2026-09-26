@@ -97,11 +97,16 @@ final column widths).
    sizes: the item's border + padding + content measure, plus its fixed
    margins) grow the base/limit of the intrinsic tracks it spans. Bases
    grow to the item's **minimum contribution** (§11.5): a specified size
-   (a cell height; a width other than `auto` or a percent), else its
-   `min-width`/`min-height`, else its automatic minimum — content-based
-   (the min-content width, the laid-out height, capped by its max) only
-   under the §6.6 rule of Items in their areas, 0 for a scroll container
-   (a `truncate` item leaves `1fr 1fr` columns even). A specified size
+   (a cell height; a width other than `auto` or a percent, which
+   depends on the area — a `w-fit` item grows a `minmax(auto, 4)`
+   column to its min-content, as Firefox and WebKit size it and WPT's
+   `grid-item-min-contribution-fit-content-001` asserts, where Chromium
+   takes its automatic minimum; probed 2026-09-25), else its
+   `min-width`/`min-height`, else its
+   automatic minimum — content-based (the min-content width, the
+   laid-out height, capped by its max) only under the §6.6 rule of
+   Items in their areas, 0 for a scroll container (a `truncate` item
+   leaves `1fr 1fr` columns even). A specified size
    or min-size, and a content-based minimum, never count below the
    item's border, padding and scrollbar gutter: a `min-w-0 px-3` item
    holds a 6-wide `1fr` column, and a `px-3` item a `minmax(auto, 2)`
@@ -249,13 +254,17 @@ it, per axis:
   `1fr 1fr` columns keeps their shares. All three engines lay these out
   so, rows alike (probed 2026-09-23).
 - **start / center / end**: the item takes its intrinsic (or explicit) size
-  and the area's leftover becomes the alignment offset (center floors).
+  and the area's leftover becomes the alignment offset (center floors);
+  an item that overflows its area sits at its start (cell-model.md
+  deviation 21 — CSS centers or ends it past the start, probed
+  2026-09-24, all three engines).
 - **auto margins** win over alignment, absorbing the area's leftover
   (both → centered, one → that side), exactly like flex; an item
   wider than its area gets none, at the area's start.
 - Content-distribution (`justify-content` / `align-content`) offsets the
-  whole track grid inside the content box when the tracks underfill it,
-  using the shared offset math (space-* variants included).
+  whole track grid inside the content box, using the shared offset math
+  (space-* variants included): tracks overflowing it start at its start
+  edge, as an overflowing flex line does (cell-model.md deviation 21).
 
 ## Subgrid
 

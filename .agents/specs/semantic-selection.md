@@ -44,10 +44,10 @@ selects a word or a paragraph.
   colors — reverse video, so colored text selects as a band of its
   color (specs/wide-characters.md "The grid paints the selection");
   the browser's own highlight on the invisible native text is
-  invisible too. A semantic selection therefore shows cell-exact in both modes,
+  invisible too, locked before the gesture's range lands (the host's
+  `data-mw-selection`, wide-characters.md). A semantic selection therefore shows cell-exact in both modes,
   and follows the content when a container scrolls (content-anchored,
-  unlike a grid drag). (Originally the native layer's `::selection`
-  invert, retired when wide clusters put the native text off the grid.)
+  unlike a grid drag).
 - **The paragraph is the text LEAF.** The unit is the innermost layout
   node under the cell that carries text (`LayoutNode.text` — a `<p>`,
   `<li>`, `<h1>`, a `<div>` with direct text, a `<td>`, a custom leaf
@@ -91,12 +91,13 @@ selects a word or a paragraph.
   `mousedown` on the grid (`detail === 1` — the drag that follows must
   not reach into a still-lifted light DOM while `selectionchange` is
   pending) and, as the catch-all, on `selectionchange` once the
-  selection no longer lies in the light DOM or has collapsed.
+  selection no longer lies in the light DOM or has collapsed; a
+  disconnect drops it with the host's other selection states.
 - **The engine writes the plain-text copy of any selection in its
   light DOM — both modes.** _Verified_: Chromium and WebKit serialize
   a range spanning two of the host's paragraphs with NO line break
-  between them (`…in it.Second paragraph…`), in `select="text"` today
-  as well — the light elements are absolutely positioned, and those
+  between them (`…in it.Second paragraph…`), in `select="text"` as
+  well — the light elements are absolutely positioned, and those
   serializers derive block breaks from in-flow layout; Firefox emits a
   blank line. A `copy` listener on the host therefore sets
   `text/plain` itself whenever the selection lies within the host's
@@ -163,7 +164,7 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   element selections, so copy means the same thing
   whichever one made the selection; the grid's own segmentation of the
   row string is never used.
-- **Shift extends an existing element selection.** A semantic
+- **Shift extends an element selection.** A semantic
   `mousedown` with `shiftKey` keeps the current selection's anchor and
   moves its focus to the far boundary (in DOM order) of the hit unit
   (an anchor inside a custom leaf's shadow becomes that host's
@@ -180,7 +181,7 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   one, natively); a semantic gesture replaces a grid selection. Which
   layer holds the selection is whatever the last gesture chose.
 - **Custom leaves name their selectable node.** `LeafRegistration`
-  (the `registerLeafRenderer` options) gains an optional
+  (the `registerLeafRenderer` options) takes an optional
   `selectionTarget(el): Node | null`: the node whose contents a
   gesture ON the leaf selects — a triple-click all of it, a
   double-click the art's line under the pointer (its glyph runs are
@@ -189,7 +190,7 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   `<mono-ascii>` returns its shadow transcript (`#mirror`).
   _Verified_: a range over the
   transcript's contents highlights the art and natively copies it in
-  all three engines — it is what `select="text"` selects there today —
+  all three engines — it is what `select="text"` selects there —
   whereas a range over the host's light contents highlights nothing
   and copies inconsistently (the transcript in Chromium and Firefox,
   nothing in WebKit). A leaf without the hook selects its light
@@ -262,9 +263,10 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   row but the last; runs of required breaks collapse to the maximum,
   none at the ends), set `text/plain`, `preventDefault()`. No `text/html` is
   written: a TUI copy is plain text.
-- **Lift, then select.** Attribute first, one forced style resolution,
+- **Lift, then select.** Both attributes first — the lift and the
+  highlight lock (`data-mw-selection`) — one forced style resolution,
   then the range — so the range is only ever set into selectable
-  content.
+  content, its native highlight locked in the same resolution.
 - **Gesture state.** `mousedown` (detail ≥ 2) starts it and records the
   anchor unit; `pointermove` extends while the primary button is down;
   the window-level `pointerup`/`pointercancel` the engine already
@@ -273,13 +275,13 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   release leaves the selection alone. The host captures the pointer
   for the gesture and auto-scrolls the pressed cell's scroll container
   or the page while the pointer sits past its edge, in both modes
-  (wide-characters.md "auto-scrolls"). The existing press bookkeeping
+  (wide-characters.md "auto-scrolls"). The press bookkeeping
   (`#pressing`, data-mw-active) runs as for any press.
 - **Repaints.** The selection lives in the light DOM, which the paint
   never rebuilds — paintGrid's capture/restore and the structural hold
-  are about grid selections and do not engage (`hasSelectionInside` is
-  false, so a held structural rebuild proceeds and leaves the light
-  Range alone). render.ts writes only geometry custom properties and
+  are about grid selections and do not engage (no Selection boundary
+  lies in the grid, so a held structural rebuild proceeds and leaves
+  the light Range alone). render.ts writes only geometry custom properties and
   engine attributes to light elements, which does not disturb a Range.
 - **Scroll containers.** Native text scrolls with its container, so
   the selection and its highlight follow the content; while a scroll
@@ -356,10 +358,10 @@ DataTransfer() })` dispatched on the host after each selection above
   asserts `getData("text/plain")`: two `<p>`s separated by a blank
   line; a word alone; the art for the banner; and, for an extension
   across the banner, paragraph, blank line, art, blank line, paragraph.
-  Real keyboard copies are spot-checked manually per engine in the
-  plan.
+  Real keyboard copies are spot-checked by hand in each engine.
 - Core: the character ↔ DOM map and the copy serializer are pure
   functions of the tree; Node tests cover collapsed whitespace, `<br>`,
   inline boxes and padding markers, and partial slices.
-- Visual: none — the selection invert is already covered by
-  `visual/selection.spec.ts`, and the highlight is the same rule.
+- Visual: none of its own — a gesture's highlight is the one the grid
+  paints for any light-DOM selection, which `visual/selection.spec.ts`'s
+  text-mode drags pin (wide-characters.md).

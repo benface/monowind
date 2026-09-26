@@ -1,16 +1,19 @@
 import { createTextVNode, defineComponent, ref, watchPostEffect } from "vue";
+import type { DefineSetupFnComponent } from "vue";
 import { hiddenSelectOptions, propNames, syncHiddenSelect } from "@monowind/ui/select";
 import type * as select from "@monowind/ui/select";
 import type { PropTypes } from "@zag-js/vue";
 import { useSelect, type Composed } from "../composables.ts";
-import { defineItemParts } from "./items.ts";
+import { defineItemParts, defineListContext } from "./items.ts";
 import {
-  defineContext,
-  definePart,
+  BOOLEAN,
   defineRoot,
   defineRootProvider,
   partsOf,
+  positionerPart,
   renderPart,
+  type Part,
+  type PartProps,
 } from "./part.ts";
 
 /** Zag's select as a compound component (specs/ui.md "Component
@@ -18,9 +21,9 @@ import {
  * Zag gives a select a root part — and its content in the top
  * layer. */
 
-export type Api = Composed<select.Api<PropTypes>, select.Service>;
+type Api = Composed<select.Api<PropTypes>, select.Service>;
 
-const context = defineContext<Api>("Select");
+const context = defineListContext<Api>("Select");
 
 /** The select a part is in, as `useSelect()` returns it. */
 export const useSelectContext = (): Api => context.use();
@@ -32,16 +35,13 @@ export const SelectRoot = defineRoot<select.Props, Api>(
   propNames,
   context,
   useSelect,
-  { propsOf: ({ api }) => api.value.getRootProps() },
+  ({ api }) => api.value.getRootProps(),
 );
 
 export const SelectRootProvider = defineRootProvider<Api>("SelectRootProvider", context);
 
 const part = partsOf<select.Api<PropTypes>, Api>("Select", context);
 
-/** Zag normalizes a select's label as a `<label>` carrying `htmlFor`
- * for the hidden control, where a listbox's is a plain element: a
- * span here would drop the association a click needs. */
 export const SelectLabel = part("Label", (api) => api.getLabelProps(), "label");
 export const SelectControl = part("Control", (api) => api.getControlProps());
 export const SelectTrigger = part("Trigger", (api) => api.getTriggerProps(), "button");
@@ -60,8 +60,8 @@ export const SelectValueText = defineComponent(
         "SelectValueText",
       );
   },
-  { name: "SelectValueText", inheritAttrs: false, props: ["asChild"] },
-);
+  { name: "SelectValueText", inheritAttrs: false, props: { asChild: BOOLEAN } },
+) as unknown as Part<"span">;
 export const SelectIndicator = part("Indicator", (api) => api.getIndicatorProps(), "span");
 export const SelectClearTrigger = part(
   "ClearTrigger",
@@ -71,18 +71,11 @@ export const SelectClearTrigger = part(
 export const SelectContent = part("Content", (api) => api.getContentProps());
 export const SelectList = part("List", (api) => api.getListProps());
 
-/** The floating part, carrying the ref that keeps it in the top layer
- * with the machine. */
-export const SelectPositioner = definePart<Api>("SelectPositioner", context, (value) => ({
-  ...value.api.value.getPositionerProps(),
-  ref: value.positioner,
-}));
+export const SelectPositioner = positionerPart("Select", context);
 
-/** The native select a form submits, `display: none` so the layout
- * skips it and a form still posts it. Its first options are markup Vue
- * writes once, for a server's page; after each render
- * `syncHiddenSelect` owns them, the selection and Zag's `value`
- * (specs/ui.md "A select is a listbox on a trigger"). */
+/** The native select a form submits (specs/ui.md "A select is a
+ * listbox on a trigger"), its selection `syncHiddenSelect`'s after
+ * each render. */
 export const SelectHiddenSelect = defineComponent(
   (_props, { attrs }) => {
     const { api, service } = context.use();
@@ -104,9 +97,9 @@ export const SelectHiddenSelect = defineComponent(
     };
   },
   { name: "SelectHiddenSelect", inheritAttrs: false },
-);
+) as unknown as DefineSetupFnComponent<PartProps<"select">, {}, {}>;
 
-const items = defineItemParts<select.Api<PropTypes>, Api>("Select", context);
+const items = defineItemParts("Select");
 export const useSelectItemContext = items.useItemContext;
 export const SelectItem = items.Item;
 export const SelectItemText = items.ItemText;

@@ -23,6 +23,19 @@ export default defineConfig({
     // when three browsers boot in parallel on a busy machine (WebKit is
     // the usual culprit). Second attempts recover cleanly.
     retry: 1,
+    reporters: [
+      "default",
+      // A retry covers a flaky play as well as a flaky boot: each test
+      // that passed only on its retry is named, so neither goes unseen.
+      {
+        onTestCaseResult(testCase) {
+          if (testCase.diagnostic()?.flaky)
+            console.warn(
+              `Passed on retry: ${testCase.project.name} › ${path.basename(testCase.module.moduleId)} › ${testCase.fullName}`,
+            );
+        },
+      },
+    ],
     browser: {
       enabled: true,
       provider: playwright(),

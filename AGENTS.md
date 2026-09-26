@@ -51,9 +51,11 @@ day it is done.
   non-obvious constraint or decision; one tight sentence usually suffices.
   No restating what the code does, no narrating history, no multi-sentence
   essays where a pointer to a spec would do.
-- No backticks inside comments in JS/TS template literals — they close
-  the string. The shadow template in `packages/core/src/element.ts` is
-  the trap; use plain quotes or bare identifiers.
+- CSS belongs in a `.css` file, imported `?inline` where a string is
+  needed (the shadow's, `packages/core/src/shadow.css`, its importer
+  referencing `vite/client` for the source's consumers), not in a
+  template literal, where a backtick in a comment closes the string.
+  Both core builds strip its comments.
 - No plan-internal jargon in code, tests, or story text (milestone
   numbers, phase numbers, plan-file dates, "before/after" migration
   language). Describe what the code IS; cite a spec or a concrete rule

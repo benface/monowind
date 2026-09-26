@@ -4,17 +4,17 @@ import type { PropTypes } from "@zag-js/vue";
 import { useDialog, type Composed } from "../composables.ts";
 import {
   defineContext,
-  definePart,
   defineRoot,
   defineRootProvider,
   partsOf,
+  positionerPart,
   triggerPart,
 } from "./part.ts";
 
 /** Zag's dialog as a compound component (specs/ui.md "Component
  * layer"). */
 
-export type Api = Composed<dialog.Api<PropTypes>, dialog.Service>;
+type Api = Composed<dialog.Api<PropTypes>, dialog.Service>;
 
 const context = defineContext<Api>("Dialog");
 
@@ -34,12 +34,7 @@ export const DialogRootProvider = defineRootProvider<Api>("DialogRootProvider", 
 
 const part = partsOf<dialog.Api<PropTypes>, Api>("Dialog", context);
 
-/** The floating part, carrying the ref that keeps it in the top layer
- * with the machine. */
-export const DialogPositioner = definePart<Api>("DialogPositioner", context, (value) => ({
-  ...value.api.value.getPositionerProps(),
-  ref: value.positioner,
-}));
+export const DialogPositioner = positionerPart("Dialog", context);
 
 export const DialogTrigger = triggerPart<dialog.Api<PropTypes>, Api>("Dialog", context);
 export const DialogContent = part("Content", (api) => api.getContentProps());

@@ -1,5 +1,15 @@
+/// <reference types="vite/client" />
 import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
-import { animatedProperties, animationPath, drainAnimated, nodeIndex } from "./animation.ts";
+import { compositeColors, parseColor, serializeColor } from "./color.ts";
+import type { Rgba } from "./color.ts";
+import {
+  EFFECTS,
+  animationPath,
+  nodeIndex,
+  readingAnimations,
+  runningUnder,
+  transitionSampling,
+} from "./animation.ts";
 import type { AnimationPath } from "./animation.ts";
 import { holdVisible, isTransparentColor, readPaintStyle } from "./style.ts";
 import { onGlyphRegistryChange } from "./glyphs.ts";
@@ -49,127 +59,60 @@ import {
   wordAt,
 } from "./selection.ts";
 import type { BoundaryPoints } from "./selection.ts";
-import { GlyphBoxes } from "./glyph-box.ts";
+import { GlyphBoxes, SHADES } from "./glyph-box.ts";
+import shadowCss from "./shadow.css?inline";
 import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
 import { gridOffsetAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics, sameMetrics } from "./metrics.ts";
-import { layoutRoot } from "./layout.ts";
-import { render, syncStickyVars } from "./render.ts";
-import { applyStickyShifts, collectStickyBoxes } from "./sticky.ts";
+import { edges, layoutRoot } from "./layout.ts";
+import { render, renderScroll, setVar } from "./render.ts";
+import { namedAnchors } from "./positioning.ts";
 import { TopLayer, isTopLayer } from "./top-layer.ts";
-import type { StickyBox } from "./sticky.ts";
-import { buildChildren, buildRootLeaf, hostLeafStyle } from "./tree.ts";
+import { buildRoot } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
-import { zeroInsets } from "./types.ts";
 import { warnOnce, warnSubject } from "./warn.ts";
 import type { CellMetrics, LayoutNode, Rect } from "./types.ts";
 
+/** Each shade's copies drawn from a literal of its glyph, so Chromium
+ * shares one computed style among them (architecture/performance.md
+ * "Shades drawn once"). */
+const SHADE_RULES = [...SHADES]
+  .map((shade) => {
+    const selector = `.grid span[data-shade="${shade}"]`;
+    return `${selector}::before, ${selector}::after { content: "${shade}"; }`;
+  })
+  .join("");
+
 const SHADOW_TEMPLATE = `
-<style>
-  :host { display: block; position: relative; contain: layout style; }
-  #viewport { position: relative; width: 100%; height: 100%; background: inherit; }
-  /* The slot as a positioned box: the light DOM paints ABOVE the grid
-   * (the elements are absolute; the host's own in-flow text, specs/host-leaf.md,
-   * would otherwise sit under the <pre> and lose its selection ink) and
-   * laid-out elements position against it — the same origin as #viewport.
-   * A block formatting context, so a flow child's top margin
-   * (specs/cell-model.md "Inline content") stays inside it, where the
-   * engine put the child. */
-  slot { display: flow-root; position: relative; }
-  /* The unified grid: one <pre> with same-paint-run spans, cell-precise
-   * (one monospace character = one cell). In select="grid" (the
-   * default, reflected onto the attribute — see DEFAULT_SELECT) the
-   * grid catches drags for native selection of the ASCII; interactive
-   * elements opt back into pointer-events via styles.css so clicks
-   * still work. In select="text" the grid is inert to events and drag
-   * selects the light DOM natively. */
-  /* Sized by the engine's ink extent (element.ts), not the host box:
-   * visible overflow paints past the host (specs/cell-model.md
-   * "Overflow"), and the host's background follows it there — the
-   * host is the canvas, as the root element's background covers a
-   * document's overflow — inherited through #viewport, the shadow
-   * parent. (A translucent host background paints repeatedly inside
-   * the box.) */
-  /* The text-fill reset: the host's own invisibility lock (specs/host-leaf.md)
-   * inherits across the shadow boundary; currentColor stays a keyword
-   * at computed time, so every run keeps its own color. */
-  .grid { position: absolute; top: 0; left: 0; margin: 0; background: inherit; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; pointer-events: none; user-select: none; -webkit-user-select: none; -webkit-text-fill-color: currentColor; }
-  /* A layer (specs/layers.md): a box at the extent carrying the root's
-   * transform and filter, its grid transparent where the subtree
-   * painted nothing; a nested box sits in its parent's, a clipped one
-   * in a clipping box at its ancestors' clip. */
-  #layers, .layer, .clip, .backdrop { position: absolute; top: 0; left: 0; pointer-events: none; }
-  .clip { overflow: clip; }
-  .layer > .grid { background: transparent; }
-  /* A background reaches the row's edges: the host's measured half-gap
-   * between the line box and the font's content area, which an inline
-   * span paints without moving the line (specs/cell-model.md). Only
-   * where the font leaves a gap, so a span pays for the lookup on no
-   * other page, and never on a box — a box was unpadded by an inline
-   * declaration, which no rule could outrank. */
-  :host([data-mw-bgpad]) .grid span:not([data-box]) {
-    padding-block: var(--mw-bgpad, 0px);
-  }
-  /* The shape every box shares (specs/wide-characters.md), one rule
-   * rather than six declarations on each: its cells' width and the
-   * glyph's placement stay inline, being the box's own. */
-  .grid span[data-box] {
-    display: inline-block;
-    padding: 0;
-    height: var(--mw-ch, 1lh);
-    overflow: clip;
-    vertical-align: top;
-    text-align: start;
-  }
-  .grid span[data-box="center"] { text-align: center; }
-  /* A shade's lattice runs on from row to row (specs/wide-characters.md):
-   * copies a period above and below the glyph, in its own line box. */
-  .grid span[data-shade] { position: relative; }
-  .grid span[data-shade]::before, .grid span[data-shade]::after { content: attr(data-shade); position: absolute; inset-inline: 0; }
-  .grid span[data-shade]::before { top: calc(-1 * var(--mw-period)); }
-  .grid span[data-shade]::after { top: var(--mw-period); }
-  :host([select="grid"]) .grid { pointer-events: auto; user-select: text; -webkit-user-select: text; }
-  /* A grid-mode drag stays in the grid it started in, where the engine
-   * supports it (specs/layers.md, deviations 3 and 8). */
-  :host([select="grid"]) .layer > .grid { user-select: contain; -webkit-user-select: contain; }
-  :host([select="grid"]) slot { pointer-events: none; user-select: none; -webkit-user-select: none; }
-  /* A read under measuring sees the pointer-events written inside the
-   * host, over a page's lock above it (specs/cell-model.md "Pointer
-   * states"); only the slot rule keys on measuring, as a slotted one
-   * restyles the shadow tree at each flip (architecture/performance.md). */
-  :host([select="grid"]) ::slotted(*) { pointer-events: auto; }
-  :host([measuring]:not([select="grid"])) slot { pointer-events: auto; }
-  /* A live semantic selection (specs/semantic-selection.md) lifts the
-   * lock so the element selection copies; pointer events stay off. */
-  :host([select="grid"][data-mw-semantic-selection]) slot { user-select: text; -webkit-user-select: text; }
-  /* The grid's own selection (a grid-mode drag) keeps the browser's
-   * invert — mirror of the field choices in styles.css. Slotted text
-   * takes the slot's rule in Chromium and WebKit: invisible, the engine
-   * paints that selection on the grid (specs/wide-characters.md). */
-  .grid::selection, .grid *::selection { color: var(--mw-bg, canvas); text-shadow: 0 0 0 var(--mw-bg, canvas); background: var(--mw-fg, canvastext); }
-  slot::selection { color: transparent; text-shadow: none; background: transparent; }
-</style>
+<style>${shadowCss}${SHADE_RULES}</style>
 <div id="viewport">
   <pre id="grid" class="grid" aria-hidden="true"></pre>
   <div id="layers"></div>
   <slot></slot>
+  <i id="color-probe" hidden style="color: var(--mw-fg, canvastext); background-color: var(--mw-bg, canvas); border-top-color: canvas"></i>
 </div>
 `;
 
-/** The `select` attribute's default, reflected onto the attribute when
- * it is absent or unrecognized so every stylesheet keys on an explicit
- * value — the single place the default lives. */
-const DEFAULT_SELECT = "grid";
-
-/** The `focus` attribute's default (specs/focus-navigation.md): Tab
- * alone moves focus; `focus="arrows"` adds arrow-key navigation.
- * Reflected like `select`. */
-const DEFAULT_FOCUS = "tab";
+/** The host's keyword attributes and their values, the default first —
+ * reflected onto the attribute when it is absent or unrecognized, so
+ * every stylesheet keys on an explicit value. `focus="arrows"` adds
+ * arrow-key navigation to Tab's (specs/focus-navigation.md). */
+const HOST_KEYWORDS = { select: ["grid", "text"], focus: ["tab", "arrows"] } as const;
 
 /** Set on the host while an element selection made by a semantic
  * gesture is live (specs/semantic-selection.md): the shadow stylesheet
  * lifts the grid-mode user-select lock under it. */
 const SEMANTIC_SELECTION = "data-mw-semantic-selection";
+
+/** Set on the host while a selection is live in its light DOM, or a
+ * selection gesture that may reach it is under way: the companion's
+ * transparent `::selection` lock holds under it (styles.css). */
+const SELECTION = "data-mw-selection";
+
+/** The light elements that paint their own selection, which the lock
+ * exempts (styles.css), an editable's subtree with it. */
+export const OWN_HIGHLIGHT =
+  "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 
 interface Point {
   node: Node;
@@ -204,9 +147,8 @@ interface Gesture {
 
 /** ARIA's composite widgets, by role: a container whose items are the
  * widgets and its focus indication, its own cells the grid's
- * (specs/cell-model.md); styles.css mirrors the list, interactive.test.ts
- * holds them equal. */
-export const COMPOSITE = [
+ * (specs/cell-model.md). */
+const COMPOSITE = [
   "[role='grid']",
   "[role='listbox']",
   "[role='menu']",
@@ -224,7 +166,7 @@ export const COMPOSITE = [
  * hit-tests a multicol spanner's anonymous wrapper as its container
  * despite pointer-events: none) and is handled as a grid event at the
  * same coordinates. */
-export const INTERACTIVE = [
+const INTERACTIVE = [
   "a",
   "button",
   "input",
@@ -246,6 +188,14 @@ export const INTERACTIVE = [
   "[role='link']",
   "[role='combobox']",
 ].join(", ");
+
+/** The marks the companion keys the two lists' rules on (styles.css):
+ * grid mode's pointer opt-in and text cursor, and the focus invert's
+ * exclusion. A forced toggle writes only a change. */
+export function markInteractivity(el: Element): void {
+  el.toggleAttribute("data-mw-interactive", el.matches(INTERACTIVE));
+  el.toggleAttribute("data-mw-composite", el.matches(COMPOSITE));
+}
 
 /** The element painted behind one: its parent, or past a shadow root
  * the host holding it. */
@@ -306,26 +256,33 @@ const DYNAMIC_RELAYOUT_EVENTS = [
   "change",
 ] as const;
 
-/** Transition properties the engine SAMPLES per animation frame (the
- * grid repaints with true mid-fade values): computed `color` stays live
- * under the text-fill lock, and nothing locks border colors, opacity,
- * or a layer's transforms and filter. Lock-owned properties
- * (backgrounds, decoration color, geometry, backdrop-filter) are
- * snapped by the measuring/settling `transition-property` allow-list
- * instead — keep the two in sync (styles.css "Lock toggles must
- * never…"). */
-const SAMPLED_TRANSITION =
-  /^(color|opacity|border-(top|right|bottom|left)-color|border-color|transform|translate|rotate|scale|filter)$/;
+/** How far a resize may report the host from the size a layout wrote,
+ * in px: the rounding of layout units (1/64 px in Chromium and WebKit,
+ * 1/60 in Firefox). */
+const SIZE_TOLERANCE = 0.05;
 
-/** The sampled properties a layer's box copies (specs/layers.md
- * "Animation is sampled"): a transition of one alone re-places the
- * boxes per frame, the layout left as it is. */
-const LAYER_TRANSITION = /^(transform|translate|rotate|scale|filter)$/;
+/** Whether a lock's snap back could start a transition on an element:
+ * a non-zero duration or delay in any entry of its lists. */
+const mayTransition = (style: CSSStyleDeclaration): boolean =>
+  /[1-9]/u.test(style.transitionDuration) || /[1-9]/u.test(style.transitionDelay);
 
-/** Safety valve for the sampling loop: a transition whose end/cancel
- * event never arrives (subtree torn down mid-fade) must not pin a rAF
- * loop forever. */
-const SAMPLING_VALVE_MS = 30_000;
+/** css-color-4's system colors, the deprecated ones after the rest. */
+const SYSTEM_COLORS =
+  "accentcolor accentcolortext activetext buttonborder buttonface buttontext canvas canvastext " +
+  "field fieldtext graytext highlight highlighttext linktext mark marktext selecteditem " +
+  "selecteditemtext visitedtext activeborder activecaption appworkspace background " +
+  "buttonhighlight buttonshadow captiontext inactiveborder inactivecaption inactivecaptiontext " +
+  "infobackground infotext menu menutext scrollbar threeddarkshadow threedface threedhighlight " +
+  "threedlightshadow threedshadow window windowframe windowtext";
+
+/** A color whose value depends on where it resolves — through a custom
+ * property, the current color, or the color scheme (a system color, a
+ * prefixed one, or `light-dark()`) — which the probe reads again each
+ * layout. */
+export const CONTEXTUAL_COLOR = new RegExp(
+  `var\\(|currentcolor|light-dark\\(|-[a-z]+-|\\b(?:${SYSTEM_COLORS.replaceAll(" ", "|")})\\b`,
+  "iu",
+);
 
 /* Wheel-gesture model (specs/scrolling.md "Gesture latching"). */
 /** Ticks further apart than this begin a new gesture — and settle. */
@@ -428,7 +385,7 @@ const HTMLElementBase = (
 ) as typeof HTMLElement;
 
 export class MonoWindElement extends HTMLElementBase {
-  static observedAttributes = ["select", "focus"];
+  static observedAttributes = Object.keys(HOST_KEYWORDS);
 
   // Stylesheets can apply after a host's first layout (vite dev
   // injection, the CDN's in-browser Tailwind compile, HMR) — a pure
@@ -483,10 +440,30 @@ export class MonoWindElement extends HTMLElementBase {
   #hostSheet = new CSSStyleSheet();
   /** Inside another host: the engine stays off (connectedCallback). */
   #nested = false;
+  /** The listeners of the current connection, removed at once on disconnect. */
+  #listening: AbortController | null = null;
+  #shadow: ShadowRoot;
   #grid: HTMLElement;
   #layers: HTMLElement;
   #probe: HTMLElement;
+  /** Resolves colors where the grid's spans inherit them
+   * (specs/cell-model.md "Opacity and translucency"): the ink, the
+   * ground and `canvas` from its own style, any other on demand. */
+  #colorProbe: HTMLElement;
+  #colorProbeStyle: CSSStyleDeclaration;
+  /** The ground and ink the last layout resolved. */
+  #ground: Rgba | undefined;
+  #ink: Rgba | undefined;
+  /** The colors the paint read through the probe, a contextual one read
+   * again each layout while the style is clean. */
+  #probedColors = new Map<string, Rgba | null>();
+  /** An ancestor's background or color transitions the host lays out
+   * again at the end of (#awaitColorTransitions). */
+  #awaitedTransitions = new WeakSet<Animation>();
   #resizeObserver: ResizeObserver | null = null;
+  /** The parent and siblings the resize observer watches
+   * (#observeSurroundings). */
+  #surroundings = new Set<Element>();
   /** The ancestors' `class` and `style`, which reach the host's cells
    * through the cascade — a theme class on the page, the derived tokens'
    * colors among them. */
@@ -495,16 +472,24 @@ export class MonoWindElement extends HTMLElementBase {
   #onColorSchemeChange = (): void => this.#scheduleLayout();
   #mutationObserver: MutationObserver | null = null;
   #layoutPending = false;
+  /** The pending layout's frame request, which any layout before it
+   * serves (#performLayout). */
+  #layoutRequest = 0;
+  /** The frame time of the last layout a frame request ran, which the
+   * sampling tick in that frame reads as its own. */
+  #laidOutFrame = -1;
   #cellMetrics: CellMetrics | null = null;
+  /** The content box the last layout sized the host to, null until one
+   * does: a resize reporting it is the layout's own (#onResize). */
+  #laidOutSize: BoxSize | null = null;
+  /** The size each box around the host last reported (#onResize). */
+  #surroundingSizes = new WeakMap<Element, BoxSize>();
   #lastLayout: LayoutNode | null = null;
   #unsubscribeLeafRegistry: (() => void) | null = null;
   #unsubscribeGlyphRegistry: (() => void) | null = null;
   #paintPending = false;
   /** Scroll containers of the LAST layout (specs/scrolling.md). */
   #scrollNodes: LayoutNode[] = [];
-  /** The sticky boxes of the last layout, shifted on every paint
-   * (specs/sticky.md). */
-  #stickyBoxes: StickyBox[] = [];
   #settleTimers = new Map<Element, ReturnType<typeof setTimeout>>();
   /** Last routed-scroll activity per scroll container (a wheel tick, an
    * auto-scroll tick): each scrollBy is a separate PROGRAMMATIC scroll,
@@ -512,12 +497,8 @@ export class MonoWindElement extends HTMLElementBase {
    * would keep snapping small deltas back (the "resistance"). Recent
    * activity suppresses them; the quiesce timer settles instead. */
   #routedScrollAt = new WeakMap<Element, number>();
-  /** What the current wheel gesture is LATCHED to — a scroll container, or the
-   * page (`el: null`): chaining is a gesture-START decision (native
-   * scroll-chaining semantics), so mid-gesture boundary hits stay on
-   * the scroll container and a scroll container sliding under the pointer never captures a
-   * page gesture. `mag`/`decayed` track the delta trend (see
-   * #onWheel). */
+  /** What the current wheel gesture is latched to: a scroll container,
+   * or the page (`el: null`). */
   #wheelLatch: WheelLatch | null = null;
   #thumbDrag: ThumbDrag | null = null;
   #trackPaging: { press: TrackPress; timer: ReturnType<typeof setTimeout> } | null = null;
@@ -541,9 +522,22 @@ export class MonoWindElement extends HTMLElementBase {
   /** Whether the last selectionchange found a range in this host's
    * light DOM — the next one must repaint even when it left. */
   #paintedSelection = false;
+  /** A press's selection gesture under way (#onSelectStart, or a press
+   * begun outside dragged in, #onPointerMove), which holds `SELECTION`
+   * until its release: its first selectionchange can find the
+   * selection collapsed, the extension to come. */
+  #selectionGesture = false;
+  /** A primary press held anywhere in the window. */
+  #pressHeld = false;
   /** Each anchored box's last successful placement, from one layout to
    * the next (specs/anchor-positioning.md). */
   #placements = new Map<Element, Remembered>();
+  /** The elements carrying `data-mw-anchor`, which the companion scopes
+   * while the engine reads (#scopeAnchors). */
+  #anchors = new Set<Element>();
+  /** Each textarea's content width in cells as the last layout gave it
+   * (#rewrapsTextareas). */
+  #textareaCells = new WeakMap<HTMLTextAreaElement, number>();
   /** When the last key went down (see #onScroll). */
   #lastKeyAt = 0;
   /** An arrow waiting for the end of its dispatch (#onKeyDown). */
@@ -592,20 +586,18 @@ export class MonoWindElement extends HTMLElementBase {
 
   constructor() {
     super();
-    const shadow = this.attachShadow({ mode: "open" });
+    const shadow = (this.#shadow = this.attachShadow({ mode: "open" }));
     shadow.innerHTML = SHADOW_TEMPLATE;
     this.#hostSheet.replaceSync(":host { --mw-fg: canvastext; --mw-bg: canvas }");
     shadow.adoptedStyleSheets = [this.#hostSheet];
-    this.#grid = shadow.getElementById("grid") as HTMLElement;
-    this.#layers = shadow.getElementById("layers") as HTMLElement;
-    // Cell-metrics probe (see measureCellMetrics): persistent, hidden but
-    // measurable, inheriting the host's font/line-height/letter-spacing.
-    // It lives in the LIGHT DOM so it is font-matched in exactly the same
-    // context as the content it stands in for (shadow-tree font matching
-    // has its own quirks on some Chromium builds). Measurement happens
-    // under the `measuring` attribute, so the companion stylesheet's
-    // typography locks are off; the inline `!important`s guard the
-    // box/wrap properties that must hold regardless.
+    this.#grid = shadow.querySelector<HTMLElement>("#grid")!;
+    this.#layers = shadow.querySelector<HTMLElement>("#layers")!;
+    this.#colorProbe = shadow.querySelector<HTMLElement>("#color-probe")!;
+    this.#colorProbeStyle = getComputedStyle(this.#colorProbe);
+    // The cell-metrics probe (measureCellMetrics), in the LIGHT DOM so it
+    // is font-matched in the content's own context; read under
+    // `measuring`, with the typography locks off, its inline
+    // `!important`s holding its box and wrap.
     this.#probe = document.createElement("span");
     this.#probe.setAttribute("aria-hidden", "true");
     this.#probe.setAttribute("data-mw-probe", "");
@@ -654,28 +646,29 @@ export class MonoWindElement extends HTMLElementBase {
     }
     // attributeChangedCallback only fires on changes; an absent
     // attribute reflects its default here.
-    if (!this.hasAttribute("select")) this.setAttribute("select", DEFAULT_SELECT);
-    if (!this.hasAttribute("focus")) this.setAttribute("focus", DEFAULT_FOCUS);
+    for (const [name, [initial]] of Object.entries(HOST_KEYWORDS)) {
+      if (!this.hasAttribute(name)) this.setAttribute(name, initial);
+    }
     // Before the observers connect, so its insertion isn't observed.
     if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
 
-    this.#resizeObserver = new ResizeObserver(() => this.#scheduleLayout());
+    this.#listening = new AbortController();
+    const { signal } = this.#listening;
+    this.#surroundingSizes = new WeakMap();
+    this.#resizeObserver = new ResizeObserver(this.#onResize);
     this.#ancestorObserver = new MutationObserver(() => this.#scheduleLayout());
-    this.#colorScheme?.addEventListener("change", this.#onColorSchemeChange);
+    this.#colorScheme?.addEventListener("change", this.#onColorSchemeChange, { signal });
     this.#resizeObserver.observe(this);
     this.#observeSurroundings();
-    // The probe too: a freshly inserted probe can transiently font-match
-    // the FALLBACK at first layout even when the real font is already
-    // loaded (WebKit; no fonts event ever follows). The swap changes the
-    // probe's size, so observing it is the missing re-measure signal.
-    // (The probe is absolutely positioned, hence blockified — inline
-    // boxes would be unobservable.)
+    // The probe too: a font it matches late resizes it, with no fonts
+    // event to say so, its first report included. Absolutely
+    // positioned, it is a block, which an observer sees.
     this.#resizeObserver.observe(this.#probe);
     // Viewport-relative lengths (h-screen, h-[95dvh], …) read
     // window.innerWidth/Height at layout time; a window resize that
     // doesn't change the HOST's size (height-only, typically) would
     // otherwise never retrigger them.
-    window.addEventListener("resize", this.#onWindowResize);
+    window.addEventListener("resize", this.#onWindowResize, { signal });
 
     // A surviving record is the author's: the engine's writes in a
     // layout are drained before observation resumes, its marks outside
@@ -705,136 +698,123 @@ export class MonoWindElement extends HTMLElementBase {
     document.fonts?.ready.then(this.#onFontsLoaded).catch((err: unknown) => {
       console.warn("[monowind] document.fonts.ready failed:", err);
     });
-    document.fonts?.addEventListener("loadingdone", this.#onFontsLoaded);
+    document.fonts?.addEventListener("loadingdone", this.#onFontsLoaded, { signal });
 
     // Pseudo-classes (:hover/:focus-visible/:active) and form-control
     // value changes flip computed styles without any MutationObserver
     // signal. Delegated events on the host schedule a relayout; the
     // rAF debouncer collapses hover storms into at most one per frame.
     for (const evt of DYNAMIC_RELAYOUT_EVENTS) {
-      this.addEventListener(evt, this.#scheduleDynamicRelayout);
+      this.addEventListener(evt, this.#scheduleDynamicRelayout, { signal });
     }
 
     // Animation sampling (specs/cell-model.md "Animation"): a running
-    // transition of a sampled property re-lays-out every frame, so the
-    // grid repaints with the browser's own interpolated values.
-    this.addEventListener("transitionrun", this.#onTransitionRun);
-    this.addEventListener("transitionend", this.#onTransitionDone);
-    this.addEventListener("transitioncancel", this.#onTransitionDone);
+    // transition of a sampled property starts the loop that shows the
+    // browser's own interpolated values each frame.
+    this.addEventListener("transitionrun", this.#onTransitionRun, { signal });
+    this.addEventListener("transitionend", this.#onTransitionDone, { signal });
+    this.addEventListener("transitioncancel", this.#onTransitionDone, { signal });
     // Keyframe animations join the same loop (specs/animations.md):
     // an iteration is a start for one resumed or begun before the
     // host listened, an end lands the state of one the loop dropped.
-    this.addEventListener("animationstart", this.#onAnimationStart);
-    this.addEventListener("animationiteration", this.#onAnimationStart);
-    this.addEventListener("animationend", this.#onAnimationDone);
-    this.addEventListener("animationcancel", this.#onAnimationDone);
+    this.addEventListener("animationstart", this.#onAnimationStart, { signal });
+    this.addEventListener("animationiteration", this.#onAnimationStart, { signal });
+    this.addEventListener("animationend", this.#onAnimationDone, { signal });
+    this.addEventListener("animationcancel", this.#onAnimationDone, { signal });
     // A popover's or a dialog's toggle bubbles from neither: captured.
-    this.addEventListener("toggle", this.#onToggle, true);
+    this.addEventListener("toggle", this.#onToggle, { capture: true, signal });
 
     // Synthesized pointer states (specs/cell-model.md "Pointer
     // states"): under select="grid" the light DOM is pointer-events:
     // none, so :hover/:active can't match — the engine hit-tests the
     // pointer's cell and marks the chain with data-mw-hover /
     // data-mw-active (utilities.css retargets the Tailwind variants).
-    this.addEventListener("pointermove", this.#onPointerMove);
-    this.addEventListener("pointerleave", this.#onPointerLeave);
-    this.addEventListener("pointerdown", this.#onPointerDown);
+    this.addEventListener("pointermove", this.#onPointerMove, { signal });
+    this.addEventListener("pointerleave", this.#onPointerLeave, { signal });
+    this.addEventListener("pointerdown", this.#onPointerDown, { signal });
     // Capture, so a covered element's own listeners never run.
-    for (const evt of COVERED_EVENTS) this.addEventListener(evt, this.#onCoveredEvent, true);
+    for (const evt of COVERED_EVENTS) {
+      this.addEventListener(evt, this.#onCoveredEvent, { capture: true, signal });
+    }
     // Scroll events don't bubble — capture catches every light-DOM
     // container's scroll (specs/scrolling.md).
-    this.addEventListener("scroll", this.#onScroll, { capture: true, passive: true });
-    this.addEventListener("scrollend", this.#onScrollEnd, { capture: true });
-    this.addEventListener("wheel", this.#onWheel, { passive: false });
+    const scrolls = { capture: true, passive: true, signal };
+    this.addEventListener("scroll", this.#onScroll, scrolls);
+    this.addEventListener("scrollend", this.#onScrollEnd, { capture: true, signal });
+    this.addEventListener("wheel", this.#onWheel, { passive: false, signal });
     // A selection in the light DOM copies as the engine's plain text
     // (specs/semantic-selection.md): the browsers' serializers lose
     // block breaks for the out-of-flow boxes the render uses.
-    this.addEventListener("copy", this.#onCopy);
+    this.addEventListener("copy", this.#onCopy, { signal });
     // Multi-click gestures (specs/semantic-selection.md): the click
     // count rides mousedown (PointerEvent.detail is 0).
-    this.addEventListener("mousedown", this.#onMouseDown);
-    this.addEventListener("keydown", this.#onKeyDown);
+    this.addEventListener("mousedown", this.#onMouseDown, { signal });
+    this.addEventListener("keydown", this.#onKeyDown, { signal });
     // An arrow that moves focus is cancelled at the window (#onKeyDown):
     // #moveFocus releases the hold this listener takes.
-    this.addEventListener("keydown", this.#onScrollKey);
-    document.addEventListener("selectionchange", this.#onSelectionChange);
-    // Release on the window: a selection drag routinely ends outside
-    // the host, and the press state must thaw wherever it ends.
-    window.addEventListener("pointerup", this.#onPointerUp);
-    window.addEventListener("pointercancel", this.#onPointerUp);
-    window.addEventListener("mouseup", this.#onMouseUp, { capture: true });
+    this.addEventListener("keydown", this.#onScrollKey, { signal });
+    document.addEventListener("selectionchange", this.#onSelectionChange, { signal });
+    document.addEventListener("selectstart", this.#onSelectStart, { capture: true, signal });
+    // Press and release on the window: a selection drag routinely
+    // starts or ends outside the host, and the press state must thaw
+    // wherever it ends. Captured, so no page handler keeps either from
+    // the host.
+    const captured = { capture: true, signal };
+    window.addEventListener("pointerdown", this.#onAnyPointerDown, captured);
+    window.addEventListener("pointerup", this.#onPointerUp, captured);
+    window.addEventListener("pointercancel", this.#onPointerUp, captured);
+    window.addEventListener("mouseup", this.#onMouseUp, captured);
     // Content scrolling under a stationary pointer moves cells beneath
     // it — native :hover re-evaluates there, so the synthesis must
     // too. Capture catches nested scrollers (scroll doesn't bubble).
-    document.addEventListener("scroll", this.#onAnyScroll, { capture: true, passive: true });
+    document.addEventListener("scroll", this.#onAnyScroll, scrolls);
 
     MonoWindElement.#watchHead(this);
     this.#scheduleLayout();
   }
 
   disconnectedCallback(): void {
-    window.removeEventListener("resize", this.#onWindowResize);
+    this.#listening?.abort();
     this.#pendingArrow?.abort();
     this.#resizeObserver?.disconnect();
     this.#mutationObserver?.disconnect();
     this.#ancestorObserver?.disconnect();
-    this.#colorScheme?.removeEventListener("change", this.#onColorSchemeChange);
     this.#resizeObserver = null;
+    this.#surroundings.clear();
     this.#mutationObserver = null;
     this.#ancestorObserver = null;
     this.#unsubscribeLeafRegistry?.();
     this.#unsubscribeLeafRegistry = null;
     this.#unsubscribeGlyphRegistry?.();
     this.#unsubscribeGlyphRegistry = null;
-    document.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
-    for (const evt of DYNAMIC_RELAYOUT_EVENTS) {
-      this.removeEventListener(evt, this.#scheduleDynamicRelayout);
-    }
-    this.removeEventListener("transitionrun", this.#onTransitionRun);
-    this.removeEventListener("transitionend", this.#onTransitionDone);
-    this.removeEventListener("transitioncancel", this.#onTransitionDone);
-    this.removeEventListener("animationstart", this.#onAnimationStart);
-    this.removeEventListener("animationiteration", this.#onAnimationStart);
-    this.removeEventListener("animationend", this.#onAnimationDone);
-    this.removeEventListener("animationcancel", this.#onAnimationDone);
-    this.removeEventListener("toggle", this.#onToggle, true);
-    this.#activeTransitions = 0;
-    this.#activeLayerTransitions = 0;
     this.#animated.clear();
-    this.removeEventListener("pointermove", this.#onPointerMove);
-    this.removeEventListener("pointerleave", this.#onPointerLeave);
-    this.removeEventListener("pointerdown", this.#onPointerDown);
-    for (const evt of COVERED_EVENTS) this.removeEventListener(evt, this.#onCoveredEvent, true);
-    this.removeEventListener("scroll", this.#onScroll, { capture: true });
-    this.removeEventListener("scrollend", this.#onScrollEnd, { capture: true });
-    this.removeEventListener("wheel", this.#onWheel);
-    this.removeEventListener("copy", this.#onCopy);
-    this.removeEventListener("keydown", this.#onKeyDown);
-    this.removeEventListener("keydown", this.#onScrollKey);
     this.#releaseKeyScroll();
-    this.removeEventListener("mousedown", this.#onMouseDown);
-    document.removeEventListener("selectionchange", this.#onSelectionChange);
     for (const timer of this.#settleTimers.values()) clearTimeout(timer);
     this.#settleTimers.clear();
     this.#thumbDrag = null;
     this.#stopTrackPaging(false);
     this.#wheelLatch = null;
     this.#stopAutoscroll();
-    window.removeEventListener("pointerup", this.#onPointerUp);
-    window.removeEventListener("pointercancel", this.#onPointerUp);
-    window.removeEventListener("mouseup", this.#onMouseUp, { capture: true });
-    document.removeEventListener("scroll", this.#onAnyScroll, { capture: true });
     this.#hoverClient = null;
     this.#pressTarget = null;
     this.#pressing = false;
+    this.#pressHeld = false;
+    this.#pressOnGrid = false;
+    this.#gesture = null;
+    this.#gridDrag = null;
     this.#paintHeld = false;
     this.#ownsRelease = false;
+    this.#selectionGesture = false;
+    // The states a release or a selectionchange would end, events the
+    // host hears no more.
+    for (const state of [SELECTION, SEMANTIC_SELECTION, "data-mw-dragging"]) {
+      this.removeAttribute(state);
+    }
     this.#updatePointerStates();
     MonoWindElement.#unwatchHead(this);
   }
 
-  /* === Synthesized pointer states ==================================== */
-
+  // Synthesized pointer states (specs/cell-model.md "Pointer states").
   #hovered = new Set<Element>();
   #pressed = new Set<Element>();
   /** The light elements the grid covers where the pointer is. */
@@ -868,11 +848,9 @@ export class MonoWindElement extends HTMLElementBase {
       this.#paintPending = false;
       const metrics = this.#cellMetrics;
       if (!this.isConnected || !this.#lastLayout || !metrics) return;
-      this.#syncScrollOffsets(metrics);
-      // Sticky boxes follow the offsets; their light-DOM shift writes
-      // are the engine's own, drained like a layout pass's.
-      applyStickyShifts(this.#stickyBoxes);
-      syncStickyVars(this.#stickyBoxes);
+      // The sticky and fixed boxes' light-DOM shift writes are the
+      // engine's own, drained like a layout pass's.
+      renderScroll(this.#lastLayout, () => this.#syncScrollOffsets(metrics));
       this.#mutationObserver?.takeRecords();
       this.#paintHeld = !this.#paint(this.#lastLayout);
       this.#followContainerScroll();
@@ -1088,16 +1066,13 @@ export class MonoWindElement extends HTMLElementBase {
     const scale = e.deltaMode === 1 ? metrics.height : e.deltaMode === 2 ? this.clientHeight : 1;
     const dx = e.deltaX * scale;
     const dy = e.deltaY * scale;
-    // Chromium marks every tick after an uncanceled first one in a
-    // native scroll sequence non-cancelable: the page owns that
-    // gesture — unless nothing outside the host can scroll that way,
-    // where routing is the only thing the tick can usefully do.
+    // A non-cancelable tick is the page's gesture, unless nothing
+    // outside the host can scroll that way.
     if (!e.cancelable && this.#outsideCanScroll(dx, dy)) return;
     const now = Date.now();
     const mag = Math.abs(dx) + Math.abs(dy);
-    // Zero-delta ticks mark gesture phases (Safari's, and Chromium's
-    // momentum cancel when a finger lands mid-inertia): a boundary.
-    // Canceled, so a sequence they open stays cancelable.
+    // A zero-delta phase tick ends the gesture, canceled so the
+    // sequence it opens stays cancelable.
     if (mag === 0) {
       this.#wheelLatch = null;
       e.preventDefault();
@@ -1106,16 +1081,9 @@ export class MonoWindElement extends HTMLElementBase {
     // Native room decides (the native ceiling IS the engine's max);
     // an axis without engine range never consumes.
     const canMove = (node: LayoutNode): boolean => containerHasRoom(node, dx, dy);
-    // Gesture boundaries without native phase info: a gesture ends
-    // when ticks quiesce or the delta RISES after confirmed inertia —
-    // momentum never rises (it often repeats a delta: 3, 3, 2, 2, 1…),
-    // finger ticks wobble — so a scroll container at its end hands a new push to
-    // the page instead of blocking until the inertia dies. Confirmed
-    // inertia STICKS: a new push usually starts below the momentum it
-    // interrupts, and only its second tick rises. Momentum follows the
-    // pointer (its ticks land wherever the cursor went), so after a
-    // move a same-axis tick that continues the decay is still the old
-    // gesture; any rise or a new dominant axis is the new one.
+    // The latch holds while ticks keep coming on its axis: after a
+    // move, one that keeps decaying; else anything but a rise after
+    // confirmed inertia.
     const latch = this.#wheelLatch;
     const axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
     const rise = latch !== null && mag > latch.mag * 1.25 + 1;
@@ -1141,13 +1109,13 @@ export class MonoWindElement extends HTMLElementBase {
     if (!target) {
       const stack = stackAt(layout, this.#cellAt(e.clientX, e.clientY, metrics));
       for (let i = stack.length - 1; i >= 0; i--) {
-        const node = stack[i]!.node;
+        const node = stack[i]!;
         if (!node.scrollRange || isInert(node.source)) continue;
         if (canMove(node)) {
           target = node;
           break;
         }
-        // At its boundary already: chain outward only if this scroll container's
+        // At its boundary already: chain outward only where its
         // overscroll-behavior allows it on the gesture's axis.
         const overscroll = node.style.overscroll;
         if ((dy !== 0 && !overscroll.y) || (dx !== 0 && !overscroll.x)) {
@@ -1155,10 +1123,8 @@ export class MonoWindElement extends HTMLElementBase {
           break;
         }
       }
-      // A swipe's first tick often carries only a tiny cross-axis
-      // delta; over a scroll container that cannot consume it, it decides nothing
-      // yet: eaten (keeping the sequence cancelable), unlatched — the
-      // next, decisive tick picks the scroll container.
+      // A tiny first tick nothing consumes decides nothing: eaten,
+      // keeping the sequence cancelable, for the next to decide.
       if (!target && mag < WHEEL_LEAD_IN_PX) {
         e.preventDefault();
         return;
@@ -1204,22 +1170,91 @@ export class MonoWindElement extends HTMLElementBase {
     return this.#outerScrollers.some((el) => hasRoom(el, dx, dy));
   }
 
-  /** The host's width is capped to whole cells (styles.css), so a
-   * growing slot no longer resizes the host: observe the parent (a
+  /** The host's width is capped to whole cells (styles.css), so the
+   * host keeps its size as its slot grows: observe the parent (a
    * growing container) and the siblings (a flex or grid slot that
    * grows because a sibling shrank), and every ancestor's `class` and
-   * `style` for the cascade. Re-run per layout — observe() is
-   * idempotent, and new siblings and ancestors join. */
+   * `style` for the cascade. Re-run per layout: new siblings join, and
+   * the ones that left go, the observer holding each it watches. */
   #observeSurroundings(): void {
     const parent = this.parentElement;
-    if (!parent || !this.#resizeObserver || !this.#ancestorObserver) return;
-    this.#resizeObserver.observe(parent);
-    for (const sibling of parent.children) {
-      if (sibling !== this) this.#resizeObserver.observe(sibling);
-    }
+    const resizes = this.#resizeObserver;
+    if (!parent || !resizes || !this.#ancestorObserver) return;
+    const surroundings = new Set<Element>([parent, ...parent.children]);
+    surroundings.delete(this);
+    for (const el of this.#surroundings) if (!surroundings.has(el)) resizes.unobserve(el);
+    for (const el of surroundings) if (!this.#surroundings.has(el)) resizes.observe(el);
+    this.#surroundings = surroundings;
     for (let el = behind(this); el; el = behind(el)) {
       this.#ancestorObserver.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
     }
+  }
+
+  /** A box around the host relays out on a width change only — a
+   * height change just moves the grid — and its first report counts as
+   * what the last layout saw. */
+  #onResize = (entries: ResizeObserverEntry[]): void => {
+    let relayout = false;
+    let moved = false;
+    for (const { target, contentRect } of entries) {
+      const size = { width: contentRect.width, height: contentRect.height };
+      if (target === this) {
+        const laidOut = this.#laidOutSize;
+        relayout ||=
+          !laidOut ||
+          Math.abs(size.width - laidOut.width) > SIZE_TOLERANCE ||
+          Math.abs(size.height - laidOut.height) > SIZE_TOLERANCE;
+      } else if (target === this.#probe) {
+        relayout ||= this.#cellChanged();
+      } else {
+        const last = this.#surroundingSizes.get(target);
+        this.#surroundingSizes.set(target, size);
+        if (!last) continue;
+        if (size.width !== last.width) relayout = true;
+        else if (size.height !== last.height) moved = true;
+      }
+    }
+    if (relayout) this.#scheduleLayout();
+    else if (moved) this.#onGridMoved();
+  };
+
+  /** Whether a textarea's rows are to wrap again: the width this layout
+   * gave it is neither the one read before the layout, which its rows
+   * wrapped at, nor the last layout's. */
+  #rewrapsTextareas(textareas: Iterable<HTMLTextAreaElement>, widths: TextareaWidths): boolean {
+    let rewraps = false;
+    for (const area of textareas) {
+      const node = this.#nodeOf(area);
+      if (!node) continue;
+      const cells = node.localRect.width - edges(node.style.border, node.resolvedPadding, "x");
+      if (cells !== widths.get(area) && cells !== this.#textareaCells.get(area)) rewraps = true;
+      this.#textareaCells.set(area, cells);
+    }
+    return rewraps;
+  }
+
+  /** Flags the elements naming an anchor (`data-mw-anchor`), whose names
+   * the companion scopes while the engine reads
+   * (specs/anchor-positioning.md "Reading"); true where one was read
+   * unscoped — new, or its flag taken off by a script — and a box is
+   * anchored by name, which reads again. */
+  #scopeAnchors(root: LayoutNode): boolean {
+    const { named, anchored } = namedAnchors(root);
+    let joined = false;
+    for (const el of this.#anchors) if (!named.has(el)) el.removeAttribute("data-mw-anchor");
+    for (const el of named) {
+      if (el.hasAttribute("data-mw-anchor")) continue;
+      el.setAttribute("data-mw-anchor", "");
+      joined = true;
+    }
+    this.#anchors = named;
+    return joined && anchored;
+  }
+
+  /** Whether the probe measures a cell other than the last layout's. */
+  #cellChanged(): boolean {
+    const last = this.#cellMetrics;
+    return last === null || !sameMetrics(last, measureCellMetrics(this, this.#probe));
   }
 
   /** The grid cell under a client point — through a layer's transform
@@ -1261,10 +1296,10 @@ export class MonoWindElement extends HTMLElementBase {
     const { col, row } = at;
     const stack = stackAt(layout, at);
     for (let i = stack.length - 1; i >= 0; i--) {
-      const { node, x, y } = stack[i]!;
+      const node = stack[i]!;
       const range = node.scrollRange;
       if (!range || isInert(node.source)) continue;
-      const bars = scrollbarGeometry(node, x, y);
+      const bars = scrollbarGeometry(node, node.paintOrigin.x, node.paintOrigin.y);
       for (const axis of ["y", "x"] as const) {
         const bar = bars[axis];
         const vertical = axis === "y";
@@ -1346,9 +1381,9 @@ export class MonoWindElement extends HTMLElementBase {
     if (settle) this.#settle(el);
   }
 
-  #onPointerMove = (event: Event): void => {
+  #onPointerMove = (event: PointerEvent): void => {
     if (isTouchInProgress(event)) return; // see #scheduleDynamicRelayout
-    const { clientX, clientY } = event as PointerEvent;
+    const { clientX, clientY } = event;
     const drag = this.#thumbDrag;
     if (drag) {
       const delta = (drag.axis === "y" ? clientY : clientX) - drag.startClient;
@@ -1357,7 +1392,20 @@ export class MonoWindElement extends HTMLElementBase {
       else drag.el.scrollLeft = target;
       return;
     }
-    const held = ((event as PointerEvent).buttons & 1) !== 0;
+    const held = (event.buttons & 1) !== 0;
+    // A press begun outside the host may drag a selection into its text
+    // mode's light DOM: the native highlight locked before this move's
+    // default extends it.
+    if (
+      held &&
+      !this.#pressing &&
+      !this.#trackPaging &&
+      !this.#selectionGesture &&
+      this.getAttribute("select") === "text"
+    ) {
+      this.#selectionGesture = true;
+      this.toggleAttribute(SELECTION, true);
+    }
     if (held && this.#gesture) this.#extendGesture(this.#gesture, clientX, clientY);
     if (held && this.#gridDrag) this.#extendGridDrag(this.#gridDrag, clientX, clientY);
     if (held && this.#pressOnGrid && !this.hasAttribute("data-mw-dragging")) {
@@ -1406,8 +1454,6 @@ export class MonoWindElement extends HTMLElementBase {
         e.target.closest("dialog:modal") !== null);
     if (asText) {
       if (!this.#isTextTarget(e.target)) return;
-    } else if (mode !== "grid") {
-      return;
     } else if (!onGrid && !this.#isPhantomTarget(e.target) && !this.#isCoveredTarget(e)) {
       // The press is a light element's own: it is a pointer target of
       // its own, and the grid shows it where the press landed.
@@ -1419,52 +1465,57 @@ export class MonoWindElement extends HTMLElementBase {
       this.removeAttribute(SEMANTIC_SELECTION);
       if (!finePointer) return;
       if (asText) {
-        this.#startCharacterDrag(e);
-        this.#startAutoscroll(e);
+        this.#startGesture(e, "character");
         return;
       }
       // A press that moves the focus — off a control inside the host,
-      // onto a focus target under the cell — repaints the focus invert,
-      // a structural rebuild a native drag anchor would not survive
-      // (paintGrid holds those until release). Take such a press over,
-      // like a phantom one: move the focus as the click would, drag
-      // through the engine.
+      // onto a focus target under the cell — repaints the focus invert
+      // (#holdsNativeDrag): taken over like a phantom one, the focus
+      // moved as the click would, the drag the engine's.
       const metrics = this.#cellMetrics;
       const at = metrics ? this.#cellAt(e.clientX, e.clientY, metrics) : null;
       const target = at ? this.#focusTargetAt(at) : null;
       if (!onGrid || target || this.#focusedInside()) this.#startGridDrag(e, target);
       return;
     }
-    if (!finePointer) return;
-    const unit = e.detail === 2 ? "word" : "paragraph";
+    if (finePointer) this.#startGesture(e, e.detail === 2 ? "word" : "paragraph");
+  };
+
+  /** A gesture's press: a text-mode one anchors a collapsed range at the
+   * character nearest the cell, which the drag extends by character
+   * (specs/wide-characters.md "Text-mode drags are routed"); a double-
+   * or triple-click selects the word or paragraph under the cell. Shift
+   * extends the existing element selection from its anchor instead.
+   * Nothing there leaves the press native — the browser's own gesture
+   * on a run of glyphs, or the grid line on a triple-click. */
+  #startGesture(e: MouseEvent, unit: GestureUnit): void {
     const selection = document.getSelection();
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!selection || !layout || !metrics) return;
     const at = this.#cellAt(e.clientX, e.clientY, metrics);
-    const target = this.#unitUnder(layout, at.col, at.row, unit, at.layerRoot);
+    const character = unit === "character";
+    const target = character
+      ? this.#unitAt(at, unit)
+      : this.#unitUnder(layout, at.col, at.row, unit, at.layerRoot);
     if (!target) {
-      // No word or paragraph under the cell (a gap, a border, a blank):
-      // the browser's own gesture on the grid — a run of glyphs, or the
-      // grid line on a triple-click.
       this.removeAttribute(SEMANTIC_SELECTION);
       this.#gesture = null;
       return;
     }
-    // Ours from here: no native word/whole-grid selection, no native
-    // drag.
     e.preventDefault();
     this.#focusAs(this.#focusTargetAt(at));
-    this.#liftLock(target);
-    // Shift extends the existing element selection from its anchor.
+    if (!character) this.#liftLock(target);
     const anchor: SelectionUnit =
       e.shiftKey && selection.anchorNode && this.#elementSelection()
         ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
-        : target;
-    this.#selectThrough(selection, anchor, target);
+        : character
+          ? pointUnit(target.start)
+          : target;
+    this.#selectThrough(selection, anchor, character && !e.shiftKey ? anchor : target);
     this.#gesture = { unit, anchor };
     this.#startAutoscroll(e);
-  };
+  }
 
   /** A gesture's auto-scroll (specs/wide-characters.md "auto-scrolls"):
    * the pointer captured so moves keep coming past the host, and the
@@ -1480,7 +1531,7 @@ export class MonoWindElement extends HTMLElementBase {
     const stack = stackAt(layout, this.#cellAt(e.clientX, e.clientY, metrics));
     let container: HTMLElement | null = null;
     for (let i = stack.length - 1; i >= 0 && !container; i--) {
-      const { node } = stack[i]!;
+      const node = stack[i]!;
       if (node.scrollRange && !isInert(node.source)) container = node.source as HTMLElement;
     }
     const outer = this.#outerScrollers[0] as HTMLElement | undefined;
@@ -1625,32 +1676,6 @@ export class MonoWindElement extends HTMLElementBase {
     if (deferred && this.isConnected) this.#scheduleLayout();
   }
 
-  /** The root as a container over its child nodes: the element
-   * children as nodes, the host's own text beside them as anonymous
-   * runs in the host's leaf style (specs/host-leaf.md), the metrics
-   * probe never one. The root carries that style too: its text
-   * properties key the host's native locks (render.ts `markRoot`). */
-  #buildRootContainer(
-    rootFontSizePx: number,
-    metrics: CellMetrics,
-    textareaWidths: TextareaWidths,
-  ): LayoutNode {
-    const nodes = Array.from(this.childNodes).filter((node) => node !== this.#probe);
-    const style = hostLeafStyle(this, rootFontSizePx, metrics);
-    return {
-      source: this,
-      style,
-      children: buildChildren(this, nodes, rootFontSizePx, metrics, textareaWidths, style),
-      text: "",
-      intrinsicWidth: 0,
-      intrinsicHeight: 0,
-      localRect: { x: 0, y: 0, width: 0, height: 0 },
-      unclampedHeight: 0,
-      naturalContentHeight: 0,
-      resolvedPadding: zeroInsets(),
-    };
-  }
-
   /** The focus a click on a cell would move to: the nearest `tabindex`
    * above the element under it — a dialog's content, a menu's, a scroll
    * region. From the cell, since a grid press targets the shadow's
@@ -1682,9 +1707,11 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** Structural repaints are held while a NATIVE drag may be in flight
    * — a press on the grid the engine has not taken over, whose
-   * browser-internal anchor would not survive a rebuild; a press on a
+   * browser-internal anchor would not survive a rebuild (Chromium
+   * collapses it even across a capture and restore); a press on a
    * control is the control's, and an engine-driven grid drag re-derives
-   * its points from flat offsets. */
+   * its points from flat offsets. Style-only paints patch nodes in
+   * place, which an anchor survives. */
   #holdsNativeDrag(): boolean {
     return this.#pressing && this.#pressOnGrid && !this.#gridDrag;
   }
@@ -1692,12 +1719,7 @@ export class MonoWindElement extends HTMLElementBase {
   /** A non-interactive light element inside the host: never a legitimate
    * pointer target in grid mode, so an event there is a grid event. */
   #isPhantomTarget(target: EventTarget | null): boolean {
-    return (
-      target instanceof Element &&
-      target !== this &&
-      this.contains(target) &&
-      !target.matches(INTERACTIVE)
-    );
+    return target instanceof Element && this.#owns(target) && !target.matches(INTERACTIVE);
   }
 
   /** A light element another box paints over at the event's cell
@@ -1713,7 +1735,7 @@ export class MonoWindElement extends HTMLElementBase {
     const e = event as MouseEvent;
     const target = e.target;
     if (!e.isTrusted || e.detail === 0 || this.getAttribute("select") !== "grid") return false;
-    if (!(target instanceof Element) || target === this || !this.contains(target)) return false;
+    if (!(target instanceof Element) || !this.#owns(target)) return false;
     if (!inBox(target, e.clientX, e.clientY)) return false;
     if (target.closest("dialog:modal")) return false;
     const layout = this.#lastLayout;
@@ -1763,9 +1785,8 @@ export class MonoWindElement extends HTMLElementBase {
     if (base && at) document.getSelection()?.setBaseAndExtent(...base, ...at);
   }
 
-  /** Drag extension: the anchor unit through the unit under the pointer,
-   * in DOM order (base at the anchor's far edge, so the browser's
-   * selection direction matches the drag). */
+  /** A drag's extension: the anchor unit through the unit under the
+   * pointer (#selectThrough). */
   #extendGesture(gesture: Gesture, clientX: number, clientY: number): void {
     const metrics = this.#cellMetrics;
     const selection = document.getSelection();
@@ -1778,17 +1799,16 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** Select from the anchor unit through `unit`: the anchor's far edge
    * becomes the base, so the browser's selection direction matches the
-   * gesture. Points inside a custom leaf's shadow cannot pair with
-   * light-tree points, so each side is expressed at light-tree edges
-   * unless both are the same shadow unit. */
+   * gesture. Units in different trees pair at light-tree edges. */
   #selectThrough(selection: Selection, anchor: SelectionUnit, unit: SelectionUnit): void {
+    // The native highlight locked before a range lands, ahead of the
+    // selectionchange a frame may render before.
+    const collapsed = sameUnit(anchor, unit) && sameUnit(unit, pointUnit(unit.start));
+    if (!collapsed) this.toggleAttribute(SELECTION, true);
     if (sameUnit(anchor, unit)) {
       selectBetween(selection, unit.start, unit.end);
       return;
     }
-    // Two units in one tree pair directly — a drag inside a custom
-    // leaf's transcript selects its characters; across trees, each side
-    // is expressed at light-tree edges.
     const sameTree = anchor.start.node.getRootNode() === unit.start.node.getRootNode();
     const from = sameTree ? anchor : this.#lightEdges(anchor);
     const to = sameTree ? unit : this.#lightEdges(unit);
@@ -1796,27 +1816,6 @@ export class MonoWindElement extends HTMLElementBase {
       comparePoints(from.start.node, from.start.offset, to.start.node, to.start.offset) <= 0;
     if (forward) selectBetween(selection, from.start, to.end);
     else selectBetween(selection, from.end, to.start);
-  }
-
-  /** A text-mode press (specs/wide-characters.md "Text-mode drags are
-   * routed"): the character nearest the cell anchors a collapsed range
-   * the drag extends by character; Shift extends the existing
-   * selection to it instead. An empty grid leaves the press native. */
-  #startCharacterDrag(e: MouseEvent): void {
-    const selection = document.getSelection();
-    const metrics = this.#cellMetrics;
-    if (!selection || !metrics) return;
-    const at = this.#cellAt(e.clientX, e.clientY, metrics);
-    const target = this.#unitAt(at, "character");
-    if (!target) return;
-    e.preventDefault();
-    this.#focusAs(this.#focusTargetAt(at));
-    const anchor: SelectionUnit =
-      e.shiftKey && selection.anchorNode && this.#elementSelection()
-        ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
-        : pointUnit(target.start);
-    this.#selectThrough(selection, anchor, e.shiftKey ? target : anchor);
-    this.#gesture = { unit: "character", anchor };
   }
 
   /** In text mode the light DOM takes pointer events: a press on a
@@ -1846,8 +1845,8 @@ export class MonoWindElement extends HTMLElementBase {
     const inner = hitStack(layout, c, r, at.layerRoot).at(-1);
     // An inert element's cells are nobody's (the browser ignores the
     // press there too).
-    if (inner && isInert(inner.node.source)) return null;
-    const boxes = inner ? [hitRect(inner.node, inner.x, inner.y), grid] : [grid];
+    if (inner && isInert(inner.source)) return null;
+    const boxes = inner ? [hitRect(inner), grid] : [grid];
     for (const box of boxes) {
       for (const cell of nearestCells(box.width, box.height, c - box.x, r - box.y)) {
         const x = box.x + cell.x;
@@ -1865,7 +1864,7 @@ export class MonoWindElement extends HTMLElementBase {
           y,
           unit,
           at.layerRoot,
-          box === grid ? null : inner!.node,
+          box === grid ? null : inner!,
         );
         if (!found) continue;
         if (edge === "self" || unit !== "character") return found;
@@ -1875,14 +1874,11 @@ export class MonoWindElement extends HTMLElementBase {
     return null;
   }
 
-  /** The unit under a cell — null unless a CHARACTER of a text leaf is
-   * painted there (padding, borders, gaps, and blank tails are the
-   * browser's), or the cell is outside `within` (a box clipped by its
-   * scroll container paints other content past the clip). The
-   * innermost hit text leaf; its selectionTarget's contents for a
-   * custom leaf; a Segmenter word mapped to DOM positions for the word
-   * gesture (falling back to the paragraph where the text has no
-   * positions). */
+  /** The unit of the innermost text leaf under a cell (#leafUnit): null
+   * unless a CHARACTER of it is painted there (padding, borders, gaps,
+   * and blank tails are the browser's), and outside `within` (a box
+   * clipped by its scroll container paints other content past the
+   * clip). */
   #unitUnder(
     layout: LayoutNode,
     col: number,
@@ -1892,17 +1888,17 @@ export class MonoWindElement extends HTMLElementBase {
     within: LayoutNode | null = null,
   ): SelectionUnit | null {
     const stack = hitStack(layout, col, row, through);
-    if (within && !stack.some((entry) => entry.node === within)) return null;
+    if (within && !stack.includes(within)) return null;
     for (let i = stack.length - 1; i >= 0; i--) {
-      const { node, x, y } = stack[i]!;
+      const node = stack[i]!;
       // An inert leaf's text is unselectable natively: no unit there.
       if (isTextLeaf(node)) {
-        return isInert(node.source) ? null : this.#leafUnit(node, x, y, col, row, unit);
+        return isInert(node.source) ? null : this.#leafUnit(node, col, row, unit);
       }
     }
     // The host's own text (specs/host-leaf.md): the root leaf lies under
     // every cell no child covers.
-    return isTextLeaf(layout) ? this.#leafUnit(layout, 0, 0, col, row, unit) : null;
+    return isTextLeaf(layout) ? this.#leafUnit(layout, col, row, unit) : null;
   }
 
   /** The character, word, or paragraph of a text leaf at a cell; null
@@ -1910,15 +1906,8 @@ export class MonoWindElement extends HTMLElementBase {
    * A character is positioned through the leaf's source map or a custom
    * leaf's transcript, a word on a custom leaf is the art's line; either
    * without a position is the leaf's whole contents (#leafContents). */
-  #leafUnit(
-    node: LayoutNode,
-    x: number,
-    y: number,
-    col: number,
-    row: number,
-    unit: GestureUnit,
-  ): SelectionUnit | null {
-    const index = charIndexAtCell(node, x, y, col, row);
+  #leafUnit(node: LayoutNode, col: number, row: number, unit: GestureUnit): SelectionUnit | null {
+    const index = charIndexAtCell(node, node.paintOrigin.x, node.paintOrigin.y, col, row);
     // Hidden text takes no selection gesture, as natively.
     if (index === null || !charVisible(node, index)) return null;
     if (unit === "character" && node.text[index] === INLINE_PAD) return null;
@@ -1983,9 +1972,10 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** Lift the grid-mode lock before the range is set — a forced style
    * resolution on the unit's element, so the range only ever lands in
-   * selectable content. */
+   * selectable content — the highlight locked in the same resolution. */
   #liftLock(unit: SelectionUnit): void {
     this.setAttribute(SEMANTIC_SELECTION, "");
+    this.setAttribute(SELECTION, "");
     const node = unit.start.node;
     const element = node instanceof Element ? node : node.parentElement;
     if (element) void getComputedStyle(element).userSelect;
@@ -1996,33 +1986,59 @@ export class MonoWindElement extends HTMLElementBase {
    * light range around its host); null otherwise. */
   #elementSelection(): BoundaryPoints | null {
     const layout = this.#lastLayout;
-    const range = selectionRangeThrough(
-      this.#grid.getRootNode() as ShadowRoot,
-      layout ? leafShadowRoots(layout) : [],
-    );
+    const range = selectionRangeThrough(this.#shadow, layout ? leafShadowRoots(layout) : []);
     if (!range || classifySelection(this, this.#grid, range) !== "light") return null;
     const collapsed =
       range.startContainer === range.endContainer && range.startOffset === range.endOffset;
     return collapsed ? null : range;
   }
 
+  /** Whether a live selection reaches the host's light DOM, both ends in
+   * it or not — a select-all, a drag in from page text, a script's range
+   * across the host — which the highlight lock holds for; a grid drag's
+   * is the grid's own. */
+  #reachesLight(): boolean {
+    if (this.#elementSelection()) return true;
+    const selection = document.getSelection();
+    if (!selection || selection.isCollapsed || !selection.containsNode(this, true)) return false;
+    const range = selectionRangeThrough(this.#shadow);
+    return range !== null && classifySelection(this, this.#grid, range) !== "grid";
+  }
+
   /** The lift ends once the selection left the light DOM or collapsed;
    * the grid repaints its highlight (a frame, through #schedulePaint —
-   * an unchanged paint costs a signature). */
+   * an unchanged paint costs a comparison of its rows). */
   #onSelectionChange = (): void => {
     const selected = this.#elementSelection() !== null;
     if (this.hasAttribute(SEMANTIC_SELECTION) && !selected) {
       this.removeAttribute(SEMANTIC_SELECTION);
     }
+    this.toggleAttribute(SELECTION, selected || this.#selectionGesture || this.#reachesLight());
     // A selection elsewhere in the document is none of this host's
     // business unless it just left it.
     if ((selected || this.#paintedSelection) && this.#lastLayout) this.#schedulePaint();
     this.#paintedSelection = selected;
   };
 
+  /** A selection the user starts in the host's light DOM, or from an
+   * ancestor (a select-all): the native highlight is locked before the
+   * selection moves, to a press's release, or to the first
+   * selectionchange of a key's. The grid and the elements that paint
+   * their own selection keep the browser's highlight. */
+  #onSelectStart = (event: Event): void => {
+    const path = event.composedPath();
+    if (this.#onGrid(path)) return;
+    const target = event.target;
+    if (!path.includes(this) && !(target instanceof Node && target.contains(this))) return;
+    const element =
+      target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    if (element?.closest(OWN_HIGHLIGHT)) return;
+    this.#selectionGesture ||= this.#pressHeld;
+    this.toggleAttribute(SELECTION, true);
+  };
+
   /** Paint the grid from `root`: the glyph boxes for this font, the
-   * light-DOM selection as inverted cells, structural rebuilds held
-   * while a native drag may be in flight. */
+   * light-DOM selection as inverted cells (#holdsNativeDrag). */
   #paint(root: LayoutNode, placeLayers = true): boolean {
     const range = this.#elementSelection();
     const metrics = this.#cellMetrics;
@@ -2033,7 +2049,26 @@ export class MonoWindElement extends HTMLElementBase {
       cell: metrics ? { width: metrics.width, height: metrics.height } : undefined,
       layers: this.#layers,
       placeLayers,
+      ground: this.#ground,
+      ink: this.#ink,
+      readColor: this.#readColor,
     });
+  }
+
+  /** A color the parser leaves alone, as the probe resolves it; null
+   * for none. */
+  #readColor = (value: string): Rgba | null => {
+    let color = this.#probedColors.get(value);
+    if (color === undefined) this.#probedColors.set(value, (color = this.#probeColor(value)));
+    return color;
+  };
+
+  #probeColor(value: string): Rgba | null {
+    const style = this.#colorProbe.style;
+    style.outlineColor = "";
+    style.outlineColor = value;
+    if (style.outlineColor === "") return null;
+    return parseColor(this.#colorProbeStyle.outlineColor);
   }
 
   #onPointerLeave = (): void => {
@@ -2042,8 +2077,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#updatePointerStates();
   };
 
-  #onPointerDown = (event: Event): void => {
-    const e = event as PointerEvent;
+  #onPointerDown = (e: PointerEvent): void => {
     if (!e.isPrimary || e.button !== 0) return;
     this.#lastPointerType = e.pointerType;
     this.#lastPointerId = e.pointerId;
@@ -2069,8 +2103,17 @@ export class MonoWindElement extends HTMLElementBase {
     this.#updatePointerStates(true);
   };
 
-  #onPointerUp = (event: Event): void => {
-    if (!(event as PointerEvent).isPrimary) return;
+  #onAnyPointerDown = ({ isPrimary, button }: PointerEvent): void => {
+    if (isPrimary && button === 0) this.#pressHeld = true;
+  };
+
+  #onPointerUp = (event: PointerEvent): void => {
+    if (!event.isPrimary) return;
+    this.#pressHeld = false;
+    if (this.#selectionGesture) {
+      this.#selectionGesture = false;
+      this.toggleAttribute(SELECTION, this.#reachesLight());
+    }
     this.#ownsRelease = event.type === "pointerup" && this.#gesture !== null;
     this.#gesture = null;
     this.#stopAutoscroll();
@@ -2088,7 +2131,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.#settle(el);
       return;
     }
-    if (!this.#pressing && !this.#pressTarget) return;
+    if (!this.#pressing) return;
     this.#pressing = false;
     this.#pressTarget = null;
     this.#updatePointerStates();
@@ -2111,12 +2154,20 @@ export class MonoWindElement extends HTMLElementBase {
     // stale offsets), and a container's scroll never moves the grid itself.
     const target = event.target;
     if (target instanceof HTMLElement && target.hasAttribute("data-mw-scroll")) return;
+    this.#onGridMoved();
+  };
+
+  /** The grid moved in the viewport — the page scrolled, a box around
+   * the host changed height, the host's own transform settled: its
+   * origin is read afresh, the top layer follows it, and a pointer held
+   * still is over other cells. */
+  #onGridMoved(): void {
     this.#gridOrigin = null;
     this.#syncTopLayerOrigin();
     if (!this.#hoverClient) return;
     this.#followPointer();
     this.#updatePointerStates();
-  };
+  }
 
   /** The light elements the browser hit where the grid shows another
    * box (specs/cell-model.md "Pointer states"), `innermost` the cell's
@@ -2215,35 +2266,38 @@ export class MonoWindElement extends HTMLElementBase {
     return changed;
   }
 
-  #activeTransitions = 0;
-  #activeLayerTransitions = 0;
   #samplingLoopRunning = false;
-  #lastTransitionRun = 0;
-  /** The light elements with a running keyframe animation, each with
-   * what a frame does for it (specs/animations.md). */
+  /** The animations under the host as the last query found them, which
+   * the frames read until a layout's query or an animation's or
+   * transition's start brings a new one: an end, a pause, a cancel and
+   * a removal show in each one's play state. */
+  #animations: readonly Animation[] | null = null;
+  /** The light elements the last tick found animating, each with what
+   * a frame does for it (specs/animations.md). */
   #animated = new Map<Element, AnimationPath>();
   /** The last layout's nodes by element, built when a frame needs
    * one. */
   #nodes: Map<Element, LayoutNode> | null = null;
 
-  /** An animation on a light element joins the sampling loop: its
-   * keyframes' properties pick its path, and a layout opens the layer
-   * it may need. The loop's ticks follow it from there — each one
-   * asks the element's animations what still runs — so an infinite
-   * animation samples for as long as it runs. */
+  /** An animation on a light element starts the sampling loop, and a
+   * layout opens the layer it may need. */
   #onAnimationStart = (event: Event): void => {
+    this.#animations = null;
     const el = event.target;
     if (!(el instanceof Element) || !this.#owns(el) || this.#animated.has(el)) return;
-    this.#follow(el);
+    this.#startSamplingLoop();
     this.#scheduleLayout();
   };
 
-  /** An end lands its state with a layout: the value it leaves beside
-   * an animation still running, or a resumed one-shot's the loop never
-   * followed, is the last layout's to read. */
+  /** An end with no loop running to land it — a resumed one-shot's,
+   * which no event announced — lands with a layout; the host's own may
+   * have moved the grid. */
   #onAnimationDone = (event: Event): void => {
     const el = event.target;
-    if (el instanceof Element && this.#owns(el)) this.#scheduleLayout();
+    if (el === this) this.#onGridMoved();
+    else if (el instanceof Element && this.#owns(el) && !this.#samplingLoopRunning) {
+      this.#scheduleLayout();
+    }
   };
 
   /** A light element of this host. */
@@ -2258,21 +2312,39 @@ export class MonoWindElement extends HTMLElementBase {
   #visibleCells: Rect | null = null;
   #centeredTopLayer = false;
 
-  /** The boxes around the host, per layout, read before the mask — the
-   * engine's rules stop at the host, so the ancestors read authored
-   * either way, but a wheel arrives between layouts: the native
-   * scrollers a page-owned wheel sequence may still have room in
-   * (#outsideCanScroll), and every box that clips the grid, which
-   * bounds the cells its reader can see (#visibleCells). */
-  #collectSurroundingBoxes(): void {
+  /** What around the host a layout reads, in one walk of the boxes
+   * behind it: the native scrollers a page-owned wheel sequence may
+   * still have room in (#outsideCanScroll), the boxes clipping the grid
+   * (#visibleCells), the backgrounds the tokens derive from, the host's
+   * own first, and the boxes that may be in transition. */
+  #readSurroundings(hostStyle: CSSStyleDeclaration): {
+    backgrounds: string[];
+    transitioning: Element[];
+  } {
     this.#outerScrollers = [];
     this.#outerClips = [];
     const page = this.ownerDocument.scrollingElement ?? this.ownerDocument.documentElement;
-    for (let el = this.parentElement; el; el = el.parentElement) {
-      const { overflow } = getComputedStyle(el);
-      if (el === page || /auto|scroll/.test(overflow)) this.#outerScrollers.push(el);
+    const backgrounds = [hostStyle.backgroundColor];
+    const transitioning: Element[] = [];
+    for (let el = behind(this); el; el = behind(el)) {
+      const style = getComputedStyle(el);
+      const { overflow } = style;
+      if (el === page || /auto|scroll/u.test(overflow)) this.#outerScrollers.push(el);
       // The page's own clip is the window, which #visibleCells starts from.
-      if (el !== page && /auto|scroll|hidden|clip/.test(overflow)) this.#outerClips.push(el);
+      if (el !== page && /auto|scroll|hidden|clip/u.test(overflow)) this.#outerClips.push(el);
+      backgrounds.push(style.backgroundColor);
+      if (mayTransition(style)) transitioning.push(el);
+    }
+    return { backgrounds, transitioning };
+  }
+
+  #awaitColorTransitions(el: Element): void {
+    for (const animation of el.getAnimations?.() ?? []) {
+      if (!("transitionProperty" in animation) || this.#awaitedTransitions.has(animation)) continue;
+      if (!/^(background-)?color$/u.test(animation.transitionProperty as string)) continue;
+      this.#awaitedTransitions.add(animation);
+      const land = (): void => this.#scheduleLayout();
+      animation.finished.then(land, land);
     }
   }
 
@@ -2286,25 +2358,53 @@ export class MonoWindElement extends HTMLElementBase {
     this.#scheduleLayout();
   };
 
-  get #hostRule(): CSSStyleDeclaration {
-    return (this.#hostSheet.cssRules[0] as CSSStyleRule).style;
+  get #hostRule(): CSSStyleRule {
+    return this.#hostSheet.cssRules[0] as CSSStyleRule;
   }
 
   /** `--mw-fg`/`--mw-bg` follow the host's own colors (specs/theming.md):
-   * its computed `color`, and its background or the nearest ancestor's
-   * where its own is transparent, `canvas` past the root — written
-   * before the measure, so the invert reads them; an outer rule's token
+   * its `color`, and its background composited over `backgrounds` down
+   * to an opaque one, `canvas` past the root; an outer rule's token
    * still outranks `:host`. */
-  #syncTokens(hostStyle: CSSStyleDeclaration): void {
-    let background = hostStyle.backgroundColor;
-    for (let el = behind(this); el && isTransparentColor(background); el = behind(el)) {
-      background = getComputedStyle(el).backgroundColor;
+  #writeTokens(color: string, backgrounds: string[]): void {
+    const translucent: Rgba[] = [];
+    let background = "canvas";
+    for (const each of backgrounds) {
+      if (isTransparentColor(each)) continue;
+      const parsed = parseColor(each);
+      if (!parsed || parsed.a >= 1) {
+        background = each;
+        break;
+      }
+      translucent.push(parsed);
     }
-    const tokens = this.#hostRule;
-    const fg = hostStyle.color;
-    const bg = isTransparentColor(background) ? "canvas" : background;
-    if (tokens.getPropertyValue("--mw-fg") !== fg) tokens.setProperty("--mw-fg", fg);
-    if (tokens.getPropertyValue("--mw-bg") !== bg) tokens.setProperty("--mw-bg", bg);
+    if (translucent.length > 0) {
+      const under = background === "canvas" ? this.#colorProbeStyle.borderTopColor : background;
+      let composite = parseColor(under);
+      if (composite) {
+        for (let i = translucent.length - 1; i >= 0; i--) {
+          composite = compositeColors(translucent[i]!, composite);
+        }
+        background = serializeColor(composite);
+      }
+    }
+    setVar(this.#hostRule, "--mw-fg", color);
+    setVar(this.#hostRule, "--mw-bg", background);
+  }
+
+  /** The ground a selected translucent cell swaps over and the ink of a
+   * glyph without a color (specs/cell-model.md "Opacity and
+   * translucency"), read back once the style is clean with the
+   * contextual colors the probe resolved. */
+  #readGround(): void {
+    const probe = this.#colorProbeStyle;
+    this.#ground = parseColor(probe.backgroundColor) ?? undefined;
+    this.#ink = parseColor(probe.color) ?? undefined;
+    const probed = this.#probedColors;
+    if (probed.size > 256) probed.clear();
+    for (const value of probed.keys()) {
+      if (CONTEXTUAL_COLOR.test(value)) probed.set(value, this.#probeColor(value));
+    }
   }
 
   /** The cells of the grid its reader can see, where the top layer's
@@ -2360,21 +2460,8 @@ export class MonoWindElement extends HTMLElementBase {
     ) {
       this.#scheduleLayout();
     }
-    const origin = this.#hostRule;
-    const [ox, oy] = [`${rect.left}px`, `${rect.top}px`];
-    if (origin.getPropertyValue("--mw-ox") !== ox) origin.setProperty("--mw-ox", ox);
-    if (origin.getPropertyValue("--mw-oy") !== oy) origin.setProperty("--mw-oy", oy);
-  }
-
-  /** An element found animating joins the set with its path — a
-   * layout's until its animations answer — and the loop runs. */
-  #follow(el: Element): void {
-    this.#animated.set(el, this.#animationPathOf(el) ?? "layout");
-    this.#startSamplingLoop();
-  }
-
-  #animationPathOf(el: Element): AnimationPath | null {
-    return animationPath(animatedProperties(el), this.#nodeOf(el));
+    setVar(this.#hostRule, "--mw-ox", `${rect.left}px`);
+    setVar(this.#hostRule, "--mw-oy", `${rect.top}px`);
   }
 
   /** `showsElement`'s test, bound for it. */
@@ -2386,84 +2473,84 @@ export class MonoWindElement extends HTMLElementBase {
     return this.#nodes.get(el) ?? null;
   }
 
-  /** A frame of the paint path (specs/animations.md): the animated
-   * elements' live paint-only properties onto their nodes, then the
-   * last layout painted again, its layers placed with it. */
-  #resampleAndPaint(): void {
+  /** A frame of the paint path (specs/animations.md): the elements'
+   * live paint-only properties onto their nodes, then the last layout
+   * painted again, its layers placed with it. */
+  #resampleAndPaint(elements: Iterable<Element>): void {
     const layout = this.#lastLayout;
     if (!layout) return;
-    for (const [el, path] of this.#animated) {
-      if (path !== "paint") continue;
+    for (const el of elements) {
       const node = this.#nodeOf(el);
       if (node) Object.assign(node.style, readPaintStyle(getComputedStyle(el)));
     }
     this.#paintHeld = !this.#paint(layout);
   }
 
-  #onTransitionRun = (event: Event): void => {
-    const property = (event as TransitionEvent).propertyName;
-    if (!SAMPLED_TRANSITION.test(property)) return;
-    if (LAYER_TRANSITION.test(property)) {
-      this.#activeLayerTransitions++;
-      // The layer the frames copy onto: opened by a layout, for an
-      // effect that arrived without one (a rule outside the host).
+  #onTransitionRun = ({ propertyName, pseudoElement, target: el }: TransitionEvent): void => {
+    this.#animations = null;
+    if (!(el instanceof Element)) return;
+    if (!transitionSampling(propertyName, el, pseudoElement !== "", this)) return;
+    // The layer an effect's frames copy onto: opened by a layout for an
+    // element not yet one (an effect a rule outside the host set).
+    if (EFFECTS.has(propertyName) && !this.#nodeOf(el)?.style.layer) {
       this.#scheduleLayout();
-    } else this.#activeTransitions++;
-    this.#lastTransitionRun = performance.now();
+    }
     this.#startSamplingLoop();
   };
 
-  #onTransitionDone = (event: Event): void => {
-    const property = (event as TransitionEvent).propertyName;
-    // A popover's exit rides a display or overlay transition: its end
-    // lands with a layout (specs/top-layer.md).
-    if (property === "display" || property === "overlay") {
-      this.#scheduleLayout();
-      return;
-    }
-    if (!SAMPLED_TRANSITION.test(property)) return;
-    if (LAYER_TRANSITION.test(property)) {
-      this.#activeLayerTransitions = Math.max(0, this.#activeLayerTransitions - 1);
-    } else this.#activeTransitions = Math.max(0, this.#activeTransitions - 1);
+  /** A popover's exit rides a display or overlay transition, whose end
+   * lands with a layout (specs/top-layer.md); the host's own ending may
+   * have moved the grid. */
+  #onTransitionDone = ({ propertyName, target }: TransitionEvent): void => {
+    if (propertyName === "display" || propertyName === "overlay") this.#scheduleLayout();
+    else if (target === this) this.#onGridMoved();
   };
 
   #startSamplingLoop(): void {
     if (this.#samplingLoopRunning) return;
     this.#samplingLoopRunning = true;
-    const tick = (): void => {
-      // Each animated element's path follows its animations as they
-      // run, pause, and end.
-      for (const el of this.#animated.keys()) {
-        const path = this.#owns(el) ? this.#animationPathOf(el) : null;
-        if (path) this.#animated.set(el, path);
-        else this.#animated.delete(el);
-      }
-      // The valve is the transitions': an animation's liveness is
-      // asked above.
-      if (performance.now() - this.#lastTransitionRun > SAMPLING_VALVE_MS) {
-        this.#activeTransitions = 0;
-        this.#activeLayerTransitions = 0;
+    /** Whether the last frame read its values through a layout. */
+    let relaidOut = false;
+    const tick = (time: number): void => {
+      const last = this.#animated;
+      this.#animated = new Map();
+      let relayout = false;
+      if (this.isConnected) {
+        this.#animations ??= this.getAnimations?.({ subtree: true }) ?? [];
+        const running = runningUnder(this, this.#animations);
+        for (const [el, properties] of running.elements) {
+          const path = animationPath(properties, this.#nodeOf(el));
+          if (path) this.#animated.set(el, path);
+        }
+        relayout = running.relayout;
       }
       const paths = new Set(this.#animated.values());
-      const sampled =
-        this.#activeTransitions > 0 || hasSynthesizedTransitions() || paths.has("layout");
-      if (
-        !this.isConnected ||
-        (!sampled && this.#activeLayerTransitions === 0 && this.#animated.size === 0)
-      ) {
+      const sampled = relayout || paths.has("layout") || hasSynthesizedTransitions();
+      if (!this.isConnected || (!sampled && this.#animated.size === 0)) {
         this.#samplingLoopRunning = false;
         // One final settle pass so the grid lands exactly on the
         // transitions' target values and an animation's end state.
         this.#scheduleLayout();
         return;
       }
-      // A relayout reads everything; live paint-only properties need
-      // a repaint; a layer's transform or filter alone moves its box.
-      if (sampled) {
-        // Held under a key's scroll like any relayout (#onScrollKey).
-        if (!this.#keyScroll) this.#performLayoutSafely();
-      } else if (paths.has("paint")) this.#resampleAndPaint();
-      else syncLayers(this.#layers);
+      // What the last frame showed lands in this one by the same path:
+      // a layout reads every value, a repaint what its elements paint,
+      // and a layer's box is placed every frame.
+      const landing = relaidOut;
+      relaidOut = sampled;
+      const repainted = new Set<Element>();
+      for (const [el, path] of [...last, ...this.#animated]) {
+        if (path === "paint" && el.isConnected) repainted.add(el);
+      }
+      // A layout this frame read every value already.
+      if (time !== this.#laidOutFrame) {
+        if (sampled || landing) {
+          // Held under a key's scroll like any relayout (#onScrollKey).
+          if (this.#keyScroll) this.#keyScroll.deferred = true;
+          else this.#performLayoutSafely();
+        } else if (repainted.size > 0) this.#resampleAndPaint(repainted);
+        else syncLayers(this.#layers);
+      }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -2486,12 +2573,10 @@ export class MonoWindElement extends HTMLElementBase {
       const scrolls = target instanceof Element && target.hasAttribute("data-mw-scroll");
       if (key !== "Enter" && (key !== " " || scrolls)) return;
     }
-    // Focus moving onto or off a <select>: relayout NOW, while still
-    // inside the event dispatch — the click's default action opens the
-    // picker right after, and once it's open relayouts are held (see
-    // #openSelectPicker). Deferring here would freeze the grid with
-    // the PREVIOUS focus-invert while native text colors update,
-    // leaving the old select white-on-white.
+    // Focus moving onto or off a <select> lays out in the event's
+    // dispatch: the click's default opens the picker next, which holds
+    // relayouts (#openSelectPicker), and the focus invert would stay
+    // stale under it.
     if (
       (event.type === "focusin" || event.type === "focusout") &&
       event.target instanceof HTMLSelectElement
@@ -2503,35 +2588,22 @@ export class MonoWindElement extends HTMLElementBase {
   };
 
   attributeChangedCallback(name: string, _previous: string | null, next: string | null): void {
-    if (name === "focus") {
-      // Keyboard-only: no layout depends on it.
-      if (next !== "tab" && next !== "arrows") {
-        if (next !== null) {
-          console.warn(
-            `[monowind] Ignoring unrecognized focus="${next}". Expected "tab" (default) or "arrows".`,
-            warnSubject(this),
-          );
-        }
-        this.setAttribute("focus", DEFAULT_FOCUS);
-      }
-      return;
-    }
-    if (name === "select" && next !== "text" && next !== "grid") {
+    const [initial, other] = HOST_KEYWORDS[name as keyof typeof HOST_KEYWORDS];
+    if (next !== initial && next !== other) {
       if (next !== null) {
         console.warn(
-          `[monowind] Ignoring unrecognized select="${next}". Expected "grid" (default) or "text".`,
+          `[monowind] Ignoring unrecognized ${name}="${next}". Expected "${initial}" (default) or "${other}".`,
           warnSubject(this),
         );
       }
-      // Reflect the default so the attribute is the single source of
-      // truth — every selector keys on an explicit value, and no CSS
-      // has to know what an absent attribute means.
-      this.setAttribute("select", DEFAULT_SELECT);
+      this.setAttribute(name, initial);
       return;
     }
+    // focus is keyboard-only: no layout depends on it.
+    if (name === "focus") return;
     // select="text" hands pointer events back to the light DOM — the
     // synthesized chains must not double up with the native states.
-    if (name === "select") this.#updatePointerStates();
+    this.#updatePointerStates();
     this.#scheduleLayout();
   }
 
@@ -2541,7 +2613,7 @@ export class MonoWindElement extends HTMLElementBase {
    * pending layout so the snapshot is current; empty before the first
    * layout or when the host has no laid-out content. */
   toPlainText(): string {
-    // The already-queued rAF will re-run the layout; that's idempotent.
+    // The layout takes the queued frame's place.
     if (this.#layoutPending || this.#keyScroll?.deferred) {
       this.#performLayout();
       if (this.#keyScroll) this.#keyScroll.deferred = false;
@@ -2557,19 +2629,21 @@ export class MonoWindElement extends HTMLElementBase {
     // Defer a frame: rAF callbacks run BEFORE the style recalc that
     // applies a freshly loaded font, so an immediate layout could measure
     // the PRE-swap fallback metrics when the event and the swap land in
-    // the same frame (seen consistently on slow CI runners). One frame
-    // later the swap has rendered; #scheduleLayout adds its own rAF.
-    // The glyph boxes measured under the fallback go with it.
+    // the same frame. One frame later the swap has rendered;
+    // #scheduleLayout adds its own rAF.
+    // The glyph boxes measured under the fallback go with it, and a
+    // layout follows only where the cell or a cached glyph measures
+    // differently: fonts settle on every page.
     requestAnimationFrame(() => {
+      const generation = this.#glyphs.generation;
       this.#glyphs.invalidate();
-      this.#scheduleLayout();
+      if (this.#glyphs.generation !== generation || this.#cellChanged()) this.#scheduleLayout();
     });
   };
 
-  /** True while a focused in-host <select> has its picker open. A
-   * relayout then would churn styles and make Chrome dismiss the
-   * picker instantly (`:open` on <select> is Chromium-only for now;
-   * browsers without it don't dismiss and fall through). */
+  /** True while a focused in-host <select> has its picker open
+   * (`:open`), which a relayout's style churn dismisses in Chromium
+   * (specs/cell-model.md, the held relayouts). */
   #openSelectPicker(): boolean {
     const active = document.activeElement;
     if (!(active instanceof HTMLSelectElement) || !this.contains(active)) return false;
@@ -2591,7 +2665,7 @@ export class MonoWindElement extends HTMLElementBase {
   #scheduleLayout(): void {
     if (this.#layoutPending || this.#nested) return;
     this.#layoutPending = true;
-    requestAnimationFrame(() => {
+    this.#layoutRequest = requestAnimationFrame((time) => {
       this.#layoutPending = false;
       // Hold the relayout while a select picker is up — re-arm so it
       // runs the frame after the picker closes (change or dismiss).
@@ -2606,6 +2680,7 @@ export class MonoWindElement extends HTMLElementBase {
         this.#schedulePaint();
         return;
       }
+      this.#laidOutFrame = time;
       this.#performLayoutSafely();
     });
   }
@@ -2615,10 +2690,10 @@ export class MonoWindElement extends HTMLElementBase {
    * hidden: the measuring mask cancels the transition, which CSS shows
    * throughout (specs/visibility.md). Found before the mask goes on,
    * where the author's transitions run. */
-  #holdFades(): void {
+  #holdFades(animations: readonly Animation[]): void {
     if (!this.hasAttribute("data-mw-ready") || typeof CSSTransition === "undefined") return;
     const now = performance.now();
-    for (const animation of this.getAnimations({ subtree: true })) {
+    for (const animation of animations) {
       if (!(animation instanceof CSSTransition) || animation.transitionProperty !== "visibility") {
         continue;
       }
@@ -2650,36 +2725,51 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #performLayout(): void {
+    // Any layout serves a pending one: it reads everything as it is.
+    if (this.#layoutPending) {
+      this.#layoutPending = false;
+      cancelAnimationFrame(this.#layoutRequest);
+    }
     // A queued frame can outlive the host's removal (story/app teardown,
     // SPA navigation): computed styles on a detached tree read as empty
     // strings, which would misclassify every element and misfire author
     // warnings. Reconnection schedules a fresh layout. A nested host
     // drops the frame an attribute queued before it connected.
     if (!this.isConnected || this.#nested) return;
+    // A host in no box (inside `display: none`) lays nothing out: its
+    // resize lays it out once it shows.
+    if (this.checkVisibility?.() === false) {
+      this.#laidOutSize = null;
+      return;
+    }
     // Container positions are read before the mask and written back after
     // it (specs/scrolling.md); bottom-stick resolves in between.
     const scrollState = this.#captureScrollState();
-    this.#collectSurroundingBoxes();
-    // Snapshot each textarea's content-area width in cells BEFORE the
-    // measuring attribute goes on. Inside measuring the engine's width
-    // rule is off — the textarea reverts to its browser-default width
-    // and any read would be wrong. The tree builder wraps the value
-    // against this width to compute the row count.
+    // Each textarea's content width in cells, read before the mask takes
+    // the engine's width rule off it: the tree wraps its value at that
+    // width.
     const textareaWidths: TextareaWidths = new Map();
+    const textareas = this.querySelectorAll<HTMLTextAreaElement>("textarea");
     const hostStyle = getComputedStyle(this);
-    this.#syncTokens(hostStyle);
     const cellWidth = hostStyle.getPropertyValue("--mw-cw").trim();
     const cellWidthPx = parseFloat(cellWidth);
     if (Number.isFinite(cellWidthPx) && cellWidthPx > 0) {
-      for (const ta of this.querySelectorAll<HTMLTextAreaElement>("textarea")) {
-        const style = getComputedStyle(ta);
-        const contentPx = ta.clientWidth - pxSum(style, "padding-left", "padding-right");
+      for (const textarea of textareas) {
+        const style = getComputedStyle(textarea);
+        const contentPx = textarea.clientWidth - pxSum(style, "padding-left", "padding-right");
         // `round` (not `floor`) so subpixel remainders don't chop one
         // cell off the width — the browser rarely wraps a character
         // that fits within half a cell of the edge.
-        textareaWidths.set(ta, Math.max(0, Math.round(contentPx / cellWidthPx)));
+        textareaWidths.set(textarea, Math.max(0, Math.round(contentPx / cellWidthPx)));
       }
     }
+    // What runs under the host, asked once for the pass
+    // (specs/animations.md): the fades it holds, the layers its reads
+    // keep, and the sampling it starts. The mask keeps every animation
+    // the reads take, so the answer before it serves under it.
+    const animations = this.getAnimations?.({ subtree: true }) ?? [];
+    this.#animations = animations;
+    const running = runningUnder(this, animations);
     // The write phase is bracketed by the `measuring` attribute and each
     // light element's flag (they gate the companion stylesheet so reads
     // see authored values). Everything the
@@ -2688,24 +2778,41 @@ export class MonoWindElement extends HTMLElementBase {
     // `finally` drains exactly our own mutation records. Observation
     // resumes the moment #performLayout returns: a user mutation in the
     // same task (right after a layout) is seen normally.
-    this.#holdFades();
+    this.#holdFades(animations);
     this.setAttribute("measuring", "");
-    // A flag per element, so a flip restyles that element alone
-    // (styles.css "Typography locks and measuring gates").
-    const gated = this.querySelectorAll("*");
-    for (const el of gated) el.setAttribute("data-mw-measuring", "");
+    let gated: Iterable<Element> = [];
+    // What the settling round masks (see finally): unknown until the
+    // reads, every element then.
+    let settling: { host: boolean; elements: Set<Element> } | null = null;
+    const outerReading = readingAnimations(running);
     try {
-      // (1) Cell metrics — measured EVERY layout from the persistent
-      // probe (one getBoundingClientRect on a hidden node; layout is
-      // already being forced). No cache to go stale: fonts settling out of
-      // order with our rAFs once left a fallback-font measurement cached
-      // with nothing to invalidate it. The vars are only rewritten when
-      // the values change. A host innerHTML swap wipes the probe (a
-      // detached node measures 0×0, and 0-px cells blow the layout up) —
-      // re-adopt it here; the childList record drains with the engine's
-      // own writes below.
+      // The host's colors and what lies behind it, read under the host's
+      // mask alone — which ends a transition of its background, the
+      // tokens taking the value it lands on — and the tokens written
+      // before the elements' flags: one style resolution serves both.
+      const { backgrounds, transitioning } = this.#readSurroundings(hostStyle);
+      this.#writeTokens(hostStyle.color, backgrounds);
+      for (const el of transitioning) this.#awaitColorTransitions(el);
+      // A flag per element, so a flip restyles that element alone
+      // (styles.css "Typography locks and measuring gates"). The
+      // interactivity marks go on before the read, which the focus
+      // invert's exclusion shapes.
+      gated = this.querySelectorAll("*");
+      for (const el of gated) {
+        el.setAttribute("data-mw-measuring", "");
+        markInteractivity(el);
+      }
+      // (1) Cell metrics, from the persistent probe each layout; an
+      // innerHTML swap detaches it, so re-adopt it (a detached probe
+      // measures 0×0).
       if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
       const metrics = measureCellMetrics(this, this.#probe);
+      // A cell of no size (a zero font; a host in no box, to an engine
+      // without checkVisibility) lays nothing out.
+      if (!(metrics.width > 0 && metrics.height > 0)) {
+        this.#laidOutSize = null;
+        return;
+      }
       const previous = this.#cellMetrics;
       if (previous === null || !sameMetrics(previous, metrics)) {
         this.style.setProperty("--mw-cw", `${metrics.width}px`);
@@ -2741,6 +2848,7 @@ export class MonoWindElement extends HTMLElementBase {
           ...(metrics.baseline === undefined ? {} : { baseline: metrics.baseline }),
         },
       );
+      this.#readGround();
 
       // (2) Available cells from the host's CONTENT box — authored padding
       // on the host stays outside the grid (the shadow slot box, which
@@ -2748,7 +2856,10 @@ export class MonoWindElement extends HTMLElementBase {
       // clientWidth excludes the border; subtract the padding ourselves.
       const padX = pxSum(hostStyle, "padding-left", "padding-right");
       const availableCols = Math.max(0, Math.floor((this.clientWidth - padX) / metrics.width));
-      if (availableCols === 0) return;
+      if (!(availableCols > 0)) {
+        this.#laidOutSize = null;
+        return;
+      }
       // The cells the reader can see, where the top layer's UA
       // placement resolves (specs/top-layer.md). Read here, beside the
       // host's own box, so it costs no layout of its own.
@@ -2758,10 +2869,13 @@ export class MonoWindElement extends HTMLElementBase {
       // content is the root leaf (specs/host-leaf.md); with a block-level
       // child the root is a virtual container over its child nodes, the
       // host's own text as anonymous runs.
-      const rootFontSizePx = getRootFontSizePx();
-      const virtualRoot =
-        buildRootLeaf(this, rootFontSizePx, metrics, textareaWidths) ??
-        this.#buildRootContainer(rootFontSizePx, metrics, textareaWidths);
+      let virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths);
+      if (this.#scopeAnchors(virtualRoot)) {
+        virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths);
+      }
+      // Found while the reads leave the style clean.
+      settling = { host: mayTransition(hostStyle), elements: new Set() };
+      for (const el of gated) if (mayTransition(getComputedStyle(el))) settling.elements.add(el);
 
       // (4) Compute integer layout, and the top-layer stack over it.
       if (this.#visibleCells) virtualRoot.visibleCells = this.#visibleCells;
@@ -2782,20 +2896,14 @@ export class MonoWindElement extends HTMLElementBase {
       // before clearing the measuring attribute so the browser only
       // paints the final state.
       render(virtualRoot);
-      this.#stickyBoxes = collectStickyBoxes(virtualRoot);
-      applyStickyShifts(this.#stickyBoxes);
-      syncStickyVars(this.#stickyBoxes);
-      // Style-only paints patch nodes in place (drag anchors survive);
-      // a STRUCTURAL rebuild while a primary press holds a selection
-      // anchor in the grid is deferred to release — a drag in flight
-      // re-derives from the browser's internal anchor, which the
-      // rebuild would destroy (Chromium collapses even across a
-      // capture-and-restore).
       // The layers' boxes are placed after the settle below: their
       // roots' effects read as the light elements finally sit.
       this.#paintHeld = !this.#paint(virtualRoot, false);
       this.#lastLayout = virtualRoot;
       this.#nodes = null;
+      if (textareas.length > 0 && this.#rewrapsTextareas(textareas, textareaWidths)) {
+        this.#scheduleLayout();
+      }
       // The grid box is the ink extent in engine cells: a glyph a
       // fallback font draws wider still overhangs as ink, but the box
       // (and the background it inherits) never grows from it.
@@ -2825,31 +2933,27 @@ export class MonoWindElement extends HTMLElementBase {
         hostStyle.boxSizing === "border-box"
           ? padX + pxSum(hostStyle, "border-left-width", "border-right-width")
           : 0;
-      const hostWidth = `${availableCols * metrics.width + chromeX}px`;
-      if (this.style.getPropertyValue("--mw-host-w") !== hostWidth)
-        this.style.setProperty("--mw-host-w", hostWidth);
+      setVar(this, "--mw-host-w", `${availableCols * metrics.width + chromeX}px`);
+      this.#laidOutSize = { width: availableCols * metrics.width, height: height * metrics.height };
 
       // (7) Reveal the host now that layout is done — kills the FOUC where
       // the browser paints raw flex/block layout before the engine runs.
       if (!this.hasAttribute("data-mw-ready")) this.setAttribute("data-mw-ready", "");
     } finally {
-      // The measured real values are about to snap back to the locks —
-      // a delta that must never start a native fade (transitions beat
-      // `!important`, and a native background fade paints the light-DOM
-      // element's box ON TOP of the grid). [settling] holds the
-      // transition-property mask up while the snap-back COMMITS: the
-      // forced flush consumes every lock delta under the mask, so the
-      // unmasked commits that follow (this frame's end included) see no
-      // delta and the authored lists stay fully respected.
-      this.setAttribute("settling", "");
+      readingAnimations(outerReading);
+      // Snap back under [settling] with one forced flush (styles.css
+      // "Lock toggles must never…"): every flag drops before it, so a
+      // settling element snaps against its parent's locks.
+      const settles = settling ?? { host: true, elements: new Set(gated) };
+      if (settles.host) this.setAttribute("settling", "");
       this.removeAttribute("measuring");
       for (const el of gated) {
-        el.setAttribute("data-mw-settling", "");
+        if (settles.elements.has(el)) el.setAttribute("data-mw-settling", "");
         el.removeAttribute("data-mw-measuring");
       }
-      void getComputedStyle(this).transitionProperty;
-      this.removeAttribute("settling");
-      for (const el of gated) el.removeAttribute("data-mw-settling");
+      if (settles.host || settles.elements.size > 0) void getComputedStyle(this).transitionProperty;
+      if (settles.host) this.removeAttribute("settling");
+      for (const el of settles.elements) el.removeAttribute("data-mw-settling");
       syncLayers(this.#layers);
       // Restore native container positions AFTER the unmask — the browser
       // re-clamps them when the mask lifts (Firefox lazily), so any
@@ -2861,21 +2965,17 @@ export class MonoWindElement extends HTMLElementBase {
       // synchronous). Deferring this to a microtask would open a window
       // where a USER mutation gets dropped with the engine's own.
       this.#mutationObserver?.takeRecords();
+      // What the pass found running is sampled: an animation resumed,
+      // or begun before this host listened (specs/animations.md).
+      if (running.relayout || running.elements.size > 0) this.#startSamplingLoop();
       // Synthesized transitions (animate.ts): background changes the
       // read detected arm HERE, outside the masks, where the authored
       // `transition-property` list is readable — then the sampling loop
       // drives the fade. A pending change that did NOT arm was painted
       // stale this pass; one more relayout paints its target.
-      // The animations the reads found (specs/animations.md): resumed,
-      // or begun before this host listened.
-      for (const el of drainAnimated(this)) if (!this.#animated.has(el)) this.#follow(el);
       if (resolvePendingTransitions(this)) {
-        if (hasSynthesizedTransitions()) {
-          this.#lastTransitionRun = performance.now();
-          this.#startSamplingLoop();
-        } else {
-          this.#scheduleLayout();
-        }
+        if (hasSynthesizedTransitions()) this.#startSamplingLoop();
+        else this.#scheduleLayout();
       }
       // The resize signals a capped host needs, outside the mask so the
       // reads are authored values.
@@ -2934,6 +3034,12 @@ interface WheelLatch {
    * (sticky once INERTIA_TICKS confirm momentum). */
   mag: number;
   decayed: number;
+}
+
+/** A box's size in px. */
+interface BoxSize {
+  width: number;
+  height: number;
 }
 
 /** An in-flight scrollbar-thumb drag (specs/scrolling.md). */

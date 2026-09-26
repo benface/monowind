@@ -3,12 +3,14 @@ import { layoutRoot } from "../src/layout.ts";
 import { paintGrid } from "../src/paint.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { cellAtPoint, hitChain, nearestCells, pointKey, scrollStep } from "../src/pointer.ts";
+import { placePainted } from "../src/paint-origin.ts";
 import { buildTree } from "../src/tree.ts";
-import { makeNode } from "./helpers.ts";
+import { layered, makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
-/** A node with a hand-set border-box rect (hitChain only reads rects,
- * children, paint order, and tableHidden — no layout pass needed). */
+/** A node with a hand-set border-box rect, its subtree placed where it
+ * paints — the root's, built last, places the tree (hitChain reads the
+ * rects, children, paint order, and tableHidden — no layout pass). */
 function box(
   name: string,
   rect: [x: number, y: number, width: number, height: number],
@@ -16,6 +18,7 @@ function box(
 ): LayoutNode {
   const node = makeNode({ source: { name } as unknown as Element, ...overrides });
   node.localRect = { x: rect[0], y: rect[1], width: rect[2], height: rect[3] };
+  placePainted(node);
   return node;
 }
 
@@ -136,7 +139,7 @@ describe("hitChain through an inline element that takes pointer events again", (
 
 describe("the pointer's cell through a layer (specs/layers.md)", () => {
   const cell = { width: 10, height: 20 };
-  const layer = { backdropFilter: "none", resampled: false };
+  const layer = layered();
 
   /** Nodes over real elements, `markup` naming each by its data-test,
    * painted with their layers placed; the chain under a point in px. */
@@ -155,6 +158,7 @@ describe("the pointer's cell through a layer (specs/layers.md)", () => {
       return node;
     }
     const root = build(at);
+    placePainted(root);
     const grid = document.createElement("pre");
     const layers = document.createElement("div");
     paintGrid(root, grid, { layers, cell });
@@ -303,6 +307,7 @@ describe("the pointer's cell through a layer (specs/layers.md)", () => {
     moved.localRect = { x: 0, y: 0, width: 4, height: 1 };
     const root = makeNode({ source: host, children: [moved] });
     root.localRect = { x: 0, y: 0, width: 10, height: 2 };
+    placePainted(root);
     const layers = document.createElement("div");
     paintGrid(root, document.createElement("pre"), { layers, cell });
     const key = (x: number) => pointKey(layers, x, 10, cell);

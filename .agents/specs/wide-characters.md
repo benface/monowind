@@ -1,22 +1,22 @@
 # Wide characters, fallback glyphs, and the grid-painted selection
 
 Status: **implemented** (2026-09-05; plan:
-`.agents/plans/2026-09-05-wide-characters.md`). Lifts cell-model.md
-deviation 10 ("double-width glyphs are counted as their UTF-16 length")
-and retires the native selection highlight in the light DOM. Two
-findings from the implementation: a glyph box measured while a web
-font was still loading must be forgotten when the font lands (the
+`.agents/plans/2026-09-05-wide-characters.md`; auto-scroll and the
+box-bounded nearest-unit search 2026-09-06). Carries cell-model.md
+deviation 10 (glyph widths are the `wcwidth` table's) and the
+grid-painted selection. Two findings from the implementation: a
+glyph box measured while a web font was still loading must be
+forgotten when the font lands (the
 fallback's advance was cached under the same font name — the theme
 gallery boxed its borders in the sweep), and a `Range` rect around a
 boxed span unions the scaled text inside it, so alignment checks read
-the span's own box. Auto-scroll and the box-bounded nearest-unit
-search were added 2026-09-06 (no plan: one phase).
+the span's own box.
 
 ## Why
 
-The engine counts one cell per UTF-16 code unit and lets the browser
-draw every glyph at its font's advance. Two things go wrong, and they
-are one problem:
+An engine that counted one cell per UTF-16 code unit and let the
+browser draw every glyph at its font's advance would go wrong twice,
+and the two are one problem:
 
 - **Glyphs the primary font lacks come from a fallback font at that
   font's own advance.** A CJK ideograph or a Hangul syllable takes one
@@ -26,9 +26,9 @@ are one problem:
   cells. From that glyph on, the row is off the grid: text drifts,
   borders zigzag against the rows above and below.
 - **Whatever the grid does about it, the transparent native text under
-  the grid keeps the font's advances.** Today the two drift together on
-  a line, so a text-mode highlight sits on the glyphs you see — until
-  the native text wraps at a different point than the grid, which a
+  the grid keeps the font's advances.** Left alone, the two drift
+  together on a line, so a text-mode highlight sits on the glyphs you
+  see — until the native text wraps at a different point than the grid, which a
   paragraph of narrow-drawn ideographs does within a few lines: from
   there the native rows and the grid rows disagree, and a press lands
   on a character rows away from the glyph under the pointer. Fix the
@@ -38,11 +38,7 @@ are one problem:
   `ic-width` scales the primary font along with the fallback (probed:
   `M` grows to 1.2 cells).
 
-So the grid must own both the glyph and the highlight. There is also a
-latent bug on the same axis: a leaf's `advances` and `charInline` are
-indexed per code POINT (the run collects `for (const ch of text)`) while
-`text`, `charSource`, and the paint walk index per code UNIT, so anything
-astral (every emoji) shifts the per-character data after it by one.
+So the grid must own both the glyph and the highlight.
 
 ## Probe results (2026-09-05, this machine, Chromium / Firefox / WebKit)
 
@@ -93,6 +89,43 @@ After a `preventDefault`ed mousedown that blurs the active control and
 sets a programmatic range, Shift+ArrowRight extends the range and a
 copy event sees it in all three engines.
 
+Tiling probes (2026-09-05 to 2026-09-21, the three engines on macOS
+unless named):
+
+- Rows against glyphs: Menlo and SF Mono draw `█` 14.3px and 14px tall
+  in the 16px and 17px rows their `line-height: normal` makes, so
+  every row of blocks gaps (the scrollbar's track and thumb included);
+  Monaco's `│` is 11.9px in a 19px row; Firefox's rows for Courier New,
+  Andale Mono and PT Mono are a pixel taller than their `│`; a
+  `leading-*` on the root makes the row taller than any font's glyph.
+- The pin: unpinned by a measured baseline, a box seamed half a pixel
+  in Chromium and left Firefox's top row half bare; box drawing
+  centered on the row instead of pinned to its baseline moved a pixel
+  up in WebKit and half a pixel down elsewhere, and a line of text in
+  a box looked off its middle.
+- Past the row: JetBrains Mono's `█`, 19px in an 18px row, and
+  Menlo's `│`, 17.8px in 16, overlap at every joint; Menlo's stem in
+  Chromium, unboxed, is 62% darker at the joint than along the row at
+  1×, 14% at 3×, which is why a zoom hides it.
+- One text run of `─`: SF Mono at 2× takes the stroke's top edge row
+  from 148 to 92 of 255 at each joint (plain text's borders always had
+  these dots). A shared `█` run: Menlo at 2× in Chromium, the row's
+  top row from 180 to 127 of 255 on the joint's columns.
+- The overhang floor, swept glyph by glyph at 1×, 2× and 3× (a run of
+  boxes at a sweep of scales, read back for a column lighter than the
+  stroke's own darkness): Chromium wanted 0.27 CSS pixels at 1× and
+  0.36 at 2×, WebKit 0.41 at 1×. At 0.25 a bordered box's top edge
+  dips 33% of its darkness at every joint in Chromium at 2×; the
+  default font's `─` overhangs 0.277 unscaled and does not close a
+  joint on its own, and the floor costs its borders 3.9% of scale.
+  JetBrains Mono's `│`, 21px in an 18px row, would shrink to 0.987
+  without the floor of 1.
+- Centering: `text-align: center` left one joint in six a fraction
+  short of the clip's edge column, a lighter column through the stroke
+  (SF Mono at 2× in Chromium, 41% of the ink; Firefox at 1× too).
+- Moiré: Chromium's scrollbar tracks, twice over, with a shade at an
+  arbitrary scale.
+
 ## Locked decisions
 
 ### Widths and units
@@ -108,7 +141,8 @@ copy event sees it in all three engines.
   renderer needs no font, and a copy pastes into a terminal at the
   width the grid showed. One cell each: ambiguous-width symbols (★ ✓ ♥
   →), halfwidth katakana, text-presentation emoji (♥, ↔ without
-  U+FE0F). Zero cells: a cluster made only of default-ignorable or
+  U+FE0F) outside the East Asian Wide blocks (〰 and ㊗ are two). Zero
+  cells: a cluster made only of default-ignorable or
   control code points (a zero-width space, a soft hyphen, a lone joiner
   or variation selector), which stays in the text and the copy, costs
   no cell, and paints nothing.
@@ -120,12 +154,12 @@ copy event sees it in all three engines.
 - **Per-character data is indexed by code unit, like `text`.** A
   leaf's `advances` and `charInline` line up with `text`, `charSource`,
   and every line span: a cluster's width sits on its first code unit
-  and its remaining units carry an advance of 0. The existing machinery
-  already handles that shape — `advanceOf` sums, the wrap's
+  and its remaining units carry an advance of 0, a shape the
+  machinery handles — `advanceOf` sums, the wrap's
   cell-boundary break and the ellipsis cut cannot stop inside a cluster
   because its tail costs nothing, `charIndexAtCell` reports the
   cluster's first unit for any of its cells, and `positionOf` maps that
-  unit to the DOM. The astral-index bug goes away with the change.
+  unit to the DOM.
 - **Form controls use the same widths for their estimates.** A
   textarea's row count and an input's intrinsic width count clusters at
   table widths; the native control still renders its own value.
@@ -174,80 +208,64 @@ copy event sees it in all three engines.
   every set against every period font for it.
 - **Tiling glyphs fit their row.** Block Elements (U+2580–U+259F:
   `█ ▀ ▄`, the quadrants) and Box Drawing (U+2500–U+257F) are the
-  glyphs meant to abut, and a font's line box need not match them:
-  Menlo and SF Mono draw `█` 14.3px and 14px tall in the 16px and 17px
-  rows their `line-height: normal` makes, so every row of blocks shows
-  a gap (the scrollbar's track and thumb included); Monaco's `│` is
-  11.9px in a 19px row, and Firefox's rows for Courier New, Andale
-  Mono, and PT Mono are a pixel taller than their `│`, so their
-  vertical borders gap; and a `leading-*` on the root makes the row
-  taller than any font's glyph. The adapter measures each range's
-  reference glyph once per grid font — `█` for blocks, `│` for box
-  drawing; when the font draws it past the row or off its cell width,
-  every glyph of the range is boxed with the one transform, and so it
-  is when a BLOCK is drawn short of the row: a block stands for a cell
-  filled, so its `font-size` is scaled until the glyph is a pixel and a
-  half taller than the row on each side. A stroke stands for a line,
-  and that growth makes it as much bolder as the row is taller than the
-  glyph — at a raised leading it turns a hairline border into a bar —
-  so a stroke short of the row keeps the size the font gives it and its
-  rows gap. Either way a `line-height` on the box pins it —
-  a line box places the baseline at half-leading plus the font's
-  ascent, both from the same `measureText` call, and the host then
-  measures the baseline the engine actually gives that box (an empty
-  inline-block's top) and corrects the line-height by twice the error,
-  since engines round a scaled font's metrics their own way, stepping
-  until the nearest lands where the engine snaps a baseline to whole
-  pixels (Chromium; WebKit and Firefox place it fractionally) — the
-  box a row tall and clipping the overshoot (half a pixel seamed in
-  Chromium; a whole one left Firefox's top row half bare). Box drawing
-  is pinned to the row's own baseline, the one the host measured, so a
-  border sits where the font sets it against the text: centered on the
-  row instead, it moved a pixel up in WebKit and half a pixel down
-  elsewhere, and a line of text in a box looked off its middle. A
-  filling glyph hangs its ink a pixel and a half past the row's top,
-  where the blocks' halves meet at the row's middle and a shade raised
-  to its lattice lands as it did in the row above; a box takes that
-  same pin where the host measured no baseline. One transform per range
-  is what keeps a junction's strokes on its neighbors': box-drawing
-  strokes sit at the glyph's center and edges, which a uniform scale
-  around the box's center preserves; a block's cost for that is ink as
-  much bolder as the row is taller than the glyph, which is why a
-  stroke is not scaled to fill. The shades `░ ▒ ▓` are patterns, periodic
-  by design: at an arbitrary scale a lattice resamples into moiré
-  (Chromium's scrollbar tracks, twice over). A shade takes the same
-  fit with its scale raised to the nearest factor that makes its
+  glyphs meant to abut, and a font's line box need not match them
+  ("Tiling probes"). The adapter measures each range's reference glyph
+  once per grid font — `█` for blocks, `│` for box drawing. Where the
+  font draws it past the row or off its cell width, every glyph of the
+  range is boxed with the one transform; so is every block where the
+  font draws `█` short of the row, its `font-size` scaled until the
+  glyph is a pixel and a half taller than the row on each side, since
+  a block stands for a cell filled. A stroke short of the row keeps
+  the size the font gives it, and its rows gap: that growth would make
+  it as much bolder as the row is taller than the glyph, a hairline
+  border a bar at a raised leading. A glyph the font draws at the
+  row's height, within a twentieth of a pixel, is left alone.
+- **One transform per range** keeps a junction's strokes on its
+  neighbors': box-drawing strokes sit at the glyph's center and edges,
+  which a uniform scale about the box's center preserves. A block pays
+  for it in ink as much bolder as the row is taller than the glyph.
+- **The box is pinned to the row.** A `line-height` on the box places
+  the baseline at half-leading plus the font's ascent, both from the
+  same `measureText` call; engines round a scaled font's metrics their
+  own way, so the host measures the baseline the engine actually gives
+  that box (an empty inline-block's top) and corrects the line-height
+  by twice the error, stepping until the nearest lands where the engine
+  snaps a baseline to whole pixels (Chromium; WebKit and Firefox place
+  it fractionally). The box is a row tall and clips the overshoot. Box
+  drawing is pinned to the row's own baseline, the one the host
+  measured, so a border sits where the font sets it against the text;
+  a filling glyph hangs its ink a pixel and a half past the row's top,
+  so the blocks' halves meet at the row's middle and a shade raised to
+  its lattice lands as it did in the row above. A box takes that same
+  pin where the host measured no baseline.
+- **A shade keeps its lattice.** `░ ▒ ▓` are periodic by design, and
+  an arbitrary scale resamples a lattice into moiré. A shade takes the
+  same fit with its scale raised to the nearest factor that makes its
   period a whole number of device pixels, so every dot rasterizes
   alike — the period read off a rendering, the first peak of the
   alpha's autocorrelation down the glyph's most patterned column. Its
-  box then carries the lattice on from row to row: its line box grows
-  by twice the row's phase, which moves the glyph down by the phase —
-  or shrinks, moving it up by the rest of the period, when down would
-  carry the glyph's content area off the box's top and up keeps it
-  past the bottom (a selection highlight covers the content area, so
-  the move must not bare the box) — and a copy a period above and
-  below, drawn by the box's pseudo-elements in the same line box,
-  fills what the shift uncovers. The box clips the rest, and a zoom,
-  which moves the device pixel ratio, refits. The
-  halves still meet at the row's middle, and a fallback font's
-  double-width block clips to its cell instead of shrinking to half a
-  row. A glyph drawn PAST the row takes the same box: it tiles, but its
-  rows overlap, and the two antialiased edges over each other paint a
-  darker band along every row's edge — Menlo's stem in Chromium, its
-  edge at the joint 62% darker than along the row at 1×, 14% at 3×,
-  which is why a zoom hides it (JetBrains Mono's `█`, 19px in an 18px
-  row; Menlo's `│`, 17.8px in 16). The box clips each row to its own
-  slice, so the strokes meet on one edge, and a shade takes its own fit
-  once the blocks take one, its lattice locked there as where they fall
-  short. The box is one per cell for a stroke, by design: a run of `─`
-  in one text
-  run overdraws itself at every joint — a font draws the line past its
-  advance so joins never gap, and two antialiased ends over each other
-  darken the stroke's edge rows into a dot per cell (plain text's
-  borders always had them; SF Mono at 2x, the top edge row from 148
-  to 92 of 255) — and only the box's clip, snapped to device pixels, keeps each
-  glyph's ink to its cell; nothing in one text run can, at any
-  letter-spacing.
+  box carries the lattice on from row to row: the box's
+  pseudo-elements draw the glyph in the box's line box moved down by
+  the row's phase — less than a period — and a period above that, each
+  clipped to the strip it fills, so every pixel of the box is drawn
+  once, as the browser draws the glyph, whatever its color. The box's
+  own glyph, pinned as any tiling glyph's, is transparent: the text a
+  selection and a copy read. A zoom, which moves the device pixel
+  ratio, refits. A fallback font's double-width block clips to its
+  cell instead of shrinking to half a row.
+- **A glyph drawn past the row is boxed too.** It tiles, but its rows
+  overlap, and the two antialiased edges over each other paint a
+  darker band along every row's edge. The box clips each row to its
+  own slice, so the strokes meet on one edge, and a shade takes its
+  own fit once the blocks take one, its lattice locked as where they
+  fall short.
+- **A stroke is boxed one per cell, by design.** A run of `─` in one
+  text run overdraws itself at every joint — a font draws the line
+  past its advance so joins never gap, and two antialiased ends over
+  each other darken the stroke's edge rows into a dot per cell — and
+  only the box's clip, snapped to device pixels, keeps each glyph's
+  ink to its cell; nothing in one text run can, at any letter-spacing.
+  The price is the row's nodes (performance.md "Tiling glyph boxes").
 - **A run of one full-width band shares a box.** `▀`, `█`, the lower
   eighths and `▔` (U+2580–U+2588, U+2594) draw the same ink at both
   edges of the cell, so the ink one pushes into its neighbor is ink the
@@ -255,67 +273,46 @@ copy event sees it in all three engines.
   take a single box of their cells, the glyphs kept on their cells by a
   `letter-spacing` of the cell less the advance and placed by the same
   `text-indent`, halved per cell. The overdraw then shows only where
-  the band's own antialiased edge row meets a joint (Menlo at 2× in
-  Chromium, a `█` row's top row from 180 to 127 of 255 on the joint's
-  columns), against a span a cell for every module of a QR code —
-  a page of seven codes, bordered panels, a scroller and two shade rows
-  paints 2191 grid spans against 3341, and 220 with nothing boxed at
-  all. A half, a quadrant, a shade or a stroke keeps its own box: their
-  ink would spill into what the neighbor leaves blank, or rasterize
-  differently at every phase. Two more things keep the joint whole: the scale never
-  leaves the range's widest ink — box drawing's `─`, the blocks' own
-  reference — short of 0.45 CSS pixels past each of the cell's edge
-  columns, nor below 1 (a glyph at its own size can leave
-  the edge column part bare, and JetBrains Mono's `│`, 21px in an 18px
-  row, would otherwise SHRINK to 0.987). CSS pixels, not device ones:
-  swept glyph by glyph against the three engines at 1×, 2× and 3× — a
-  run of boxes at a sweep of scales, read back for a column lighter
-  than the stroke's own darkness — what closes a joint holds roughly
-  steady in CSS pixels (Chromium wanted 0.27 at 1× and 0.36 at 2×,
-  WebKit 0.41 at 1×) while a device-pixel floor thins as the screen
-  gets denser. 0.45 clears every case measured, and the margin is not
-  spare: at 0.25 a bordered box's top edge dips 33% of its darkness at
-  every cell joint in Chromium at 2×, and the default font's `─`,
-  which overhangs 0.277 unscaled, does not close one on its own. It
-  costs that font's borders 3.9% of scale,
-  and the glyph is placed by a `text-indent` of half the room its
-  advance leaves in the box, not `text-align: center`: a centered line
-  lands on a rounded position, and at one joint in six its end fell a
-  fraction short of the clip's edge column, a lighter column through
-  the stroke (SF Mono at 2× in Chromium, 41% of the ink; Firefox at
-  1× too). The price is the row's nodes: on a page of sixty bordered
-  boxes at the macOS
-  defaults, whose glyphs run past the row, 360 grid nodes unboxed and
-  1260 boxed. What the nodes cost per layout was set by the measuring
-  gate, not the boxes: read through descendant rules, the host's
-  `[measuring]` and `[settling]` flips walked the whole subtree, shadow
-  grid included, four times a layout — 8.4 ms of the boxed page's style
-  recalc, 3.3 of the unboxed one's, where the relayout's own row costs
-  a fraction of a millisecond — so each light element gates its own
-  rules by its own flag instead (cell-model.md "Typography"): the flips
-  then cost 0.07 ms, and the page relays out in 13.2 ms boxed against
-  10.7 unboxed at the old gate (18.5 boxed at it; Chromium's own
-  counters, 30 relayouts, three rounds). A glyph the font draws at the
-  row's height, within a twentieth of a pixel, is left alone. That case
-  alone stops at a layer that RESAMPLES its cells
-  — scaled, rotated, skewed: a transform never moves layout, so the pin
-  holds there, but each box's clip edge lands between device pixels and
-  is antialiased, a lighter seam at every row that the overshooting
-  glyph covers unboxed (a border's stems fell away from its corners in a
-  `scale-150` layer; the short and off-width fits pay the same seam
-  there, having no glyph that covers the row), so those cells keep the
-  glyph the font gives them (specs/layers.md). A layer inside one is
-  resampled too, its box a child of theirs. Every other layer takes the
-  box: one that only stacks (a dialog's, a popover's), one a filter
-  opens (a blur, a backdrop blur), one a translation moves, and one
-  resting at an identity are all the host's grid in every way that
-  matters here. The layer's read marks it (types.ts `resampled`), off
-  the effects it already reads, so the paint reads no style of its own;
-  a glyph both past the row AND off its cell width keeps its box
-  everywhere, the width fit being needed either way. Two limits to know:
-  a transform ABOVE the host resamples the main grid and nothing weighs
-  it, and a layer in transition keeps the decision of the paint before
-  it, the settle repainting at the final value.
+  the band's own antialiased edge row meets a joint. A half, a
+  quadrant, a shade or a stroke keeps its own box: their ink would
+  spill into what the neighbor leaves blank, or rasterize differently
+  at every phase. A band drawn translucent, by its color or its span's
+  opacity, keeps its own box too, the ink it pushes into its neighbor
+  otherwise composited twice.
+- **The joints close.** The scale never leaves the range's widest ink —
+  box drawing's `─`, the blocks' own reference — short of 0.45 CSS
+  pixels past each of the cell's edge columns, nor below 1: a glyph at
+  its own size can leave the edge column part bare, and one taller
+  than the row would otherwise shrink. CSS pixels, not device ones:
+  what closes a joint holds roughly steady in CSS pixels while a
+  device-pixel floor thins as the screen gets denser, and 0.45 clears
+  every case the sweep measured, with no margin to spare. The glyph is
+  placed by a `text-indent` of half the room its advance leaves in the
+  box, not `text-align: center`, whose rounded line position leaves
+  some joints a fraction short of the clip's edge column.
+- **A layer that resamples its cells drops the past-the-row box.** In
+  a scaled, rotated or skewed layer a transform never moves layout, so
+  the pin holds, but each box's clip edge lands between device pixels
+  and is antialiased, a lighter seam at every row that the
+  overshooting glyph covers unboxed (a border's stems fell away from
+  its corners in a `scale-150` layer); so a glyph drawn past the row
+  keeps the glyph the font gives it there (specs/layers.md). The short
+  and off-width fits keep their box and pay the seam, having no glyph
+  that covers the row, and a glyph both past the row and off its cell
+  width keeps its box everywhere, the width fit being needed either
+  way. A line glyph drawn translucent keeps a box there for its color
+  or opacity (cell-model.md "Opacity and translucency") but not the
+  past-the-row fit: the font's own glyph, centered in its cells. A
+  layer inside a resampling one resamples too, its box a child
+  of theirs. Every other layer takes the box: one that only stacks (a
+  dialog's, a popover's), one a filter opens (a blur, a backdrop
+  blur), one a translation moves, and one resting at an identity are
+  all the host's grid in every way that matters here. The layer's read
+  marks it (types.ts `resampled`), off the effects it already reads,
+  so the paint reads no style of its own. Two limits: a transform
+  ABOVE the host resamples the main grid and nothing weighs it, and a
+  layer in transition keeps the decision of the paint before it, the
+  settle repainting at the final value.
 - **Rows cannot grow.** The grid's `line-height` is pinned to the
   measured cell height so a fallback font's taller line box (emoji
   fonts, some CJK fonts) cannot push the rows below.
@@ -346,21 +343,38 @@ copy event sees it in all three engines.
   character-to-cell walk, a renderer leaf whole — and paints those
   cells as REVERSE VIDEO: each cell's own color and background swap,
   the theme's `--mw-fg`/`--mw-bg` standing in where the cell has none.
-  Plain text therefore highlights as the theme invert, as before;
-  colored text highlights as a band of ITS color with theme-background
-  glyphs (an emerald banner selects emerald, not black), where the
-  retired CSS rule painted every element with the theme colors; and a
+  Plain text therefore highlights as the theme invert; colored text
+  highlights as a band of ITS color with theme-background glyphs (an
+  emerald banner selects emerald, not black), where a `::selection`
+  rule would paint every element with the theme colors; and a
   focus-inverted control re-inverts under selection with no special
-  case, which the CSS rule needed. The canonical light-DOM
-  `::selection` rule turns transparent (its three sites — styles.css,
-  the host, the ascii transcript — go with it) except under
+  case. The light `::selection` sites — styles.css's rule, the host's
+  slot, the ascii and QR transcripts — are transparent except under
   `forced-colors: active`, where the system paints selections and
-  strips backgrounds, so the native rule stays; form controls and
+  strips backgrounds, so the native rule stays. The light DOM's rule
+  holds while the host carries `data-mw-selection`: set before the
+  engine writes a range of its own (a gesture's, in the style
+  resolution a semantic gesture's lift forces), at a `selectstart`
+  in the host's light DOM or on an ancestor of it (a user's drag, a
+  select-all, Firefox's keyboard extension from a caret) outside the
+  form controls and editables, whose own rule is below, at the first
+  move over a text-mode host of a press begun outside it (a drag that
+  may carry a selection in, ahead of the move's own extension), held
+  through a press's gesture to its release and a key's to its first
+  `selectionchange`, and at a `selectionchange` finding a range that
+  reaches the host's light DOM — both ends in it, or one across its
+  edge (a select-all, a drag in from page text, a script's range
+  around the host), a grid drag's aside; dropped at a
+  `selectionchange` or a release finding none, and at the host's
+  disconnect. Matched on every
+  element, the rule would have each restyle compute a `::selection`
+  too; the shadow sites style one element each and hold always. Form controls and
   editables, which render their own text, swap their own colors by a
   rule of their own, as the grid swaps a selected cell's: the engine
   writes each editable's measured ink and the ground the grid paints
   under it — its own fill, else the nearest above, `bg-clear` cutting
-  through to the theme's — as `--mw-ink` / `--mw-ground` (render.ts),
+  through to the theme's, which is written out too (`var(--mw-bg)`) —
+  as `--mw-ink` / `--mw-ground` (render.ts),
   and the rule reads them swapped. A focus-inverted control's measured
   colors are the inverted ones; a contenteditable's inline descendants
   inherit their block's. An editable region inside a host keeps its
@@ -384,7 +398,7 @@ copy event sees it in all three engines.
   character under the glyph the user sees, and sets a collapsed range
   there; moves extend the range character by character the same way
   (base at the anchor, extent under the pointer, the browser's own
-  direction rules); Shift extends the existing range; double- and
+  direction rules); Shift extends the current range; double- and
   triple-click are the word and paragraph gestures the grid mode
   already has. A pointer past the host's edge clamps to the nearest
   cell, so the extent runs to the nearest character of the box under
@@ -402,7 +416,7 @@ copy event sees it in all three engines.
   pointer handlers ignore touch, and the engine paints what it selects.
   The browser is never asked which character sits under a mouse, so a
   drifted native glyph cannot pick its neighbor. What the native drag
-  did for free and the engine now does too: leaving a control's focus
+  did for free and the engine does too: leaving a control's focus
   on press, and the copy through the engine's serializer.
 - **An engine gesture auto-scrolls its scroller, as a native drag
   does — a text-mode drag, and the word and paragraph gestures in
@@ -429,91 +443,6 @@ copy event sees it in all three engines.
   grid drag is the browser's own positional selection on the `<pre>`
   (specs/scrolling.md), which auto-scrolls the page natively and
   scrolls no scroll container.
-- **The centering nudge is retired.** `data-mw-center-nudge` existed
-  to land the native highlight on centered glyphs; with the highlight
-  painted from cells it has no job.
-
-## Mechanics
-
-- `width.ts`: `clusterWidth(cluster): 0 | 1 | 2` from a hand-condensed
-  East Asian Wide/Fullwidth block table plus JS's own
-  `\p{Extended_Pictographic}`, `\p{Emoji_Presentation}`,
-  `\p{Regional_Indicator}`, and `\p{Default_Ignorable_Code_Point}`;
-  `graphemes(text)` with the ASCII fast path and a cached grapheme
-  `Intl.Segmenter`; `clusterAdvance`, `clusterAdvances`, `textCells`.
-  All four helpers are exported from the package.
-- tree.ts: `collectNodes` walks text nodes per cluster (a cluster
-  string, its width plus tracking as the advance; CRLF one break);
-  `normalizeRun` unchanged (a space is its own cluster); at node build
-  `expandClusters` spreads `advances` and `charInline` over code units.
-  `buildRendererLeaf`, textarea rows, and select labels use the same
-  widths.
-- wrap.ts: `lineAdvance` takes the text so a line's trailing gap is
-  its last cluster's advance beyond its cells, exact for wide clusters
-  and markers alike.
-- plain-text.ts: `forEachLeafCell` visits clusters (`index, length, x,
-y, advance`); `renderGrids` writes a cluster at its cell and `""` at
-  its continuation cells, keeps the wide owner of every cell so a later
-  paint or a clip edge blanks the cluster whole, and takes
-  `RenderOptions` — `boxed(cluster, cells, paint)` and `selection:
-Map<leaf, { start, end }>`; a `selected` paint swaps color and
-  background in `applyCellPaint`; `rowSegments` closes a boxed cluster
-  into its own `{ text, cells, box }` segment; `renderGridRows` returns
-  the segments with the cell strings.
-- glyph-box.ts (DOM): `GlyphBoxes` — canvas `measureText` per distinct
-  cluster and font (family, size, weight, style), the 0.01-cell
-  tolerance, the fill scale capped by the ink, a cache the element
-  clears on `configure` changes and on font `loadingdone`; a cluster's
-  box is not cached while `document.fonts` is loading, a tiling fit is
-  (its measurement forces a layout, and the `loadingdone` invalidation
-  refreshes it).
-- paint.ts: `paintGrid(root, target, { holdStructural, glyphs,
-selection })` — `holdStructural` while a press on the grid the engine
-  has not taken over may be a native drag, whose anchor a rebuild would
-  lose; a press on a control is the control's — patches per ROW (styles
-  in place when the row's structure matches, a rebuild between its
-  neighbors' newlines when not); a boxed segment wears `data-box`, which
-  a shadow rule draws as an `inline-block` `--mw-ch` tall, unpadded and
-  clipped — the shape every box shares costs one rule rather than six
-  declarations apiece — with its own `cells × --mw-cw` width inline,
-  the glyph placed by a
-  `text-indent` of half the room its `advance` leaves, its font-size
-  the scale; boxes repeat down a page, so a span's style is built once
-  and its fellows are clones of it; a tiling fit adds its
-  `line-height`, a shade's moved by
-  twice the row's shift; a shade adds `data-shade` (its glyph, which
-  the shadow's `::before`/`::after` repeat a period above and below)
-  and `--mw-period` in px; the glyph cache's `generation` — counting
-  its refits, a font load's or a cell change's — is kept with the paint,
-  and a grid painted under an earlier one restyles every box even where
-  no row changed (a layer whose text stood still kept the fallback
-  font's fit); every other grid span pads
-  `padding-block: var(--mw-bgpad)`, the host's `ceil(backgroundGap /
-2)` px — on a host wearing `data-mw-bgpad`, which it sets only where
-  that gap is real, so a span carries no lookup on any other page; `gridOffsetAt` and `paintedCell` read the kept cell strings.
-- selection.ts: `selectedRanges(root, points)`.
-- element.ts: `#paint` (glyph boxes plus the selection's ranges);
-  `#onSelectionChange` repaints a host holding the range or just left
-  by it; the text-mode press (`#startCharacterDrag`) and the
-  `"character"` gesture unit, extended by the existing
-  `#extendGesture`; `#unitAt` finds the nearest unit over painted
-  cells only, in `nearestCells` order (pointer.ts) inside the innermost
-  box under the cell, then the grid; the
-  grid's `line-height` pinned to the cell and its `letter-spacing` set
-  to `gridLetterSpacing`; the host's `--mw-bgpad`; the glyph cache
-  configured per layout from the grid's computed font, with
-  `#baselineOf` lending the tiling fit its measured baseline;
-  `#autoscroll` (the gesture's scroller, captured pointer, and 50 ms
-  tick through `#scrollRouted`, the wheel's scroll-and-settle)
-  and `#followPointer`, which a scroll-driven paint and a page scroll
-  call to extend the live gesture under the held pointer.
-- styles.css / element.ts / @monowind/ascii: the light `::selection`
-  sites are transparent outside forced colors, form controls and
-  editables swapping their engine-written colors by a rule of their
-  own; `#grid::selection` keeps the invert; `data-mw-center-nudge` is
-  gone.
-- render.ts: `--mw-ink` / `--mw-ground` on editables, the ground
-  threaded down the walk.
 
 ## Deviations (documented, like the cell model's running list)
 
@@ -521,6 +450,30 @@ selection })` — `holdStructural` while a press on the grid the engine
   other selection with reverse video.** The `<pre>`'s highlight is the
   browser's `::selection`, which cannot swap a span's own colors; the
   painted highlight can and does. Plain text looks the same both ways.
+  A faded element's cells over an opaque background, blended into it
+  (an `opacity: 0` one's glyphs included), highlight in the full
+  invert too, where CSS keeps a selection at the element's opacity, as
+  the span's opacity keeps it over none.
+- **In text mode, a selection a script makes that reaches a host, or
+  one a key or a drag carries into it from outside with no move over
+  the host, can show the browser's highlight for a frame.** `selectionchange`,
+  which sets the host's `data-mw-selection` then, is a task of its own
+  in every engine, and a frame can render before it (probed
+  2026-09-24): always after a selection made in a
+  `requestAnimationFrame` callback; after one made in a task, rarely
+  (at random phases of the frame, 10 in 120 in Firefox, 1 in Chromium,
+  none in WebKit); after a Shift+Arrow extension, 4 in 4 in Chromium,
+  2 in 4 in Firefox, none in WebKit. That frame shows, in Chromium and
+  WebKit, which hand every light element the slot's transparent
+  highlight (css-pseudo-4 highlight inheritance), only an element's
+  authored `::selection` colors (a `selection:` utility); in Firefox,
+  which inherits none, the default highlight as well. Grid mode shows
+  none: the browser paints no highlight on its unselectable light
+  text. A gesture in the host, a select-all, a keyboard extension from
+  a caret (Firefox's starts with a `selectstart`; Chromium and WebKit
+  extend no caret outside caret browsing), a drag pressed outside from
+  its first move over the host, and the engine's own ranges set the
+  flag first, and a change to a live selection keeps it.
 - **Keyboard selection extension follows the native wrap.** Shift+Down
   in text mode moves by the browser's line boxes, which can differ
   from the grid's rows on lines holding drifted glyphs; the painted
@@ -559,13 +512,13 @@ selection })` — `holdStructural` while a press on the grid the engine
   per-cell offsets; the selection → cells mapping and the inverted
   paint over a focus-inverted control.
 - Storybook (three engines): a paragraph mixing CJK, emoji, a star, and
-  Latin — grid rows, the boxed spans' widths, an emoji row's height
-  unchanged; text-mode press and drag selecting characters by cell
+  Latin — grid rows, the boxed spans' widths, an emoji's row one row
+  tall; text-mode press and drag selecting characters by cell
   (the star's neighbor is the one you see), Shift extension, the word
   and paragraph gestures, copy; the painted highlight's cells for a
   drag, for a keyboard extension, and over a focused control; a
-  textarea with CJK sized by cluster widths; the existing selection
-  stories re-pointed at the painted cells; auto-scroll (`Test /
+  textarea with CJK sized by cluster widths; the selection stories
+  asserting the painted cells; auto-scroll (`Test /
 Selection / Autoscroll`, a text-mode host): a press in a scroll
   container and one synthetic move past its bottom edge scroll it and
   extend the selection to a paragraph that was below its fold, a move
@@ -578,7 +531,20 @@ Selection / Autoscroll`, a text-mode host): a press in a scroll
   triple-click in the container held past its edge scrolls it the same
   way; in three engines. `Nearest Unit`: a leaf taller than its scroll
   container — a drag over its blank visible rows reaches the paragraph
-  above, not the one painted past the clip.
+  above, not the one painted past the clip. `Highlight Lock` and
+  `Drag In Lock`: an authored `selection:` color reads transparent
+  from a script's `selectionchange`, a press's `selectstart`, a word
+  gesture's press, and a text-mode drag pressed outside from its first
+  move over the host, each through its release, and from a key's
+  `selectstart` to its first `selectionchange`, a selection crossing
+  the host's edge — a drag's carried in from page text, past its
+  release, a select-all, a script's range across the host — for as
+  long as it lasts, and not otherwise. Node (element.test.ts): a
+  `selectstart` in the light DOM or on an ancestor locks, one in a
+  form control or an editable does not (a region that is not
+  editable locks, an editable's island does not), a press whose
+  release a page stops short of the window still ends, and a
+  disconnect drops the lock, the lift, and the drag mark.
 - Node: `scrollStep` — cells past each edge, rounded up, zero inside.
 - Visual (`visual/selection.spec.ts`, a real mouse, on the play-less
   `Autoscroll Fixture`): a drag from a scroll container's first line
@@ -586,9 +552,9 @@ Selection / Autoscroll`, a text-mode host): a press in a scroll
   grid-mode double-click — scrolls it, never the page, and extends the
   selection past its fold, as only the captured pointer's moves reach
   the engine there; both modes, three engines.
-- Visual: the selection-invert fixtures re-baselined (the paint is the
-  engine's now, so they become engine-identical), a "Wide characters"
-  story under Features, and the deviation story of a native Shift+Down
+- Visual: the selection-invert fixtures (the paint is the engine's,
+  so text mode's are engine-identical), a "Wide characters" story
+  under Features, and the deviation story of a native Shift+Down
   on a drifted line.
 - Tiling fit: the stubbed-canvas unit tests (one measurement per range
   and font, the scale and line-height from Menlo's numbers, a glyph
@@ -597,24 +563,28 @@ Selection / Autoscroll`, a text-mode host): a press in a scroll
   indent, a double-width one clipped, box drawing
   fitted apart from the blocks, a shade locked to its lattice and its
   phase row by row, the pin corrected by a measured baseline), the
-  paint test of a shade's phase and period on its box, the layer tests
+  paint test of a shade's phase and period on its box, the blend
+  fixture's translucent shades (`visual/blend.spec.ts`: over no
+  background, over a translucent one, and a shadow's ring, their
+  fullest ink against the browser's glyph drawn once, in three
+  engines), the layer tests
   of the effects that resample a layer's cells and of the paint told
   which cells a resampled layer draws, and the
   `Features / Typography / Tiling Glyphs` story — a `leading-6`
   root, where the bundled font's `█` and `│` are short of the row,
   beside a host at the font's own leading, where its `│` runs past it,
   as the play asserts —
-  asserting every tiling glyph's box, the shades' lattice and phase, a
-  painted row's padding, and the cell as whole layout units in three
-  engines, with its golden in the sweep.
+  asserting every tiling glyph's box, the shades' lattice and phase
+  and their copies' glyph, a painted row's padding, and the cell as
+  whole layout units in three engines, with its golden in the sweep.
 
 ## Verification
 
-Done before the plan (results above): the boxed span's row height,
-neighbor cells, vertical centering, native selection, and ink at the
-fill scale in all three engines; `Intl.Segmenter` cost; the sweep
-image's fonts; keyboard extension and copy after a prevented mousedown.
-Measured after the implementation (2026-09-05, `verify/paint-bench.mjs`,
+Probed (results above): the boxed span's row height, neighbor cells,
+vertical centering, native selection, and ink at the fill scale in all
+three engines; `Intl.Segmenter` cost; the sweep image's fonts; keyboard
+extension and copy after a prevented mousedown. Measured
+(2026-09-05, `verify/paint-bench.mjs`,
 80 paragraphs in an 89 × 320 grid, one character added per frame): a
 drag move within a paragraph or across paragraphs is indistinguishable
 from an idle frame in all three engines (median 17 ms Chromium and
@@ -626,15 +596,71 @@ per change, the DOM patch is per row.
 
 ## Touch points on implementation
 
-- width.ts: `clusterWidth` (0, 1 or 2 cells per grapheme),
-  `graphemes`, `clusterAdvance`, `clusterAdvances` and `textCells` —
-  the terminal convention every measure goes through.
-- glyph-box.ts: `#tileFit` and the `BaselineOf` measurer the host
-  lends it, which scale a glyph the font lacks into its cells.
-- paint.ts `applySegment`: pins, clips and stretches a tiled glyph.
-- metrics.ts: `backgroundGap` (the host's `--mw-bgpad`, the grid's
-  span padding) and `gridLetterSpacing` (the cell rounded up to
-  1/64 px, set on the grid).
+- width.ts: `clusterWidth` (0, 1 or 2 cells per grapheme, from a
+  hand-condensed East Asian Wide/Fullwidth table and the
+  `Extended_Pictographic`, `Emoji_Presentation`, `Regional_Indicator`
+  and `Default_Ignorable_Code_Point` properties), `graphemes` (the ASCII
+  fast path, a cached grapheme `Intl.Segmenter`), `clusterAdvance`,
+  `clusterAdvances` and `textCells`, exported from the package — the
+  terminal convention every measure goes through.
+- tree.ts: `collectNodes` walks text per cluster (its width plus
+  tracking as the advance; CRLF one break); `expandClusters` spreads
+  `advances` and `charInline` over code units; `buildRendererLeaf`,
+  textarea rows and select labels count the same widths.
+- wrap.ts: `lineAdvance` takes the text, so a line's trailing gap is
+  its last cluster's advance beyond its cells.
+- plain-text.ts: `forEachLeafCell` visits clusters; `renderGrids`
+  writes a cluster at its cell and `""` at its continuation cells,
+  keeping each cell's wide owner so a later paint or a clip edge blanks
+  the cluster whole; `RenderOptions`' `boxed` and `selection`; a
+  selected paint swaps color and background (`applyCellPaint`);
+  `rowSegments` closes a boxed cluster into its own segment, and
+  `renderGridRows` returns the segments with the cell strings.
+- glyph-box.ts: `GlyphBoxes` — `measureText` per distinct cluster and
+  font (family, size, weight, style), the 0.01-cell tolerance, the
+  fill scale capped by the ink; `#tileFit` and the `BaselineOf`
+  measurer the host lends it; the cache `configure` clears on a font
+  or cell change and `invalidate()` re-measures on fonts settling, a
+  cluster's box uncached while `document.fonts` is loading.
+- paint.ts: `paintGrid`'s per-row patch (styles in place when the
+  row's structure matches, a rebuild between its neighbors' newlines
+  when not), `holdStructural` while a press the engine has not taken
+  over may be a native drag; `applySegment`, a boxed segment's
+  `data-box` span — its width, `text-indent`, scale, a tiling fit's
+  `line-height`, a shade's `data-shade`, `--mw-period` and `--mw-phase` —
+  built once and cloned down the page, and every box restyled when the glyph
+  cache's `generation` moved; `gridOffsetAt` and `paintedCell` read the
+  kept cell strings.
+- metrics.ts: `backgroundGap` (the host's `--mw-bgpad`, the grid's span
+  padding) and `gridLetterSpacing` (the cell rounded up to 1/64 px, set
+  on the grid).
+- selection.ts: `selectedRanges(root, points)`.
+- element.ts: `#paint` (glyph boxes and the selection's ranges);
+  `#onSelectionChange` repainting a host holding the range or just
+  left by it; the text-mode press (`#startGesture`) and the
+  `"character"` gesture unit, extended by `#extendGesture`; `#unitAt`,
+  the nearest unit over painted cells in `nearestCells` order; the
+  grid's `line-height` and `letter-spacing`; the host's `--mw-bgpad`;
+  the glyph cache configured per layout, `#baselineOf` lending the
+  tiling fit its baseline; the shadow's `[data-shade]` rules drawing a
+  shade's lattice at its phase and a period above, each clipped to its
+  strip, each shade's glyph a literal (performance.md "Shades drawn
+  once"); `#autoscroll` and `#followPointer`; the
+  light DOM's `::selection` lock under `data-mw-selection`
+  (`#onSelectStart`, a press's held on the window's `#pressHeld`, both
+  its edges captured, `#onSelectionChange` and `#reachesLight`,
+  `#selectThrough` and `#liftLock`, a press
+  begun outside in `#onPointerMove`, the release in `#onPointerUp`,
+  the disconnect);
+  the shadow's transparent `slot::selection` and the grid's invert.
+- styles.css: the light `::selection` sites transparent outside forced
+  colors; form controls and editables swapping their engine-written
+  colors by a rule of their own, ungated.
+- render.ts: `--mw-ink` / `--mw-ground` on editables, the ground
+  threaded down the walk.
+- packages/ascii/src/index.ts: the transcript's transparent
+  `#mirror::selection`.
+- packages/qr-code/src/index.ts: the same, on its transcript.
 - cell-model.md "Selection", "Text alignment" and "Typography",
-  semantic-selection.md's gesture model, core-architecture.md's
-  display-width entry, and the README's "Selection" all point here.
+  semantic-selection.md's gesture model and core-architecture.md's
+  display-width entry point here.

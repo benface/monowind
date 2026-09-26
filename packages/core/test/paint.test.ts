@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { gridOffsetAt, paintGrid } from "../src/paint.ts";
 import { layoutRoot } from "../src/layout.ts";
-import { buildTree } from "../src/tree.ts";
-import { makeNode } from "./helpers.ts";
+import { cells, layered, makeNode } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
 /** The three paint tiers (specs/cell-model.md "Selection"): identical
@@ -22,7 +21,7 @@ describe("paintGrid rows", () => {
       style: { display: "flex", flexDirection: "column" },
       children: [
         makeNode({ text: "hi", intrinsicWidth: 2 }),
-        makeNode({ style: { height: { kind: "cells", value: 1 } } }),
+        makeNode({ style: { height: cells(1) } }),
         makeNode({ text: "hello world", intrinsicWidth: 11 }),
       ],
     });
@@ -146,10 +145,9 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
       shift: () => 0,
       generation: 0,
     };
-    const cells = (value: number) => ({ kind: "cells" as const, value });
     const stem = (resampled: boolean, text = "\u2502") =>
       makeNode({
-        style: { width: cells(2), layer: { backdropFilter: "none", resampled } },
+        style: { width: cells(2), layer: layered(resampled) },
         text,
         intrinsicWidth: 1,
         source: document.createElement("div"),
@@ -166,7 +164,7 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     expect(Array.from(layers.querySelectorAll("pre.grid"), boxed)).toEqual([false, true, true]);
   });
 
-  it("carries a shade's lattice across rows: the phase in the line box, copies a period away", () => {
+  it("carries a shade's lattice across rows: the phase and period on its box, its line box pinned", () => {
     const target = document.createElement("pre");
     const root = makeNode({
       children: [
@@ -177,16 +175,118 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     layoutRoot(root, 1);
     const glyphs = {
       box: () => ({ scale: 1.5, lineHeight: 14.31, advance: 12, period: 3 }),
-      shift: (_box: unknown, row: number) => [0, -1, 1][row % 3]!,
+      shift: (_box: unknown, row: number) => [0, 2, 1][row % 3]!,
       generation: 0,
     };
     paintGrid(root, target, { glyphs });
     const [first, second] = Array.from(target.querySelectorAll("span"));
     expect(first!.dataset.shade).toBe("░");
     expect(first!.style.getPropertyValue("--mw-period")).toBe("3px");
+    expect(first!.style.getPropertyValue("--mw-phase")).toBe("0px");
+    expect(second!.style.getPropertyValue("--mw-phase")).toBe("2px");
+    // The shadow's rules draw the lattice at the phase; the box's own
+    // line box stays where the pin puts it.
     expect(first!.style.lineHeight).toBe("14.31px");
-    // Row 1 moves one pixel up the lattice: its line box shrinks by two.
-    expect(second!.style.lineHeight).toBe("12.31px");
+    expect(second!.style.lineHeight).toBe("14.31px");
+  });
+
+  it("paints a translucent shade in its own color, over a background or none", () => {
+    // Each copy that carries the lattice is clipped to the strip it
+    // fills, so no pixel is drawn twice.
+    const target = document.createElement("pre");
+    const shade = (style: Parameters<typeof makeNode>[0]["style"]) =>
+      makeNode({ style: { color: "rgb(0 0 0 / 0.25)", ...style }, text: "░", intrinsicWidth: 1 });
+    const root = makeNode({
+      children: [shade({}), shade({ backgroundColor: "rgb(0 0 255 / 0.5)" })],
+    });
+    layoutRoot(root, 1);
+    const glyphs = {
+      box: () => ({ scale: 1.5, lineHeight: 14, advance: 12, period: 3 }),
+      shift: () => 0,
+      generation: 0,
+    };
+    paintGrid(root, target, { glyphs });
+    const shades = Array.from(target.querySelectorAll("span"), (span) => [
+      span.style.color,
+      span.style.opacity,
+    ]);
+    expect(shades).toEqual([
+      ["rgb(0 0 0 / 0.25)", ""],
+      ["rgb(0 0 0 / 0.25)", ""],
+    ]);
+  });
+
+  it("paints a faded run with nothing beneath as a span at its opacity, patched as it changes", () => {
+    const target = document.createElement("pre");
+    const tree = (opacity: number) => {
+      const root = makeNode({ children: [makeNode({ style: { opacity }, text: "ab" })] });
+      layoutRoot(root, 2);
+      return root;
+    };
+    paintGrid(tree(0.5), target);
+    const span = target.querySelector("span")!;
+    expect([span.textContent, span.style.opacity]).toEqual(["ab", "0.5"]);
+    paintGrid(tree(0.25), target);
+    expect(target.querySelector("span")).toBe(span);
+    expect(span.style.opacity).toBe("0.25");
+  });
+
+  it("fades a color emoji over a blended cell on a span of its own, its underline with it", () => {
+    // WebKit draws a color emoji whole at any color alpha above 0.
+    const target = document.createElement("pre");
+    const tree = (opacity: number) => {
+      const style = { opacity, color: "rgb(0 0 0)", textDecorationLine: "underline" };
+      const leaf = makeNode({ style, text: "\u{1F600}", intrinsicWidth: 2 });
+      leaf.advances = [2, 0];
+      const root = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [leaf] });
+      layoutRoot(root, 2);
+      return root;
+    };
+    const glyphs = { box: () => null, shift: () => 0, generation: 0 };
+    const painted = () => {
+      const span = target.querySelector("span")!;
+      const glyph = span.querySelector("span");
+      return {
+        span,
+        glyph,
+        styles: [span.style.textDecoration, glyph?.style.opacity, glyph?.style.textDecoration],
+      };
+    };
+    paintGrid(tree(0.4), target, { glyphs });
+    const { span, glyph, styles } = painted();
+    expect([glyph?.textContent, ...styles]).toEqual(["\u{1F600}", "", "0.4", "underline"]);
+    paintGrid(tree(0.2), target, { glyphs });
+    const faded = painted();
+    expect([faded.span === span, faded.glyph === glyph, ...faded.styles]).toEqual([
+      true,
+      true,
+      "",
+      "0.2",
+      "underline",
+    ]);
+    paintGrid(tree(1), target, { glyphs });
+    const whole = target.querySelector("span")!;
+    expect([whole.childElementCount, whole.textContent, whole.style.textDecoration]).toEqual([
+      0,
+      "\u{1F600}",
+      "underline",
+    ]);
+  });
+
+  it("boxes a run of one band cell by cell where its color stays translucent", () => {
+    const target = document.createElement("pre");
+    const band = (color: string) => makeNode({ style: { color }, text: "███", intrinsicWidth: 3 });
+    const root = makeNode({ children: [band("rgb(0 0 0)"), band("rgb(0 0 0 / 0.5)")] });
+    layoutRoot(root, 3);
+    const fit = { scale: 1.2, lineHeight: 19, advance: 9.6 };
+    const glyphs = { box: () => fit, shift: () => 0, generation: 0 };
+    paintGrid(root, target, { glyphs });
+    const rows = target.textContent!.split("\n");
+    expect(rows).toEqual(["███", "███"]);
+    const spans = Array.from(target.querySelectorAll("span"), (span) => span.textContent);
+    // The overdraw a shared box leaves at each joint is ink the neighbor
+    // draws anyway, twice over in a translucent color.
+    expect(spans).toEqual(["███", "█", "█", "█"]);
   });
 
   it("drops the shade mark from a span patched in place once its font draws it whole", () => {
@@ -229,21 +329,68 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     expect(span.style.color).toBe("");
   });
 
-  it("boxes a line glyph an inline element's opacity fades, as a translucent box's", () => {
-    // Its color is mixed toward transparent: unboxed, its overshoot
-    // composites twice where the rows join (specs/cell-model.md "Opacity").
-    const host = document.createElement("div");
-    host.innerHTML = '<div><p>\u2502<span style="opacity: 0.5">\u2502</span></p></div>';
-    document.body.appendChild(host);
-    const node = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(node, 4);
-    host.remove();
+  it("boxes a line glyph whose color stays translucent, one blended opaque joining its rows", () => {
+    // Unboxed, its overshoot composites twice where the rows join
+    // (specs/cell-model.md "Opacity and translucency").
+    const stem = (style: Parameters<typeof makeNode>[0]["style"]) =>
+      makeNode({ style: { color: "rgb(0 0 0 / 0.5)", ...style }, text: "\u2502" });
+    const root = makeNode({
+      style: { width: cells(2) },
+      children: [
+        stem({}),
+        stem({ opacity: 0.5, color: "rgb(0 0 0)" }),
+        stem({ backgroundColor: "rgb(255 255 255)", width: cells(1) }),
+        stem({ layer: layered() }),
+      ],
+    });
+    layoutRoot(root, 2);
     const target = document.createElement("pre");
-    paintGrid(node, target, { glyphs: { box: () => null, shift: () => 0, generation: 0 } });
-    const spans = Array.from(target.querySelectorAll("span"));
-    expect(spans.map((span) => [span.textContent, span.dataset.box !== undefined])).toEqual([
-      ["\u2502", true],
+    const layers = document.createElement("div");
+    const glyphs = { box: () => null, shift: () => 0, generation: 0 };
+    paintGrid(root, target, { glyphs, layers, placeLayers: false });
+    const boxed = (grid: Element) =>
+      Array.from(grid.querySelectorAll("span"), (span) => [
+        span.textContent,
+        (span as HTMLElement).dataset.box,
+      ]);
+    expect(boxed(target)).toEqual([
+      ["\u2502", "center"],
+      ["\u2502", "center"],
+      ["\u2502", undefined],
     ]);
+    expect(boxed(layers.querySelector(".grid")!)).toEqual([["\u2502", "center"]]);
+  });
+
+  it("boxes a translucent line glyph in a scaled layer, whose fit it declines", () => {
+    const tree = (resampled: boolean) => {
+      const root = makeNode({
+        children: [
+          makeNode({
+            style: { color: "rgb(0 0 0 / 0.5)", layer: layered(resampled) },
+            text: "\u2502",
+          }),
+        ],
+      });
+      layoutRoot(root, 1);
+      return root;
+    };
+    const target = document.createElement("pre");
+    const layers = document.createElement("div");
+    const glyphs = {
+      box: () => ({ scale: 1.08, lineHeight: 30, advance: 9.6, past: true }),
+      shift: () => 0,
+      generation: 0,
+    };
+    const fit = () => {
+      const span = layers.querySelector(".grid span") as HTMLElement;
+      return [span.dataset.box, span.style.fontSize, span.style.lineHeight];
+    };
+    // The font's own glyph, centered in its cell.
+    paintGrid(tree(true), target, { glyphs, layers, placeLayers: false });
+    expect(fit()).toEqual(["center", "", ""]);
+    // The same cells in a layer that no longer resamples wear the fit.
+    paintGrid(tree(false), target, { glyphs, layers, placeLayers: false });
+    expect(fit()).toEqual(["", "108%", "30px"]);
   });
 
   it("maps cells to flat offsets across rows", () => {

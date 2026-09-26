@@ -1,4 +1,4 @@
-import type { Mounted } from "../vanilla.ts";
+import { isPlain, type Mounted } from "../vanilla.ts";
 
 /**
  * The base every `<mono-*>` element is (specs/ui.md "Component
@@ -42,9 +42,6 @@ interface Selecting {
   value: string[];
   setValue(value: string[]): void;
 }
-
-const isPlain = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
 
 /** Two prop values alike: the same, or arrays or plain objects whose
  * entries are — a framework hands a fresh `value` array or `ids`

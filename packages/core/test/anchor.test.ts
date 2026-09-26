@@ -132,7 +132,7 @@ describe("the read", () => {
       maxHeight: { anchor: "--c", dimension: "height" },
     });
     // The browser's px is the pre-grid anchor's: unset until placed.
-    expect(style.width).toEqual({ kind: "auto" });
+    expect(style.width).toBeUndefined();
     expect(style.minWidth).toBe("auto");
     expect(style.maxHeight).toBeUndefined();
     // Only an out-of-flow box takes one, as in CSS.
@@ -365,6 +365,12 @@ describe("the area", () => {
     expect(place(box).rect).toMatchObject({ x: 0, y: 4 });
     const end = anchored("x", { x: "span-all", y: "end" }, { style: { justifySelf: "end" } });
     expect(place(end).rect).toMatchObject({ x: 19, y: 4 });
+    const flexEnd = anchored(
+      "x",
+      { x: "span-all", y: "end" },
+      { style: { justifySelf: "flex-end" } },
+    );
+    expect(place(flexEnd).rect).toMatchObject({ x: 19, y: 4 });
     // Beside a 3-row anchor, on its rows and below, a box hugs the top
     // of the area, or centers on the anchor under anchor-center.
     const hugging = anchored("x", { x: "end", y: "span-end" });
@@ -567,13 +573,16 @@ describe("the fallbacks", () => {
     // Beside an anchor at row 5, a 4-row box has 3 rows spanning down:
     // flipped to span up, its start alignment becomes end, its bottom
     // on the anchor's bottom.
-    const box = anchored(
-      "a b c d",
-      { x: "end", y: "span-end" },
-      { style: { width: { kind: "cells", value: 1 }, alignSelf: "start" } },
-      [{ flips: ["block"] }],
-    );
-    expect(place(box, 6, 1, 5).rect).toMatchObject({ y: 2 });
+    const y = (alignSelf: CellStyle["alignSelf"]) => {
+      const box = anchored(
+        "a b c d",
+        { x: "end", y: "span-end" },
+        { style: { width: { kind: "cells", value: 1 }, alignSelf } },
+        [{ flips: ["block"] }],
+      );
+      return place(box, 6, 1, 5).rect.y;
+    };
+    expect([y("start"), y("flex-start")]).toEqual([2, 2]);
   });
 });
 

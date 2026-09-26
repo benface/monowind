@@ -14,9 +14,7 @@ export {
   type Connected,
   type Positioned,
 } from "./hooks.ts";
-/** The collections a listbox and a select take, Zag's own: `items`
- * and, for a grid of them, `columnCount`. Both components build the
- * same `ListCollection`, so one export serves each. */
+/** The three lists' collections, `@monowind/ui/listbox`'s. */
 export { collection, gridCollection } from "@monowind/ui/listbox";
 export type { PartProps } from "./components/part.tsx";
 export type { ItemProps } from "./components/items.tsx";

@@ -178,6 +178,33 @@ export const InlineBorder: StoryObj = {
   },
 };
 
+/** Test-only: an inline element's padding is its own (specs/cell-model.md,
+ * deviation 5): a span inside a padded one takes none, so its light box,
+ * and the text after it, sit on the cells the grid draws them on. */
+export const NestedInlinePadding: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p>
+        a <span class="bg-red-500 px-2">b<span data-test="inner">c</span></span>
+        <b data-test="after">d</b>
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    expect(gridOf(host).textContent).toContain("a   bc   d");
+    const { width } = cellSize(host);
+    const left = gridOf(host).getBoundingClientRect().left;
+    // "a ", two padding cells and "b" before "c", its one cell alone.
+    const inner = by("inner").getBoundingClientRect();
+    expect(Math.abs(inner.left - left - 5 * width)).toBeLessThan(0.5);
+    expect(Math.abs(inner.width - width)).toBeLessThan(0.5);
+    expect(Math.abs(by("after").getBoundingClientRect().left - left - 9 * width)).toBeLessThan(0.5);
+  },
+};
+
 /** Test-only: tracked atomic inline boxes filling their line exactly,
  * which the browser keeps on one line as the grid does
  * (visual/agreement.spec.ts checks each on its cells in every engine). */
@@ -551,7 +578,8 @@ export const TilingGlyphs: StoryObj = {
     const strokes = tiling(host).filter((box) => /^[\u2500-\u257F]$/.test(box.textContent!));
     expect(labels(strokes.filter((box) => box.dataset.box !== undefined))).toEqual([]);
     // A shade scales past the blocks, to whole device pixels of lattice,
-    // and its box carries the lattice's phase from row to row.
+    // and its box carries the lattice's phase from row to row, its
+    // copies drawing its glyph.
     const block = parseFloat(boxes.find((box) => /^█+$/.test(box.textContent!))!.style.fontSize);
     const shades = boxes.filter((box) => /^[\u2591-\u2593]$/.test(box.textContent!));
     expect(shades.length).toBeGreaterThan(3);
@@ -560,6 +588,7 @@ export const TilingGlyphs: StoryObj = {
       return (
         !(parseFloat(box.style.fontSize) >= block) ||
         box.dataset.shade !== box.textContent ||
+        getComputedStyle(box, "::after").content !== JSON.stringify(box.textContent) ||
         !(period > 0) ||
         !(parseFloat(box.style.lineHeight) > 0)
       );

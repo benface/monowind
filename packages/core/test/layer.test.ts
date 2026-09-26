@@ -6,7 +6,7 @@ import { readCellStyle } from "../src/style.ts";
 import { zeroInsets } from "../src/types.ts";
 import { clusterAdvances } from "../src/width.ts";
 import type { Layer, LayoutNode } from "../src/types.ts";
-import { makeNode } from "./helpers.ts";
+import { cells, layered, makeNode, scrollBox } from "./helpers.ts";
 
 /** Layers (specs/layers.md): the read of a layer root's effects, the
  * paint of its subtree into a grid of its own, and the nodes the DOM
@@ -37,7 +37,7 @@ describe("layer read", () => {
       ["scale: 1.5", true],
       ["filter: blur(2px)", false],
     ] as const) {
-      expect(read(effect), effect).toEqual({ backdropFilter: "none", resampled });
+      expect(read(effect), effect).toEqual(layered(resampled));
     }
     expect(read("backdrop-filter: blur(2px)")).toEqual({
       backdropFilter: "blur(2px)",
@@ -49,11 +49,8 @@ describe("layer read", () => {
     expect(read("transform: matrix(1, 0, 0, 1, 0, 0)")).toBeNull();
     expect(read("transform: matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)")).toBeNull();
     expect(read("scale: 1; rotate: 0deg; translate: 0px 0px")).toBeNull();
-    expect(read("transform: matrix(1, 0, 0, 1, 2, 0)")).toEqual({
-      backdropFilter: "none",
-      resampled: false,
-    });
-    expect(read("scale: 1 1.5")).toEqual({ backdropFilter: "none", resampled: true });
+    expect(read("transform: matrix(1, 0, 0, 1, 2, 0)")).toEqual(layered());
+    expect(read("scale: 1 1.5")).toEqual(layered(true));
   });
 
   it("marks the effects that draw the cells at another size or angle", () => {
@@ -83,9 +80,6 @@ describe("layer read", () => {
   });
 });
 
-/** A layer root's read, for a node under test. */
-const layered = (resampled = false): Layer => ({ backdropFilter: "none", resampled });
-
 /** An element with the effects a layer root's node copies. */
 const effects = (style: string): Element => {
   const el = document.createElement("div");
@@ -95,7 +89,6 @@ const effects = (style: string): Element => {
 };
 
 const border = { top: 1, right: 1, bottom: 1, left: 1 };
-const cells = (value: number) => ({ kind: "cells" as const, value });
 
 /** The main grid's rows and each layer's, as joined strings. */
 const rowsOf = (root: LayoutNode) => {
@@ -440,7 +433,7 @@ describe("layer paint (specs/layers.md)", () => {
     });
     const root = makeNode({ style: { width: cells(6), height: cells(6) }, children: [box] });
     layoutRoot(root, 6);
-    box.scroll = { x: 0, y: 2 };
+    scrollBox(root, box, 0, 2);
     const { layers } = rowsOf(root);
     expect(layers[0]!.rows).toEqual([]);
   });
@@ -454,7 +447,7 @@ describe("layer paint (specs/layers.md)", () => {
     });
     const root = makeNode({ style: { width: cells(6) }, children: [box] });
     layoutRoot(root, 6);
-    box.scroll = { x: 0, y: 2 };
+    scrollBox(root, box, 0, 2);
     const { main, layers } = rowsOf(root);
     expect(main[0]!.startsWith("three")).toBe(true);
     expect(layers[0]).toMatchObject({ x: 0, y: 1 });
@@ -614,6 +607,114 @@ describe("layer nodes (paint.ts)", () => {
     source.style.rotate = "45deg";
     syncLayers(layers);
     expect(box.style.rotate).toBe("45deg");
+  });
+
+  it("puts a layer root's opacity, times its faded ancestors', on its box, its cells unfaded", () => {
+    const layers = document.createElement("div");
+    const root = makeNode({
+      style: { width: cells(8) },
+      children: [
+        makeNode({
+          style: { opacity: 0.5 },
+          children: [
+            makeNode({
+              style: { opacity: 0.4, color: "rgb(0 0 0)", layer: layered() },
+              text: "ab",
+              intrinsicWidth: 2,
+              source: effects("rotate: 3deg; opacity: 0.4"),
+            }),
+          ],
+        }),
+      ],
+    });
+    layoutRoot(root, 8);
+    const painted = renderGridRows(root);
+    expect(painted.layers[0]!.segments[0]![0]).toEqual({ text: "ab", color: "rgb(0 0 0)" });
+    paint(root, layers);
+    const box = layers.firstElementChild as HTMLElement;
+    expect(box.style.opacity).toBe("0.2");
+  });
+
+  it("keeps a blend's alpha over a layer's unpainted cells, for the browser to composite", () => {
+    const root = makeNode({
+      style: { width: cells(4) },
+      children: [
+        makeNode({
+          style: { position: "relative", backgroundColor: "rgb(255 0 0 / 0.5)", layer: layered() },
+          children: [
+            makeNode({ text: "ab", intrinsicWidth: 2 }),
+            makeNode({
+              style: {
+                position: "absolute",
+                insets: { top: 0, right: null, bottom: null, left: 0 },
+                width: cells(1),
+                height: cells(1),
+                backgroundColor: "rgb(0 0 255 / 0.5)",
+              },
+            }),
+          ],
+        }),
+      ],
+    });
+    layoutRoot(root, 4);
+    const [first, rest] = renderGridRows(root).layers[0]!.segments[0]!;
+    expect(first).toEqual({ text: " ", backgroundColor: "rgb(85 0 170 / 0.75)" });
+    expect(rest).toEqual({ text: "b  ", backgroundColor: "rgb(255 0 0 / 0.5)" });
+  });
+
+  it("draws a translucent glyph over a translucent background once, its color as it is", () => {
+    const root = makeNode({
+      style: { width: cells(4) },
+      children: [
+        makeNode({
+          style: { backgroundColor: "rgb(0 0 0 / 0.5)", layer: layered() },
+          children: [
+            makeNode({ style: { color: "rgb(255 255 255 / 0.5)" }, text: "ab" }),
+            makeNode({ style: { opacity: 0.5, color: "rgb(255 255 0)" }, text: "cd" }),
+          ],
+        }),
+      ],
+    });
+    layoutRoot(root, 4);
+    const rows = renderGridRows(root).layers[0]!.segments;
+    expect(rows[0]![0]).toEqual({
+      text: "ab",
+      color: "rgb(255 255 255 / 0.5)",
+      backgroundColor: "rgb(0 0 0 / 0.5)",
+    });
+    expect(rows[1]![0]).toEqual({
+      text: "cd",
+      color: "rgb(255 255 0 / 0.5)",
+      backgroundColor: "rgb(0 0 0 / 0.5)",
+    });
+  });
+
+  it("fades a group over a layer's unpainted cells as its span's opacity, its label over its own fill", () => {
+    const root = makeNode({
+      style: { width: cells(3) },
+      children: [
+        makeNode({
+          style: { layer: layered() },
+          children: [
+            makeNode({
+              style: {
+                opacity: 0.5,
+                backgroundColor: "rgb(0 0 255)",
+                color: "rgb(255 255 0)",
+              },
+              text: "ab",
+            }),
+          ],
+        }),
+      ],
+    });
+    layoutRoot(root, 3);
+    expect(renderGridRows(root).layers[0]!.segments[0]![0]).toEqual({
+      text: "ab",
+      color: "rgb(255 255 0)",
+      backgroundColor: "rgb(0 0 255)",
+      opacity: 0.5,
+    });
   });
 
   it("composites a layer's wide cluster whole", () => {

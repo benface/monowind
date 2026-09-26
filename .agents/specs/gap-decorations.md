@@ -1,7 +1,7 @@
 # Spec: gap decorations (rules)
 
 Status: implemented (`rules.css` utilities; engine painting via
-`collectGapRuleRuns` in `borders.ts`, wired into flex and grid). The
+`gapRuleRuns` in `borders.ts`, wired into flex, grid and multicol). The
 normative source is CSS Gaps Level 1 (css-gaps-1), which generalizes
 multicol's `column-rule-*` to flex and grid gaps and adds
 `row-rule-*`. Shipped unflagged in Chrome/Edge 149 (flagged trial since
@@ -121,9 +121,13 @@ engine paints the glyphs; a supporting browser must not double-paint
 fractional ones). The used gap in a ruled axis floors at the rule
 width — `rule` alone behaves as `gap-1 rule` — so a rule always has
 cells to paint in (deviation 1). Crossing rules junction (`┼`), and a
-rule that reaches the content edge through zero padding tees into the
-container's own innermost border ring (`┬ ┴ ├ ┤`) — the shared
-junction-glyph machinery in both cases.
+rule that reaches the container's own innermost border ring — the
+content edge through zero padding, or across the padding where its
+tracks overflow — joins it on the ring's straight run: a tee (`┬ ┴ ├
+┤`) where it ends there, a cross (`┼`) where it runs on past, as
+Chromium paints a rule over its tracks' whole extent, over the border
+and beyond (probed 2026-09-25); a rule beside the box meets no border.
+The shared junction-glyph machinery serves both.
 
 ### Segments (rule-break, rule-inset, rule-visibility-items)
 

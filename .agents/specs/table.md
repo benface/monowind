@@ -93,7 +93,8 @@ the grid track machinery.
    (floored at the content min — a width can't shrink a column below its
    content, and doesn't raise its min, per CSS 2.1); a percent width
    leaves the column's intrinsic sums content-based and acts through
-   inflation (step 3) and resolution (step 4).
+   inflation (step 3) and resolution (step 4). A `fit-content` width on
+   a cell or `<col>` is `auto` (probed: every engine, in both layouts).
 2. Spanning cells distribute their excess (contribution minus what the
    spanned columns already provide, minus the chrome between them) in
    ascending span order, proportionally to the spanned columns' max
@@ -251,6 +252,11 @@ are ignored.
   marker), like `inline-grid`.
 - Cells are containing blocks for their content as ordinary blocks;
   `relative` on a cell works for abspos descendants.
+- An out-of-flow child of the table itself sits where a row in its
+  place would start: after the rows before it (header rows first and
+  footer rows last, whatever the DOM order), past the border spacing
+  or lattice line there, and inset like a row, its own margins past
+  that (probed 2026-09-25, every engine).
 - Browser side, laid-out cells/rows/groups are absolutized by the
   companion stylesheet, which blockifies their computed display — the
   native table layout dissolves and every box lands where the engine
@@ -265,7 +271,8 @@ are ignored.
    HTML tables are unaffected.
 2. **Collapsed borders live inside the table** — no half-border overhang
    past the border box; the lattice occupies whole cells between and
-   around the cells.
+   around the cells, so a trailing out-of-flow child sits past the
+   table's own bottom border, which browsers put after it.
 3. **Percent inflation follows css-tables-3, capped at the available
    width** (CSS 2.1 leaves it undefined; probed: all three engines
    match the formula on single-row cases, within a pixel). In intrinsic

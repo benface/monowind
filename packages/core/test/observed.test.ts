@@ -20,6 +20,7 @@ it("follows the attributes that render, every data-* but the engine's marks, and
     "data-highlighted",
     "id",
     "role",
+    "tabindex",
     "popovertarget",
     "max",
   ]) {
@@ -27,7 +28,6 @@ it("follows the attributes that render, every data-* but the engine's marks, and
   }
   for (const name of [
     "name",
-    "tabindex",
     "title",
     "aria-activedescendant",
     "aria-controls",

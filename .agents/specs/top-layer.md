@@ -38,8 +38,9 @@ supply them. Its `::backdrop`'s computed
 `background-color`, `background-image`, `backdrop-filter`, and
 `opacity` (`getComputedStyle(el, "::backdrop")`) are the **backdrop**,
 none when nothing of them shows; the companion locks the native
-backdrop transparent outside `[measuring]`, as it locks the light
-elements' backgrounds, so the page is dimmed once, by the grid's box.
+backdrop transparent outside its element's `data-mw-measuring` flag,
+as it locks the light elements' backgrounds, so the page is dimmed
+once, by the grid's box.
 
 The host listens to `toggle` in the capture phase (the event bubbles
 from neither popovers nor dialogs; every engine dispatches it for
@@ -101,10 +102,11 @@ connected — join the stack in tree order.
   through `display: none`, so a popover whose exit rides a discrete
   `display` transition keeps painting last through its exit, in every
   engine alike, whether or not the engine honours `overlay`. The
-  companion's transition mask under `[measuring]` and `[settling]`
-  keeps `display` and `overlay` in the list for popovers and dialogs
-  — for them alone: the engine's own `display` toggle under
-  `[measuring]`, the grid-template read assist, must start no
+  companion's transition mask under an element's `data-mw-measuring`
+  and `data-mw-settling` flags keeps `display` and `overlay` in the
+  list for popovers and dialogs — for them alone: the engine's own
+  `display` toggle under the measuring flag, the grid-template read
+  assist, must start no
   transition elsewhere — so the measuring passes leave the discrete
   transition running, and a `transitionend` or `transitioncancel` of
   either lands its state with a layout, as an animation's end does
@@ -189,17 +191,21 @@ connected — join the stack in tree order.
   assigned onto each layout's tree (`topLayerRank`, `root.topLayer`).
 - element.ts: the capture-phase `toggle` listener; `display` and
   `overlay` among the landing transitions; the grid's client origin
-  written as `--mw-ox`/`--mw-oy` for the light elements' placement; a
+  written as `--mw-ox`/`--mw-oy` for the light elements' placement,
+  after every layout and page scroll and when a box around the host
+  changes height (`#onResize`); a
   grid-mode press inside a modal dialog taken as text mode's.
-- styles.css: `display, overlay` in the transition mask for popovers
-  and dialogs; the native `::backdrop` locked transparent outside
-  `[measuring]`; a `[data-mw-top]` element placed `fixed` in the
-  viewport from the grid's client origin, since the top layer resolves
-  against the viewport, not the host; the host's surface on
-  `[popover]` and `dialog`, in the base layer.
-- positioning.ts: a fixed box's `hostRect`; plain-text.ts `walk` and
-  pointer.ts `hitStack`: a fixed box from the host's origin outside
-  its ancestors' clips, the stack after the tree; paint.ts: the
-  backdrop box beneath a layer's; render.ts: a fixed light element
-  taking its ancestors' scroll back through the sticky-shift
-  variables.
+- styles.css: `display, overlay` in the transition mask for popovers and
+  dialogs; the native `::backdrop` locked transparent outside its
+  element's `data-mw-measuring` flag; a `[data-mw-top]` element placed
+  `fixed` in the viewport from the grid's client origin, since the top
+  layer resolves against the viewport, not the host; the host's surface
+  on `[popover]` and `dialog`, in the base layer.
+- positioning.ts: a fixed box's `hostRect`.
+- paint-origin.ts: `placePainted`, a fixed box's `paintOrigin`.
+- plain-text.ts: `walk` paints a fixed box outside its ancestors'
+  clips, and the stack after the tree.
+- pointer.ts: `hitStack` likewise.
+- paint.ts: the backdrop box beneath a layer's.
+- render.ts: a fixed light element taking back the scroll and shifts
+  its parent paints it with, through the sticky-shift variables.

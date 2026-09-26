@@ -5,23 +5,19 @@ import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
 import {
+  blockStaticSlot,
   boxChrome,
   clampSize,
+  contentOrigin,
   intrinsicOuterWidth,
+  isInFlowBox,
   isOutOfFlow,
   layoutNode,
-  minContentOuterWidth,
+  resolveMargin,
   resolveSizeAgainst,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
-import type {
-  Insets,
-  LatticeBorder,
-  LatticeSegment,
-  LayoutNode,
-  Side,
-  TableLattice,
-} from "./types.ts";
+import type { LatticeBorder, LatticeSegment, LayoutNode, Side, TableLattice } from "./types.ts";
 
 /**
  * Table layout (specs/table.md): CSS 2.1 §17 adapted to integer cells.
@@ -58,6 +54,8 @@ interface TableStructure {
   colPercent: (number | undefined)[];
   /** `<col>`/`<colgroup>` boxes and misparented content — never rendered. */
   hidden: LayoutNode[];
+  /** Per out-of-flow child: the index a row in its place would take. */
+  outOfFlow: Map<LayoutNode, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,22 +71,29 @@ function markHidden(structure: TableStructure, node: LayoutNode): void {
   );
 }
 
-/** HTML `colspan`/`rowspan`, clamped per the HTML spec. `rowspan` 0 means
- * "to the end of the row group" and resolves during placement. */
-function spanAttribute(el: Element, name: "colspan" | "rowspan"): number {
+/** `span`, `colspan` or `rowspan`, clamped per HTML; a `rowspan` of 0
+ * runs to the end of the row group, resolved during placement. */
+function spanAttribute(el: Element, name: "span" | "colspan" | "rowspan"): number {
   const raw = Number.parseInt(el.getAttribute(name) ?? "", 10);
   if (Number.isNaN(raw)) return 1;
-  if (name === "colspan") return Math.min(1000, Math.max(1, raw));
-  return Math.min(65534, Math.max(0, raw));
+  if (name === "rowspan") return Math.min(65534, Math.max(0, raw));
+  return Math.min(1000, Math.max(1, raw));
+}
+
+/** The width a table cell or column sets in cells, fixed or min-/max-content:
+ * a percent reads apart, fit-content as auto (probed: every engine). */
+function fixedWidth(node: LayoutNode, cache: IntrinsicCache): number | undefined {
+  const { width } = node.style;
+  if (width === undefined || width.kind === "percent" || width.kind === "fit-content") {
+    return undefined;
+  }
+  return resolveSizeAgainst(width, 0, node, cache);
 }
 
 function readColumns(structure: TableStructure, node: LayoutNode, cache: IntrinsicCache): void {
   const expand = (col: LayoutNode, count: number) => {
     const width = col.style.width;
-    const fixed =
-      width && width.kind !== "auto" && width.kind !== "percent"
-        ? resolveSizeAgainst(width, 0, col, cache)
-        : undefined;
+    const fixed = fixedWidth(col, cache);
     const percent = width && width.kind === "percent" ? width.value : undefined;
     for (let i = 0; i < count; i++) {
       structure.colFixed.push(fixed);
@@ -96,20 +101,14 @@ function readColumns(structure: TableStructure, node: LayoutNode, cache: Intrins
     }
   };
   if (node.style.tableRole === "column") {
-    expand(node, spanCount(node.source));
+    expand(node, spanAttribute(node.source, "span"));
     return;
   }
   const cols = node.children.filter((child) => child.style.tableRole === "column");
-  if (cols.length === 0) expand(node, spanCount(node.source));
-  else for (const col of cols) expand(col, spanCount(col.source));
+  if (cols.length === 0) expand(node, spanAttribute(node.source, "span"));
+  else for (const col of cols) expand(col, spanAttribute(col.source, "span"));
   for (const child of node.children)
     if (child.style.tableRole !== "column") markHidden(structure, child);
-}
-
-/** `<col span>` / `<colgroup span>`, clamped per HTML (1–1000). */
-function spanCount(el: Element): number {
-  const raw = Number.parseInt(el.getAttribute("span") ?? "", 10);
-  return Number.isNaN(raw) ? 1 : Math.min(1000, Math.max(1, raw));
 }
 
 function resolveTableStructure(node: LayoutNode, cache: IntrinsicCache): TableStructure {
@@ -123,6 +122,7 @@ function resolveTableStructure(node: LayoutNode, cache: IntrinsicCache): TableSt
     colFixed: [],
     colPercent: [],
     hidden: [],
+    outOfFlow: new Map(),
   };
 
   // Row groups render header-first and footer-last regardless of DOM
@@ -131,7 +131,10 @@ function resolveTableStructure(node: LayoutNode, cache: IntrinsicCache): TableSt
   const bodyRows: { row: LayoutNode; group: LayoutNode | null }[] = [];
   const footerRows: { row: LayoutNode; group: LayoutNode }[] = [];
   for (const child of node.children) {
-    if (isOutOfFlow(child.style)) continue;
+    if (isOutOfFlow(child.style)) {
+      structure.outOfFlow.set(child, bodyRows.length);
+      continue;
+    }
     const role = child.style.tableRole;
     if (role === "row") {
       bodyRows.push({ row: child, group: null });
@@ -152,6 +155,10 @@ function resolveTableStructure(node: LayoutNode, cache: IntrinsicCache): TableSt
     } else {
       markHidden(structure, child);
     }
+  }
+
+  for (const [child, row] of structure.outOfFlow) {
+    structure.outOfFlow.set(child, headerRows.length + row);
   }
 
   // Group boundaries: each explicit group is one; direct body rows merge
@@ -223,16 +230,14 @@ interface ColumnBounds {
  * Cell margins are ignored, per CSS (internal table boxes have none). */
 function cellContribution(cell: LayoutNode, kind: "min" | "max", cache: IntrinsicCache): number {
   const style = cell.style;
-  const contentMin = minContentOuterWidth(cell, cache);
+  const contentMin = intrinsicOuterWidth(cell, "min", cache);
   let width: number;
   if (kind === "min") {
     width = contentMin;
   } else {
-    const fixed =
-      style.width !== undefined && style.width.kind !== "auto" && style.width.kind !== "percent"
-        ? resolveSizeAgainst(style.width, 0, cell, cache)
-        : undefined;
-    width = fixed !== undefined ? Math.max(contentMin, fixed) : intrinsicOuterWidth(cell, cache);
+    const fixed = fixedWidth(cell, cache);
+    width =
+      fixed !== undefined ? Math.max(contentMin, fixed) : intrinsicOuterWidth(cell, "max", cache);
   }
   const min = typeof style.minWidth === "number" ? style.minWidth : 0;
   const max = typeof style.maxWidth === "number" ? style.maxWidth : undefined;
@@ -275,20 +280,20 @@ function autoColumnBounds(
   // (equal shares when all zero). Percent on spanning cells is ignored.
   spanning.sort((a, b) => a.colSpan - b.colSpan);
   for (const cell of spanning) {
-    const c0 = cell.col;
-    const c1 = cell.col + cell.colSpan;
-    const interior = chromeBetweenColumns(chrome, c0, c1);
-    const weights = max.slice(c0, c1);
+    const columnStart = cell.col;
+    const columnEnd = cell.col + cell.colSpan;
+    const interior = linesWithin(chrome.vLines, columnStart, columnEnd);
+    const weights = max.slice(columnStart, columnEnd);
     for (const kind of ["min", "max"] as const) {
       const target = kind === "min" ? min : max;
-      const provided = target.slice(c0, c1).reduce((a, b) => a + b, 0) + interior;
+      const provided = target.slice(columnStart, columnEnd).reduce((a, b) => a + b, 0) + interior;
       const excess = cellContribution(cell.node, kind, cache) - provided;
       if (excess <= 0) continue;
       const shares = distributeInteger(
         weights.some((w) => w > 0) ? weights : weights.map(() => 1),
         excess,
       );
-      for (let c = c0; c < c1; c++) target[c]! += shares[c - c0]!;
+      for (let c = columnStart; c < columnEnd; c++) target[c]! += shares[c - columnStart]!;
     }
   }
 
@@ -375,11 +380,10 @@ function fixedLayoutColumns(
   for (const cell of structure.cells) {
     if (cell.row !== 0) continue;
     const style = cell.node.style;
-    let cellWidth: number | undefined;
-    if (style.width && style.width.kind === "percent")
-      cellWidth = Math.max(0, Math.round((columnSpace * style.width.value) / 100));
-    else if (style.width && style.width.kind !== "auto")
-      cellWidth = resolveSizeAgainst(style.width, 0, cell.node, cache);
+    const cellWidth =
+      style.width?.kind === "percent"
+        ? Math.max(0, Math.round((columnSpace * style.width.value) / 100))
+        : fixedWidth(cell.node, cache);
     if (cellWidth === undefined) continue;
     const share = distributeInteger(
       Array.from({ length: cell.colSpan }, () => 1),
@@ -408,12 +412,10 @@ function fixedLayoutColumns(
 
 interface TableChrome {
   collapsed: boolean;
-  /** Collapsed: per-line widths (columnCount + 1 / rowCount + 1); the
-   * separate model keeps them zero and uses the spacings. */
+  /** Per-line widths (columnCount + 1 / rowCount + 1): the lattice's
+   * when collapsed, the border spacing in the separate model. */
   vLines: number[];
   hLines: number[];
-  spacingX: number;
-  spacingY: number;
   /** Collapsed only: winner per vertical segment [line][row] and
    * horizontal segment [line][column]; null = no border there (spanned
    * through, or nothing authored). */
@@ -461,10 +463,8 @@ function resolveChrome(node: LayoutNode, structure: TableStructure): TableChrome
   const set = glyphSetFor(node.style.glyphSet);
   const chrome: TableChrome = {
     collapsed,
-    vLines: Array.from({ length: C + 1 }, () => 0),
-    hLines: Array.from({ length: R + 1 }, () => 0),
-    spacingX: collapsed ? 0 : node.style.borderSpacingX,
-    spacingY: collapsed ? 0 : node.style.borderSpacingY,
+    vLines: Array.from({ length: C + 1 }, () => (collapsed ? 0 : node.style.borderSpacingX)),
+    hLines: Array.from({ length: R + 1 }, () => (collapsed ? 0 : node.style.borderSpacingY)),
     vSegments: [],
     hSegments: [],
   };
@@ -539,24 +539,10 @@ function resolveChrome(node: LayoutNode, structure: TableStructure): TableChrome
   return chrome;
 }
 
-function innerChromeX(chrome: TableChrome, columnCount: number): number {
-  return chrome.collapsed
-    ? chrome.vLines.reduce((a, b) => a + b, 0)
-    : (columnCount + 1) * chrome.spacingX;
-}
-
-/** Chrome between columns [c0, c1): interior lattice lines or spacing. */
-function chromeBetweenColumns(chrome: TableChrome, c0: number, c1: number): number {
-  if (!chrome.collapsed) return chrome.spacingX * (c1 - c0 - 1);
+/** The line widths inside the tracks [start, end). */
+function linesWithin(lines: number[], start: number, end: number): number {
   let sum = 0;
-  for (let i = c0 + 1; i < c1; i++) sum += chrome.vLines[i]!;
-  return sum;
-}
-
-function chromeBetweenRows(chrome: TableChrome, r0: number, r1: number): number {
-  if (!chrome.collapsed) return chrome.spacingY * (r1 - r0 - 1);
-  let sum = 0;
-  for (let j = r0 + 1; j < r1; j++) sum += chrome.hLines[j]!;
+  for (let i = start + 1; i < end; i++) sum += lines[i]!;
   return sum;
 }
 
@@ -580,7 +566,7 @@ function tableData(node: LayoutNode, cache: IntrinsicCache): TableData {
     structure,
     chrome,
     bounds,
-    chromeX: innerChromeX(chrome, structure.columnCount),
+    chromeX: chrome.vLines.reduce((a, b) => a + b, 0),
   };
   cache.tableData.set(node, data);
   return data;
@@ -598,8 +584,8 @@ export function tableIntrinsicInnerWidths(
   let min = bounds.min.reduce((a, b) => a + b, 0) + chromeX;
   let max = bounds.max.reduce((a, b) => a + b, 0) + chromeX;
   if (structure.caption) {
-    min = Math.max(min, minContentOuterWidth(structure.caption, cache));
-    max = Math.max(max, intrinsicOuterWidth(structure.caption, cache));
+    min = Math.max(min, intrinsicOuterWidth(structure.caption, "min", cache));
+    max = Math.max(max, intrinsicOuterWidth(structure.caption, "max", cache));
   }
   return { min, max };
 }
@@ -650,29 +636,24 @@ export function layoutTable(
   node: LayoutNode,
   innerWidth: number,
   definiteInnerHeight: number | undefined,
-  border: Insets,
-  padding: Insets,
   cache: IntrinsicCache,
 ): number {
-  const { structure, chrome, bounds } = tableData(node, cache);
+  const { structure, chrome, bounds, chromeX } = tableData(node, cache);
   const C = structure.columnCount;
   const R = structure.rows.length;
-  const contentLeft = border.left + padding.left;
-  const contentTop = border.top + padding.top;
+  const { x: contentLeft, y: contentTop } = contentOrigin(node);
 
   for (const hiddenNode of structure.hidden) {
     hiddenNode.tableHidden = true;
     hiddenNode.localRect = { x: 0, y: 0, width: 0, height: 0 };
     hiddenNode.resolvedPadding = { top: 0, right: 0, bottom: 0, left: 0 };
-    hiddenNode.unclampedHeight = 0;
   }
 
-  const columnSpace = Math.max(0, innerWidth - innerChromeX(chrome, C));
+  const columnSpace = Math.max(0, innerWidth - chromeX);
   // Fixed layout applies only with an authored width; a width-auto fixed
   // table uses the auto algorithm, like every browser (CSS 2.1 §17.5.2).
   const style = node.style;
-  const usesFixedLayout =
-    style.tableLayout === "fixed" && style.width !== undefined && style.width.kind !== "auto";
+  const usesFixedLayout = style.tableLayout === "fixed" && style.width !== undefined;
   const widths = usesFixedLayout
     ? fixedLayoutColumns(structure, columnSpace, cache)
     : distributeColumns(bounds, columnSpace);
@@ -681,11 +662,11 @@ export function layoutTable(
   const colX: number[] = [];
   let x = 0;
   for (let c = 0; c < C; c++) {
-    x += chrome.collapsed ? chrome.vLines[c]! : chrome.spacingX;
+    x += chrome.vLines[c]!;
     colX.push(x);
     x += widths[c]!;
   }
-  const gridWidth = x + (chrome.collapsed ? (chrome.vLines[C] ?? 0) : chrome.spacingX);
+  const gridWidth = x + chrome.vLines[C]!;
 
   // Caption first: a top caption shifts the grid down.
   let captionHeight = 0;
@@ -699,12 +680,12 @@ export function layoutTable(
   const naturalHeights = new Map<PlacedCell, number>();
   const spanWidths = new Map<PlacedCell, number>();
   for (const cell of structure.cells) {
-    const c1 = cell.col + cell.colSpan;
-    const spanW =
-      widths.slice(cell.col, c1).reduce((a, b) => a + b, 0) +
-      chromeBetweenColumns(chrome, cell.col, c1);
-    spanWidths.set(cell, spanW);
-    layoutNode(cell.node, spanW, undefined, 0, 0, "fill", cache, { width: spanW });
+    const columnEnd = cell.col + cell.colSpan;
+    const spanWidth =
+      widths.slice(cell.col, columnEnd).reduce((a, b) => a + b, 0) +
+      linesWithin(chrome.vLines, cell.col, columnEnd);
+    spanWidths.set(cell, spanWidth);
+    layoutNode(cell.node, spanWidth, undefined, 0, 0, "fill", cache, { width: spanWidth });
     naturalHeights.set(cell, cell.node.localRect.height);
   }
 
@@ -713,9 +694,7 @@ export function layoutTable(
   // others) row heights floor, single-span cells raise, spanning cells
   // distribute ascending-span (equal shares), extra definite height
   // spreads equally over the non-percent rows (specs/table.md).
-  const chromeY = chrome.collapsed
-    ? chrome.hLines.reduce((a, b) => a + b, 0)
-    : (R + 1) * chrome.spacingY;
+  const chromeY = chrome.hLines.reduce((a, b) => a + b, 0);
   const rowBasis =
     definiteInnerHeight === undefined
       ? undefined
@@ -745,17 +724,17 @@ export function layoutTable(
     .filter((cell) => cell.rowSpan > 1)
     .sort((a, b) => a.rowSpan - b.rowSpan);
   for (const cell of rowSpanning) {
-    const r1 = cell.row + cell.rowSpan;
+    const rowEnd = cell.row + cell.rowSpan;
     const provided =
-      rowHeights.slice(cell.row, r1).reduce((a, b) => a + b, 0) +
-      chromeBetweenRows(chrome, cell.row, r1);
+      rowHeights.slice(cell.row, rowEnd).reduce((a, b) => a + b, 0) +
+      linesWithin(chrome.hLines, cell.row, rowEnd);
     const excess = naturalHeights.get(cell)! - provided;
     if (excess <= 0) continue;
     const shares = distributeInteger(
       Array.from({ length: cell.rowSpan }, () => 1),
       excess,
     );
-    for (let r = cell.row; r < r1; r++) rowHeights[r]! += shares[r - cell.row]!;
+    for (let r = cell.row; r < rowEnd; r++) rowHeights[r]! += shares[r - cell.row]!;
   }
   if (definiteInnerHeight !== undefined && R > 0) {
     const extra =
@@ -779,12 +758,11 @@ export function layoutTable(
   const rowY: number[] = [];
   let y = gridTop;
   for (let r = 0; r < R; r++) {
-    y += chrome.collapsed ? chrome.hLines[r]! : chrome.spacingY;
+    y += chrome.hLines[r]!;
     rowY.push(y);
     y += rowHeights[r]!;
   }
-  const gridBottom =
-    R > 0 ? y + (chrome.collapsed ? (chrome.hLines[R] ?? 0) : chrome.spacingY) : gridTop;
+  const gridBottom = R > 0 ? y + chrome.hLines[R]! : gridTop;
 
   // Rects, parent-relative down the tree: table → group → row → cell.
   // Rows and groups never went through layoutNode; give them the fields
@@ -805,7 +783,6 @@ export function layoutTable(
       height: bottom - top,
     };
     group.resolvedPadding = { top: 0, right: 0, bottom: 0, left: 0 };
-    group.unclampedHeight = bottom - top;
   }
   for (let r = 0; r < R; r++) {
     const rowNode = structure.rows[r]!;
@@ -818,13 +795,12 @@ export function layoutTable(
       height: rowHeights[r]!,
     };
     rowNode.resolvedPadding = { top: 0, right: 0, bottom: 0, left: 0 };
-    rowNode.unclampedHeight = rowHeights[r]!;
   }
   for (const cell of structure.cells) {
-    const r1 = cell.row + cell.rowSpan;
-    const areaH =
-      rowHeights.slice(cell.row, r1).reduce((a, b) => a + b, 0) +
-      chromeBetweenRows(chrome, cell.row, r1);
+    const rowEnd = cell.row + cell.rowSpan;
+    const areaHeight =
+      rowHeights.slice(cell.row, rowEnd).reduce((a, b) => a + b, 0) +
+      linesWithin(chrome.hLines, cell.row, rowEnd);
     // A cell with percent-height children re-lays-out at the final area
     // height so they resolve against it — the browsers' legacy second
     // pass. Deeper percents chain through their parents' then-definite
@@ -832,28 +808,28 @@ export function layoutTable(
     const hasPercentHeightChild = cell.node.children.some(
       (child) => !isOutOfFlow(child.style) && child.style.height?.kind === "percent",
     );
-    if (hasPercentHeightChild && areaH !== naturalHeights.get(cell)) {
-      layoutNode(cell.node, spanWidths.get(cell)!, areaH, 0, 0, "fill", cache, {
+    if (hasPercentHeightChild && areaHeight !== naturalHeights.get(cell)) {
+      layoutNode(cell.node, spanWidths.get(cell)!, areaHeight, 0, 0, "fill", cache, {
         width: spanWidths.get(cell)!,
-        height: areaH,
+        height: areaHeight,
       });
     }
     // Align the CONTENT, not the box: an explicit cell height tallens
     // the natural box, but vertical-align still centers within it.
-    alignCellContent(cell.node, areaH - cell.node.naturalContentHeight);
+    alignCellContent(cell.node, areaHeight - cell.node.naturalContentHeight);
     cell.node.localRect = {
       x: colX[cell.col]!,
       y: 0,
       width: cell.node.localRect.width,
-      height: areaH,
+      height: areaHeight,
     };
   }
 
-  // Static slots for the table's own out-of-flow children: content origin
-  // (sole-item semantics are a grid/flex concept; block-like here).
-  for (const child of node.children)
-    if (isOutOfFlow(child.style))
-      child.staticSlot = { kind: "block", x: contentLeft, y: contentTop };
+  for (const [child, row] of structure.outOfFlow) {
+    const margin = resolveMargin(child.style.margin, innerWidth);
+    const top = row < R ? rowY[row]! : y + chrome.hLines[R]!;
+    child.staticSlot = blockStaticSlot(margin, contentLeft + chrome.vLines[0]!, contentTop + top);
+  }
 
   if (structure.caption && node.style.captionSide === "bottom")
     structure.caption.localRect.y = contentTop + gridBottom;
@@ -896,8 +872,7 @@ function alignCellContent(cell: LayoutNode, delta: number): void {
   if (delta <= 0) return;
   const align = cell.style.verticalAlign;
   const offset = align === "center" ? Math.floor(delta / 2) : align === "end" ? delta : 0;
-  const hasInFlow = cell.children.some((c) => !isOutOfFlow(c.style) && !c.inlineBox);
-  if (!hasInFlow) {
+  if (!cell.children.some(isInFlowBox)) {
     // The FULL delta lands in padding even at offset 0 (top alignment):
     // the renderers then account for every row of the stretched box.
     cell.resolvedPadding.top += offset;

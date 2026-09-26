@@ -6,7 +6,7 @@ import { hitStack } from "../src/pointer.ts";
 import { readCellStyle } from "../src/style.ts";
 import { TopLayer, isTopLayer } from "../src/top-layer.ts";
 import type { LayoutNode } from "../src/types.ts";
-import { makeNode } from "./helpers.ts";
+import { layered, makeNode, scrollBox } from "./helpers.ts";
 
 /** The top layer (specs/top-layer.md): the read, the stack, the paint
  * after the tree from the host's origin, the backdrop tint, and the
@@ -194,7 +194,7 @@ describe("top layer paint", () => {
     const root = makeNode({ children: [spacer(2), box] });
     expect(rowsOf(root)[0]).toBe("FIX");
     expect(fixed.hostRect).toEqual({ x: 0, y: 0 });
-    box.scroll = { x: 0, y: 2 };
+    scrollBox(root, box, 0, 2);
     const rows = renderGridRows(root).cells.map((row) => row.join("").trimEnd());
     expect(rows[0]).toBe("FIX");
     expect(rows[2]!.startsWith("line2")).toBe(true);
@@ -225,7 +225,7 @@ describe("top layer paint", () => {
     // above the main grid.
     const badge = makeNode({
       text: "badge",
-      style: { layer: { backdropFilter: "none", resampled: false } },
+      style: { layer: layered() },
     });
     const dialog = top("", 0, 0, { children: [badge] });
     const page = makeNode({ children: [makeNode({ text: "page" }), dialog] });
@@ -238,7 +238,7 @@ describe("top layer paint", () => {
   it("covers a layer beneath, and ignores a layer root above", () => {
     const sticker = makeNode({
       text: "sticker",
-      style: { layer: { backdropFilter: "none", resampled: false } },
+      style: { layer: layered() },
     });
     const modal = top("MODAL", 0, 0);
     const root = makeNode({ children: [sticker, modal] });
@@ -249,7 +249,7 @@ describe("top layer paint", () => {
     // main grid, untransformed.
     const pop = top("POP", 0, 1);
     const turned = makeNode({
-      style: { layer: { backdropFilter: "none", resampled: false } },
+      style: { layer: layered() },
       children: [makeNode({ text: "turned" }), pop],
     });
     const page = makeNode({ style: { minHeight: 2 }, children: [turned] });
@@ -262,12 +262,13 @@ describe("top layer paint", () => {
 });
 
 describe("top layer opacity", () => {
-  it("paints an element's own opacity, its ancestors' escaped", () => {
-    const pop = top("POP", 0, 0, { style: { opacity: 0.5 } });
+  it("blends an element at its own opacity, its ancestors' escaped", () => {
+    const pop = top("POP", 0, 0, { style: { opacity: 0.4, color: "rgb(0 0 0)" } });
     const dim = makeNode({ style: { opacity: 0.25 }, children: [makeNode({ text: "dim" }), pop] });
     const root = makeNode({ style: { minHeight: 2 }, children: [dim] });
     const { segments } = painted(root);
-    expect(segments[0]!.find((segment) => segment.text.startsWith("POP"))!.opacity).toBe("0.5");
+    const shown = segments[0]!.find((segment) => segment.text.startsWith("POP"))!;
+    expect([shown.color, shown.opacity]).toEqual(["rgb(0 0 0)", 0.4]);
   });
 });
 
@@ -282,7 +283,7 @@ describe("the backdrop box", () => {
 
   it("draws the backdrop over the grid, beneath the element's own box, and removes it with the backdrop", () => {
     const dialog = top("D", 0, 0, {
-      style: { backdrop, layer: { backdropFilter: "none", resampled: false } },
+      style: { backdrop, layer: layered() },
     });
     const root = makeNode({
       style: { minHeight: 3 },
@@ -322,8 +323,27 @@ describe("the pointer through the stack", () => {
     const after = makeNode({ text: "afterwards" });
     const root = makeNode({ style: { minHeight: 6 }, children: [box, after] });
     painted(root);
-    expect(hitStack(root, 1, 3, null).map((entry) => entry.node)).toEqual([box, menu]);
-    expect(hitStack(root, 6, 2, null).map((entry) => entry.node)).toEqual([after]);
-    expect(hitStack(root, 11, 0, null).map((entry) => entry.node)).toEqual([box, fixed]);
+    expect(hitStack(root, 1, 3, null)).toEqual([box, menu]);
+    expect(hitStack(root, 6, 2, null)).toEqual([after]);
+    expect(hitStack(root, 11, 0, null)).toEqual([box, fixed]);
+  });
+
+  it("places an element's ancestors where they paint, a fixed one from the host", () => {
+    const menu = top("MENU", 0, 4);
+    const fixed = makeNode({
+      style: { position: "fixed", insets: { top: 0, right: null, bottom: null, left: 10 } },
+      children: [makeNode({ text: "FIX" }), menu],
+    });
+    const lines = Array.from({ length: 4 }, (_, i) => makeNode({ text: `line${i}` }));
+    const box = scroller([...lines, fixed], 2);
+    const root = makeNode({ style: { minHeight: 6 }, children: [spacer(1), box] });
+    painted(root);
+    scrollBox(root, box, 0, 1);
+    const stack = hitStack(root, 1, 4, null);
+    expect(stack.map((node) => [node, node.paintOrigin.x, node.paintOrigin.y])).toEqual([
+      [box, 0, 1],
+      [fixed, 10, 0],
+      [menu, 0, 4],
+    ]);
   });
 });

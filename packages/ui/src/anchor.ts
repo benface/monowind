@@ -189,8 +189,9 @@ export function withHandlers<P extends object, T extends PropTypes>(
 }
 
 /** Props without one of them, where the grid or the markup owns it
- * instead: the positioner's `style`, a root's `id`, and the content's
- * `hidden`, so a closed state's exit plays before the positioner hides
+ * instead: the positioner's `style`, a root's `id` — the markup's,
+ * which the page finds the element by — and the content's `hidden`,
+ * so a closed state's exit plays before the positioner hides
  * (specs/ui.md). */
 export function omit<P extends object>(props: P, key: string): P {
   const rest = { ...(props as Record<string, unknown>) };

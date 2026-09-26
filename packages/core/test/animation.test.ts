@@ -1,76 +1,122 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
-import { resolvePendingTransitions, trackBackground } from "../src/animate.ts";
+import {
+  hasSynthesizedTransitions,
+  resolvePendingTransitions,
+  trackBackground,
+} from "../src/animate.ts";
 import {
   animatedProperties,
   animatesEffect,
   animationPath,
-  drainAnimated,
   nodeIndex,
+  readingAnimations,
+  runningUnder,
+  transitionSampling,
 } from "../src/animation.ts";
 import { mixColors, parseColor, prepareColor } from "../src/color.ts";
 import type { Rgba } from "../src/color.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { readCellStyle, readPaintStyle } from "../src/style.ts";
-import { makeNode } from "./helpers.ts";
+import { layered, makeNode } from "./helpers.ts";
 
-/** Animations (specs/animations.md): the running animations' keyframe
- * properties, the path a frame takes for them, and the read that keeps
- * an animating effect a layer root. */
+/** Animations (specs/animations.md): what runs under a host, from one
+ * query, the path a frame takes for it, and the read that keeps an
+ * animating effect a layer root. */
 
-/** An element whose `getAnimations` reports the given keyframes, as
- * the platform would: happy-dom runs no CSS animations. */
-const animating = (
-  keyframes: Record<string, string>[][],
-  style = "",
+/** A CSS animation of `keyframes` on `target`, as the platform lists
+ * one: happy-dom runs no CSS animations. */
+const keyframed = (
+  target: Element,
+  keyframes: Record<string, string>[],
   playState: AnimationPlayState = "running",
-): HTMLElement => {
-  const el = document.createElement("div");
-  el.setAttribute("style", style);
-  document.body.appendChild(el);
-  el.getAnimations = () =>
-    keyframes.map(
-      (frames) =>
-        ({
-          animationName: "spin",
-          playState,
-          effect: Object.assign(Object.create(KeyframeEffect.prototype), {
-            getKeyframes: () => frames.map((frame) => ({ offset: 0, easing: "linear", ...frame })),
-          }),
-        }) as unknown as Animation,
-    );
-  return el;
+  pseudoElement: string | null = null,
+): Animation =>
+  ({
+    animationName: "spin",
+    playState,
+    effect: {
+      target,
+      pseudoElement,
+      getKeyframes: () => keyframes.map((frame) => ({ offset: 0, easing: "linear", ...frame })),
+    },
+  }) as unknown as Animation;
+
+/** A CSS transition of `transitionProperty` on `target`. */
+const transitioned = (
+  target: Element,
+  transitionProperty: string,
+  pseudoElement: string | null = null,
+  playState: AnimationPlayState = "running",
+): Animation =>
+  ({ transitionProperty, playState, effect: { target, pseudoElement } }) as unknown as Animation;
+
+/** A host with three light elements. */
+const hostOf = (): { host: HTMLElement; a: HTMLElement; b: HTMLElement; c: HTMLElement } => {
+  const host = document.createElement("div");
+  const [a, b, c] = [
+    document.createElement("p"),
+    document.createElement("p"),
+    document.createElement("p"),
+  ];
+  host.append(a, b, c);
+  document.body.append(host);
+  return { host, a, b, c };
 };
 
-describe("animated properties", () => {
-  it("collects the keyframes' properties of the running animations", () => {
-    const el = animating([
-      [{ transform: "none" }, { transform: "rotate(1turn)" }],
-      [{ opacity: "1" }, { opacity: "0.5" }, { opacity: "1" }],
-    ]);
-    expect([...animatedProperties(el)].sort()).toEqual(["opacity", "transform"]);
-  });
+afterEach(() => readingAnimations(null));
 
-  it("leaves out a paused animation, and an element with no animations", () => {
-    expect(animatedProperties(animating([[{ opacity: "0" }]], "", "paused")).size).toBe(0);
-    expect(animatedProperties(document.createElement("div")).size).toBe(0);
-  });
-
-  it("skips the call where the computed style names no animation, and notes a find", () => {
-    const el = animating([[{ opacity: "0" }]]);
+describe("what runs under a host", () => {
+  it("is every light element's animated properties, from one query", () => {
+    const { host, a, b, c } = hostOf();
     let calls = 0;
-    const list = el.getAnimations;
-    el.getAnimations = () => (calls++, list.call(el));
-    expect(animatedProperties(el, getComputedStyle(el)).size).toBe(0);
-    expect(calls).toBe(0);
-    expect(drainAnimated(document.body)).toEqual([]);
-    el.style.animationName = "spin";
-    expect(animatedProperties(el, getComputedStyle(el)).size).toBe(1);
+    host.getAnimations = (options) => (
+      calls++,
+      options?.subtree
+        ? [
+            keyframed(a, [{ transform: "none" }, { transform: "rotate(1turn)" }]),
+            keyframed(a, [{ opacity: "1" }, { opacity: "0.5" }, { opacity: "1" }]),
+            transitioned(b, "opacity"),
+            transitioned(b, "border-top-color"),
+            transitioned(b, "scale"),
+            transitioned(b, "background-color"),
+            transitioned(c, "border-left-color", null, "finished"),
+            keyframed(c, [{ opacity: "0" }], "paused"),
+          ]
+        : []
+    );
+    const { elements, relayout } = runningUnder(host);
     expect(calls).toBe(1);
-    // A read's find waits for the host that holds the element, once.
-    expect(drainAnimated(document.createElement("div"))).toEqual([]);
-    expect(drainAnimated(document.body)).toEqual([el]);
-    expect(drainAnimated(document.body)).toEqual([]);
+    expect([...elements.keys()]).toEqual([a, b]);
+    expect([...elements.get(a)!].sort()).toEqual(["opacity", "transform"]);
+    expect([...elements.get(b)!].sort()).toEqual(["borderTopColor", "opacity", "scale"]);
+    expect(relayout).toBe(false);
+  });
+
+  it("relays out for a color's transition, the host's own among them, and a pseudo-element's paint-only one", () => {
+    const { host, a } = hostOf();
+    const relays = (animation: Animation) => runningUnder(host, [animation]).relayout;
+    expect(relays(transitioned(a, "color"))).toBe(true);
+    expect(relays(transitioned(host, "color"))).toBe(true);
+    expect(relays(transitioned(a, "opacity", "::before"))).toBe(true);
+    expect(relays(transitioned(a, "border-top-color", "::backdrop"))).toBe(true);
+    expect(relays(transitioned(a, "scale", "::before"))).toBe(false);
+    expect(runningUnder(host, [transitioned(a, "color")]).elements.size).toBe(0);
+  });
+
+  it("leaves the host's own animations and other transitions to the browser, and a pseudo-element's keyframes", () => {
+    const { host, a } = hostOf();
+    const own = ["opacity", "border-top-color", "scale", "transform", "filter", "background-color"];
+    expect(
+      runningUnder(host, [
+        ...own.map((property) => transitioned(host, property)),
+        keyframed(host, [{ opacity: "0" }, { transform: "scale(2)" }]),
+        keyframed(a, [{ opacity: "0" }], "running", "::before"),
+      ]),
+    ).toEqual({ elements: new Map(), relayout: false });
+    expect(own.map((property) => transitionSampling(property, host, false, host))).toEqual(
+      own.map(() => null),
+    );
   });
 });
 
@@ -85,10 +131,25 @@ describe("animation path", () => {
     expect(animationPath(new Set(["rotate", "filter"]), null)).toBe("box");
   });
 
+  it("places the box for a layer root's opacity, the box's own", () => {
+    const root = makeNode({ text: "x", intrinsicWidth: 1 });
+    root.style.layer = layered();
+    expect(animationPath(new Set(["opacity"]), root)).toBe("box");
+    expect(animationPath(new Set(["opacity", "scale"]), root)).toBe("box");
+    expect(animationPath(new Set(["opacity", "color"]), root)).toBe("paint");
+  });
+
   it("repaints for live paint-only properties on a node, effects beside them too", () => {
     expect(animationPath(new Set(["opacity"]), parent)).toBe("paint");
     expect(animationPath(new Set(["color", "borderTopColor"]), leaf)).toBe("paint");
     expect(animationPath(new Set(["opacity", "transform"]), leaf)).toBe("paint");
+  });
+
+  it("repaints a collapsed table part's opacity, which the paint applies as it resolves the lattice", () => {
+    const cell = makeNode({ text: "x", intrinsicWidth: 1 });
+    cell.style.latticeBorder = { top: null, right: null, bottom: null, left: null } as never;
+    expect(animationPath(new Set(["opacity"]), cell)).toBe("paint");
+    expect(animationPath(new Set(["opacity", "borderTopColor"]), cell)).toBe("layout");
   });
 
   it("re-lays-out for anything else, an inline element, an inherited color, a lattice's border, a backdrop filter", () => {
@@ -107,48 +168,51 @@ describe("animation path", () => {
 });
 
 describe("the read", () => {
+  /** A light element of a host with `style`, the pass's reads handed
+   * `animations` of it, which its own `getAnimations` is never asked. */
+  const reading = (style: string, animations: (el: Element) => Animation[]): HTMLElement => {
+    const { host, a } = hostOf();
+    a.setAttribute("style", style);
+    a.getAnimations = () => {
+      throw new Error("an element's own query");
+    };
+    readingAnimations(runningUnder(host, animations(a)));
+    return a;
+  };
+
   it("keeps an element animating an effect a layer root through an identity", () => {
-    const el = animating(
-      [[{ transform: "none" }, { transform: "rotate(1turn)" }]],
-      "animation-name: spin; transform: matrix(1, 0, 0, 1, 0, 0)",
-    );
-    expect(animatesEffect(el, getComputedStyle(el))).toBe(true);
-    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none", resampled: false });
+    const el = reading("animation-name: spin; transform: matrix(1, 0, 0, 1, 0, 0)", (a) => [
+      keyframed(a, [{ transform: "none" }, { transform: "rotate(1turn)" }]),
+    ]);
+    expect(animatesEffect(el)).toBe(true);
+    expect(readCellStyle(el, 16).layer).toEqual(layered());
+    // Outside a pass, the reads find nothing running.
+    readingAnimations(null);
+    expect(readCellStyle(el, 16).layer).toBeNull();
   });
 
   it("keeps an element whose effect is in transition a layer root, from the identity", () => {
-    const el = document.createElement("div");
-    el.setAttribute("style", "transition-duration: 1s; scale: 1");
-    document.body.appendChild(el);
-    let calls = 0;
-    el.getAnimations = () => (
-      calls++,
-      [
-        { transitionProperty: "scale", playState: "running" },
-        { transitionProperty: "color", playState: "running" },
-      ] as unknown as Animation[]
-    );
-    expect(animatesEffect(el, getComputedStyle(el))).toBe(true);
-    expect(readCellStyle(el, 16).layer).toEqual({ backdropFilter: "none", resampled: false });
-    el.getAnimations = () => [
-      { transitionProperty: "color", playState: "running" } as unknown as Animation,
-    ];
-    expect(readCellStyle(el, 16).layer).toBeNull();
-    // Without a duration there is no transition to ask for.
-    el.style.transitionDuration = "0s";
-    calls = 0;
-    expect(readCellStyle(el, 16).layer).toBeNull();
-    expect(calls).toBe(0);
+    const el = reading("transition-duration: 1s; scale: 1", (a) => [
+      transitioned(a, "scale"),
+      transitioned(a, "color"),
+    ]);
+    expect(readCellStyle(el, 16).layer).toEqual(layered());
+    const colored = reading("transition-duration: 1s; scale: 1", (a) => [transitioned(a, "color")]);
+    expect(readCellStyle(colored, 16).layer).toBeNull();
   });
 
   it("leaves an element animating its opacity off the layers", () => {
-    const el = animating([[{ opacity: "1" }, { opacity: "0.5" }]], "animation-name: spin");
-    expect(animatesEffect(el, getComputedStyle(el))).toBe(false);
+    const el = reading("animation-name: spin", (a) => [
+      keyframed(a, [{ opacity: "1" }, { opacity: "0.5" }]),
+    ]);
+    expect(animatedProperties(el)).toEqual(new Set(["opacity"]));
+    expect(animatesEffect(el)).toBe(false);
     expect(readCellStyle(el, 16).layer).toBeNull();
   });
 
   it("samples the live paint-only properties", () => {
-    const el = animating([], "color: rgb(1, 2, 3); opacity: 0.5; border-top-color: rgb(4, 5, 6)");
+    const { a: el } = hostOf();
+    el.setAttribute("style", "color: rgb(1, 2, 3); opacity: 0.5; border-top-color: rgb(4, 5, 6)");
     expect(readPaintStyle(getComputedStyle(el))).toMatchObject({
       color: "rgb(1, 2, 3)",
       opacity: 0.5,
@@ -159,20 +223,18 @@ describe("the read", () => {
 
 describe("the background tracker under an animation", () => {
   it("reads the animated value as it is", () => {
-    const el = animating(
-      [[{ backgroundColor: "red" }]],
-      "animation-name: spin; transition-duration: 1s",
-    );
+    const { host, a: el } = hostOf();
+    el.setAttribute("style", "animation-name: spin; transition-duration: 1s");
+    readingAnimations(runningUnder(host, [keyframed(el, [{ backgroundColor: "red" }])]));
     const cs = getComputedStyle(el);
     expect(trackBackground(el, "rgb(255, 0, 0)", cs)).toBe("rgb(255, 0, 0)");
     expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(0, 0, 255)");
   });
 
   it("still synthesizes a fade beside an animation of something else", () => {
-    const el = animating(
-      [[{ transform: "none" }]],
-      "animation-name: spin; transition-duration: 1s",
-    );
+    const { host, a: el } = hostOf();
+    el.setAttribute("style", "animation-name: spin; transition-duration: 1s");
+    readingAnimations(runningUnder(host, [keyframed(el, [{ transform: "none" }])]));
     const cs = getComputedStyle(el);
     expect(trackBackground(el, "rgb(255, 0, 0)", cs)).toBe("rgb(255, 0, 0)");
     expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(255, 0, 0)");
@@ -180,33 +242,114 @@ describe("the background tracker under an animation", () => {
 });
 
 describe("the synthesized background fade", () => {
-  // Restored however a test ends.
-  let clock: MockInstance<() => number>;
+  // The browser's eased progress (happy-dom computes none) and the
+  // timing it was armed with; restored however a test ends.
+  let progress: number | null;
+  let armed: EffectTiming | undefined;
+  let timing: MockInstance<() => ComputedEffectTiming>;
   let host: HTMLElement;
   beforeEach(() => {
-    clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+    progress = 0;
+    armed = undefined;
+    timing = vi.spyOn(KeyframeEffect.prototype, "getComputedTiming").mockImplementation(function (
+      this: KeyframeEffect,
+    ) {
+      armed = this.getTiming();
+      return { progress };
+    });
     host = document.createElement("div");
     document.body.append(host);
   });
   afterEach(() => {
-    clock.mockRestore();
+    timing.mockRestore();
     host.remove();
   });
-  /** A linear 1s fade's background `t` of the way from `from` to `to`. */
-  const fadeAt = (from: string, to: string, t: number): string => {
+  /** An element whose background changed from `from` to `to`, its fade
+   * armed: over a second, unless `style` says otherwise. */
+  const fading = (
+    from: string,
+    to: string,
+    style = "transition-property: background-color; transition-duration: 1s",
+  ): HTMLElement => {
     const el = document.createElement("div");
-    el.style.transitionProperty = "background-color";
-    el.style.transitionDuration = "1s";
-    el.style.transitionTimingFunction = "linear";
+    el.setAttribute("style", style);
     host.append(el);
     const cs = getComputedStyle(el);
-    clock.mockReturnValue(1000);
     trackBackground(el, from, cs);
     trackBackground(el, to, cs);
     resolvePendingTransitions(host);
-    clock.mockReturnValue(1000 + t * 1000);
-    return trackBackground(el, to, cs);
+    return el;
   };
+  /** The background of a fade from `from` to `to` at `eased` progress. */
+  const fadeAt = (from: string, to: string, eased: number): string => {
+    const el = fading(from, to);
+    progress = eased;
+    return trackBackground(el, to, getComputedStyle(el));
+  };
+
+  it("paints the old background until the layout's end arms a fade, and snaps where none covers it", () => {
+    const el = document.createElement("div");
+    el.setAttribute("style", "transition-property: color; transition-duration: 1s");
+    host.append(el);
+    const cs = getComputedStyle(el);
+    trackBackground(el, "rgb(255, 0, 0)", cs);
+    expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(255, 0, 0)");
+    // The stale paint asks the caller for one more layout.
+    expect(resolvePendingTransitions(host)).toBe(true);
+    expect(hasSynthesizedTransitions()).toBe(false);
+    expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(0, 0, 255)");
+  });
+
+  it("arms the background's duration, delay, and easing, filled backwards as a CSS transition", () => {
+    const el = fading(
+      "rgb(0, 0, 0)",
+      "rgb(255, 0, 0)",
+      "transition-property: color, background-color; transition-duration: 2s, 1s; transition-delay: 0s, 300ms; transition-timing-function: linear(0 0%, 0.8 20%, 1 100%), steps(4)",
+    );
+    expect(hasSynthesizedTransitions()).toBe(true);
+    trackBackground(el, "rgb(255, 0, 0)", getComputedStyle(el));
+    expect(armed).toMatchObject({
+      duration: 1000,
+      delay: 300,
+      easing: "steps(4)",
+      fill: "backwards",
+    });
+  });
+
+  it("reads the target past the end, which ends the fade", () => {
+    const el = fading("rgb(0, 0, 0)", "rgb(255, 0, 0)");
+    progress = null;
+    expect(trackBackground(el, "rgb(255, 0, 0)", getComputedStyle(el))).toBe("rgb(255, 0, 0)");
+    expect(hasSynthesizedTransitions()).toBe(false);
+  });
+
+  it("answers a second read in one layout as the first", () => {
+    // The anchors' re-read (specs/anchor-positioning.md "Reading") reads
+    // every element again before the layout's end arms its fades.
+    const el = document.createElement("div");
+    el.setAttribute("style", "transition-property: background-color; transition-duration: 1s");
+    host.append(el);
+    const cs = getComputedStyle(el);
+    trackBackground(el, "rgb(255, 0, 0)", cs);
+    expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(255, 0, 0)");
+    expect(trackBackground(el, "rgb(0, 0, 255)", cs)).toBe("rgb(255, 0, 0)");
+    resolvePendingTransitions(host);
+  });
+
+  it("retargets from the color it shows", () => {
+    const el = fading("rgb(255, 0, 0)", "rgb(0, 0, 255)");
+    const cs = getComputedStyle(el);
+    progress = 0.5;
+    const halfway = trackBackground(el, "rgb(0, 0, 255)", cs);
+    // A second read in the layout answers as the first.
+    expect(trackBackground(el, "rgb(0, 255, 0)", cs)).toBe(halfway);
+    expect(trackBackground(el, "rgb(0, 255, 0)", cs)).toBe(halfway);
+    resolvePendingTransitions(host);
+    progress = 0;
+    expect(trackBackground(el, "rgb(0, 255, 0)", cs)).toBe(halfway);
+    progress = 1;
+    expect(trackBackground(el, "rgb(0, 255, 0)", cs)).toBe("rgb(0 255 0)");
+  });
 
   it("mixes a legacy pair in sRGB and any other in OKLab, alpha premultiplied", () => {
     const halfway = (from: string, to: string): Rgba => parseColor(fadeAt(from, to, 0.5))!;
@@ -235,58 +378,14 @@ describe("the synthesized background fade", () => {
     );
   });
 
-  it("mixes an end outside sRGB by its own OKLab value, clipped once mixed", () => {
+  it("mixes an end outside sRGB by its own OKLab value, written as color(srgb) past it", () => {
     // Tailwind's emerald-400 to gray-800, cyan-400 to fuchsia-500,
     // lime-400 to white.
-    expect(fadeAt("oklch(0.765 0.177 163.223)", "oklch(0.278 0.033 256.848)", 0.25)).toBe(
-      "rgb(0 166 124)",
-    );
-    expect(fadeAt("oklch(0.789 0.154 211.53)", "oklch(0.667 0.295 322.15)", 0.5)).toBe(
-      "rgb(168 150 248)",
-    );
-    expect(fadeAt("oklch(0.841 0.238 128.85)", "rgb(255, 255, 255)", 0.25)).toBe(
-      "rgb(179 238 100)",
-    );
-  });
-
-  it("eases by cubic-bezier(), steps() and linear(), as the computed value writes them", () => {
-    const redAt = (easing: string, elapsed: number): number => {
-      const el = document.createElement("div");
-      el.style.transitionProperty = "background-color";
-      el.style.transitionDuration = "1s";
-      el.style.transitionTimingFunction = easing;
-      host.append(el);
-      const cs = getComputedStyle(el);
-      clock.mockReturnValue(1000);
-      trackBackground(el, "rgb(0, 0, 0)", cs);
-      trackBackground(el, "rgb(255, 0, 0)", cs);
-      resolvePendingTransitions(host);
-      clock.mockReturnValue(1000 + elapsed);
-      return Math.round(parseColor(trackBackground(el, "rgb(255, 0, 0)", cs))!.r * 100) / 100;
-    };
-    // Tailwind's default easing.
-    expect(redAt("cubic-bezier(0.4, 0, 0.2, 1)", 500)).toBe(0.78);
-    expect(redAt("steps(4)", 300)).toBe(0.25);
-    expect(redAt("steps(1, start)", 100)).toBe(1);
-    expect(redAt("steps(1)", 900)).toBe(0);
-    expect(redAt("steps(3, jump-none)", 500)).toBe(0.5);
-    expect(redAt("linear(0 0%, 0.8 20%, 1 100%)", 100)).toBe(0.4);
-    expect(redAt("linear(0 0%, 0.8 20%, 1 100%)", 600)).toBe(0.9);
-  });
-
-  it("takes the background's entry of a timing-function list whose functions nest", () => {
-    const el = document.createElement("div");
-    el.style.transitionProperty = "color, background-color";
-    el.style.transitionDuration = "1s";
-    el.style.transitionTimingFunction = "linear(0 0%, calc(0.8) 20%, 1 100%), steps(4)";
-    host.append(el);
-    const cs = getComputedStyle(el);
-    trackBackground(el, "rgb(0, 0, 0)", cs);
-    trackBackground(el, "rgb(255, 0, 0)", cs);
-    resolvePendingTransitions(host);
-    clock.mockReturnValue(1300);
-    const red = parseColor(trackBackground(el, "rgb(255, 0, 0)", cs))!.r;
-    expect(Math.round(red * 100) / 100).toBe(0.25);
+    expect([
+      fadeAt("oklch(0.765 0.177 163.223)", "oklch(0.278 0.033 256.848)", 0.25),
+      fadeAt("oklch(0.789 0.154 211.53)", "oklch(0.667 0.295 322.15)", 0.5),
+      fadeAt("oklch(0.841 0.238 128.85)", "rgb(255, 255, 255)", 0.25),
+    ]).toEqual(["color(srgb -0.00758 0.65098 0.48455)", "rgb(168 150 248)", "rgb(179 238 100)"]);
   });
 });
 

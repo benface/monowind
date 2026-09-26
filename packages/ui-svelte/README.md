@@ -52,7 +52,7 @@ standing in — and holds the API for the parts under it. The parts:
 - Combobox — `ComboboxRoot` (an element of its own),
   `ComboboxLabel`, `ComboboxControl`, `ComboboxInput`,
   `ComboboxTrigger`, `ComboboxClearTrigger`, `ComboboxPositioner`,
-  `ComboboxContent`, `ComboboxList`, and the item parts below. Its
+  `ComboboxContent`, `ComboboxList`, and the item parts above. Its
   list anchors to the control, so it lines up under the input;
   filtering is yours, and the items your collection leaves out are
   hidden.
@@ -69,13 +69,15 @@ A menu's, a dialog's, a popover's and a tooltip's root renders
 nothing — Zag gives those four no root part, and a wrapper invented
 for one would put a box in the grid's layout — so an attribute on
 one goes nowhere, and a development build warns and names it. A
-listbox's and a select's root renders its part and takes attributes
-as any part does.
+listbox's, a select's and a combobox's root renders its part and takes
+attributes as any part does.
 
 An item names one of the collection's items, by `item` or by the
 `value` that finds it there, and holds it for the text and the
-indicator inside; `useItemContext()` reads it. `SelectValueText` shows what is
-selected, its children the placeholder until something is.
+indicator inside; `useItemContext()` reads it. The item parts read
+the nearest listbox, select or combobox root, whichever of the three
+they are named for. `SelectValueText` shows what is selected, its
+children the placeholder until something is.
 
 A `MenuRoot` inside another is that menu's **submenu**: Zag links the
 two, and the submenu takes the side it opens on (`right-start`, or

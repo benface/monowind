@@ -1,7 +1,7 @@
 import { trackBackground } from "./animate.ts";
-import { animatesEffect } from "./animation.ts";
+import { EFFECTS, animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
-import { colorAlpha, isLegacyColor, parseColor, splitCommas } from "./color.ts";
+import { colorAlpha, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
@@ -58,9 +58,9 @@ import type {
 /**
  * Read the interpreted CellStyle for an element from its computed CSS.
  *
- * The host must have the `measuring` attribute set while this runs so the
- * engine's own geometry rules (from styles.css) don't feed their outputs back
- * into what we read.
+ * Each element read carries its `data-mw-measuring` flag while this runs,
+ * so the engine's own geometry rules (styles.css) don't feed their outputs
+ * back into what it reads.
  *
  * `metrics` (the host's measured cell) is the basis for leading and
  * tracking; absent in headless tests, where the cell height defaults to
@@ -86,35 +86,12 @@ export function readCellStyle(
     cs.getPropertyValue("--mw-missing-glyphs"),
   );
   const set = glyphSetFor(glyphSet);
-  // A min/max limit: an authored calc() or viewport length first (their
-  // units carry intent the computed px has lost), then the computed px.
-  const limit = (property: string, resolved: string, prefix: string): SizeLimit | undefined =>
-    authoredCalcCells(
-      csm,
-      property,
-      resolved,
-      classAttr,
-      prefix,
-      inlineStyle,
-      metrics,
-      rootFontSizePx,
-    ) ??
-    viewportLimit(
-      csm,
-      property,
-      resolved,
-      classAttr,
-      prefix,
-      inlineStyle,
-      metrics,
-      rootFontSizePx,
-    ) ??
-    readLimit(resolved, rootFontSizePx);
+  const source: ReadSource = { cs, csm, classAttr, inlineStyle, metrics, rootFontSizePx };
 
   // Atomic inline-level boxes lay their CONTENT out like their block-level
   // counterparts (the tree builder blockifies the box itself onto its own
   // row — cell-model deviation).
-  const rawDisplay = cs.display || TABLE_DISPLAY_FALLBACK[el.tagName] || "";
+  const rawDisplay = computedDisplay(el, cs);
   const tableRole: TableRole = TABLE_ROLES[rawDisplay] ?? "none";
   // A computed property's read is a call into the engine each time: one
   // wanted twice is read once.
@@ -212,19 +189,19 @@ export function readCellStyle(
   const hoisted = topLayer || el.hasAttribute("popover");
   const outOfFlow = hoisted || position === "absolute" || position === "fixed";
   const anchoring = readAnchoring(el, cs, outOfFlow);
-  const source: AnchorSource | null = outOfFlow
-    ? {
-        classAttr,
-        inlineStyle,
-        csm,
-        autoMinimum: metrics?.autoMinimum ?? "auto",
-        nativeDefault: anchoring.positionAnchor?.startsWith("--mw:") ?? false,
-        rootFontSizePx,
-      }
+  const anchorSource: AnchorSource | null = outOfFlow
+    ? { ...source, nativeDefault: anchoring.positionAnchor?.startsWith(IMPLICIT_ANCHOR) ?? false }
     : null;
-  const anchorSizes = source ? readAnchorSizes(source) : {};
-  const anchorInsets = source ? readAnchorInsets(source) : {};
+  const anchorSizes = anchorSource ? readAnchorSizes(anchorSource) : {};
+  const anchorInsets = anchorSource ? readAnchorInsets(anchorSource) : {};
   const { flexDirection, flexWrap, flexShrink, columnGap, rowGap, zIndex, breakInside } = cs;
+  const ruleInset = cs.getPropertyValue("--mw-rule-inset").trim();
+  const justifyContent = readAlignment(el, "justify-content", JUSTIFY, cs.justifyContent);
+  const alignContent = readAlignment(el, "align-content", JUSTIFY, cs.alignContent);
+  const alignItems = readAlignment(el, "align-items", ALIGN, cs.alignItems);
+  const alignSelf = readAlignment(el, "align-self", ALIGN_SELF, cs.alignSelf);
+  const justifyItems = readAlignment(el, "justify-items", ALIGN, cs.justifyItems);
+  const justifySelf = readAlignment(el, "justify-self", ALIGN_SELF, cs.justifySelf);
   const style: CellStyle = {
     display,
     tableRole,
@@ -248,12 +225,18 @@ export function readCellStyle(
     // plain getComputedStyle is reliable here — `flex-1` reads as "0%".
     flexBasis: readFlexBasis(cs.flexBasis, rootFontSizePx),
     order: Number(cs.order) || 0,
-    justifyContent: mapJustify(cs.justifyContent),
-    alignContent: mapJustify(cs.alignContent),
-    alignItems: mapAlign(cs.alignItems),
-    alignSelf: mapAlignSelf(cs.alignSelf),
-    justifyItems: mapAlign(cs.justifyItems),
-    justifySelf: mapAlignSelf(cs.justifySelf),
+    justifyContent: justifyContent.keyword,
+    justifyContentSafe: justifyContent.safe,
+    alignContent: alignContent.keyword,
+    alignContentSafe: alignContent.safe,
+    alignItems: alignItems.keyword,
+    alignItemsSafe: alignItems.safe,
+    alignSelf: alignSelf.keyword,
+    alignSelfSafe: alignSelf.safe,
+    justifyItems: justifyItems.keyword,
+    justifyItemsSafe: justifyItems.safe,
+    justifySelf: justifySelf.keyword,
+    justifySelfSafe: justifySelf.safe,
     gridTemplateColumns,
     gridTemplateRows,
     gridAutoColumns,
@@ -267,20 +250,23 @@ export function readCellStyle(
     gridColumnEnd: parseGridLine(cs.getPropertyValue("grid-column-end")),
     gridRowStart: parseGridLine(cs.getPropertyValue("grid-row-start")),
     gridRowEnd: parseGridLine(cs.getPropertyValue("grid-row-end")),
-    width: readSize(csm, cs.width, "width", rootFontSizePx, classAttr, inlineStyle, metrics),
-    height: readSize(csm, cs.height, "height", rootFontSizePx, classAttr, inlineStyle, metrics),
-    minWidth: limit("min-width", cs.minWidth, "min-w") ?? "auto",
-    minHeight: limit("min-height", cs.minHeight, "min-h") ?? "auto",
-    maxWidth: limit("max-width", cs.maxWidth, "max-w"),
-    maxHeight: limit("max-height", cs.maxHeight, "max-h"),
+    width: readSize(source, "width", cs.width),
+    height: readSize(source, "height", cs.height),
+    minWidth: readLimit(source, "min-width", cs.minWidth, "min-w") ?? "auto",
+    minHeight: readLimit(source, "min-height", cs.minHeight, "min-h") ?? "auto",
+    maxWidth: readLimit(source, "max-width", cs.maxWidth, "max-w"),
+    maxHeight: readLimit(source, "max-height", cs.maxHeight, "max-h"),
     padding: readPadding(cs, rootFontSizePx),
-    margin: readMargin(cs, csm, classAttr, inlineStyle, rootFontSizePx),
-    position: readPosition(position),
+    margin: readMargin(source),
+    position: readKeyword(POSITIONS, position, "static"),
     // Per CSS an out-of-flow box computes `float: none`; headless DOMs
     // report the authored value, so the engine applies the rule itself.
-    float: isOutOfFlowPosition(position) ? "none" : readFloat(cs.float),
-    clear: readClear(cs.clear),
-    insets: readInsets(cs, csm, classAttr, inlineStyle, rootFontSizePx),
+    float:
+      position === "absolute" || position === "fixed"
+        ? "none"
+        : readKeyword(FLOAT_SIDES, cs.float, "none"),
+    clear: readKeyword(CLEAR_SIDES, cs.clear, "none"),
+    insets: readInsets(source),
     // `column-gap: normal` is 0 in flex/grid but 1em in multicol, per
     // CSS (specs/multicol.md "Reading"). Headless DOMs report unset as
     // an empty string — same initial value.
@@ -344,18 +330,14 @@ export function readCellStyle(
         ? readGapRule(cs, "x", set)
         : null,
     ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y", set) : null,
-    ruleBreak: readKeyword(cs, "--mw-rule-break", ["none", "intersection"] as const, "normal"),
+    ruleBreak: readKeyword(RULE_BREAKS, cs.getPropertyValue("--mw-rule-break").trim(), "normal"),
     ruleInset:
-      cs.getPropertyValue("--mw-rule-inset").trim() === "overlap-join"
-        ? "overlap-join"
-        : Math.max(
-            0,
-            roundHalfAwayFromZero(parseFloat(cs.getPropertyValue("--mw-rule-inset")) || 0),
-          ),
+      ruleInset === "overlap-join"
+        ? ruleInset
+        : Math.max(0, roundHalfAwayFromZero(parseFloat(ruleInset) || 0)),
     ruleVisibilityItems: readKeyword(
-      cs,
-      "--mw-rule-visibility-items",
-      ["all", "around", "between"] as const,
+      RULE_VISIBILITIES,
+      cs.getPropertyValue("--mw-rule-visibility-items").trim(),
       "normal",
     ),
     columnCount,
@@ -374,7 +356,7 @@ export function readCellStyle(
   for (const side of Object.keys(anchorInsets) as Side[]) style.insets[side] = null;
   applyBorderCollapse(style, cs);
   if (hoisted) {
-    applyTopLayerGeometry(style, classAttr, inlineStyle);
+    applyTopLayerGeometry(style, source);
     // A backdrop's element paints in a box of its own, above the
     // backdrop box (specs/top-layer.md): a layer root.
     if (style.backdrop) style.layer ??= { backdropFilter: "none", resampled: false };
@@ -393,17 +375,23 @@ const ANCHOR_SIZE_PROPERTIES = [
   ["maxHeight", "max-height", "max-h", "height"],
 ] as const;
 
-/** What an anchor function is read from: the element's class and inline
- * style, its computed values as Typed OM has them, how the engine reads
- * an `auto` minimum there, whether its default anchor is a popover's
- * invoker, and the root font size its fallbacks resolve by. */
-interface AnchorSource {
+/** What a length is read from: the element's computed values, as Typed
+ * OM has them too, its class and inline style — whose units carry
+ * intent the computed px has lost — the measured cell, and the root
+ * font size. */
+interface ReadSource {
+  cs: CSSStyleDeclaration;
+  csm: StylePropertyMapReadOnly | null;
   classAttr: string;
   inlineStyle: CSSStyleDeclaration;
-  csm: StylePropertyMapReadOnly | null;
-  autoMinimum: string;
-  nativeDefault: boolean;
+  metrics: CellMetrics | undefined;
   rootFontSizePx: number;
+}
+
+/** An anchor function's source, and whether its default anchor is a
+ * popover's invoker. */
+interface AnchorSource extends ReadSource {
+  nativeDefault: boolean;
 }
 
 /** An anchor function's arguments: its words before the fallback's
@@ -466,7 +454,7 @@ function inEffect(
   if (source.nativeDefault && !args.words.some((word) => word.startsWith("--"))) return true;
   const computed = source.csm.get(property)?.toString() ?? "";
   if (args.fallback === undefined)
-    return computed === unresolvedValue(property, source.autoMinimum);
+    return computed === unresolvedValue(property, source.metrics?.autoMinimum ?? "auto");
   if (args.fallback === null) return true;
   const value = lengthValue(computed, axis, source.rootFontSizePx);
   return (
@@ -600,7 +588,7 @@ export function setAnchorSize(
           ? { kind: "cells", value: length }
           : length !== undefined && length.cells === undefined
             ? { kind: "percent", value: length.percent }
-            : { kind: "auto" };
+            : undefined;
       return;
     case "minWidth":
     case "minHeight":
@@ -688,11 +676,15 @@ function readAnchoring(
     positionAnchor: readPositionAnchor(el, cs, positionArea !== null),
     positionArea,
     positionTryFallbacks: parsePositionTryFallbacks(cs.getPropertyValue("position-try-fallbacks")),
-    positionTryOrder: Object.hasOwn(TRY_ORDER, tryOrder) ? TRY_ORDER[tryOrder]! : "normal",
+    positionTryOrder: readKeyword(TRY_ORDER, tryOrder, "normal"),
     positionVisibility: parsePositionVisibility(cs.getPropertyValue("position-visibility")),
     anchorCenter: { x: cs.justifySelf === "anchor-center", y: cs.alignSelf === "anchor-center" },
   };
 }
+
+/** The start of the anchor names the engine gives a popover's implicit
+ * anchor, apart from an author's. */
+export const IMPLICIT_ANCHOR = "--mw:";
 
 /** An element's `position-anchor`: a name; `match-parent` its parent's;
  * `auto` its implicit anchor — a popover's, synthesized from its id —
@@ -709,7 +701,7 @@ function readPositionAnchor(el: Element, cs: CSSStyleDeclaration, hasArea: boole
     return readPositionAnchor(parent, parentStyle, parentArea !== null);
   }
   const implicit = anchor === "auto" || ((anchor === "normal" || anchor === "") && hasArea);
-  return implicit && el.hasAttribute("popover") && el.id !== "" ? `--mw:${el.id}` : null;
+  return implicit && el.hasAttribute("popover") && el.id !== "" ? IMPLICIT_ANCHOR + el.id : null;
 }
 
 /** An element's `anchor-name`s; an invoker of a popover
@@ -719,7 +711,7 @@ export function readAnchorNames(el: Element, cs: CSSStyleDeclaration): string[] 
   const named = cs.getPropertyValue("anchor-name").trim();
   if (named !== "" && named !== "none") return named.split(",").map((name) => name.trim());
   const target = el.getAttribute("popovertarget") ?? el.getAttribute("commandfor");
-  return target ? [`--mw:${target}`] : [];
+  return target ? [IMPLICIT_ANCHOR + target] : [];
 }
 
 const AREA_X: Record<string, AreaSide> = {
@@ -842,20 +834,13 @@ export function parsePositionTryFallbacks(value: string): AnchorFallback[] {
  * and inline style say nothing: the browsers resolve the UA's `auto`
  * margins to used pixels, and without the Typed OM the insets read
  * from the class list alone. */
-function applyTopLayerGeometry(
-  style: CellStyle,
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-): void {
+function applyTopLayerGeometry(style: CellStyle, { classAttr, inlineStyle }: ReadSource): void {
   style.position = "fixed";
   for (const side of SIDES) {
     style.insets[side] ??= 0;
   }
-  if (style.width === undefined || style.width.kind === "auto")
-    style.width = { kind: "fit-content" };
-  if (style.height === undefined || style.height.kind === "auto") {
-    style.height = { kind: "fit-content" };
-  }
+  style.width ??= { kind: "fit-content" };
+  style.height ??= { kind: "fit-content" };
   const authored = (stems: string, physical: string): boolean =>
     new RegExp(`(?:^|[\\s:.[!])-?(?:${stems})-`).test(classAttr) ||
     inlineStyle.getPropertyValue(physical) !== "";
@@ -981,18 +966,8 @@ function readScrollbarWidth(el: Element, cs: CSSStyleDeclaration): "auto" | "non
 /** `scrollbar-color: <thumb> <track>` — two computed colors, split at
  * the top parenthesis level (rgb()/color() carry inner spaces). */
 function readScrollbarColor(value: string): { thumb: string; track: string } | null {
-  const v = (value ?? "").trim();
-  if (!v || v === "auto") return null;
-  let depth = 0;
-  for (let i = 0; i < v.length; i++) {
-    const ch = v[i]!;
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === " " && depth === 0) {
-      return { thumb: v.slice(0, i), track: v.slice(i + 1).trim() };
-    }
-  }
-  return null;
+  const [thumb, track] = splitTopLevel(value ?? "", " ");
+  return thumb && track ? { thumb, track } : null;
 }
 
 /** A `<integer>` custom property in cells, floored at `min`. */
@@ -1041,9 +1016,12 @@ function isZeroClipped(el: Element, cs: CSSStyleDeclaration): boolean {
   );
 }
 
-/** Tag → display fallback for environments whose getComputedStyle
- * returns "" for UA-styled table elements (happy-dom); real browsers
- * always resolve a computed display. */
+/** A computed `display`. happy-dom leaves the initial `inline` and the
+ * table parts' UA values unset (""); a browser always resolves one. */
+export function computedDisplay(el: Element, cs: CSSStyleDeclaration): string {
+  return cs.display || TABLE_DISPLAY_FALLBACK[el.tagName] || "inline";
+}
+
 const TABLE_DISPLAY_FALLBACK: Record<string, string> = {
   TABLE: "table",
   THEAD: "table-header-group",
@@ -1068,6 +1046,8 @@ const TABLE_ROLES: Record<string, TableRole> = {
   "table-column-group": "column-group",
 };
 
+const VERTICAL_ALIGN = { top: "start", middle: "center", bottom: "end" } as const;
+
 /** Cell block-axis alignment, from the COMPUTED `vertical-align` — the
  * companion's baseline lock is measuring-gated, so the read sees the
  * authored/UA value from any authoring (classes, plain CSS, hints).
@@ -1080,10 +1060,7 @@ function readVerticalAlign(el: Element, cs: CSSStyleDeclaration): "start" | "cen
     cs.verticalAlign ||
     el.getAttribute("valign")?.toLowerCase() ||
     (el.tagName === "TD" || el.tagName === "TH" ? "middle" : "baseline");
-  if (value === "top") return "start";
-  if (value === "middle") return "center";
-  if (value === "bottom") return "end";
-  return "start";
+  return readKeyword(VERTICAL_ALIGN, value, "start");
 }
 
 /** The text properties a leaf takes from its own element — the host's
@@ -1107,7 +1084,7 @@ export function readTextStyle(
     // the tree builder preserve the source's spaces and newlines
     // (specs/cell-model.md). Readable via getComputedStyle because the
     // companion stylesheet's white-space lock is measuring-gated.
-    whiteSpace: cs.whiteSpace === "pre" ? "pre" : cs.whiteSpace === "nowrap" ? "nowrap" : "normal",
+    whiteSpace: readKeyword(WHITE_SPACES, cs.whiteSpace, "normal"),
     tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     textDecorationLine: cs.textDecorationLine,
@@ -1141,15 +1118,8 @@ function warnAuthoredFontSize(
   );
 }
 
-function readKeyword<T extends string, D extends string>(
-  cs: CSSStyleDeclaration,
-  property: string,
-  values: readonly T[],
-  fallback: D,
-): T | D {
-  const value = cs.getPropertyValue(property).trim() as T;
-  return values.includes(value) ? value : fallback;
-}
+const RULE_BREAKS = keywords("none", "intersection");
+const RULE_VISIBILITIES = keywords("all", "around", "between");
 
 /** Gap rules from the `--mw-rule-*` mirrors (specs/gap-decorations.md);
  * registered `inherits: false`, so a container only sees its own. A
@@ -1162,7 +1132,11 @@ function readGapRule(
 ): GapRule | null {
   const weight = parseFloat(cs.getPropertyValue(`--mw-rule-${axis}-width`)) || 0;
   if (weight <= 0) return null;
-  const style = mapBorderStyle(cs.getPropertyValue(`--mw-rule-${axis}-style`).trim());
+  const style = readKeyword(
+    BORDER_STYLES,
+    cs.getPropertyValue(`--mw-rule-${axis}-style`).trim(),
+    "solid",
+  );
   const color = cs.getPropertyValue(`--mw-rule-${axis}-color`).trim();
   return {
     width: weightBand(style, weight, set).cells,
@@ -1200,56 +1174,105 @@ function supportsTypedOM(
   return typeof (el as { computedStyleMap?: unknown }).computedStyleMap === "function";
 }
 
-/** `normal` (the initial value) and `stretch` both read as `stretch`: flex
- * treats it as `start` (per css-align), grid stretches auto tracks. */
-function mapJustify(value: string): JustifyContent {
-  switch (value) {
-    case "center":
-      return "center";
-    case "flex-end":
-    case "end":
-    case "right":
-      return "end";
-    case "space-between":
-      return "space-between";
-    case "space-around":
-      return "space-around";
-    case "space-evenly":
-      return "space-evenly";
-    case "normal":
-    case "stretch":
-    case "":
-      return "stretch";
-    default:
-      return "start";
-  }
+/** A keyword as `table` reads it, else `fallback`. */
+function readKeyword<T, D = T>(
+  table: Readonly<Record<string, T>>,
+  value: string,
+  fallback: D,
+): T | D {
+  return Object.hasOwn(table, value) ? table[value]! : fallback;
 }
 
-function mapAlign(value: string): AlignItems {
-  switch (value) {
-    case "center":
-    // Centered on the anchor for an anchored box (specs/anchor-positioning.md),
-    // centered for any other.
-    case "anchor-center":
-      return "center";
-    case "flex-end":
-    case "end":
-      return "end";
-    case "stretch":
-    // CSS default for align-items on a flex container is "normal", which
-    // behaves as "stretch" in flex/grid contexts.
-    case "normal":
-    case "":
-      return "stretch";
-    default:
-      return "start";
-  }
+/** A table of keywords that read as themselves. */
+function keywords<T extends string>(...values: T[]): Record<string, T> {
+  return Object.fromEntries(values.map((value) => [value, value]));
 }
 
-function mapAlignSelf(value: string): "auto" | AlignItems {
-  if (value === "auto" || value === "" || value === "normal") return "auto";
-  return mapAlign(value);
+/** An alignment value's keyword, as `table` reads it past css-align's
+ * overflow position (`safe` or `unsafe`) and `legacy` (justify-items,
+ * whose other keyword is what a grid's items take), and whether it is
+ * `safe`, which a baseline is. A value the table lacks warns once and
+ * reads as the initial value, the table's empty entry. */
+function readAlignment<T>(
+  el: Element,
+  property: string,
+  table: Readonly<Record<string, T>>,
+  value: string,
+): { keyword: T; safe: boolean } {
+  const words = value.split(" ").filter((word) => word !== "legacy");
+  const safe = words[0] === "safe";
+  if (safe || words[0] === "unsafe") words.shift();
+  const key = words.join(" ");
+  if (Object.hasOwn(table, key)) {
+    return { keyword: table[key]!, safe: safe || key.endsWith("baseline") };
+  }
+  warnOnce(el, `${property}: ${value} is not supported and reads as its initial value.`);
+  return { keyword: table[""]!, safe: false };
 }
+
+/** Content distribution: `normal` (the initial value) and `stretch`
+ * both read as `stretch` — flex treats it as `flex-start` (per
+ * css-align), grid stretches auto tracks. */
+const JUSTIFY: Record<string, JustifyContent> = {
+  start: "start",
+  "flex-start": "flex-start",
+  left: "start",
+  center: "center",
+  "flex-end": "flex-end",
+  end: "end",
+  right: "end",
+  "space-between": "space-between",
+  "space-around": "space-around",
+  "space-evenly": "space-evenly",
+  baseline: "flex-start",
+  "first baseline": "flex-start",
+  "last baseline": "end",
+  normal: "stretch",
+  stretch: "stretch",
+  "": "stretch",
+};
+
+/** Item alignment: `normal` behaves as `stretch` in flex and grid, and
+ * `anchor-center` centers on the anchor for an anchored box
+ * (specs/anchor-positioning.md), plainly for any other. */
+const ALIGN: Record<string, AlignItems> = {
+  start: "start",
+  "flex-start": "flex-start",
+  "self-start": "start",
+  left: "start",
+  center: "center",
+  "anchor-center": "center",
+  "flex-end": "flex-end",
+  "self-end": "end",
+  end: "end",
+  right: "end",
+  baseline: "baseline",
+  "first baseline": "baseline",
+  "last baseline": "last baseline",
+  normal: "stretch",
+  stretch: "stretch",
+  "": "stretch",
+};
+const ALIGN_SELF: Record<string, AlignItems | "auto"> = {
+  ...ALIGN,
+  auto: "auto",
+  normal: "auto",
+  "": "auto",
+};
+
+const POSITIONS = keywords<Position>("relative", "absolute", "fixed", "sticky");
+const WHITE_SPACES = keywords("pre", "nowrap");
+
+/** `inline-start`/`inline-end` are the logical spellings a browser may
+ * report for `float-start`/`float-end`; LTR maps them to the sides. */
+const FLOAT_SIDES: Record<string, Float> = {
+  left: "left",
+  "inline-start": "left",
+  right: "right",
+  "inline-end": "right",
+};
+const CLEAR_SIDES: Record<string, Clear> = { ...FLOAT_SIDES, both: "both" };
+const BORDER_STYLES = keywords<BorderStyle>("double", "dashed", "dotted");
 
 /**
  * Read margins, preserving `auto` as `null`.
@@ -1261,15 +1284,11 @@ function mapAlignSelf(value: string): "auto" | AlignItems {
  * as the source of truth when available.
  *
  * On engines without Typed OM (Firefox pre-157), fall back to scanning the
- * class attribute for Tailwind auto-margin utilities. LTR only for now.
+ * class attribute for Tailwind auto-margin utilities, left to right
+ * (specs/cell-model.md deviation 20).
  */
-function readMargin(
-  cs: CSSStyleDeclaration,
-  csm: StylePropertyMapReadOnly | null,
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-  rootFontSizePx: number,
-): PerSide<CellLength | null> {
+function readMargin(source: ReadSource): PerSide<CellLength | null> {
+  const { cs, csm, classAttr, inlineStyle, rootFontSizePx } = source;
   const readSide = (
     physical: string,
     logical: string,
@@ -1336,52 +1355,6 @@ export function lineGapRows(lineHeight: string, fontSizePx: number): number {
   return Math.max(0, Math.floor(px / fontSizePx + 1e-6) - 1);
 }
 
-function readPosition(value: string): Position {
-  switch (value) {
-    case "relative":
-    case "absolute":
-    case "fixed":
-    case "sticky":
-      return value;
-    default:
-      return "static";
-  }
-}
-
-function isOutOfFlowPosition(value: string): boolean {
-  return value === "absolute" || value === "fixed";
-}
-
-/** `inline-start`/`inline-end` are the logical spellings a browser may
- * report for `float-start`/`float-end`; LTR maps them to the sides. */
-function readFloat(value: string): Float {
-  switch (value) {
-    case "left":
-    case "inline-start":
-      return "left";
-    case "right":
-    case "inline-end":
-      return "right";
-    default:
-      return "none";
-  }
-}
-
-function readClear(value: string): Clear {
-  switch (value) {
-    case "left":
-    case "inline-start":
-      return "left";
-    case "right":
-    case "inline-end":
-      return "right";
-    case "both":
-      return "both";
-    default:
-      return "none";
-  }
-}
-
 /** The `inset` stem that authors every side (`inset-0`), apart from the
  * axis, logical-side, shadow, and ring utilities sharing its prefix. */
 const EVERY_SIDE = "inset(?!-(?:[xyse]|b[se]|shadow|ring)\\b)";
@@ -1408,13 +1381,8 @@ const SIDE_STEMS = {
  * utility read from the class list, its used px having resolved the
  * percentage already. LTR only.
  */
-function readInsets(
-  cs: CSSStyleDeclaration,
-  csm: StylePropertyMapReadOnly | null,
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-  rootFontSizePx: number,
-): PerSide<CellLength | null> {
+function readInsets(source: ReadSource): PerSide<CellLength | null> {
+  const { cs, csm, classAttr, inlineStyle, rootFontSizePx } = source;
   const side = (prop: Side): CellLength | null => {
     const stems = SIDE_STEMS[prop];
     if (csm) {
@@ -1491,8 +1459,8 @@ function readBoxShadow(
     return Math.sign(px) * Math.max(1, Math.round(cells));
   };
   const shadows: BoxShadow[] = [];
-  for (const part of splitCommas(value)) {
-    const tokens = splitTopLevel(part);
+  for (const part of splitTopLevel(value, ",")) {
+    const tokens = splitTopLevel(part, " ");
     const lengths = tokens.filter(isLength).map(parseFloat);
     if (lengths.length < 2) continue;
     const [x, y, blur = 0, spread = 0] = lengths;
@@ -1516,13 +1484,13 @@ function readBoxShadow(
 function readBackgroundImage(value: string, color: string, rootFontSizePx: number): Gradient[] {
   const gradients: Gradient[] = [];
   if (!value || value === "none") return gradients;
-  for (const layer of splitCommas(value.replace(/\bcurrentcolor\b/gi, color))) {
+  for (const layer of splitTopLevel(value.replace(/\bcurrentcolor\b/gi, color), ",")) {
     const match = /^\s*(repeating-)?(linear|radial|conic)-gradient\((.*)\)\s*$/s.exec(layer);
     if (!match) continue;
     const [, repeating, kind, inner] = match;
-    const args = splitCommas(inner!).map((arg) => arg.trim());
+    const args = splitTopLevel(inner!, ",").map((arg) => arg.trim());
     const leads = args.length > 0 && !startsWithColor(args[0]!);
-    const head = leads ? splitTopLevel(args[0]!) : [];
+    const head = leads ? splitTopLevel(args[0]!, " ") : [];
     const stopArgs = leads ? args.slice(1) : args;
     const stops = readGradientStops(stopArgs, rootFontSizePx);
     if (stops.length < 2) continue;
@@ -1566,7 +1534,7 @@ function gradientSpace(head: string[], stopArgs: string[]): { space: ColorSpace;
     };
   }
   const colors = stopArgs.filter(startsWithColor);
-  const legacy = colors.every((arg) => isLegacyColor(splitTopLevel(arg)[0] ?? ""));
+  const legacy = colors.every((arg) => isLegacyColor(splitTopLevel(arg, " ")[0] ?? ""));
   return { space: legacy ? "srgb" : "oklab", hue: "shorter" };
 }
 
@@ -1672,7 +1640,7 @@ function radialGeometry(
 function readGradientStops(args: string[], rootFontSizePx: number): GradientStop[] {
   const stops: GradientStop[] = [];
   for (const arg of args) {
-    const tokens = splitTopLevel(arg);
+    const tokens = splitTopLevel(arg, " ");
     const color = parseColor(tokens[0] ?? "");
     if (!color) {
       const hint = gradientLength(tokens[0] ?? "", rootFontSizePx);
@@ -1702,25 +1670,21 @@ function readRadius(value: string, rootFontSizePx: number): number {
   return radius;
 }
 
-function mapBorderStyle(value: string): BorderStyle {
-  switch (value) {
-    case "double":
-      return "double";
-    case "dashed":
-      return "dashed";
-    case "dotted":
-      return "dotted";
-    default:
-      return "solid";
-  }
-}
-
 /**
- * Read a min/max constraint. Percentages must be kept symbolic (they resolve
+ * Read a min/max constraint: an authored calc() or viewport length first,
+ * then the computed value. Percentages must be kept symbolic (they resolve
  * against the parent's content box during layout) — naive px parsing would
  * read `"100%"` as 100px and produce a nonsense cell count.
  */
-function readLimit(value: string, rootFontSizePx: number): SizeLimit | undefined {
+function readLimit(
+  source: ReadSource,
+  property: string,
+  value: string,
+  prefix: string,
+): SizeLimit | undefined {
+  const resolved = resolvedText(source.csm, property, value);
+  const authored = authoredCells(source, property, resolved, prefix);
+  if (authored !== undefined) return authored;
   if (!value || value === "none" || value === "auto") return undefined;
   if (value === "min-content" || value === "max-content" || value === "fit-content") return value;
   if (value.endsWith("%")) {
@@ -1728,7 +1692,7 @@ function readLimit(value: string, rootFontSizePx: number): SizeLimit | undefined
     return Number.isFinite(percent) ? { percent } : undefined;
   }
   const px = parseFloat(value);
-  return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : undefined;
+  return Number.isFinite(px) ? pxToCells(px, source.rootFontSizePx) : undefined;
 }
 
 /**
@@ -1777,7 +1741,6 @@ const IDENTITY = new Set([
   "0px 0px",
   "0px 0px 0px",
 ]);
-const TRANSFORMS = ["transform", "translate", "rotate", "scale", "filter"];
 
 function readLayer(el: Element, cs: CSSStyleDeclaration): Layer | null {
   const effect = (property: string): string => {
@@ -1785,10 +1748,9 @@ function readLayer(el: Element, cs: CSSStyleDeclaration): Layer | null {
     return value === "" || IDENTITY.has(value) ? "none" : value;
   };
   const backdropFilter = effect("backdrop-filter");
-  const layered =
-    backdropFilter !== "none" ||
-    TRANSFORMS.some((p) => effect(p) !== "none") ||
-    animatesEffect(el, cs);
+  let layered = backdropFilter !== "none";
+  for (const property of EFFECTS) layered ||= effect(property) !== "none";
+  layered ||= animatesEffect(el);
   return layered ? { backdropFilter, resampled: resamples(effect) } : null;
 }
 
@@ -1837,68 +1799,21 @@ function readTextIndent(cs: CSSStyleDeclaration, rootFontSizePx: number): number
   return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
 }
 
-function readSize(
-  csm: StylePropertyMapReadOnly | null,
-  fallback: string,
-  key: "width" | "height",
-  rootFontSizePx: number,
-  classAttr: string,
-  inlineStyle: CSSStyleDeclaration,
-  metrics: CellMetrics | undefined,
-): Size | undefined {
-  // Viewport-relative lengths (h-screen, style="height: 100dvh", …)
-  // express PHYSICAL screen intent, so they convert via the measured
-  // cell size, not the spacing scale (specs/cell-model.md
-  // "Viewport-relative lengths"). The inline style attribute keeps the
-  // authored unit verbatim — and inline beats classes, per cascade.
-  const inlineViewport = viewportLengthPx(key === "width" ? inlineStyle.width : inlineStyle.height);
-  if (inlineViewport !== null) {
-    return { kind: "cells", value: physicalCells(inlineViewport, key, metrics, rootFontSizePx) };
-  }
-  const calc = authoredCalcCells(
-    csm,
-    key,
-    fallback,
-    classAttr,
-    key === "width" ? "w" : "h",
-    inlineStyle,
-    metrics,
-    rootFontSizePx,
-  );
-  if (calc !== undefined) return { kind: "cells", value: calc };
-  // Class scan, every engine: computed values (Typed OM included)
-  // resolve viewport units to plain px, indistinguishable from
-  // spacing-scale lengths.
+function readSize(source: ReadSource, key: "width" | "height", computed: string): Size | undefined {
+  const { csm, classAttr, inlineStyle, rootFontSizePx } = source;
   const axis = key === "width" ? "w" : "h";
-  const viewportPx = viewportUtilityPx(classAttr, axis) ?? viewportUtilityPx(classAttr, "size");
-  if (viewportPx !== null) {
-    // The resolved px, when active, also carries sv/lv/dv bases the
-    // innerWidth/Height estimate can't know.
-    const px = activeUtilityPx(resolvedText(csm, key, fallback), viewportPx);
-    if (px !== null) {
-      return { kind: "cells", value: physicalCells(px, key, metrics, rootFontSizePx) };
-    }
-  }
+  const resolved = resolvedText(csm, key, computed);
+  const authored = authoredCells(source, key, resolved, axis);
+  if (authored !== undefined) return { kind: "cells", value: authored };
   if (csm) {
-    const value = csm.get(key);
-    if (value == null) return undefined;
-    const s = value.toString().trim();
-    if (s === "auto") return { kind: "auto" };
-    const intrinsic = intrinsicSizeKeyword(s);
+    if (resolved === "" || resolved === "auto") return undefined;
+    const intrinsic = intrinsicSizeKeyword(resolved);
     if (intrinsic) return intrinsic;
-    if (s.endsWith("%")) return { kind: "percent", value: parseFloat(s) };
-    if (s.endsWith("px")) return { kind: "cells", value: pxToCells(parseFloat(s), rootFontSizePx) };
-    if (s.endsWith("rem"))
-      return { kind: "cells", value: roundHalfAwayFromZero(parseFloat(s) / 0.25) };
-    // Authored viewport units that survive to the computed string
-    // (engine-dependent; arbitrary values like h-[50vh]).
-    const authoredViewport = viewportLengthPx(s);
-    if (authoredViewport !== null) {
-      return {
-        kind: "cells",
-        value: physicalCells(authoredViewport, key, metrics, rootFontSizePx),
-      };
-    }
+    const amount = parseFloat(resolved);
+    if (resolved.endsWith("%")) return { kind: "percent", value: amount };
+    if (resolved.endsWith("px")) return { kind: "cells", value: pxToCells(amount, rootFontSizePx) };
+    if (resolved.endsWith("rem"))
+      return { kind: "cells", value: roundHalfAwayFromZero(amount / 0.25) };
   }
   // Fallback path (Firefox pre-157: no Typed OM). getComputedStyle returns
   // *used* values (always px) for box properties, so we can't distinguish
@@ -1907,7 +1822,7 @@ function readSize(
   // If neither is present, treat as auto so intrinsic sizing kicks in.
   const inline = key === "width" ? inlineStyle.width : inlineStyle.height;
   if (inline) {
-    if (inline === "auto") return { kind: "auto" };
+    if (inline === "auto") return undefined;
     const intrinsic = intrinsicSizeKeyword(inline);
     if (intrinsic) return intrinsic;
     if (inline.endsWith("%")) return { kind: "percent", value: parseFloat(inline) };
@@ -1939,10 +1854,9 @@ function readSize(
   // (including rowspan effects), not the authored value.
   const numeric = new RegExp(`${stem}(\\d+(?:\\.\\d+)?)(?![\\w-/])`).exec(classAttr);
   if (numeric) return { kind: "cells", value: roundHalfAwayFromZero(Number(numeric[1])) };
-  if (!new RegExp(stem).test(classAttr)) return { kind: "auto" };
-  if (fallback === "auto") return { kind: "auto" };
-  if (fallback.endsWith("%")) return { kind: "percent", value: parseFloat(fallback) };
-  const px = parseFloat(fallback);
+  if (!new RegExp(stem).test(classAttr)) return undefined;
+  if (computed.endsWith("%")) return { kind: "percent", value: parseFloat(computed) };
+  const px = parseFloat(computed);
   if (Number.isFinite(px)) return { kind: "cells", value: pxToCells(px, rootFontSizePx) };
   return undefined;
 }
@@ -2005,44 +1919,54 @@ function physicalCells(
   return pxToCells(px, rootFontSizePx);
 }
 
-/** An authored `calc()` length, evaluated PER TERM into cells
- * (specs/cell-model.md "Mixed-unit calc()"): viewport units through the
- * measured cell like `h-screen`, `rem` and `--spacing(N)` on the
- * spacing scale, `px` on the same scale — so `calc(100vh -
- * --spacing(2))` is "the rows that fit, minus two", which the single
- * computed px can no longer say. Sourced from the inline style or the
- * arbitrary-value utility (`max-h-[calc(…)]`, `_` for spaces), and
- * active-checked against the computed px like viewport utilities. A
- * percentage term, or one the evaluator does not model (em, var()),
- * leaves the value to the computed px. undefined = no authored calc. */
-function authoredCalcCells(
-  csm: StylePropertyMapReadOnly | null,
+/** A length whose authored units carry intent the computed px has lost,
+ * in cells: a viewport length through the measured cell
+ * (specs/cell-model.md "Viewport-relative lengths"), a `calc()` per
+ * term ("Mixed-unit calc()": viewport units like `h-screen`, `rem`,
+ * `--spacing(N)` and `px` on the spacing scale, so `calc(100vh -
+ * --spacing(2))` is "the rows that fit, minus two"). From the inline
+ * style, which wins by cascade, or Typed OM's `resolved` text; else a
+ * utility (`max-h-[calc(…)]`, `_` for spaces; `min-h-[95dvh]`, a size's
+ * `size-*` too), active-checked against that text. A percentage term,
+ * or one the evaluator does not model (em, var()), leaves the value to
+ * the computed px. undefined = none. */
+function authoredCells(
+  source: ReadSource,
   property: string,
-  resolvedValue: string,
-  classAttr: string,
-  utilityPrefix: string,
-  inlineStyle: CSSStyleDeclaration,
-  metrics: CellMetrics | undefined,
-  rootFontSizePx: number,
+  resolved: string,
+  prefix: string,
 ): number | undefined {
+  const { classAttr, metrics, rootFontSizePx } = source;
   const key = property.endsWith("width") ? "width" : "height";
-  const inline = inlineStyle.getPropertyValue(property).trim();
+  const inline = source.inlineStyle.getPropertyValue(property).trim();
+  // A viewport string is proof in itself: parsed as px, "100dvh" is 100.
+  const viewport = viewportLengthPx(inline) ?? (source.csm ? viewportLengthPx(resolved) : null);
+  if (viewport !== null) return physicalCells(viewport, key, metrics, rootFontSizePx);
   const fromInline = inline.startsWith("calc(");
   // Six reads per element: the substring test spares the regex almost always.
-  if (!fromInline && !classAttr.includes("-[calc(")) return undefined;
-  const utility = new RegExp(`(?:^|[\\s:.[!])${utilityPrefix}-\\[(calc\\([^\\]]*\\))\\]`).exec(
-    classAttr,
-  );
-  const authored = fromInline ? inline : utility?.[1]?.replaceAll("_", " ");
-  if (!authored) return undefined;
-  const value = evaluateCalc(authored, key, metrics, rootFontSizePx);
-  if (!value || value.unitless || value.percent !== 0) return undefined;
-  const cells = Math.max(0, roundHalfAwayFromZero(value.cells));
-  // The inline style wins by cascade; a class needs the active-check.
-  if (fromInline) return cells;
-  return activeUtilityPx(resolvedText(csm, property, resolvedValue), value.px) === null
-    ? undefined
-    : cells;
+  const calc = fromInline
+    ? inline
+    : classAttr.includes("-[calc(")
+      ? new RegExp(`(?:^|[\\s:.[!])${prefix}-\\[(calc\\([^\\]]*\\))\\]`)
+          .exec(classAttr)?.[1]
+          ?.replaceAll("_", " ")
+      : undefined;
+  const value = calc ? evaluateCalc(calc, key, metrics, rootFontSizePx) : null;
+  if (
+    value &&
+    !value.unitless &&
+    value.percent === 0 &&
+    (fromInline || activeUtilityPx(resolved, value.px) !== null)
+  ) {
+    return Math.max(0, roundHalfAwayFromZero(value.cells));
+  }
+  // Class scan, every engine: computed values resolve viewport units to
+  // plain px; the resolved px, active, also carries the sv/lv/dv bases.
+  const scanned =
+    viewportUtilityPx(classAttr, prefix) ??
+    (property === key ? viewportUtilityPx(classAttr, "size") : null);
+  const px = scanned === null ? null : activeUtilityPx(resolved, scanned);
+  return px === null ? undefined : physicalCells(px, key, metrics, rootFontSizePx);
 }
 
 /** A property's resolved value as text: Typed OM's, else the computed one. */
@@ -2179,36 +2103,6 @@ function evaluateCalc(
   return i === tokens.length ? result : null;
 }
 
-/** Viewport-relative min/max limit, when one is authored. Class scan
- * (`min-h-screen`, `min-h-[95dvh]`, …) — computed values resolve
- * viewport units to plain px in every engine, so the class list is the
- * only reliable signal — active-checked (activeUtilityPx). undefined =
- * not viewport-relative (caller falls through to the normal readLimit). */
-function viewportLimit(
-  csm: StylePropertyMapReadOnly | null,
-  property: string,
-  resolvedValue: string,
-  classAttr: string,
-  utilityPrefix: string,
-  inlineStyle: CSSStyleDeclaration,
-  metrics: CellMetrics | undefined,
-  rootFontSizePx: number,
-): number | undefined {
-  const key = property.endsWith("width") ? "width" : "height";
-  // An authored viewport string — inline style (kept verbatim in the
-  // style attribute) or a computed value that survives resolution —
-  // is proof in itself: no active-check needed (or possible: parsing
-  // it as px would misread "100dvh" as 100).
-  const authoredPx =
-    viewportLengthPx(inlineStyle.getPropertyValue(property)) ??
-    viewportLengthPx(csm?.get(property)?.toString().trim() ?? "");
-  if (authoredPx !== null) return physicalCells(authoredPx, key, metrics, rootFontSizePx);
-  const scanned = viewportUtilityPx(classAttr, utilityPrefix);
-  if (scanned === null) return undefined;
-  const px = activeUtilityPx(resolvedText(csm, property, resolvedValue), scanned);
-  return px === null ? undefined : physicalCells(px, key, metrics, rootFontSizePx);
-}
-
 /**
  * CSS `flex-basis`. `auto` → undefined, so the layout falls back to the
  * width-or-intrinsic base; `content` is the content's size, the item's
@@ -2241,7 +2135,6 @@ function intrinsicSizeKeyword(value: string): Size | undefined {
  * readCellStyle), so the authored structure survives: lengths are computed
  * to px, but `fr`, `minmax()`, and `repeat()` keep their form. Fixed
  * repeats expand here; `auto-fill` / `auto-fit` stay symbolic for layout.
- * Line names would appear in `[bracket]` groups — deferred, dropped.
  */
 export function parseTrackTemplate(value: string, rootFontSizePx: number): GridTemplate {
   const trimmed = value.trim();
@@ -2258,7 +2151,7 @@ export function parseTrackTemplate(value: string, rootFontSizePx: number): GridT
     tracks.push(track);
   };
   let autoRepeat: NonNullable<Extract<GridTemplate, { kind: "tracks" }>["autoRepeat"]> | undefined;
-  for (const token of splitTopLevel(trimmed)) {
+  for (const token of splitTopLevel(trimmed, " ")) {
     const names = parseLineNames(token);
     if (names) {
       pending.push(...names);
@@ -2308,7 +2201,7 @@ function parseTrackList(
   const tracks: TrackSize[] = [];
   const lineNames: string[][] = [];
   let pending: string[] = [];
-  for (const token of splitTopLevel(value)) {
+  for (const token of splitTopLevel(value, " ")) {
     const names = parseLineNames(token);
     if (names) {
       pending.push(...names);
@@ -2377,7 +2270,7 @@ export function parseGridTemplateAreas(value: string): GridAreas | null {
 /** Parse `grid-auto-columns` / `grid-auto-rows`: a track-size list, cycled
  * across implicit tracks. Falls back to a single `auto`. */
 function parseAutoTracks(value: string, rootFontSizePx: number): TrackSize[] {
-  const tracks = splitTopLevel(value.trim())
+  const tracks = splitTopLevel(value.trim(), " ")
     .filter((t) => t !== "" && !t.startsWith("["))
     .map((t) => parseTrackSize(t, rootFontSizePx));
   return tracks.length > 0 ? tracks : [autoTrack()];
@@ -2391,7 +2284,7 @@ function parseTrackSize(token: string, rootFontSizePx: number): TrackSize {
   if (minmax) {
     // Depth-aware argument split — a nested function (`minmax(min(8rem,
     // 100%), 1fr)`) has commas of its own.
-    const args = splitCommas(minmax[1]!).map((arg) => arg.trim());
+    const args = splitTopLevel(minmax[1]!, ",").map((arg) => arg.trim());
     if (args.length === 2) {
       return {
         min: parseTrackBreadth(args[0]!, rootFontSizePx),
@@ -2415,7 +2308,9 @@ function parseTrackBreadth(token: string, rootFontSizePx: number): TrackBreadth 
   // deviations).
   const math = token.match(/^(min|max)\((.*)\)$/s);
   if (math) {
-    const args = splitCommas(math[2]!).map((arg) => parseTrackBreadth(arg.trim(), rootFontSizePx));
+    const args = splitTopLevel(math[2]!, ",").map((arg) =>
+      parseTrackBreadth(arg.trim(), rootFontSizePx),
+    );
     const fixed = args.every(
       (a) => a.kind === "cells" || a.kind === "percent" || a.kind === "math",
     );
@@ -2438,27 +2333,6 @@ function parseTrackBreadth(token: string, rootFontSizePx: number): TrackBreadth 
     ? roundHalfAwayFromZero(px / 0.25)
     : pxToCells(px, rootFontSizePx);
   return { kind: "cells", value: cells };
-}
-
-/** Split a CSS value list on top-level whitespace (nested parens and
- * brackets stay intact). */
-function splitTopLevel(value: string): string[] {
-  const tokens: string[] = [];
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i]!;
-    if (ch === "(" || ch === "[") depth++;
-    else if (ch === ")" || ch === "]") depth--;
-    if (/\s/.test(ch) && depth === 0) {
-      if (start !== -1) tokens.push(value.slice(start, i));
-      start = -1;
-    } else if (start === -1) {
-      start = i;
-    }
-  }
-  if (start !== -1) tokens.push(value.slice(start));
-  return tokens;
 }
 
 /** Parse a `grid-column-start`-family longhand: `auto`, an integer line
@@ -2530,7 +2404,7 @@ function readBorder(
       style === "none" || style === "hidden"
         ? 0
         : parseFloat(cs.getPropertyValue(`border-${side}-width`)) || 0;
-    borderStyle[side] = mapBorderStyle(style);
+    borderStyle[side] = readKeyword(BORDER_STYLES, style, "solid");
     if (weight <= 0) continue;
     borderWeight[side] = weight;
     border[side] = weightBand(borderStyle[side], weight, set).cells;

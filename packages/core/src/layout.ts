@@ -15,6 +15,7 @@ import {
   layoutFlexColumn,
   layoutFlexRow,
   mainAxisOffsets,
+  resolveFlexEdge,
 } from "./flex.ts";
 import { gridIntrinsicInnerWidths, layoutGrid } from "./grid.ts";
 import {
@@ -22,15 +23,15 @@ import {
   multicolIntrinsicInnerWidth,
   multicolLeafGeometry,
   multicolLeafRuleRuns,
-  resolveLeafColumns,
+  resolveColumns,
   restrictingHeight,
 } from "./multicol.ts";
 import { layoutTable, tableIntrinsicInnerWidths, tableUsedOuterWidth } from "./table.ts";
 import type { TableData } from "./table.ts";
 import { positionOutOfFlow } from "./positioning.ts";
 import type { Remembered } from "./positioning.ts";
+import { placePainted } from "./paint-origin.ts";
 import { inlineBoxesOf, scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
-import { warnOnce } from "./warn.ts";
 import { bandAt, clearanceBelow, floatsBottom, placeFloat } from "./floats.ts";
 import type { FloatBox } from "./floats.ts";
 import type {
@@ -59,7 +60,8 @@ import type {
  * Layout entry point: mutates localRect on the root and each descendant.
  * Coordinates are parent-relative (root's rect is at 0,0). `remembered`
  * carries anchored boxes' last successful placements between layouts
- * (specs/anchor-positioning.md).
+ * (specs/anchor-positioning.md). Last, every box gets its `paintOrigin`
+ * under the synced scroll offsets (paint-origin.ts).
  */
 export function layoutRoot(
   root: LayoutNode,
@@ -85,12 +87,25 @@ export function layoutRoot(
   const { overflow } = root.style;
   if (overflow.x === "visible") root.localRect.width = Math.max(root.localRect.width, ink.x);
   if (overflow.y === "visible") root.localRect.height = Math.max(height, ink.y);
+  placePainted(root);
   return { height };
 }
 
 /** absolute / fixed boxes are out of normal flow. */
 export function isOutOfFlow(style: CellStyle): boolean {
   return style.position === "absolute" || style.position === "fixed";
+}
+
+/** The static position of an out-of-flow box whose margin box starts at
+ * (`x`, `y`) with no sibling margin to collapse with
+ * (specs/positioning.md): its border box, past its resolved left and top
+ * `margin`. */
+export function blockStaticSlot(
+  margin: NullableInsets,
+  x: number,
+  y: number,
+): { kind: "block"; x: number; y: number } {
+  return { kind: "block", x: x + (margin.left ?? 0), y: y + (margin.top ?? 0) };
 }
 
 /** A formatting-context root beside floats (specs/float.md): it steps
@@ -105,14 +120,20 @@ export function isFormattingContextRoot(node: LayoutNode): boolean {
     display !== "block" ||
     overflow.x !== "visible" ||
     overflow.y !== "visible" ||
-    node.children.some((child) => !child.inlineBox && !isOutOfFlow(child.style))
+    node.children.some(isInFlowBox)
   );
+}
+
+/** A child that lays out as a box of its parent's: in flow, and no
+ * atomic inline box riding the parent's text run. */
+export function isInFlowBox(child: LayoutNode): boolean {
+  return !isOutOfFlow(child.style) && !child.inlineBox;
 }
 
 /** The floats a leaf's lines wrap against (specs/float.md): its
  * container's exclusion boxes and content width, and the leaf's
  * border-box origin in that content box. */
-export interface Intrusions {
+interface Intrusions {
   boxes: FloatBox[];
   contentWidth: number;
   x: number;
@@ -147,11 +168,11 @@ export function makeIntrinsicCache(): IntrinsicCache {
 }
 
 /**
- * `forced` carries flex-assigned ("used") sizes from a parent flex pass —
- * they are authoritative and skip resolution/clamping entirely (the flex
- * loop already applied min/max). With sizes forced, `availableWidth` stays
- * the CONTAINING BLOCK's content width, which percent padding, margins,
- * and min/max resolve against — never the assigned size itself.
+ * `forced` is a parent's used size (flex, grid area, table cell): a
+ * forced width skips resolution and clamping; a forced height still
+ * clamps to min/max. With sizes forced, `availableWidth` stays the
+ * CONTAINING BLOCK's content width, which percent padding, margins, and
+ * min/max resolve against — never the assigned size itself.
  */
 export function layoutNode(
   node: LayoutNode,
@@ -197,7 +218,7 @@ export function layoutNode(
   const maxHeight = resolveLimit(style.maxHeight, availableHeight);
   // Percent padding resolves against the containing block's width (CSS: all
   // four sides use the inline size) — `availableWidth` is that width here.
-  // Stored on the node because the renderers need the resolved cells too.
+  // Stored on the node, where the layout modes and the renderers read it.
   const gutter = scrollGutter(style);
   const bands = scrollGutterBands(style);
   if (forced?.gutter?.right) gutter.right = bands.right;
@@ -213,15 +234,14 @@ export function layoutNode(
   // model"): a zero-height box with a top border is its border row.
   const outerWidth = Math.max(
     forced?.width ??
-      clampSize(resolveWidth(style, availableWidth, widthMode, node, cache), minWidth, maxWidth),
+      clampSize(resolveWidth(node, availableWidth, widthMode, cache), minWidth, maxWidth),
     edges(style.border, padding, "x"),
   );
   const outerHeightExplicit = resolveHeight(style, availableHeight);
-  // A `forcedHeight` (set by a parent flex-column when grow/shrink assigned a
-  // main-axis size) overrides both explicit `height` and `min-height` — the
-  // flex algorithm's "used main size" is authoritative. Otherwise the content
-  // lays out against the explicit height as its limits leave it, or a
-  // `min-height` floor, so items-center / items-end see the enforced size.
+  // A forced height overrides an explicit `height` and a `min-height`
+  // floor. Otherwise the content lays out against the explicit height as
+  // its limits leave it, or a `min-height` floor, so items-center /
+  // items-end see the enforced size.
   const outerHeightFloor =
     forcedHeight ??
     (outerHeightExplicit === undefined
@@ -258,76 +278,26 @@ export function layoutNode(
   // past the cap re-flexes against it — a scroll-container item
   // (automatic minimum 0) shrinks and scrolls.
   const isLeaf = laysOutAsTextLeaf(node);
-  const layoutContent = (innerHeight: number, definite: boolean): number => {
-    const definiteInner = definite && Number.isFinite(innerHeight) ? innerHeight : undefined;
+  const layoutContent = (height: number, definite: boolean): number => {
+    const width = inner.width;
+    const definiteInner = definite && Number.isFinite(height) ? height : undefined;
     if (isLeaf) {
-      return layoutTextLeaf(
-        node,
-        inner.width,
-        innerHeight,
-        definiteInner,
-        maxInnerHeight,
-        padding,
-        cache,
-        intrusions,
-      );
+      return layoutTextLeaf(node, width, height, definiteInner, maxInnerHeight, cache, intrusions);
     }
-    if (style.display === "flex" && style.flexDirection === "row") {
-      return layoutFlexRow(
-        node,
-        inner.width,
-        innerHeight,
-        definiteInner,
-        style.border,
-        padding,
-        cache,
-      );
-    }
-    if (style.display === "flex") {
-      return layoutFlexColumn(
-        node,
-        inner.width,
-        innerHeight,
-        definite,
-        style.border,
-        padding,
-        cache,
-      );
-    }
-    if (style.display === "grid") {
-      return layoutGrid(
-        node,
-        inner.width,
-        innerHeight,
-        definiteInner,
-        style.border,
-        padding,
-        cache,
-      );
-    }
-    if (style.display === "table") {
-      return layoutTable(node, inner.width, definiteInner, style.border, padding, cache);
-    }
-    if (style.display === "multicol") {
-      for (const child of node.children) {
-        if (child.style.float === "none") continue;
-        warnOnce(
-          child.source,
-          "float on a multicol container's own child is ignored — it lays out as a " +
-            "column item; float it inside a child instead (specs/float.md).",
-        );
+    switch (style.display) {
+      case "flex": {
+        const layoutFlex = style.flexDirection === "row" ? layoutFlexRow : layoutFlexColumn;
+        return layoutFlex(node, width, height, definiteInner, cache);
       }
-      return layoutMulticol(
-        node,
-        inner.width,
-        definiteInner,
-        maxInnerHeight,
-        style.border,
-        padding,
-        cache,
-      );
+      case "grid":
+        return layoutGrid(node, width, height, definiteInner, cache);
+      case "table":
+        return layoutTable(node, width, definiteInner, cache);
+      case "multicol":
+        return layoutMulticol(node, width, definiteInner, maxInnerHeight, cache);
+      default:
+        return layoutBlock(node, width, definiteInner, cache);
     }
-    return layoutBlock(node, inner.width, definiteInner, style.border, padding, cache);
   };
   // Taken before the content lays out: a flex/grid text leaf folds its
   // alignment into the padding, which is no part of its content height.
@@ -341,16 +311,9 @@ export function layoutNode(
   }
 
   const naturalHeight = contentHeight + chromeY;
-  // Order matters: min-* is a floor, max-* is a ceiling; when both apply,
-  // max wins per CSS (min-width < max-width is required, but if the author
-  // sets an inconsistent pair CSS clamps to `max(min, min(max, value))`).
-  // The pre-clamp height is the column flex algorithm's base size (CSS
-  // distributes from UNclamped bases; min/max apply via its freeze loop).
-  const unclampedHeight = forcedHeight ?? outerHeightExplicit ?? naturalHeight;
-  node.unclampedHeight = unclampedHeight;
   node.naturalContentHeight = naturalHeight;
   const finalHeight = Math.max(
-    clampSize(unclampedHeight, minHeight, maxHeight),
+    clampSize(forcedHeight ?? outerHeightExplicit ?? naturalHeight, minHeight, maxHeight),
     edges(style.border, padding, "y"),
   );
 
@@ -367,7 +330,7 @@ export function layoutNode(
     const finalContentHeight = finalHeight - edges(style.border, padding, "y");
     if (finalContentHeight > multicolGeometry.totalRows)
       padding.bottom += finalContentHeight - multicolGeometry.totalRows;
-    multicolLeafRuleRuns(node, multicolGeometry, style.border, padding);
+    multicolLeafRuleRuns(node, multicolGeometry);
   }
 
   node.localRect = { x: parentX, y: parentY, width: outerWidth, height: finalHeight };
@@ -376,8 +339,9 @@ export function layoutNode(
   // offset, from the ENGINE's layout — never native scrollHeight.
   if (scrollsAxis(style.overflow.x) || scrollsAxis(style.overflow.y)) {
     const extent = contentExtent(node);
-    const sizeX = Math.max(0, extent.x - style.border.left - padding.left);
-    const sizeY = Math.max(0, extent.y - style.border.top - padding.top);
+    const origin = contentOrigin(node);
+    const sizeX = Math.max(0, extent.x - origin.x);
+    const sizeY = Math.max(0, extent.y - origin.y);
     const contentW = Math.max(0, outerWidth - edges(style.border, padding, "x"));
     const contentH = Math.max(0, finalHeight - edges(style.border, padding, "y"));
     node.scrollRange = {
@@ -416,8 +380,8 @@ export function layoutNode(
  * empty box. `white-space: nowrap` text never soft-wraps: its height is
  * the hard-line (`<br>`) count, regardless of width. `leading-*` adds
  * `lineGap` empty rows BETWEEN lines only (specs/cell-model.md). Returns
- * content height (rows used); mutates `padding` (=== resolvedPadding)
- * for quantized content alignment and multicol column folding.
+ * content height (rows used); mutates `resolvedPadding` for quantized
+ * content alignment and multicol column folding.
  */
 function layoutTextLeaf(
   node: LayoutNode,
@@ -425,11 +389,11 @@ function layoutTextLeaf(
   innerHeight: number,
   definiteInnerHeight: number | undefined,
   maxInnerHeight: number | undefined,
-  padding: Insets,
   cache: IntrinsicCache,
   intrusions?: Intrusions,
 ): number {
   const style = node.style;
+  const padding = node.resolvedPadding;
   let contentHeight: number;
   if (node.text) {
     // Atomic inline boxes first: lay each out (shrink-to-fit; height =
@@ -457,7 +421,7 @@ function layoutTextLeaf(
       // equal fractional columns start on the engine's whole cells;
       // vertical slack folds after the final height clamp (layoutNode).
       const gap = resolveGap(style, "x", innerWidth);
-      const columns = resolveLeafColumns(style, innerWidth, gap);
+      const columns = resolveColumns(style, innerWidth, gap);
       padding.right += columns.leftover;
       const multicol = multicolLeafGeometry(
         node,
@@ -472,32 +436,29 @@ function layoutTextLeaf(
       if (geometry.bands) node.lineBands = geometry.bands;
     }
     contentHeight = geometry.totalRows;
-    // The last line's row, the baseline the box aligns by natively.
-    const lastText = geometry.textY.at(-1);
-    if (lastText !== undefined) node.baselineRow = style.border.top + padding.top + lastText;
+    const lineWidths = geometry.spans.map((span) =>
+      lineAdvance(node.text, span.start, span.end, node.advances, style.tracking),
+    );
     const bands = node.lineBands;
+    const lineX = node.multicolGeometry?.lineX;
     node.textExtent = {
-      width: geometry.spans.reduce(
-        (max, span, index) =>
-          Math.max(
-            max,
-            (bands?.[index]?.x ?? 0) +
-              lineAdvance(node.text, span.start, span.end, node.advances, style.tracking),
-          ),
+      width: lineWidths.reduce(
+        (max, width, index) =>
+          Math.max(max, (lineX?.[index] ?? 0) + (bands?.[index]?.x ?? 0) + width),
         0,
       ),
       rows: geometry.totalRows,
     };
-    // Content alignment of the anonymous text item, quantized to whole
-    // cells (specs/cell-model.md): a flex/grid element whose content is
-    // bare text centers/ends it by folding the leftover into the
-    // engine-owned padding. The browser's own (fractional, off-grid)
-    // anonymous-item alignment is reset in styles.css; padding places
-    // the text instead, so browser, plain text, and decorations agree.
-    // Symmetry of the wrap is preserved: the padded content box is
-    // exactly the widest line, and greedy wrap breaks identically there
-    // (every line fits, and every overflow still overflows).
-    const alignedWidth = alignLeafText(node, geometry, innerWidth, innerHeight, padding);
+    const alignedWidth = alignLeafText(
+      node,
+      lineWidths,
+      geometry.totalRows,
+      innerWidth,
+      innerHeight,
+    );
+    // The last line's row, the baseline the box aligns by natively.
+    const lastText = geometry.textY.at(-1);
+    if (lastText !== undefined) node.baselineRow = contentOrigin(node).y + lastText;
     // Place each box at its marker's wrapped (line, column), past the
     // line's indent and alignment as its text is — the browser's own
     // line layout puts the in-flow box in the same spot because both
@@ -505,37 +466,34 @@ function layoutTextLeaf(
     // grows its LINE (per CSS; the box is vertical-align: top, so its
     // top sits on the line's first row like the text).
     if (boxes.length > 0) {
-      const lineOfChar = (charIndex: number) =>
-        geometry.spans.findIndex((span) => charIndex >= span.start && charIndex < span.end);
+      const origin = contentOrigin(node);
+      const { spans } = geometry;
+      // Markers and lines both run in text order.
+      let line = 0;
       eachObjectMarker(node.text, (charIndex, boxIndex) => {
-        const line = lineOfChar(charIndex);
-        if (line === -1) return; // e.g. width 0 edge; box stays at origin
-        const span = geometry.spans[line]!;
+        while (line < spans.length && spans[line]!.end <= charIndex) line++;
+        const span = spans[line];
+        if (span === undefined || charIndex < span.start) return; // e.g. width 0 edge; box stays at origin
         boxes[boxIndex]!.localRect = {
           ...boxes[boxIndex]!.localRect,
           x:
-            style.border.left +
-            padding.left +
-            lineStart(node, line, span, alignedWidth).x +
+            origin.x +
+            lineStart(node, line, span, alignedWidth, lineWidths[line]).x +
             advanceOf(span.start, charIndex, node.advances),
-          y: style.border.top + padding.top + geometry.lineY[line]!,
+          y: origin.y + geometry.lineY[line]!,
         };
       });
     }
   } else {
     contentHeight = node.intrinsicHeight;
   }
-  // Out-of-flow children of a leaf: static position = the content-box
-  // origin plus their margins (specs/positioning.md — CSS's hypothetical
-  // inline position is approximated by the run's origin).
+  // Out-of-flow children of a leaf start at the content-box origin (CSS's
+  // hypothetical inline position approximated by the run's origin).
+  const { x, y } = contentOrigin(node);
   for (const child of node.children) {
-    if (child.inlineBox) continue;
-    const margin = resolveMargin(child.style.margin, innerWidth);
-    child.staticSlot = {
-      kind: "block",
-      x: style.border.left + padding.left + (margin.left ?? 0),
-      y: style.border.top + padding.top + (margin.top ?? 0),
-    };
+    if (!child.inlineBox) {
+      child.staticSlot = blockStaticSlot(resolveMargin(child.style.margin, innerWidth), x, y);
+    }
   }
   return contentHeight;
 }
@@ -553,13 +511,11 @@ function layoutTextLeaf(
  * deviation).
  */
 function laysOutAsTextLeaf(node: LayoutNode): boolean {
-  const hasInFlowChildren = node.children.some(
-    (child) => !isOutOfFlow(child.style) && !child.inlineBox,
-  );
-  if (hasInFlowChildren) return false;
+  if (node.children.some(isInFlowBox)) return false;
   return node.text !== "" || (node.style.display !== "flex" && node.style.display !== "grid");
 }
 
+/** A size between its min and max, per CSS: a min above the max wins. */
 export function clampSize(value: number, min: number, max: number | undefined): number {
   const clamped = max !== undefined ? Math.min(value, max) : value;
   return Math.max(min, clamped);
@@ -573,36 +529,36 @@ export function clampSize(value: number, min: number, max: number | undefined): 
  * align-items — the anonymous item's single implicit track fills the box).
  * The padded content box becomes exactly the widest line, which preserves
  * the wrap: every line still fits, and greedy breaks are unchanged.
- * Mutates `padding` (=== node.resolvedPadding), which the renderers and
- * this leaf's box/slot placement below all read; returns the width the
- * text aligns in, the padded content box's.
+ * Mutates `node.resolvedPadding`, which the renderers and this leaf's
+ * box/slot placement all read; returns the width the text aligns in, the
+ * padded content box's.
  */
 function alignLeafText(
   node: LayoutNode,
-  geometry: { spans: LineSpan[]; totalRows: number },
+  lineWidths: number[],
+  rows: number,
   innerWidth: number,
   innerHeight: number,
-  padding: Insets,
 ): number {
   const style = node.style;
+  const padding = node.resolvedPadding;
   if (style.display !== "flex" && style.display !== "grid") return innerWidth;
-  if (geometry.spans.length === 0) return innerWidth;
+  if (lineWidths.length === 0) return innerWidth;
   const isColumn = style.display === "flex" && style.flexDirection === "column";
+  // A stretched anonymous item keeps its text at its start under wrap-reverse.
+  const isFlex = style.display === "flex";
+  const crossAlign = resolveFlexEdge(style.alignItems, isFlex && style.wrapReverse, isFlex);
   let alignedWidth = innerWidth;
 
-  const itemWidth = geometry.spans.reduce(
-    (max, span) =>
-      Math.max(max, lineAdvance(node.text, span.start, span.end, node.advances, style.tracking)),
-    0,
-  );
+  const itemWidth = lineWidths.reduce((max, width) => Math.max(max, width), 0);
   const leftoverX = Math.max(0, innerWidth - itemWidth);
   if (leftoverX > 0) {
     const tx =
       style.display === "grid"
         ? alignCrossOffset(style.justifyItems, innerWidth, itemWidth)
         : isColumn
-          ? alignCrossOffset(style.alignItems, innerWidth, itemWidth)
-          : mainAxisOffsets(effectiveJustify(style), [itemWidth], leftoverX)[0]!;
+          ? alignCrossOffset(crossAlign, innerWidth, itemWidth)
+          : mainAxisOffsets(effectiveJustify(style, 1), [itemWidth], leftoverX)[0]!;
     if (tx > 0) {
       padding.left += tx;
       padding.right += leftoverX - tx;
@@ -613,12 +569,12 @@ function alignLeafText(
   // Vertical offsets only exist inside a bounded box (explicit height,
   // min-height floor, or a flex/grid-assigned size).
   if (Number.isFinite(innerHeight)) {
-    const leftoverY = Math.max(0, innerHeight - geometry.totalRows);
+    const leftoverY = Math.max(0, innerHeight - rows);
     if (leftoverY > 0) {
       const ty =
         style.display === "grid" || !isColumn
-          ? alignCrossOffset(style.alignItems, innerHeight, geometry.totalRows)
-          : mainAxisOffsets(effectiveJustify(style), [geometry.totalRows], leftoverY)[0]!;
+          ? alignCrossOffset(crossAlign, innerHeight, rows)
+          : mainAxisOffsets(effectiveJustify(style, 1), [rows], leftoverY)[0]!;
       if (ty > 0) {
         padding.top += ty;
         padding.bottom += leftoverY - ty;
@@ -676,12 +632,14 @@ export function leafLineGeometry(
  * alignment includes; else the content's), its indent (the first line's
  * alone: a `<br>` re-indents nothing, per CSS), and its `x` — the
  * column's and the band's edge, the indent, and the `text-align`
- * offset, whole cells. */
+ * offset, whole cells. `lineWidth` is the span's advance, where the
+ * caller has it. */
 export function lineStart(
   node: LayoutNode,
   index: number,
   span: LineSpan,
   contentWidth: number,
+  lineWidth = lineAdvance(node.text, span.start, span.end, node.advances, node.style.tracking),
 ): { width: number; indent: number; x: number } {
   const style = node.style;
   const band = node.lineBands?.[index];
@@ -692,7 +650,6 @@ export function lineStart(
       ? Math.max(1, multicol.columnWidth - style.tracking)
       : contentWidth;
   const indent = index === 0 ? style.textIndent : 0;
-  const lineWidth = lineAdvance(node.text, span.start, span.end, node.advances, style.tracking);
   const leftover = Math.max(0, width - indent - lineWidth);
   const offset =
     style.textAlign === "end"
@@ -721,19 +678,30 @@ function lineOpener(
   intrusions: Intrusions,
   bands: LineBand[],
 ): LineOpener {
-  const { border, lineGap } = node.style;
-  const padding = node.resolvedPadding;
-  const x0 = intrusions.x + border.left + padding.left;
-  const y0 = intrusions.y + border.top + padding.top;
+  const { lineGap } = node.style;
+  const origin = contentOrigin(node);
+  const x0 = intrusions.x + origin.x;
+  const y0 = intrusions.y + origin.y;
   const floatsEnd = floatsBottom(intrusions.boxes);
-  // Only an inline box makes a line taller than a row.
-  const hasBoxes = inlineBoxesOf(node).length > 0;
+  // Only an inline box makes a line taller than a row: its rows, by its
+  // marker's index.
+  const boxes = inlineBoxesOf(node);
+  const boxRows = new Map<number, number>();
+  if (boxes.length > 0) {
+    eachObjectMarker(node.text, (charIndex, boxIndex) => {
+      boxRows.set(charIndex, boxes[boxIndex]!.localRect.height);
+    });
+  }
+  const lineRows = (span: LineSpan): number => {
+    let rows = 1;
+    if (boxRows.size > 0) {
+      for (let i = span.start; i < span.end; i++) rows = Math.max(rows, boxRows.get(i) ?? 1);
+    }
+    return rows;
+  };
   return (index, closed) => {
     let row = 0;
-    if (index > 0) {
-      const height = hasBoxes ? leafLineMetrics(node, closed).heights[index - 1]! : 1;
-      row = bands[index - 1]!.row + height + lineGap;
-    }
+    if (index > 0) row = bands[index - 1]!.row + lineRows(closed[index - 1]!) + lineGap;
     for (;;) {
       const band = bandAt(intrusions.boxes, intrusions.contentWidth, y0 + row);
       const start = Math.max(band.x, x0);
@@ -758,7 +726,13 @@ export function leafLineSpans(
 ): LineSpan[] {
   if (node.style.whiteSpace !== "normal") {
     const spans = hardLineSpans(node.text);
-    if (openLine) spans.forEach((_, index) => openLine(index, spans.slice(0, index)));
+    if (openLine) {
+      const closed: LineSpan[] = [];
+      for (const span of spans) {
+        openLine(closed.length, closed);
+        closed.push(span);
+      }
+    }
     return spans;
   }
   return wrapLineSpans(node.text, contentWidth, {
@@ -829,6 +803,13 @@ export function edges(border: Insets, padding: Insets, axis: "x" | "y"): number 
     : border.top + border.bottom + padding.top + padding.bottom;
 }
 
+/** Where a laid-out box's content box starts in its border box. */
+export function contentOrigin(node: LayoutNode): { x: number; y: number } {
+  const { border } = node.style;
+  const padding = node.resolvedPadding;
+  return { x: border.left + padding.left, y: border.top + padding.top };
+}
+
 /** A box's border, padding and reserved scrollbar gutter on an axis
  * from its style, before it lays out: percent padding resolves against
  * `basis`, as 0 where that is indefinite (intrinsic sizing). */
@@ -868,6 +849,13 @@ export function resolveMargin(margin: PerSide<CellLength | null>, basis: number)
   };
 }
 
+/** A box's resolved margins on an axis, `auto` counting 0. */
+export function fixedMargins(margin: NullableInsets, axis: "x" | "y"): number {
+  return axis === "x"
+    ? (margin.left ?? 0) + (margin.right ?? 0)
+    : (margin.top ?? 0) + (margin.bottom ?? 0);
+}
+
 /** Resolve a height limit to cells: percent needs a definite available
  * size; intrinsic keywords behave as "no constraint" on heights. `"auto"`
  * resolves to none here (0 in block flow) — flex main-axis code
@@ -902,9 +890,8 @@ export function resolveWidthLimit(
  *
  * - Vertical (main-axis) margins on adjacent siblings **collapse** — the
  *   effective gap is `max(prev.bottom, curr.top)` for two positives, `min`
- *   for two negatives, and the sum for mixed signs (standard CSS rule).
- *   Parent–child collapsing is intentionally NOT implemented (see the cell-
- *   model spec's Deviations section).
+ *   for two negatives, and the sum for mixed signs (standard CSS rule);
+ *   between siblings only (specs/cell-model.md deviation 1).
  * - Horizontal (cross-axis) margins position the child; `auto` on either
  *   side centers or end-aligns as CSS does.
  */
@@ -912,12 +899,9 @@ function layoutBlock(
   node: LayoutNode,
   innerWidth: number,
   definiteInnerHeight: number | undefined,
-  border: Insets,
-  padding: Insets,
   cache: IntrinsicCache,
 ): number {
-  const originX = border.left + padding.left;
-  const startY = border.top + padding.top;
+  const { x: originX, y: startY } = contentOrigin(node);
   // The floats placed so far, in content-box cells (specs/float.md).
   const floats: FloatBox[] = [];
   let y = startY;
@@ -1032,7 +1016,7 @@ function layoutRootBesideFloats(
   definiteInnerHeight: number | undefined,
   cache: IntrinsicCache,
 ): { x: number; y: number } {
-  const marginX = (margin.left ?? 0) + (margin.right ?? 0);
+  const marginX = fixedMargins(margin, "x");
   const minWidth = widthContribution(child, "min", cache) + marginX;
   const lay = (width: number): void =>
     layoutNode(child, Math.max(0, width - marginX), definiteInnerHeight, 0, 0, "fill", cache);
@@ -1166,35 +1150,30 @@ export function collapseMargins(a: number, b: number): number {
 }
 
 function resolveWidth(
-  style: CellStyle,
+  node: LayoutNode,
   available: number,
   mode: SizingMode,
-  node: LayoutNode,
   cache: IntrinsicCache,
 ): number {
-  const width = style.width;
-  if (style.display === "table") {
-    // Tables shrink-to-fit even in block flow, floored at their min sum
-    // (specs/table.md step 3); fixed layout fills, percents inflate. A
-    // table degraded to a text leaf (no rows) shrink-to-fits on its
-    // plain intrinsics.
-    const hasStructure = node.children.some(
-      (child) => !isOutOfFlow(child.style) && !child.inlineBox,
+  const style = node.style;
+  // Tables shrink-to-fit even in block flow, floored at their min sum
+  // (specs/table.md step 3); fixed layout fills, percents inflate. A
+  // table degraded to a text leaf (no rows) shrink-to-fits on its plain
+  // intrinsics.
+  const isTable = style.display === "table";
+  const laysOutAsTable = isTable && !laysOutAsTextLeaf(node);
+  if (style.width !== undefined) {
+    const resolved = resolveSizeAgainst(style.width, available, node, cache);
+    if (!laysOutAsTable) return resolved;
+    return Math.max(
+      resolved,
+      tableIntrinsicInnerWidths(node, cache).min + boxChrome(style, "x", available),
     );
-    if (!hasStructure) {
-      if (width !== undefined && width.kind !== "auto")
-        return resolveSizeAgainst(width, available, node, cache);
-      return Math.min(available, intrinsicOuterWidth(node, cache));
-    }
-    if (width !== undefined && width.kind !== "auto") {
-      const resolved = resolveSizeAgainst(width, available, node, cache);
-      return Math.max(resolved, tableMinOuterWidth(node, available, cache));
-    }
-    return tableUsedOuterWidth(node, available, cache);
   }
-  if (width !== undefined && width.kind !== "auto")
-    return resolveSizeAgainst(width, available, node, cache);
-  return mode === "shrink" ? Math.min(available, intrinsicOuterWidth(node, cache)) : available;
+  if (laysOutAsTable) return tableUsedOuterWidth(node, available, cache);
+  return mode === "shrink" || isTable
+    ? Math.min(available, intrinsicOuterWidth(node, "max", cache))
+    : available;
 }
 
 /** How far a box's content reaches past its border-box origin, in
@@ -1211,10 +1190,9 @@ function contentExtent(node: LayoutNode): { x: number; y: number } {
     y = Math.max(y, child.localRect.y + extent.y);
   }
   if (node.textExtent) {
-    const { border } = node.style;
-    const padding = node.resolvedPadding;
-    x = Math.max(x, border.left + padding.left + node.textExtent.width);
-    y = Math.max(y, border.top + padding.top + node.textExtent.rows);
+    const origin = contentOrigin(node);
+    x = Math.max(x, origin.x + node.textExtent.width);
+    y = Math.max(y, origin.y + node.textExtent.rows);
   }
   return { x, y };
 }
@@ -1234,10 +1212,6 @@ function scrollableExtent(node: LayoutNode): { x: number; y: number } {
   };
 }
 
-function tableMinOuterWidth(node: LayoutNode, available: number, cache: IntrinsicCache): number {
-  return tableIntrinsicInnerWidths(node, cache).min + boxChrome(node.style, "x", available);
-}
-
 function resolveHeight(style: CellStyle, available: number | undefined): number | undefined {
   if (style.height?.kind === "cells") return style.height.value;
   if (style.height?.kind === "percent" && available != null)
@@ -1245,8 +1219,9 @@ function resolveHeight(style: CellStyle, available: number | undefined): number 
   return undefined;
 }
 
-/** Resolve a definite Size against an available extent (`auto` falls back
- * to max-content — callers handle the auto/fill distinction themselves). */
+/** Resolve a width against the available width: cells as themselves, a
+ * percent of it, and the intrinsic keywords as the node's content
+ * widths — fit-content the available width clamped between them. */
 export function resolveSizeAgainst(
   size: Size,
   available: number,
@@ -1259,119 +1234,103 @@ export function resolveSizeAgainst(
     case "percent":
       return percentToCells(size.value, available);
     case "min-content":
-      return minContentOuterWidth(node, cache);
+      return intrinsicOuterWidth(node, "min", cache);
     case "max-content":
-      return intrinsicOuterWidth(node, cache);
+      return intrinsicOuterWidth(node, "max", cache);
     case "fit-content":
       return Math.min(
-        intrinsicOuterWidth(node, cache),
-        Math.max(minContentOuterWidth(node, cache), available),
+        intrinsicOuterWidth(node, "max", cache),
+        Math.max(intrinsicOuterWidth(node, "min", cache), available),
       );
-    case "auto":
-      return intrinsicOuterWidth(node, cache);
   }
 }
 
-/** Max-content intrinsic outer width (border + padding + unwrapped content). */
-export function intrinsicOuterWidth(node: LayoutNode, cache: IntrinsicCache): number {
-  const cached = cache.maxContent.get(node);
+/**
+ * A box's min- or max-content outer width: its content's plus its chrome.
+ * A text leaf's min-content is its longest unbreakable unit (a word under
+ * normal wrapping, a whole hard line under `nowrap`), its max-content the
+ * unwrapped text. A flex row sums its items, at min-content only when it
+ * can't wrap; other containers take the widest child (at max-content,
+ * floats share a line and multicol multiplies by its columns).
+ */
+export function intrinsicOuterWidth(
+  node: LayoutNode,
+  kind: "min" | "max",
+  cache: IntrinsicCache,
+): number {
+  const widths = kind === "min" ? cache.minContent : cache.maxContent;
+  const cached = widths.get(node);
   if (cached !== undefined) return cached;
-  const result = intrinsicInnerWidth(node, cache) + boxChrome(node.style, "x");
-  cache.maxContent.set(node, result);
+  const result = intrinsicInnerWidth(node, kind, cache) + boxChrome(node.style, "x");
+  widths.set(node, result);
   return result;
 }
 
-function intrinsicInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
-  const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
+function intrinsicInnerWidth(node: LayoutNode, kind: "min" | "max", cache: IntrinsicCache): number {
+  const style = node.style;
+  const inFlow = node.children.filter(isInFlowBox);
   if (inFlow.length === 0) {
-    if (node.style.display === "multicol")
-      return multicolIntrinsicInnerWidth(node.style, node.intrinsicWidth);
-    return node.intrinsicWidth;
+    if (kind === "max") {
+      return style.display === "multicol"
+        ? multicolIntrinsicInnerWidth(style, node.intrinsicWidth)
+        : node.intrinsicWidth;
+    }
+    if (!node.text || style.whiteSpace !== "normal") return node.intrinsicWidth;
+    return longestSegmentAdvance(node.text, { advances: node.advances, tracking: style.tracking });
   }
-  if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).max;
-  if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).max;
-  if (node.style.display === "flex" && node.style.flexDirection === "row") {
-    const gap = resolveGap(node.style, "x", undefined) * Math.max(0, inFlow.length - 1);
-    return inFlow.reduce((sum, c) => sum + widthContribution(c, "max", cache), 0) + gap;
+  if (style.display === "grid") return gridIntrinsicInnerWidths(node, cache)[kind];
+  if (style.display === "table") return tableIntrinsicInnerWidths(node, cache)[kind];
+  const contributions = inFlow.map((c) => widthContribution(c, kind, cache));
+  if (
+    style.display === "flex" &&
+    style.flexDirection === "row" &&
+    (kind === "max" || style.flexWrap === "nowrap")
+  ) {
+    const gap = resolveGap(style, "x", undefined) * (inFlow.length - 1);
+    return contributions.reduce((sum, width) => sum + width, 0) + gap;
   }
-  const widest = inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "max", cache)), 0);
-  if (node.style.display === "multicol") return multicolIntrinsicInnerWidth(node.style, widest);
-  if (node.style.display === "block" && inFlow.some((c) => c.style.float !== "none")) {
+  const widest = contributions.reduce((max, width) => Math.max(max, width), 0);
+  if (kind === "min") return widest;
+  if (style.display === "multicol") return multicolIntrinsicInnerWidth(style, widest);
+  if (style.display === "block" && inFlow.some((c) => c.style.float !== "none")) {
     // Floats share a line with the content beside them; a cleared child
     // starts a new one (specs/float.md).
-    let widest = 0;
+    let widestLine = 0;
     let floatsWidth = 0;
     let beside = 0;
-    for (const c of inFlow) {
-      const width = widthContribution(c, "max", cache);
+    inFlow.forEach((c, i) => {
+      const width = contributions[i]!;
       if (c.style.float !== "none") floatsWidth += width;
       else if (c.style.clear !== "none") {
-        widest = Math.max(widest, floatsWidth + beside);
+        widestLine = Math.max(widestLine, floatsWidth + beside);
         floatsWidth = 0;
         beside = width;
       } else beside = Math.max(beside, width);
-    }
-    return Math.max(widest, floatsWidth + beside);
+    });
+    return Math.max(widestLine, floatsWidth + beside);
   }
   return widest;
 }
 
-/** A child's outer width contribution to its parent's intrinsic size: its
- * explicit width if fixed (percent behaves as auto, per intrinsic
- * contribution rules), else its min-/max-content outer width; clamped by
- * its own fixed min/max, and floored at its border and padding. */
+/** A child's `kind` contribution to its parent's intrinsic width: an
+ * explicit width in cells or as an intrinsic keyword (`w-min`, `w-max`),
+ * else its `kind`-content outer width — which a percent width takes
+ * (intrinsic contribution rules) and fit-content too, its contributions
+ * being auto's (css-sizing-3); clamped by its own fixed min/max, and
+ * floored at its border and padding. */
 export function widthContribution(
   child: LayoutNode,
   kind: "min" | "max",
   cache: IntrinsicCache,
 ): number {
-  const style = child.style;
-  const width =
-    style.width !== undefined && style.width.kind !== "auto" && style.width.kind !== "percent"
-      ? resolveSizeAgainst(style.width, 0, child, cache)
-      : kind === "min"
-        ? minContentOuterWidth(child, cache)
-        : intrinsicOuterWidth(child, cache);
-  const min = typeof style.minWidth === "number" ? style.minWidth : 0;
-  const max = typeof style.maxWidth === "number" ? style.maxWidth : undefined;
-  return Math.max(boxChrome(style, "x"), clampSize(width, min, max));
-}
-
-/**
- * Min-content intrinsic outer width: the narrowest the box can get without
- * overflow. For a text leaf that's the longest unbreakable unit — a word
- * under normal wrapping, a whole hard line under `nowrap`. A nowrap flex
- * row sums its items (they sit side by side no matter what); wrapping rows
- * and block/column containers take the widest child.
- */
-export function minContentOuterWidth(node: LayoutNode, cache: IntrinsicCache): number {
-  const cached = cache.minContent.get(node);
-  if (cached !== undefined) return cached;
-  const result = minContentInnerWidth(node, cache) + boxChrome(node.style, "x");
-  cache.minContent.set(node, result);
-  return result;
-}
-
-function minContentInnerWidth(node: LayoutNode, cache: IntrinsicCache): number {
-  const inFlow = node.children.filter((c) => !isOutOfFlow(c.style) && !c.inlineBox);
-  if (inFlow.length === 0) {
-    if (!node.text || node.style.whiteSpace !== "normal") return node.intrinsicWidth;
-    return longestSegmentAdvance(node.text, {
-      advances: node.advances,
-      tracking: node.style.tracking,
-    });
-  }
-  if (node.style.display === "grid") return gridIntrinsicInnerWidths(node, cache).min;
-  if (node.style.display === "table") return tableIntrinsicInnerWidths(node, cache).min;
-  if (
-    node.style.display === "flex" &&
-    node.style.flexDirection === "row" &&
-    node.style.flexWrap === "nowrap"
-  ) {
-    const gap = resolveGap(node.style, "x", undefined) * Math.max(0, inFlow.length - 1);
-    return inFlow.reduce((sum, c) => sum + widthContribution(c, "min", cache), 0) + gap;
-  }
-  return inFlow.reduce((max, c) => Math.max(max, widthContribution(c, "min", cache)), 0);
+  const { width, minWidth, maxWidth } = child.style;
+  const outer =
+    width === undefined || width.kind === "percent" || width.kind === "fit-content"
+      ? intrinsicOuterWidth(child, kind, cache)
+      : resolveSizeAgainst(width, 0, child, cache);
+  const min = typeof minWidth === "number" ? minWidth : 0;
+  const max = typeof maxWidth === "number" ? maxWidth : undefined;
+  return Math.max(boxChrome(child.style, "x"), clampSize(outer, min, max));
 }
 
 function shrinkSize(

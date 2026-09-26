@@ -164,7 +164,7 @@ function mountMenu(root: Element, machineProps: MountProps): MenuMount {
       }
     },
     live,
-    submenus.map((submenu) => submenu.machine),
+    { linked: submenus.map((submenu) => submenu.machine) },
   );
   return {
     machine,

@@ -78,7 +78,7 @@ truth.
   cells and moves three in either direction, so Up and Down take the
   same number of presses — and the native ceiling reads as max (see
   the first bullet); every frame during a scroll, cheap through the
-  existing signature/patch paths. Mid-gesture the native (invisible)
+  existing unchanged-row/patch paths. Mid-gesture the native (invisible)
   text may sit up to half a cell off the grid ink; once scrolling has
   gone quiet (`scrollend` plus a short debounce — a held key fires
   scrollend after every step, and an instant settle would cut the next

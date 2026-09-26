@@ -164,6 +164,9 @@ describe("attributes as props", () => {
     element.value = ["main"];
     element.ids = { content: "list" };
     expect(element.api, "the mount left alone").toBe(api);
+    // A prototype-less object is as plain as a literal.
+    element.ids = Object.assign(Object.create(null), { content: "list" });
+    expect(element.api, "the mount left alone").toBe(api);
     element.value = [];
     expect(element.api).not.toBe(api);
     element.remove();

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -15,18 +15,25 @@ export interface MonowindOptions {
 
 const VIRTUAL_ID = "virtual:monowind";
 
-/** The engine's stylesheet and the `resolve` settings that load one
- * `monowind` for the page, the app's own else this plugin's: two copies
- * are two registries. */
-function resolveMonowind(root: string): { styles: string; resolve: object } {
-  if (hasPackage(root, "monowind")) {
-    const require = createRequire(path.join(root, "package.json"));
-    return { styles: require.resolve("monowind/styles.css"), resolve: { dedupe: ["monowind"] } };
-  }
-  const require = createRequire(import.meta.url);
+/** The engine's stylesheet and the config that loads one `monowind` for
+ * the page, the app's own else this plugin's: two copies are two
+ * registries. An installed engine is pre-bundled once, the packages
+ * built on it against that bundle; a linked one (a workspace, `npm link`)
+ * is excluded and served as is: the optimizer's cache would miss its
+ * edits, and a pre-bundled package built on it would inline a copy. */
+function resolveMonowind(root: string): { styles: string; config: object } {
+  const own = hasPackage(root, "monowind");
+  const require = createRequire(own ? path.join(root, "package.json") : import.meta.url);
+  const entry = require.resolve("monowind");
+  const installed = realpathSync(entry).split(path.sep).includes("node_modules");
   return {
     styles: require.resolve("monowind/styles.css"),
-    resolve: { alias: [{ find: /^monowind$/, replacement: require.resolve("monowind") }] },
+    config: {
+      optimizeDeps: installed ? { include: ["monowind"] } : { exclude: ["monowind"] },
+      resolve: own
+        ? { dedupe: ["monowind"] }
+        : { alias: [{ find: /^monowind$/, replacement: entry }] },
+    },
   };
 }
 
@@ -70,9 +77,7 @@ export default function monowind(options: MonowindOptions = {}): PluginOption[] 
     name: "monowind",
     config(config) {
       engine = resolveMonowind(path.resolve(config.root ?? process.cwd()));
-      // The dev server pre-bundles the engine once, and the packages built
-      // on it against that bundle.
-      return { optimizeDeps: { include: ["monowind"] }, resolve: engine.resolve };
+      return engine.config;
     },
     configResolved(config) {
       command = config.command;

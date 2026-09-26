@@ -7,6 +7,7 @@ import {
   copyText,
   dragTo,
   expectGridOnItsCells,
+  frames,
   pressAt,
   readyHost,
   release,
@@ -53,7 +54,6 @@ export const Wide: StoryObj = {
     const press = (name: string, at: Point, detail: number, init: PressInit = {}) =>
       pressAt(by(name), at, detail, init);
     const move = (at: Point) => dragTo(by("mixed"), at);
-    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     // A selected cell's color is the theme's background (its own has
     // none here); the paint swaps the two.
     const painted = () =>
@@ -101,7 +101,7 @@ export const Wide: StoryObj = {
     expect(copyText(host)).toBe("中文 한글 😀");
     release();
     // The painted highlight: the selected cells, inverted on the grid.
-    await nextFrame();
+    await frames();
     await waitFor(() => expect(painted()).toBe("中文 한글 😀"));
 
     // Double-click: the word; triple-click: the paragraph.
@@ -118,10 +118,10 @@ export const Wide: StoryObj = {
     move(cell("second", 0, 0));
     expect(selection()).toBe("Second paragraph after the wide one.");
     release();
-    await nextFrame();
+    await frames();
     await waitFor(() => expect(painted()).toBe("Second paragraph after the wide one."));
     document.getSelection()!.removeAllRanges();
-    await nextFrame();
+    await frames();
     await waitFor(() => expect(painted()).toBe(""));
 
     // A banner's transcript is text like any other: a drag inside it
@@ -132,7 +132,7 @@ export const Wide: StoryObj = {
     expect(press("banner", cell("banner", 2, 1), 1)).toBe(false);
     move(cell("banner", 6, 1));
     expect(copyText(host)).toBe(artLines[1]!.slice(2, 7));
-    await nextFrame();
+    await frames();
     await waitFor(() => expect(painted()).toBe(artLines[1]!.slice(2, 7)));
     // Down a row: through the character under the pointer, in text order.
     move(cell("banner", 1, 2));

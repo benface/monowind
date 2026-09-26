@@ -1,7 +1,23 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { copyText, gridOf, pressAt, readyHost, release, testHooks } from "./helpers.ts";
+import { wrapLines } from "monowind";
+import dejaVuSubset from "../../../assets/fonts/DejaVuSansMono-subset.woff2?url";
+import {
+  cellSize,
+  copyText,
+  countLayouts,
+  expectGridOnItsCells,
+  expectOnItsCells,
+  frames,
+  gridOf,
+  hoverOver,
+  pressAt,
+  readyHost,
+  release,
+  testHooks,
+  transitionLayouts,
+} from "./helpers.ts";
 
 /**
  * The host's own content states: emptied out, it is zero rows with an
@@ -9,8 +25,9 @@ import { copyText, gridOf, pressAt, readyHost, release, testHooks } from "./help
  * content is the root leaf (specs/host-leaf.md); its own text beside a
  * block child is an anonymous run, the block a flow child
  * (specs/cell-model.md "Inline content"); a host inside another is
- * plain content of the outer one, and a host's own animation is the
- * browser's. Hidden from the sidebar and the story sweep.
+ * plain content of the outer one, and a host's own animation, and its
+ * own transitions other than `color`'s, are the browser's. Hidden from
+ * the sidebar and the story sweep.
  */
 const meta: Meta = {
   title: "Test / Host",
@@ -20,7 +37,7 @@ export default meta;
 
 export const Content: StoryObj = {
   render: () => html`
-    <mono-wind data-test="host" class="border border-neutral-500 bg-neutral-950 p-1">
+    <mono-wind class="border border-neutral-500 bg-neutral-950 p-1">
       <div>hello world<br />second line</div>
     </mono-wind>
   `,
@@ -166,9 +183,14 @@ export const Nested: StoryObj = {
     console.warn = (...args: unknown[]) => warnings.push(String(args[0]));
     try {
       const inner = document.createElement("mono-wind");
-      inner.innerHTML = "<p>Inner text.</p>";
+      inner.innerHTML = '<p>Inner text.</p><button data-test="inner-button">press</button>';
       outer.appendChild(inner);
       await waitFor(() => expect(gridOf(outer).textContent).toContain("Inner text."));
+      // Its interactives are the outer host's to mark, and take the
+      // pointer in its grid mode.
+      const button = canvasElement.querySelector('[data-test="inner-button"]')!;
+      expect(button).toHaveAttribute("data-mw-interactive");
+      expect(getComputedStyle(button).pointerEvents).toBe("auto");
       expect(warnings.some((w) => w.includes("inside another <mono-wind> is unsupported"))).toBe(
         true,
       );
@@ -184,7 +206,7 @@ export const Nested: StoryObj = {
       selecting.innerHTML = "<p>Selecting text.</p>";
       outer.appendChild(selecting);
       await waitFor(() => expect(gridOf(outer).textContent).toContain("Selecting text."));
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await frames();
       expect(gridOf(selecting).textContent).toBe("");
       expect(selecting.hasAttribute("data-mw-ready")).toBe(false);
     } finally {
@@ -196,7 +218,6 @@ export const Nested: StoryObj = {
 /** A host straight under a shadow root, with no element parent, is a
  * top-level one: its engine runs. */
 export const InShadowRoot: StoryObj = {
-  tags: ["!dev", "!golden"],
   render: () => html`<div data-test="holder"></div>`,
   play: async ({ canvasElement }) => {
     const holder = testHooks(canvasElement)("holder");
@@ -208,6 +229,141 @@ export const InShadowRoot: StoryObj = {
   },
 };
 
+/** A host lays out once as it loads (specs/cell-model.md "Observation"):
+ * fonts that settled already, a glyph cache holding nothing, and the
+ * sizes the layout itself writes schedule no second one. A resize of
+ * its container and of its cell still lay it out again, and content
+ * above it growing moves a top-layer element with the grid. */
+export const LoadLayouts: StoryObj = {
+  render: () => html`<div data-test="page"></div>`,
+  play: async ({ canvasElement }) => {
+    // The stories' font loaded, which nothing on the page may have used
+    // yet: fonts.ready waits on no load that has not started.
+    await document.fonts.load('1em "JetBrains Mono"');
+    // Text the glyph cache measures nothing of, and borders it measures.
+    const loads = ["<p>Plain text.</p>", '<div class="border px-1">A bordered box.</div>'].map(
+      (content) => {
+        const container = document.createElement("div");
+        const host = document.createElement("mono-wind");
+        host.innerHTML = content;
+        const load = { container, host, layouts: countLayouts(host) };
+        container.append(host);
+        testHooks(canvasElement)("page").append(container);
+        return load;
+      },
+    );
+    for (const { host } of loads) {
+      await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
+    }
+    await frames(10);
+    expect(loads.map((load) => load.layouts.count)).toEqual([1, 1]);
+
+    // A narrower container.
+    const [text, box] = loads as [(typeof loads)[0], (typeof loads)[0]];
+    text.container.style.width = "20rem";
+    await waitFor(() => expect(text.layouts.count).toBe(2));
+    await frames(10);
+    expect(text.layouts.count).toBe(2);
+    // A larger cell, which only the cell probe's size reports: a rule
+    // the host's observers see no mutation of.
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync("mono-wind[data-test='larger'] { font-size: 20px }");
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    try {
+      const width = cellSize(text.host).width;
+      text.host.dataset.test = "larger";
+      await waitFor(() => expect(cellSize(text.host).width).toBeGreaterThan(width));
+      await frames(10);
+      expect(text.layouts.count).toBe(3);
+    } finally {
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((each) => each !== sheet);
+    }
+
+    // Content above the host growing moves the grid, and a top-layer
+    // element on it moves with it.
+    const above = document.createElement("p");
+    above.textContent = "Above the host.";
+    box.container.prepend(above);
+    box.host.insertAdjacentHTML(
+      "beforeend",
+      '<div data-test="popover" popover class="border px-1">A popover.</div>',
+    );
+    const popover = box.host.querySelector<HTMLElement>('[data-test="popover"]')!;
+    popover.showPopover();
+    await waitFor(() => expect(gridOf(box.host).textContent).toContain("A popover."));
+    await expectOnItsCells(box.host, popover);
+    above.style.height = "5rem";
+    await expectOnItsCells(box.host, popover);
+    for (const { layouts } of loads) layouts.stop();
+  },
+};
+
+/** A face that loads once the host has settled: the host lays out
+ * again at the face's cell, its grid on its cells (specs/cell-model.md
+ * "Observation"), and a story's ready host is that layout's. */
+export const LateFont: StoryObj = {
+  render: () => html`<div data-test="page"></div>`,
+  play: async ({ canvasElement }) => {
+    // A family of its own, so the face is new to the page whatever ran before.
+    const family = `Late Mono ${Math.random().toString(36).slice(2)}`;
+    const host = document.createElement("mono-wind");
+    host.style.fontFamily = `"${family}", serif`;
+    host.innerHTML =
+      '<p>Laid out before its font loads.</p><div class="border px-1">A bordered box.</div>';
+    testHooks(canvasElement)("page").append(host);
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
+    // Past the load's own layouts, so the swap is all that lays it out.
+    await frames(5);
+    const fallback = cellSize(host).width;
+    const face = new FontFace(family, `url(${dejaVuSubset})`);
+    document.fonts.add(face);
+    try {
+      await face.load();
+      await readyHost(canvasElement);
+      expect(cellSize(host).width).not.toBe(fallback);
+      expectGridOnItsCells(host);
+    } finally {
+      document.fonts.delete(face);
+    }
+  },
+};
+
+/** A textarea's rows wrap its value at the width the layout gave it
+ * (specs/cell-model.md "Form controls"), which its first layout has no
+ * snapshot of: loaded with the host, or inserted after, it lays out
+ * again at that width, with no other change to prompt it. */
+export const TextareaRows: StoryObj = {
+  render: () => html`<div data-test="page"></div>`,
+  play: async ({ canvasElement }) => {
+    await document.fonts.ready;
+    const value = "one two three four five six seven eight nine ten";
+    const host = document.createElement("mono-wind");
+    host.innerHTML = `<textarea class="w-12 border">${value}</textarea>`;
+    testHooks(canvasElement)("page").append(host);
+    await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
+    const rowCounts = (area: HTMLTextAreaElement) => {
+      const { width, height } = cellSize(host);
+      const style = getComputedStyle(area);
+      const content =
+        area.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      return {
+        laidOut: Math.round(area.getBoundingClientRect().height / height),
+        wrapped: wrapLines(area.value, Math.floor(content / width)).length + 2,
+      };
+    };
+    const [first] = host.querySelectorAll("textarea");
+    const expectWrapped = (area: HTMLTextAreaElement) =>
+      waitFor(() => {
+        const { laidOut, wrapped } = rowCounts(area);
+        expect(wrapped).toBeGreaterThan(4);
+        expect(laidOut).toBe(wrapped);
+      });
+    await expectWrapped(first!);
+    host.insertAdjacentHTML("beforeend", `<textarea class="w-12 border">${value}</textarea>`);
+    await expectWrapped(host.querySelectorAll("textarea")[1]!);
+  },
+};
+
 /** The host's own keyframe animation is the browser's, moving the
  * grid with the host: the engine samples nothing for it. */
 export const Animated: StoryObj = {
@@ -215,17 +371,81 @@ export const Animated: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = canvasElement.querySelector<HTMLElement>('[data-test="host"]')!;
     await waitFor(() => expect(host).toHaveAttribute("data-mw-ready"));
-    let layouts = 0;
-    const observer = new MutationObserver(() => layouts++);
-    observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    const layouts = countLayouts(host);
     const opacities = new Set<string>();
     const until = performance.now() + 600;
     while (performance.now() < until) {
       opacities.add(getComputedStyle(host).opacity);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await frames();
     }
-    observer.disconnect();
+    layouts.stop();
     expect(opacities.size, "host frames").toBeGreaterThanOrEqual(3);
-    expect(layouts, "layouts under the host's animation").toBeLessThanOrEqual(1);
+    expect(layouts.count, "layouts under the host's animation").toBe(0);
+  },
+};
+
+/** The host's own opacity, border color and scale transition as its
+ * animation would, the browser's alone: nothing lays out from the
+ * class change's layout to three frames past the end. Its `color`,
+ * which the grid inherits, relays out each frame. */
+export const Transitioned: StoryObj = {
+  render: () => html`
+    <mono-wind class="border border-[rgb(255,0,0)] text-[rgb(255,255,0)] transition duration-500">
+      <p>Fading…</p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const layouts = countLayouts(host);
+    /** The layouts a class change's transition makes after the change's
+     * own, to three frames past its end, and the frames it ran. */
+    const transition = (from: string, to: string, ended: () => boolean) =>
+      transitionLayouts(layouts, () => host.classList.replace(from, to), ended, { settle: 3 });
+    host.classList.add("opacity-50", "scale-95");
+    const faded = await transition("border-[rgb(255,0,0)]", "border-[rgb(0,0,255)]", () => {
+      const style = getComputedStyle(host);
+      return (
+        style.opacity === "0.5" &&
+        style.borderTopColor === "rgb(0, 0, 255)" &&
+        style.scale === "0.95"
+      );
+    });
+    expect(faded.frames, "the fade's frames").toBeGreaterThanOrEqual(5);
+    expect(faded.during, "layouts during the host's fade").toBe(0);
+    const colored = await transition(
+      "text-[rgb(255,255,0)]",
+      "text-[rgb(0,255,255)]",
+      () => getComputedStyle(host).color === "rgb(0, 255, 255)",
+    );
+    expect(colored.during, "layouts during the host's color change").toBeGreaterThanOrEqual(
+      colored.frames / 2,
+    );
+    layouts.stop();
+  },
+};
+
+/** Test-only: the host's own move is the browser's, and at its end the
+ * grid's place reads afresh — a pointer held still is over the cells
+ * that moved under it. */
+export const MovedHost: StoryObj = {
+  render: () => html`
+    <mono-wind class="transition-transform duration-200">
+      <div class="flex">
+        <div data-test="first" class="w-12">first</div>
+        <div data-test="second" class="w-12">second</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    hoverOver(by("first"));
+    await waitFor(() => expect(by("first")).toHaveAttribute("data-mw-hover"));
+    // The second item slides under the pointer.
+    host.style.translate = `-${by("first").getBoundingClientRect().width}px`;
+    await waitFor(() => expect(host.getAnimations()).toHaveLength(0));
+    await frames(2);
+    expect(by("first")).not.toHaveAttribute("data-mw-hover");
+    expect(by("second")).toHaveAttribute("data-mw-hover");
   },
 };

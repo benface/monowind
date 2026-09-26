@@ -89,9 +89,9 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
 
 ## Mechanics
 
-- Attribute plumbing mirrors `select`: `observedAttributes`, a
-  `DEFAULT_FOCUS`, reflection on connect and on an unrecognized value
-  (with the same warning shape).
+- Attribute plumbing is `select`'s: an entry in `HOST_KEYWORDS` (its
+  values, the default first) gives `observedAttributes`, reflection on
+  connect and on an unrecognized value, and the warning.
 - `keydown` handler: ignore unless `focus="arrows"`, the key is an
   arrow, and no modifier is held. The focused element is the event's
   target (a control inside a nested shadow root arrives retargeted to
@@ -109,7 +109,7 @@ true })` followed by `scrollIntoView({ block: "nearest", inline:
   → native.
 - Selection of the target is a pure function
   `nextFocus(direction, current: Rect, candidates: { rect, element }[])`
-  in a new `packages/core/src/focus.ts`, testable in Node; the
+  in `packages/core/src/focus.ts`, testable in Node; the
   element handler is plumbing around it.
 
 ## Deviations (documented, like the cell model's running list)

@@ -24,10 +24,11 @@ export function start<T extends MachineSchema>(
   return started;
 }
 
-/** A plain object, which a partial merges into a level deep. A class
- * instance is not one: spread into a literal, a Zag collection keeps
- * its items and loses the accessors the machine navigates by. */
-const isPlain = (value: unknown): value is Record<string, unknown> => {
+/** A plain object, which a partial merges into a level deep and an
+ * element compares by its entries. A class instance is not one:
+ * spread into a literal, a Zag collection keeps its items and loses
+ * the accessors the machine navigates by. */
+export const isPlain = (value: unknown): value is Record<string, unknown> => {
   if (typeof value !== "object" || value === null) return false;
   const proto: unknown = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
@@ -122,6 +123,13 @@ interface Followed {
   subscribe(listener: () => void): () => void;
 }
 
+/** What a mount follows past its own machine — a menu's submenus —
+ * and what it runs last at the destroy. */
+interface MountOptions {
+  linked?: Iterable<Followed>;
+  cleanup?: () => void;
+}
+
 /** A started machine mounted on its markup (specs/ui.md): the API
  * connected and spread onto the parts — found once by the caller's
  * `wire`, Zag's spread rewriting a trigger item's `data-part` — on
@@ -133,7 +141,7 @@ export function mount<T extends MachineSchema, A>(
   connect: (service: Service<T>) => A,
   wire: (api: A, spread: Spread) => void,
   live: LiveProps<Partial<T["props"]>>,
-  linked: Iterable<Followed> = [],
+  { linked = [], cleanup }: MountOptions = {},
 ): Mounted<A> {
   // Zag declares this one private and defines it on the instance.
   const notify = (machine as unknown as { notify?: () => void }).notify;
@@ -170,8 +178,9 @@ export function mount<T extends MachineSchema, A>(
     destroy() {
       stopped = true;
       for (const unsubscribe of unsubscribes) unsubscribe();
-      for (const cleanup of unwire) cleanup();
+      for (const unspread of unwire) unspread();
       machine.stop();
+      cleanup?.();
     },
   };
 }
@@ -186,12 +195,12 @@ export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
   connect: (service: Service<T>) => A,
   wire: ((api: A, spread: Spread) => void) | undefined,
   live: LiveProps<Partial<T["props"]>>,
-  linked: Iterable<Followed> = [],
+  options: MountOptions = {},
 ): Mounted<A> {
   const triggers = parts(root, "trigger");
   const positioner = part(root, "positioner");
   const content = part(root, "content");
-  const mounted = mount(
+  return mount(
     machine,
     connect,
     (api, spread) => {
@@ -204,18 +213,12 @@ export function mountAnchored<T extends MachineSchema, A extends CommonApi>(
       syncTopLayer(positioner, api.open);
     },
     live,
-    linked,
+    {
+      ...options,
+      cleanup: () => {
+        syncTopLayer(positioner, false);
+        options.cleanup?.();
+      },
+    },
   );
-  return {
-    get api() {
-      return mounted.api;
-    },
-    updateProps(partial) {
-      mounted.updateProps(partial);
-    },
-    destroy() {
-      mounted.destroy();
-      syncTopLayer(positioner, false);
-    },
-  };
 }

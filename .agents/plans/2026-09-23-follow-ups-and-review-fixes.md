@@ -378,7 +378,7 @@ Apps and scripts:
   endpoint on parse, where the older fade clamped only its output, so
   mid-fade values drift for such colors (emerald-400 → gray-800 at
   t 0.25: rgb(0 166 124) then, rgb(34 166 124) now). Mixing unclamped,
-  as CSS interpolates, changes gradients too (gradients.md deviation 7) — its own pass.
+  as CSS interpolates, changes gradients too (gradients.md deviation 6) — its own pass.
 - **Two anchor utilities without a fallback** for one property cannot
   be told apart (Typed OM reads both as `auto`); the first in the class
   attribute is read.

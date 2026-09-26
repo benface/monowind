@@ -1,4 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
+// Where the plugin writes StyleX's rules (vite.config.ts).
+import "./stylex.css";
 // The companion stylesheet, which the engine needs and no styling tool
 // supplies: the locks on the host's subtree and the `@property`
 // declarations the grid reads.

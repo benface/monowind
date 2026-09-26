@@ -1,8 +1,9 @@
 # Spec: animations — keyframes sampled like transitions
 
 Status: **implemented** (2026-09-13; `animation.ts` classifies the
-running animations, `element.ts` runs the three paths, `style.ts`
-keeps an animating effect a layer root). Transitions, the
+running animations and the transitions sampled as them, `element.ts`
+runs the three paths, `style.ts` keeps an animating effect a layer
+root). Transitions, the
 sampling loop, and the synthesized background fades live in
 `cell-model.md` "Animation"; the layer's box and its per-frame copy in
 `layers.md` "Animation is sampled".
@@ -20,13 +21,23 @@ engine has only to sample it, as it samples transitions.
 
 ## Reading
 
-The measure pass reads, per element, only whether to ask: an
-`animation-name` other than none, or a `transition-duration` other
-than zero, has `getAnimations()` say what runs on the element, for
-the layer root it keeps (Locked decisions). `animationstart` bubbles
-from the light elements to the host; the target's `getAnimations()`
-gives its running `CSSAnimation`s, each with its keyframes' property
-names and its play state. A **sampled animation** is one whose keyframes touch a sampled
+What runs under the host is one query: the host's
+`getAnimations({ subtree: true })` gives every running `CSSAnimation`,
+with its keyframes' property names and its play state, and every
+running `CSSTransition`, with its property — one call, where an
+element's own scans the document's animations in Chromium, a pass
+over many elements costing the square of their count. A layout pass
+asks it once, before its mask, which keeps every animation the
+reads take, and hands the reads each element's running properties: the
+layer root it keeps (Locked decisions), and the synthesized
+background fade a running background animation ends; a pass run inside
+another's reads (another host's plain text a leaf renderer asks for)
+hands the outer pass its own back. The frames of the sampling loop
+read the last query's animations, each one's play state showing an
+end, a pause, a cancel or a removal, and ask afresh after an
+`animationstart`, an `animationiteration` or a `transitionrun`, which
+bubble from the light elements to the host: Gecko walks every node of
+the subtree for the query, where a play state costs nothing. A **sampled animation** is one whose keyframes touch a sampled
 property: `color`, the `border-*-color` longhands, `opacity`,
 `background-color`, or a layer effect (`transform`, `translate`,
 `rotate`, `scale`, `filter`, `backdrop-filter`). Any other keyframe
@@ -38,33 +49,57 @@ through the relayout it drives.
 - **An animation drives the sampling loop as a transition does.** An
   `animationstart` (or an `animationiteration`, for one resumed or
   begun before the host listened) whose target is the host's own light
-  element adds it to the host's animated set and starts the loop; so
-  does a measure pass that reads a running animation, the sure
-  sighting of one resumed from a pause. Each tick asks the element's
-  `getAnimations()` what still runs and re-picks its path from that,
-  and the element leaves the set when nothing of its runs — an end, a
-  cancel, a pause, a removal alike. The loop runs while the set has an
-  element: an infinite animation keeps it going for as long as the
-  element is on the page; the 30s valve is the transitions' alone. A
-  settle layout follows the end, as for transitions, and every end or
-  cancel lands its state with a layout of its own: the value it leaves
-  beside an animation still running, or a resumed one-shot's the loop
-  never followed, is that layout's to read.
+  element starts the loop; so does a layout pass whose query finds
+  anything running, the sure sighting of an animation resumed from a
+  pause. Each tick asks what runs under the host (Reading) and picks
+  each animated element's path from that, and an element leaves the
+  set when nothing of its runs — an end, a cancel, a pause, a removal
+  alike, a removed element's cancel reaching the host no more. The
+  loop runs while anything sampled runs: an infinite animation keeps
+  it going for as long as the element is on the page. What leaves the
+  set lands in the next frame by the path that showed it — a repaint
+  reads its paint-only values once more, a layer's box is placed every
+  frame, and a frame after a relayout lays out once more — and the
+  loop's last layout lands everything, a layer root back at a resting
+  identity leaving the layers there; an end or cancel is no layout of
+  its own. One with no loop running to land it, a resumed one-shot's
+  that no event announced, lays out.
+- **A transition of a property no other node inherits is sampled as
+  its animation is.** A light element's own `opacity`, border-color,
+  or layer-effect transition starts the loop at its `transitionrun`,
+  takes the path the same keyframes would, and lands its value as the
+  animation does. A transition on the host itself, other than
+  `color`'s, is the browser's, as the host's own animation is: its
+  opacity, border, and transform are native, the grid fading and
+  moving with it, so nothing is sampled, its start and end included;
+  the end of either reads the grid's place afresh, where a pointer
+  held still now points.
+  A `color` transition relays out each frame (cell-model.md
+  "Animation"), the host's among them: its children and inline runs
+  hold snapshots of what they inherited. A pseudo-element's opacity or
+  border or text color relays out too: the one the engine draws,
+  `::backdrop`, reaches the grid through its box, whose look a layout
+  reads (top-layer.md), and neither a repaint nor a box placement
+  reads a pseudo-element's style. One rule classifies them, for the
+  events and the frames alike (animation.ts `transitionSampling`).
 - **Each frame does the least that shows the value.** Per animated
-  element, the keyframes' properties pick the path: effects alone →
-  the layer's box is placed again from the computed values, as a
-  transition of them does; `color`, border colors, and `opacity`
+  element, the keyframes' properties pick the path: effects alone,
+  or with a layer root's opacity → the layer's box is placed again
+  from the computed values, as a transition of them does; `color`,
+  border colors, and `opacity`
   alone on a laid-out element → the node's style takes the computed
   values and the grid repaints from the last layout, with no measure
   and no layout — a `color` only on a leaf without inline elements,
   since what its children and inline runs inherited is a snapshot, a
   border color off a collapsed table, whose lattice took its colors at
-  layout; anything else (a `background-color`, a `backdrop-filter`,
+  layout (its opacity repaints: the paint resolves the lattice and
+  applies the opacity itself); anything else (a `background-color`, a `backdrop-filter`,
   which the companion locks on the light element, a geometry property,
   an inline element's color, a mix that includes one) → a relayout,
   which reads every animated value under `[measuring]` as the
   transition loop does. The three combine per frame: one relayout serves every
-  element that needs one.
+  element that needs one, and a layout scheduled for the same frame is
+  that relayout (cell-model.md "Animation").
 - **An element animating an effect is a layer root while it animates**,
   identity frames included, so `animate-spin` keeps its box through
   `rotate(0)` and a scale that passes through 1 stays a layer: the
@@ -99,41 +134,76 @@ through the relayout it drives.
 ## Testing
 
 - Node: the keyframe classification into the three paths, a lattice's
-  border and a backdrop filter included; the read treating a running
-  animation or transition of an effect as an effect through a stubbed
-  `getAnimations`, and noting an animation's find for the host; the
-  background tracker yielding to a background keyframe alone; the
-  paint-style resample; the node index leaving an anonymous run to its
-  element.
+  border, a backdrop filter, a layer root's opacity, and a collapsed
+  table part's opacity included; what runs under a host from one
+  call — every element's keyframes and the transitions sampled as
+  animations (opacity, border colors, effects), a color's and a
+  pseudo-element's paint-only transition relaying out, the host's own
+  others and its keyframes left to the browser; the read treating a
+  running animation or transition of an effect as an effect from the
+  pass's query, no element's own asked; the background tracker
+  yielding to a background keyframe alone; the paint-style resample;
+  the node index leaving an anonymous run to its element; a layout
+  asking what runs once, the frames reading its answer until a start
+  asks again, and a layout inside another's reads handing the outer
+  one its answer back (element.test.ts); styles.css's mask keeping
+  exactly the transitions a frame samples (cascade.test.ts).
 - Storybook: `animate-spin` on a glyph — the layer's rotation changes
   across frames and the box never disappears at the identity;
-  `animate-pulse` on a skeleton — the cells' opacity changes across
-  frames with no layout between them; `animate-ping` — both paths at
-  once; `animate-bounce` — a translate per frame; a one-shot
+  `animate-pulse` on a skeleton — the cells' shown colors change
+  across frames with no layout between them; `animate-ping` — a scale
+  and a fade on its box; `animate-bounce` — a translate per frame; an
+  opacity transition, alone and beside a scale, with no layout between
+  its frames and its cells landing at its end, and one beside a color
+  change relaying out each frame; a one-shot
   `animate-in`-style keyframe (opacity and scale) landing exactly on
   its end state with a settle, and a `forwards` one holding its end;
   a background-color keyframe sampled through the relayout path with
   a `transition-colors` on the same element; a paused animation
   holding and turning again once resumed; a one-shot ending beside an
   infinite animation landing its value; a host's own animation left to
-  the browser.
+  the browser, and its own opacity, border-color and scale transitions
+  with no layout from the class change's to past their end, its color
+  relaying out each frame (host.stories.ts `Transitioned`); an element
+  removed mid color transition leaving no layout after its removal's
+  (`RemovedMidTransition`); transitions of effects and opacities
+  staggered to end one after another, an ended fade's cells at its
+  value from the frame after, with no layout at any end
+  (`StaggeredTransitions`); the host's own transform ending, a pointer
+  held still then over the cells moved under it (host.stories.ts
+  `MovedHost`); a
+  transform transition on an element already a layer root starting
+  with no layout; a color transition beside DOM changes between
+  frames and in a frame's callbacks laying out once a frame
+  (`OneLayoutAFrame`).
 - Visual: none — the story's infinite animations have no still state
   a golden could pin, so it opts out of the sweep (`!golden`).
 
 ## Touch points on implementation
 
-- element.ts: the animation listeners (start and iteration as entries,
-  end and cancel as landings); the animated set beside the transition
-  counters, re-classified per tick and joined by the reads' finds per
-  layout; the tick's three paths (`syncLayers`, a repaint after a style
-  resample, the relayout).
-- style.ts `readLayer`: a running animation or transition of a layer
-  effect counts as an effect (`getAnimations()` on elements with an
-  `animation-name` or a `transition-duration`).
+- element.ts: the animation listeners (start and iteration as entries
+  and a new query, an end with no loop running as a landing, the host's
+  own as the grid moved), and the transition listeners (animation.ts
+  `transitionSampling`), whose start starts the loop and asks a new
+  query; the animated set, classified per tick from `#animations`, the
+  last query's; the layout pass's one query, handed to its reads (the
+  outer pass's handed back after) and starting the loop where anything
+  runs; the tick's three paths (`syncLayers`, a repaint after a style
+  resample of what repaints or just left, the relayout, one more after
+  the last), skipped in a frame a scheduled layout ran
+  (`#laidOutFrame`), and any layout cancelling a pending scheduled one
+  (`#layoutRequest`).
+- animation.ts: `transitionSampling`, the one rule for transitions;
+  `runningUnder`, the query's classification, a removed element's
+  animation left out; `readingAnimations`, returning the answer it
+  replaces, and `animatedProperties`, the pass's answer to its reads;
+  `EFFECTS` and `PAINT_ONLY`, which styles.css's mask lists;
+  `animationPath`, a layer root's opacity on the box path.
+- style.ts: `readLayer`, where a running animation or transition of a
+  layer effect counts as an effect (`animatesEffect`); `readPaintStyle`,
+  the paint-only values a frame reads onto an animated element's node
+  before element.ts's `#resampleAndPaint` repaints the last layout.
 - animate.ts `trackBackground`: a running `background-color` animation
   ends a synthesized fade and reads as it is.
-- paint.ts / plain-text.ts: none (the repaint path writes
-  `CellStyle.color`/`opacity`/`borderColor` on the node and calls
-  `paintGrid` on the last layout).
 - cell-model.md "Animation" and layers.md: both defer to this spec for
   keyframe sampling rather than listing it as a deviation.

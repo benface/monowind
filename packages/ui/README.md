@@ -347,12 +347,12 @@ to a framework's nested root, along with the behavior a parent shares.
 
 A positioner is a surface in the host's colors by default (the
 engine's, in place of the browser's canvas colors); `bg-clear` on the
-content cuts the grid's cells beneath it out instead, showing what
-lies behind the host through it. The dialog's positioner is centered
-by the platform and carries the `::backdrop` (`backdrop:bg-black/50`),
-which the engine draws beneath it; without the class the backdrop is
-invisible and the dialog still modal, Zag's trap and `aria-hidden`
-being its own.
+content cuts the grid's cells beneath it out instead, showing the
+host's ground (its background, or the page behind a transparent host).
+The dialog's positioner is centered by the platform and carries the
+`::backdrop` (`backdrop:bg-black/50`), which the engine draws beneath
+it; without the class the backdrop is invisible and the dialog still
+modal, Zag's trap and `aria-hidden` being its own.
 
 ## Modules
 

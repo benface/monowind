@@ -27,10 +27,6 @@ export interface GlyphBox {
   /** The vertical period of a shade's lattice at that scale, in px
    * (set for shades only). */
   period?: number;
-  /** How far the glyph's content area — what a browser's selection
-   * highlight covers — reaches past the box above and below, in px
-   * (set with `period`). */
-  reach?: { above: number; below: number };
   /** Whether the fit exists only because the font draws the glyph PAST
    * the row: it covers the row already, and the box is there to clip
    * the overshoot off the rows below (set for that case alone). */
@@ -51,7 +47,8 @@ const BLOCKS = TILING[0]!;
 
 /** The shades: patterns, whose fit locks their lattice to device
  * pixels and carries it across rows. */
-const SHADE = /^[\u2591-\u2593]$/;
+export const SHADES = "\u2591\u2592\u2593";
+const SHADE = new RegExp(`^[${SHADES}]$`);
 
 /** How far a tiling glyph's ink must reach past the cell's edge
  * columns for the clip to leave no column part bare. CSS pixels, not
@@ -67,7 +64,7 @@ function drawingOf(metrics: TextMetrics): string {
 
 /** Where the baseline of `glyph` lands, in px from the top of a box a
  * row tall with that `font-size` factor and `line-height`. */
-export type BaselineOf = (glyph: string, scale: number, lineHeight: number) => number;
+type BaselineOf = (glyph: string, scale: number, lineHeight: number) => number;
 
 export class GlyphBoxes {
   #boxes = new Map<string, GlyphBox | null>();
@@ -136,11 +133,12 @@ export class GlyphBoxes {
   }
 
   /** Whether the font still draws every glyph a cached measurement came
-   * from exactly as it did; false with nothing cached, or no canvas to
-   * ask. */
+   * from exactly as it did: true with nothing measured, as no cached
+   * box then rests on the font. */
   #draws(): boolean {
+    if (this.#drawn.size === 0) return true;
     const context = this.#canvas();
-    if (!context || this.#drawn.size === 0) return false;
+    if (!context) return false;
     for (const [key, was] of this.#drawn) {
       const at = key.indexOf("\u001f");
       context.font = key.slice(0, at);
@@ -213,20 +211,13 @@ export class GlyphBoxes {
     return { scale, advance: Math.round(metrics.width * scale * 1000) / 1000 };
   }
 
-  /** How far a shade's lattice moves in `row` so that it carries on
-   * from the row above: down by the phase, or up by the rest of the
-   * period when down would carry the glyph's content area off the
-   * box's top and up keeps it past the bottom — a selection highlight
-   * covers the content area, and the move must not bare the box. */
+  /** How far down a shade's lattice moves in `row`, less than a
+   * period, so that it carries on from the row above. */
   shift(box: GlyphBox, row: number): number {
     const unit = (box.period ?? 0) * this.#dpr;
     if (!unit) return 0;
     const traveled = row * this.#cell.height * this.#dpr;
-    const down = (unit - (traveled % unit)) % unit;
-    const up = unit - down;
-    const reach = box.reach;
-    const goesUp = reach && down > reach.above * this.#dpr && up <= reach.below * this.#dpr;
-    return (goesUp ? -up : down) / this.#dpr;
+    return ((unit - (traveled % unit)) % unit) / this.#dpr;
   }
 
   /** One fit per tiling range of a font: null when the font draws the
@@ -316,15 +307,6 @@ export class GlyphBoxes {
           }
         }
         box.lineHeight = Math.round(lineHeight * 100) / 100;
-        if (lattice) {
-          // The content area sits in the line box by its half-leading.
-          const content = (ascent + descent) * scale;
-          const top = (lineHeight - content) / 2;
-          box.reach = {
-            above: Math.round(-top * 100) / 100,
-            below: Math.round((top + content - cellHeight) * 100) / 100,
-          };
-        }
       }
       fit = box;
     }

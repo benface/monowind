@@ -5,13 +5,16 @@ import {
   cellSize,
   dragTo,
   expectOnItsCells,
+  frames,
   gridOf,
   isChromium,
+  nearColor,
   paintedSpan,
   pressAt,
   readyHost,
   release,
   rowsOf,
+  shown,
   testHooks,
 } from "./helpers.ts";
 import type { Point } from "./helpers.ts";
@@ -283,26 +286,33 @@ export const Transitions: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const pop = canvasElement.querySelector<HTMLElement>('[data-test="pop"]')!;
-    const opacity = () => paintedSpan(host, "Fading")?.style.opacity;
+    // The popover's glyphs at its opacity, nothing beneath them.
+    const color = () => shown(paintedSpan(host, "Fading"));
+    const ink = getComputedStyle(pop).color;
     pop.showPopover();
+    const landed = (value: string | undefined) => value !== undefined && nearColor(value, ink);
+    const midFlight = (seen: Set<string | undefined>) =>
+      [...seen].filter((value) => value !== undefined && !landed(value)).length;
     const seen = new Set<string | undefined>();
     const until = performance.now() + 700;
     while (performance.now() < until) {
-      seen.add(opacity());
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      seen.add(color());
+      await frames();
     }
     // Mid-flight values, then the landed one.
-    expect(
-      [...seen].filter((value) => value !== undefined && value !== "").length,
-    ).toBeGreaterThanOrEqual(2);
-    await waitFor(() => expect(opacity()).toBe(""));
+    expect(midFlight(seen)).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(landed(color())).toBe(true));
+    // The exit's frames to the popover's last: faded ones where the
+    // browser runs the exit.
     pop.hidePopover();
-    if (isChromium) {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      expect(gridOf(host).textContent).toContain("Fading popover");
-      expect(parseFloat(opacity()!)).toBeLessThan(1);
+    const leaving = new Set<string | undefined>();
+    const exit = performance.now() + 10_000;
+    while (gridOf(host).textContent!.includes("Fading popover") && performance.now() < exit) {
+      leaving.add(color());
+      await frames();
     }
-    await waitFor(() => expect(gridOf(host).textContent).not.toContain("Fading popover"));
+    expect(gridOf(host).textContent).not.toContain("Fading popover");
+    if (isChromium) expect(midFlight(leaving)).toBeGreaterThanOrEqual(2);
   },
 };
 

@@ -1,5 +1,6 @@
-import { defaultCellStyle, zeroInsets } from "../src/types.ts";
-import type { CellStyle, LayoutNode } from "../src/types.ts";
+import { placePainted } from "../src/paint-origin.ts";
+import { createNode, defaultCellStyle } from "../src/types.ts";
+import type { CellStyle, Layer, LayoutNode } from "../src/types.ts";
 
 const stubElement = { getAttribute: () => null } as unknown as Element;
 
@@ -13,16 +14,31 @@ export function makeNode(overrides: {
   source?: Element;
 }): LayoutNode {
   const text = overrides.text ?? "";
-  return {
-    source: overrides.source ?? stubElement,
-    style: { ...defaultCellStyle(), ...overrides.style },
-    children: overrides.children ?? [],
+  return createNode(
+    overrides.source ?? stubElement,
+    { ...defaultCellStyle(), ...overrides.style },
+    overrides.children,
     text,
-    intrinsicWidth: overrides.intrinsicWidth ?? text.length,
-    intrinsicHeight: overrides.intrinsicHeight ?? (text.length > 0 ? 1 : 0),
-    localRect: { x: 0, y: 0, width: 0, height: 0 },
-    unclampedHeight: 0,
-    naturalContentHeight: 0,
-    resolvedPadding: zeroInsets(),
-  };
+    overrides.intrinsicWidth ?? text.length,
+    overrides.intrinsicHeight ?? (text.length > 0 ? 1 : 0),
+  );
+}
+
+/** A length of `value` cells. */
+export const cells = (value: number) => ({ kind: "cells" as const, value });
+
+/** A layer root's layer (specs/layers.md): no backdrop filter, its cells
+ * drawn resampled or not. */
+export const layered = (resampled = false): Layer => ({ backdropFilter: "none", resampled });
+
+/** `box` scrolled to `x`, `y` cells and the tree placed again: the boxes
+ * a sticky shift moved. */
+export function scrollBox(
+  root: LayoutNode,
+  box: LayoutNode,
+  x: number,
+  y: number,
+): ReturnType<typeof placePainted> {
+  box.scroll = { x, y };
+  return placePainted(root);
 }

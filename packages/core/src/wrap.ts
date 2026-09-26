@@ -1,23 +1,11 @@
 /**
- * Greedy word-wrap for monospace text on the cell grid.
- *
- * Text is a string plus optional per-character `advances` (cells each
- * character occupies — 1 by default, `1 + tracking` for letter-spaced text;
- * see specs/cell-model.md). Words are runs of non-whitespace; whitespace
- * runs collapse to single spaces between fitting words. Browsers also treat
- * a hyphen inside a word as a break opportunity (break after `-`, no
- * hyphen added) — except a word-INITIAL hyphen run (UAX #14 LB20a;
- * `-top-1` wraps `-top-` │ `1`, probed in Chromium/WebKit; Firefox's
- * own model differs and is a documented divergence) — so words are
- * further split into breakable segments. A segment wider than
- * `width` breaks at cell boundaries. `\n` in the input is a HARD line break
- * — the wrap restarts on a new line (the source of these is `<br>`
- * elements, converted to `\n` by the tree builder). A blank hard line still
- * occupies one row.
- *
- * Matches how a browser wraps `white-space: normal; overflow-wrap: anywhere`
- * text in a fixed-width monospace container — we set that in styles.css so
- * the two agree.
+ * Greedy word-wrap for monospace text on the cell grid, as a browser
+ * wraps `white-space: normal; overflow-wrap: anywhere` text (styles.css
+ * sets that): white space collapsing, hyphen break opportunities and
+ * `\n` hard breaks per specs/cell-model.md "Whitespace collapsing" and
+ * "Hyphen break opportunities". Text is a string plus optional
+ * per-character `advances` (cells each character occupies, `1 +
+ * tracking` for letter-spaced text).
  */
 
 import { clusterWidth } from "./width.ts";
@@ -34,7 +22,7 @@ export interface LineSpan {
  * leaf's own `tracking` — the trailing gap it absorbs at line ends (see
  * `lineAdvance`). Defaults: plain 1-cell characters, no tracking.
  */
-export interface WrapOptions {
+interface WrapOptions {
   advances?: number[] | undefined;
   tracking?: number;
   /** `text-indent` in cells: reduces the first hard line's usable width
@@ -79,9 +67,8 @@ export function hardLineSpans(text: string): LineSpan[] {
 }
 
 export function wrapLineSpans(text: string, width: number, options: WrapOptions = {}): LineSpan[] {
-  // Empty = nothing but collapsible white space — but a `\n` is a hard
-  // break (a `<br>`), never collapsible. NOT `trim()`, which would also
-  // eat NBSP — an NBSP-only leaf still renders a line in the browser.
+  // Nothing but collapsible white space is empty; a `\n` is a hard
+  // break (a `<br>`), never collapsible.
   if (!/[^ \t\r\f]/.test(text)) return [];
   const spans: LineSpan[] = [];
   let lineStart = 0;
@@ -149,15 +136,6 @@ export function longestSegmentAdvance(text: string, options: WrapOptions = {}): 
   return longest;
 }
 
-/**
- * Split a word at its internal break opportunities: after each hyphen run,
- * except a word-initial run (UAX #14 LB20a). `"mx-auto"` →
- * `["mx-", "auto"]`; `"-top-1"` → `["-top-", "1"]`.
- */
-export function breakableSegments(word: string): string[] {
-  return breakableSegmentRanges(word, 0, word.length).map((r) => word.slice(r.start, r.end));
-}
-
 /** U+FFFC marks an embedded atomic inline box (see LayoutNode.inlineBox):
  * unbreakable itself, but with break opportunities on BOTH sides, like
  * browsers give replaced elements. */
@@ -207,13 +185,14 @@ function breakableSegmentRanges(text: string, start: number, end: number): LineS
       segmentStart = next;
     }
   }
-  segments.push({ start: segmentStart, end });
+  // A word ending on a marker has closed its last segment already.
+  if (end > segmentStart) segments.push({ start: segmentStart, end });
   return segments;
 }
 
-// CSS "document white space" only: space, tab, CR, LF, FF. Notably NOT NBSP
-// (U+00A0) — JS `\s` would match it, but the browser neither collapses nor
-// breaks at it, so it must stay inside its word.
+/** CSS "document white space" only: space, tab, CR, LF, FF. Not NBSP
+ * (U+00A0), which JS `\s` would match: the browser neither collapses nor
+ * breaks at it, so it stays inside its word. */
 const COLLAPSIBLE = /[ \t\r\n\f]/;
 
 function wordRanges(text: string, start: number, end: number): LineSpan[] {
@@ -274,13 +253,13 @@ function wrapHardLine(
   for (const word of words) {
     let joinsPrevious = false; // segments after the first attach with no space
     for (const segment of breakableSegmentRanges(text, word.start, word.end)) {
-      let segStart = segment.start;
-      const segEnd = segment.end;
-      const separatorStart = current !== null && !joinsPrevious ? segStart - 1 : segStart;
-      const candidate = advancesSum + advanceOf(separatorStart, segEnd, advances);
-      const trailing = Math.min(tracking, trailingGap(text, segEnd - 1, advances));
+      let segmentStart = segment.start;
+      const segmentEnd = segment.end;
+      const separatorStart = current !== null && !joinsPrevious ? segmentStart - 1 : segmentStart;
+      const candidate = advancesSum + advanceOf(separatorStart, segmentEnd, advances);
+      const trailing = Math.min(tracking, trailingGap(text, segmentEnd - 1, advances));
       if (current !== null && candidate - trailing <= availableWidth()) {
-        current.end = segEnd;
+        current.end = segmentEnd;
         advancesSum = candidate;
       } else {
         if (current !== null) {
@@ -290,19 +269,19 @@ function wrapHardLine(
         // Break a too-wide segment at cell boundaries: a chunk of exactly
         // `width` stays as the current line (matching browser overflow-wrap).
         for (;;) {
-          let fit = segStart;
+          let fit = segmentStart;
           while (
-            fit < segEnd &&
-            lineAdvance(text, segStart, fit + 1, advances, tracking) <= availableWidth()
+            fit < segmentEnd &&
+            lineAdvance(text, segmentStart, fit + 1, advances, tracking) <= availableWidth()
           )
             fit++;
-          if (fit === segEnd || fit === segStart) break;
-          lines.push({ start: segStart, end: fit });
+          if (fit === segmentEnd || fit === segmentStart) break;
+          lines.push({ start: segmentStart, end: fit });
           lineIndent = 0;
-          segStart = fit;
+          segmentStart = fit;
         }
-        current = { start: segStart, end: segEnd };
-        advancesSum = advanceOf(segStart, segEnd, advances);
+        current = { start: segmentStart, end: segmentEnd };
+        advancesSum = advanceOf(segmentStart, segmentEnd, advances);
       }
       joinsPrevious = true;
     }

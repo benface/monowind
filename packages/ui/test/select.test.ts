@@ -134,6 +134,8 @@ describe("the mount", () => {
     expect(by(root, "value-text").textContent).toBe("next");
     expect(root.querySelector<HTMLSelectElement>("select")!.value).toBe("next");
     mounted.destroy();
+    // The placeholder goes back, for a mount on the same markup to read.
+    expect(by(root, "value-text").textContent).toBe("Choose a branch");
     root.remove();
   });
 

@@ -1,6 +1,6 @@
 # monowind — core architecture
 
-Status: living document — Milestones 1–6 implemented (last updated 2026-09-19)
+Status: living document (last updated 2026-09-24)
 
 ## What monowind is
 
@@ -205,8 +205,9 @@ All three share one core. Concretely, the packages:
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_
-  `dist/cdn.js` (~107 KB gzip), built by `vite.cdn.config.ts` from
-  `src/cdn.ts`, exercised by `apps/example-html`; it exposes
+  `dist/cdn.js` (~157 KB gzip, measured 2026-09-26), built by
+  `vite.cdn.config.ts` from `src/cdn.ts` (its inlined stylesheets stripped
+  of their comments), exercised by `apps/example-html`; it exposes
   `globalThis.monowind.version` plus the leaf-renderer extension API for
   sibling CDN bundles. `dist/sort.js` (`vite.sort.config.ts`,
   ~77 KB gzip) is its optional companion adding
@@ -243,7 +244,7 @@ config needed.
 
 The engine both reads authored styles and writes geometry, and both
 `getComputedStyle` and `computedStyleMap` report the cascade winner — including our
-own overrides. Planned solution, batched per animation frame (pre-paint, so no
+own overrides. The cycle, batched per animation frame (pre-paint, so no
 visible flash):
 
 1. Set a "measuring" attribute on the host and a `data-mw-measuring` flag on
@@ -251,7 +252,12 @@ visible flash):
    are guarded by `:not([data-mw-measuring])` on the element itself).
 2. Read computed styles for the whole tree (one forced style recalc).
 3. Compute integer layout in JS.
-4. Write custom properties / decoration; remove the measuring attribute.
+4. Write custom properties / decoration; remove the measuring attribute
+   and flags. An element — or the host — whose transitions a lock's
+   snap back could start (a non-zero duration or delay) swaps its flag
+   for `data-mw-settling` first, for one forced style flush under the
+   transition mask; a layout with nothing to settle forces none
+   (specs/cell-model.md "Animation").
 
 Do **not** use `display: none` tricks to read computed values — hiding elements
 blurs focus and resets internal scroll state, violating focus preservation.
@@ -264,11 +270,10 @@ Four patterns recur in `styles.css` and are easy to misread:
   would otherwise read back as if the author wrote it (white-space,
   letter-spacing, line-height, geometry) is gated on the element's own
   `data-mw-measuring` flag, so during the read pass elements show their
-  AUTHORED values. The flag sits on each light element rather than being
-  the host's `measuring` attribute read through a descendant combinator:
-  that shape makes every flip of the attribute invalidate the host's whole
-  subtree, the shadow grid's every span included (specs/cell-model.md
-  "Typography"); the host's attribute gates only the host's own rules.
+  AUTHORED values. The flag sits on each light element, never the
+  host's `measuring` attribute read through a descendant combinator
+  (why: specs/cell-model.md "Animation"); the host's attribute gates
+  only the host's own rules.
   Ungated rules are only those that must hold during measurement too (the
   font lock, which defines the cell metrics).
 - **Locks in `@layer theme`.** Every `!important` rule of the engine's sits
@@ -324,9 +329,8 @@ dominant.
 
 ## Open questions
 
-- **Dynamic style-change detection** — RESOLVED 2026-08-30, shipped
-  in Milestone 6. Instead of the CSS-transition-event trick (which
-  risks a feedback loop with our own geometry writes), the host
+- **Dynamic style-change detection** — resolved 2026-08-30. Instead
+  of the CSS-transition-event trick (which risks a feedback loop with our own geometry writes), the host
   registers `pointerover`/`pointerleave` + `pointerdown`/`pointerup`/
   `pointercancel` + `keydown`/`keyup` + `focusin`/`focusout` +
   `input`/`change` listeners, event-delegated to laid-out elements;
@@ -343,13 +347,12 @@ dominant.
   the host, a `class` or `style` change on an ancestor and a color
   scheme change schedule a layout (a theme class on the page reaches
   the cells through the cascade) — cell-model.md "Observation".
-- **Transforms**: `translate-y-1` etc. would shift content off-grid (browser
-  applies raw px). Likely answer: rescale the standalone `translate` property to
-  cells the way insets are handled; neutralize matrix `transform`s. Needs
-  checking against how Tailwind v4 actually emits translate/rotate/scale.
-- **Heavy border style exposure**: no CSS `border-style` keyword maps to heavy
-  glyphs (`double` claims `═`); likely a monowind-specific opt-in via an owned
-  custom property. See `../specs/cell-model.md`.
+- **Transforms** — resolved: a transform or filter makes its element a
+  layer root, its cells painted into a box that carries the native
+  effect, the layout left on the grid (`../specs/layers.md`).
+- **Heavy borders** — resolved: the border width selects a weight band
+  of the glyph set (heavy from 2px in the default set), no style
+  keyword needed (`../specs/cell-model.md` "Box model").
 - **Cell aspect ratio / font metrics**: measure the actual font (not `1ch`
   assumptions), re-measure on `document.fonts.ready`; whether to recommend/bundle a
   known-good monospace font.

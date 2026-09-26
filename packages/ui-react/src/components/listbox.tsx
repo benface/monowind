@@ -2,8 +2,8 @@ import { propNames } from "@monowind/ui/listbox";
 import type * as listbox from "@monowind/ui/listbox";
 import type { PropTypes } from "@zag-js/react";
 import { useListbox, type Connected } from "../hooks.ts";
-import { defineItemParts } from "./items.tsx";
-import { defineContext, defineRoot, defineRootProvider, partsOf, type PartProps } from "./part.tsx";
+import { defineItemParts, defineListContext } from "./items.tsx";
+import { defineRoot, defineRootProvider, partsOf, type PartProps } from "./part.tsx";
 
 /**
  * Zag's listbox as a compound component (specs/ui.md "Component
@@ -13,7 +13,7 @@ import { defineContext, defineRoot, defineRootProvider, partsOf, type PartProps 
 
 export type Api = Connected<listbox.Api<PropTypes>, listbox.Service>;
 
-const context = defineContext<Api>("Listbox");
+const context = defineListContext<Api>("Listbox");
 
 /** The listbox a part is in, as `useListbox()` returns it. */
 export const useListboxContext = context.use;
@@ -25,7 +25,7 @@ export const Root = defineRoot<listbox.Props, Api, PartProps<"div">>(
   useListbox,
   context,
   propNames,
-  { propsOf: (api) => api.getRootProps() },
+  (api) => api.getRootProps(),
 );
 
 /** A listbox over an API the caller holds, for reaching it from
@@ -44,4 +44,4 @@ export const {
   ItemIndicator,
   ItemGroup,
   ItemGroupLabel,
-} = defineItemParts("Listbox", context);
+} = defineItemParts("Listbox");

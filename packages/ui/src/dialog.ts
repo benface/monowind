@@ -4,8 +4,7 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, withProps, type MachineProps } from "./anchor.ts";
 import { liveProps, mountAnchored, start, titledParts, type Mounted } from "./vanilla.ts";
 
-/** An interface of this module's own, so a framework package's types
- * reach Zag's through this module, one of its dependencies. */
+/** An interface of its own, for the reason menu.ts's `Props` is. */
 export interface Props extends Dialog.Props {}
 export type Api<T extends PropTypes = PropTypes> = Dialog.Api<T>;
 export type Service = Dialog.Service;
@@ -35,9 +34,8 @@ export function connect<T extends PropTypes>(
 
 /** Zag's API with the grid's props: the positioner a manual popover —
  * the top layer's, centered by the UA in the cells the window shows,
- * its `::backdrop` the dialog's (specs/top-layer.md) — the content
- * shown by it; the props every
- * `api`'s, the `Component` shape. */
+ * its `::backdrop` the dialog's (specs/top-layer.md) — and the content
+ * shown by it. The same signature as every entry's `api`. */
 export function api<T extends PropTypes>(
   zag: Dialog.Api<T>,
   normalize: NormalizeProps<T>,

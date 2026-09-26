@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+import { css } from "./vite.config.ts";
 
 const { version } = JSON.parse(
   readFileSync(resolve(import.meta.dirname, "package.json"), "utf8"),
@@ -16,6 +17,7 @@ export default defineConfig({
   define: {
     __MONOWIND_VERSION__: JSON.stringify(version),
   },
+  css,
   build: {
     lib: {
       entry: resolve(import.meta.dirname, "src/cdn.ts"),

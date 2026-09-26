@@ -1,36 +1,48 @@
 import { percentToCells } from "./metrics.ts";
-import { glyphSetFor } from "./glyphs.ts";
-import { collectGapRuleRuns, ruleBandSegments } from "./borders.ts";
+import { gapRuleRuns, ruleBandSegments } from "./borders.ts";
 import type { GapSegment, GapStrip, RuleSegment } from "./borders.ts";
 import {
   autoMarginOffset,
   boxChrome,
   clampSize,
+  contentOrigin,
+  fixedMargins,
   intrinsicOuterWidth,
+  isInFlowBox,
   isOutOfFlow,
   layoutNode,
-  minContentOuterWidth,
   resolveGap,
   resolveLimit,
   resolveMargin,
   resolveSizeAgainst,
   resolveWidthLimit,
 } from "./layout.ts";
-import type { IntrinsicCache } from "./layout.ts";
-import type { CellStyle, Insets, LayoutNode } from "./types.ts";
+import type { IntrinsicCache, SizingMode } from "./layout.ts";
+import type { CellStyle, LayoutNode, NullableInsets } from "./types.ts";
+
+/**
+ * Flexbox (specs/flex.md): row and column algorithms, CSS §9.7 flexible
+ * length resolution, and the shared distribution/alignment helpers. See
+ * layout.ts for the deliberate import cycle between the layout modules.
+ */
 
 interface FlexLine {
   row: { node: LayoutNode }[];
 }
 
-/** Column-gap x-ranges of one line: the space between adjacent item
- * rects in visual order (whatever gap, justify, and margins produced). */
-function lineGapRanges(line: FlexLine, originX: number): { start: number; end: number }[] {
-  const rects = line.row.map((item) => item.node.localRect).sort((a, b) => a.x - b.x);
+/** The gaps between a line's adjacent item rects along `axis`, in visual
+ * order (whatever gap, justify, and margins produced), origin-relative. */
+function lineGapRanges(
+  items: readonly { node: LayoutNode }[],
+  origin: number,
+  axis: "x" | "y",
+): { start: number; end: number }[] {
+  const size = axis === "x" ? "width" : "height";
+  const rects = items.map((item) => item.node.localRect).sort((a, b) => a[axis] - b[axis]);
   const ranges: { start: number; end: number }[] = [];
   for (let i = 1; i < rects.length; i++) {
-    const start = rects[i - 1]!.x + rects[i - 1]!.width - originX;
-    const end = rects[i]!.x - originX;
+    const start = rects[i - 1]![axis] + rects[i - 1]![size] - origin;
+    const end = rects[i]![axis] - origin;
     if (end > start) ranges.push({ start, end });
   }
   return ranges;
@@ -49,7 +61,7 @@ function rowBandSegments(
 ): GapSegment[] {
   if (node.style.ruleBreak !== "intersection") return [{ start: 0, end: innerWidth }];
   const crossings = [lines[r - 1]!, lines[r]!]
-    .flatMap((line) => lineGapRanges(line, originX))
+    .flatMap((line) => lineGapRanges(line.row, originX, "x"))
     .sort((a, b) => a.start - b.start);
   // Item strips (the complement of the merged crossings) feed the shared
   // segmenter; every strip is plain occupied track.
@@ -67,37 +79,14 @@ function rowBandSegments(
     cursor = Math.max(cursor, crossing.end);
   }
   if (cursor < innerWidth) strips.push(occupiedStrip(cursor, innerWidth));
-  return ruleBandSegments(
-    strips,
-    "intersection",
-    "all",
-    node.style.ruleInset === "overlap-join" ? "overlap-join" : 0,
-  );
+  return ruleBandSegments(strips, "intersection", "all", node.style.ruleInset === "overlap-join");
 }
-
-export function insetSegments(
-  segments: RuleSegment[],
-  inset: number | "overlap-join",
-): RuleSegment[] {
-  if (typeof inset !== "number" || inset <= 0) return segments;
-  return segments
-    .map((segment) => ({ ...segment, start: segment.start + inset, end: segment.end - inset }))
-    .filter((segment) => segment.end > segment.start);
-}
-
-/**
- * Flexbox (specs/flex.md): row and column algorithms, CSS §9.7 flexible
- * length resolution, and the shared distribution/alignment helpers. See
- * layout.ts for the deliberate import cycle between the layout modules.
- */
 
 export function layoutFlexRow(
   node: LayoutNode,
   innerWidth: number,
   innerHeight: number,
   definiteInnerHeight: number | undefined,
-  border: Insets,
-  padding: Insets,
   cache: IntrinsicCache,
 ): number {
   const gapX = resolveGap(node.style, "x", innerWidth);
@@ -121,15 +110,13 @@ export function layoutFlexRow(
     };
   });
 
-  // Break into rows greedily. With gap, an item breaks when `used + gap +
-  // fixedMargins + base` exceeds innerWidth. The first item on a row is
-  // always placed even if it alone overflows, matching CSS.
+  // The first item on a row is always placed, as CSS does.
   const rows: (typeof items)[] = [];
   if (node.style.flexWrap === "wrap") {
     let current: typeof items = [];
     let used = 0;
     for (const item of items) {
-      const itemWidth = item.hypothetical + (item.margin.left ?? 0) + (item.margin.right ?? 0);
+      const itemWidth = item.hypothetical + fixedMargins(item.margin, "x");
       const next = current.length === 0 ? itemWidth : used + gapX + itemWidth;
       if (current.length > 0 && next > innerWidth) {
         rows.push(current);
@@ -147,17 +134,13 @@ export function layoutFlexRow(
     rows.push(items);
   }
 
-  const originX = border.left + padding.left;
-  const originY = border.top + padding.top;
+  const { x: originX, y: originY } = contentOrigin(node);
 
   // Phase A: resolve each line's item widths, lay the items out, and take
   // the line's natural height (tallest item, fixed cross margins in).
   const lines = rows.map((row) => {
     const totalGap = gapX * Math.max(0, row.length - 1);
-    const fixedMarginTotal = row.reduce(
-      (sum, item) => sum + (item.margin.left ?? 0) + (item.margin.right ?? 0),
-      0,
-    );
+    const fixedMarginTotal = row.reduce((sum, item) => sum + fixedMargins(item.margin, "x"), 0);
     // Auto margins count as 0 while the lengths flex, and share what
     // flexing leaves (CSS §8.1) — below, as the leftover.
     const availableForItems = Math.max(0, innerWidth - totalGap - fixedMarginTotal);
@@ -168,11 +151,7 @@ export function layoutFlexRow(
       });
     }
     const height = row.reduce(
-      (h, item) =>
-        Math.max(
-          h,
-          item.node.localRect.height + (item.margin.top ?? 0) + (item.margin.bottom ?? 0),
-        ),
+      (h, item) => Math.max(h, item.node.localRect.height + fixedMargins(item.margin, "y")),
       0,
     );
     return { row, widths, availableForItems, height };
@@ -195,12 +174,15 @@ export function layoutFlexRow(
       rowHeights[0] = Math.max(innerHeight, rowHeights[0] ?? 0);
     lineOffsets = [0];
   } else {
-    const naturalTotal = rowHeights.reduce((s, h) => s + h, 0);
-    const leftover = Number.isFinite(innerHeight)
-      ? Math.max(0, innerHeight - naturalTotal - totalGapY)
-      : 0;
-    const alignContent = effectiveAlignContent(node.style);
-    if (alignContent === "stretch" && leftover > 0) {
+    const linesExtent = rowHeights.reduce((s, h) => s + h, 0) + totalGapY;
+    // Lines overflow a definite height only: a min-height floor grows.
+    const leftover =
+      definiteInnerHeight === undefined
+        ? Number.isFinite(innerHeight)
+          ? Math.max(0, innerHeight - linesExtent)
+          : 0
+        : definiteInnerHeight - linesExtent;
+    if (node.style.alignContent === "stretch" && leftover > 0) {
       const shares = distributeInteger(
         Array.from({ length: lines.length }, () => 1),
         leftover,
@@ -208,11 +190,8 @@ export function layoutFlexRow(
       for (let i = 0; i < rowHeights.length; i++) rowHeights[i]! += shares[i]!;
       lineOffsets = mainAxisOffsets("start", rowHeights, 0);
     } else {
-      lineOffsets = mainAxisOffsets(
-        alignContent === "stretch" ? "start" : alignContent,
-        rowHeights,
-        leftover,
-      );
+      const alignContent = effectiveAlignContent(node.style, lines.length);
+      lineOffsets = mainAxisOffsets(alignContent, rowHeights, leftover);
     }
   }
 
@@ -233,15 +212,10 @@ export function layoutFlexRow(
       const align = effectiveAlign(child, node);
       const itemMargin = row[i]!.margin;
       const hasCrossAutoMargin = itemMargin.top === null || itemMargin.bottom === null;
-      // Treat `{kind: "auto"}` as no explicit height (Typed OM returns this
-      // for elements that don't set a height; only `cells`/`percent` counts
-      // as an author-set size that stretch should respect).
-      const hasExplicitHeight =
-        child.style.height !== undefined && child.style.height.kind !== "auto";
       if (
         align === "stretch" &&
         !hasCrossAutoMargin &&
-        !hasExplicitHeight &&
+        child.style.height === undefined &&
         rowHeight !== child.localRect.height
       ) {
         const marginTop = itemMargin.top ?? 0;
@@ -262,55 +236,25 @@ export function layoutFlexRow(
         });
       }
     }
-    const totalUsed = widths.reduce((s, w) => s + w, 0);
-    const leftover = Math.max(0, availableForItems - totalUsed);
-
-    // Auto margins on the main axis absorb leftover space (each gets an
-    // equal share). If any exist, they override justify-content.
-    const autoCount = row.reduce(
-      (n, item) => n + (item.margin.left === null ? 1 : 0) + (item.margin.right === null ? 1 : 0),
-      0,
-    );
-    const autoMarginBefore: number[] = Array.from({ length: row.length }, () => 0);
-    const autoMarginAfter: number[] = Array.from({ length: row.length }, () => 0);
-    let offsets: number[];
-    if (autoCount > 0 && leftover > 0) {
-      const shares = distributeInteger(
-        Array.from({ length: autoCount }, () => 1),
-        leftover,
-      );
-      let shareIndex = 0;
-      for (let i = 0; i < row.length; i++) {
-        if (row[i]!.margin.left === null) autoMarginBefore[i] = shares[shareIndex++]!;
-        if (row[i]!.margin.right === null) autoMarginAfter[i] = shares[shareIndex++]!;
-      }
-      offsets = mainAxisOffsets("start", widths, 0);
-    } else {
-      offsets = mainAxisOffsets(effectiveJustify(node.style), widths, leftover);
-    }
-
-    let cumulativeExtraOffset = 0;
+    const justify = effectiveJustify(node.style, row.length);
+    const positions = mainAxisPositions(justify, row, widths, availableForItems, gapX, "x");
     for (let i = 0; i < row.length; i++) {
       const item = row[i]!;
       const child = item.node;
-      const fixedLeft = item.margin.left ?? 0;
-      const fixedRight = item.margin.right ?? 0;
-      cumulativeExtraOffset += autoMarginBefore[i]! + fixedLeft;
       child.localRect = {
         ...child.localRect,
-        x: originX + offsets[i]! + i * gapX + cumulativeExtraOffset,
+        x: originX + positions[i]!,
         y:
           originY +
           y +
           alignedOffset(
-            effectiveAlign(child, node),
+            lineAlign(child, node),
             item.margin.top,
             item.margin.bottom,
             rowHeight,
             child.localRect.height,
           ),
       };
-      cumulativeExtraOffset += autoMarginAfter[i]! + fixedRight;
     }
   }
 
@@ -328,7 +272,7 @@ export function layoutFlexRow(
     const horizontal: RuleSegment[] = [];
     for (let r = 0; r < lines.length; r++) {
       const top = lineOffsets[r]! + r * gapY;
-      for (const gap of lineGapRanges(lines[r]!, originX)) {
+      for (const gap of lineGapRanges(lines[r]!.row, originX, "x")) {
         vertical.push({
           bandStart: gap.start,
           bandSize: gap.end - gap.start,
@@ -348,23 +292,16 @@ export function layoutFlexRow(
     // `normal` behaves as `none` in flex and visibility-items is
     // grid/multicol-only (css-gaps), so beyond intersection breaks the
     // bands only honor rule-inset (specs/gap-decorations.md "Segments").
-    node.decorationRuns = collectGapRuleRuns({
-      glyphs: glyphSetFor(node.style.glyphSet),
-      ruleX: node.style.ruleX,
-      ruleY: node.style.ruleY,
-      vertical: insetSegments(vertical, node.style.ruleInset),
-      horizontal: insetSegments(horizontal, node.style.ruleInset),
-      contentWidth: innerWidth,
-      contentHeight,
-      border,
-      borderStyle: node.style.borderStyle,
-      borderWeight: node.style.borderWeight,
-      borderColor: node.style.borderColor,
-      padding,
-    });
+    node.decorationRuns = gapRuleRuns(
+      node,
+      vertical,
+      horizontal,
+      innerWidth,
+      definiteInnerHeight ?? contentHeight,
+    );
   }
 
-  recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
+  recordFlexStaticSlots(node, originX, originY, innerWidth, contentHeight);
   // The lines' natural heights, a flex parent's read of the box's content
   // height: the height or min-height floor they stretched into is the
   // caller's to apply.
@@ -376,8 +313,8 @@ export function layoutFlexRow(
  * "as if it were the sole flex item" rule once the box is sized. */
 function recordFlexStaticSlots(
   node: LayoutNode,
-  border: Insets,
-  padding: Insets,
+  originX: number,
+  originY: number,
   innerWidth: number,
   contentHeight: number,
 ): void {
@@ -386,8 +323,8 @@ function recordFlexStaticSlots(
     child.staticSlot = {
       kind: "flex",
       direction: node.style.flexDirection,
-      originX: border.left + padding.left,
-      originY: border.top + padding.top,
+      originX,
+      originY,
       innerWidth,
       innerHeight: contentHeight,
     };
@@ -398,49 +335,34 @@ export function layoutFlexColumn(
   node: LayoutNode,
   innerWidth: number,
   innerHeight: number,
-  heightIsDefinite: boolean,
-  border: Insets,
-  padding: Insets,
+  definiteInnerHeight: number | undefined,
   cache: IntrinsicCache,
 ): number {
   const gapY = resolveGap(node.style, "y", innerHeight);
   const finiteInner = Number.isFinite(innerHeight);
-  const definiteHeight = heightIsDefinite && finiteInner ? innerHeight : undefined;
 
   const items = flexOrderedChildren(node).map((child) => {
     const margin = resolveMargin(child.style.margin, innerWidth);
-    const availableChildWidth = Math.max(0, innerWidth - (margin.left ?? 0) - (margin.right ?? 0));
-    // Per-item cross-axis (width) stretch decision: parent's alignItems is
-    // the default, but a child's own alignSelf wins if set. So an item with
-    // `self-start` inside a stretch parent shrinks to intrinsic, not fills.
-    const childStretch = effectiveAlign(child, node) === "stretch";
+    const availableWidth = Math.max(0, innerWidth - fixedMargins(margin, "x"));
+    // The cross-axis (width) stretch: the item's own align-self, else the
+    // parent's align-items — a `self-start` item shrinks to fit.
+    const widthMode: SizingMode = effectiveAlign(child, node) === "stretch" ? "fill" : "shrink";
     // First pass at intrinsic height along the main axis. A definite
     // container height is the basis for the child's percent height.
-    layoutNode(
-      child,
-      availableChildWidth,
-      definiteHeight,
-      0,
-      0,
-      childStretch ? "fill" : "shrink",
-      cache,
-    );
+    layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, widthMode, cache);
     const limitBasis = finiteInner ? innerHeight : undefined;
-    // Base main size per CSS flex-basis: cells, or a percent of a definite
-    // container height; an intrinsic basis, or a percent of an indefinite
-    // one, is the content height (§7.2.3); `auto` is the first-pass height
-    // BEFORE min/max clamping — distribution starts from raw bases, the
-    // freeze loop enforces the limits.
-    const basis = child.style.flexBasis;
+    // The base main size (flex-basis, else the item's height): cells, or
+    // a percent of a definite container height; anything else — auto, an
+    // intrinsic keyword, a percent of an indefinite height — is the
+    // content height (§7.2.3). Unclamped: the freeze loop applies min/max.
+    const basis = child.style.flexBasis ?? child.style.height;
     const naturalHeight = child.naturalContentHeight;
     const base =
-      basis === undefined || basis.kind === "auto"
-        ? child.unclampedHeight
-        : basis.kind === "cells"
-          ? basis.value
-          : basis.kind === "percent" && definiteHeight !== undefined
-            ? percentToCells(basis.value, definiteHeight)
-            : naturalHeight;
+      basis?.kind === "cells"
+        ? basis.value
+        : basis?.kind === "percent" && definiteInnerHeight !== undefined
+          ? percentToCells(basis.value, definiteInnerHeight)
+          : naturalHeight;
     // The automatic minimum is capped by the item's first-pass height: its
     // own height as its max leaves it.
     const min = Math.max(
@@ -452,7 +374,7 @@ export function layoutFlexColumn(
             undefined,
           )
         : (resolveLimit(child.style.minHeight, limitBasis) ?? 0),
-      boxChrome(child.style, "y", availableChildWidth),
+      boxChrome(child.style, "y", availableWidth),
     );
     const max = resolveLimit(child.style.maxHeight, limitBasis);
     return {
@@ -464,14 +386,13 @@ export function layoutFlexColumn(
       max,
       hypothetical: Math.max(0, clampSize(base, min, max)),
       margin,
+      availableWidth,
+      widthMode,
     };
   });
 
   const totalGap = gapY * Math.max(0, items.length - 1);
-  const fixedMarginTotal = items.reduce(
-    (sum, item) => sum + (item.margin.top ?? 0) + (item.margin.bottom ?? 0),
-    0,
-  );
+  const fixedMarginTotal = items.reduce((sum, item) => sum + fixedMargins(item.margin, "y"), 0);
   const hypotheticalTotal = items.reduce((sum, item) => sum + item.hypothetical, 0);
   const containerSpace = finiteInner
     ? Math.max(0, innerHeight - totalGap - fixedMarginTotal)
@@ -479,9 +400,10 @@ export function layoutFlexColumn(
   // A min-height-only container size is a floor, not a cap: it can hand
   // extra space to flex-grow, but content larger than the floor keeps its
   // hypothetical size (no flex-shrink) and the container grows to fit.
-  const availableForItems = heightIsDefinite
-    ? containerSpace
-    : Math.max(containerSpace, hypotheticalTotal);
+  const availableForItems =
+    definiteInnerHeight === undefined
+      ? Math.max(containerSpace, hypotheticalTotal)
+      : containerSpace;
 
   // Without distribution, items take their HYPOTHETICAL sizes (base clamped
   // by min/max) — stacking with raw bases would disagree with the heights
@@ -493,110 +415,57 @@ export function layoutFlexColumn(
   // height forced so any nested content that depends on the parent's height
   // (items-center/end in a nested flex, percent heights) sees the final size.
   for (let i = 0; i < items.length; i++) {
-    if (finalHeights[i] !== items[i]!.node.localRect.height) {
-      const item = items[i]!;
-      const availableChildWidth = Math.max(
-        0,
-        innerWidth - (item.margin.left ?? 0) - (item.margin.right ?? 0),
-      );
-      const childStretch = effectiveAlign(item.node, node) === "stretch";
-      layoutNode(
-        item.node,
-        availableChildWidth,
-        finalHeights[i]!,
-        0,
-        0,
-        childStretch ? "fill" : "shrink",
-        cache,
-        { height: finalHeights[i]! },
-      );
+    const item = items[i]!;
+    const height = finalHeights[i]!;
+    if (height !== item.node.localRect.height) {
+      layoutNode(item.node, item.availableWidth, height, 0, 0, item.widthMode, cache, { height });
     }
   }
 
-  const totalUsed = finalHeights.reduce((s, h) => s + h, 0);
-  const leftover = Math.max(0, availableForItems - totalUsed);
-
-  // Auto margins share what flexing leaves, as a row's do.
-  const autoCount = items.reduce(
-    (n, item) => n + (item.margin.top === null ? 1 : 0) + (item.margin.bottom === null ? 1 : 0),
-    0,
-  );
-  const autoMarginBefore: number[] = Array.from({ length: items.length }, () => 0);
-  const autoMarginAfter: number[] = Array.from({ length: items.length }, () => 0);
-  let offsets: number[];
-  if (autoCount > 0 && leftover > 0) {
-    const shares = distributeInteger(
-      Array.from({ length: autoCount }, () => 1),
-      leftover,
-    );
-    let shareIndex = 0;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i]!.margin.top === null) autoMarginBefore[i] = shares[shareIndex++]!;
-      if (items[i]!.margin.bottom === null) autoMarginAfter[i] = shares[shareIndex++]!;
-    }
-    offsets = mainAxisOffsets("start", finalHeights, 0);
-  } else {
-    offsets = mainAxisOffsets(effectiveJustify(node.style), finalHeights, leftover);
-  }
-
-  const originX = border.left + padding.left;
-  const originY = border.top + padding.top;
-  let cumulativeExtraOffset = 0;
+  const { x: originX, y: originY } = contentOrigin(node);
+  const justify = effectiveJustify(node.style, items.length);
+  const positions = mainAxisPositions(justify, items, finalHeights, availableForItems, gapY, "y");
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!;
     const child = item.node;
-    const fixedTop = item.margin.top ?? 0;
-    const fixedBottom = item.margin.bottom ?? 0;
-    cumulativeExtraOffset += autoMarginBefore[i]! + fixedTop;
     child.localRect = {
       ...child.localRect,
       x:
         originX +
         alignedOffset(
-          effectiveAlign(child, node),
+          lineAlign(child, node),
           item.margin.left,
           item.margin.right,
           innerWidth,
           child.localRect.width,
         ),
-      y: originY + offsets[i]! + i * gapY + cumulativeExtraOffset,
+      y: originY + positions[i]!,
     };
-    cumulativeExtraOffset += autoMarginAfter[i]! + fixedBottom;
   }
 
+  const totalUsed = finalHeights.reduce((s, h) => s + h, 0);
   const totalOccupied = totalUsed + totalGap + fixedMarginTotal;
   const contentHeight = finiteInner ? Math.max(innerHeight, totalOccupied) : totalOccupied;
 
   // Gap rules: horizontal bands between stacked items, full content
   // width (the single column's cross extent), retracted by rule-inset.
   if (node.style.ruleY && items.length > 1) {
-    const horizontal: RuleSegment[] = [];
-    const rects = items
-      .map((item) => item.node.localRect)
-      .slice()
-      .sort((a, b) => a.y - b.y);
-    for (let i = 1; i < rects.length; i++) {
-      const bandStart = rects[i - 1]!.y + rects[i - 1]!.height - originY;
-      const bandSize = rects[i]!.y - originY - bandStart;
-      if (bandSize > 0) horizontal.push({ bandStart, bandSize, start: 0, end: innerWidth });
-    }
-    node.decorationRuns = collectGapRuleRuns({
-      glyphs: glyphSetFor(node.style.glyphSet),
-      ruleX: null,
-      ruleY: node.style.ruleY,
-      vertical: [],
-      horizontal: insetSegments(horizontal, node.style.ruleInset),
-      contentWidth: innerWidth,
-      contentHeight,
-      border,
-      borderStyle: node.style.borderStyle,
-      borderWeight: node.style.borderWeight,
-      borderColor: node.style.borderColor,
-      padding,
-    });
+    const horizontal = lineGapRanges(items, originY, "y").map((gap): RuleSegment => ({
+      bandStart: gap.start,
+      bandSize: gap.end - gap.start,
+      start: 0,
+      end: innerWidth,
+    }));
+    node.decorationRuns = gapRuleRuns(
+      node,
+      [],
+      horizontal,
+      innerWidth,
+      definiteInnerHeight ?? contentHeight,
+    );
   }
 
-  recordFlexStaticSlots(node, border, padding, innerWidth, contentHeight);
+  recordFlexStaticSlots(node, originX, originY, innerWidth, contentHeight);
   // What the items need at their hypothetical sizes, a flex parent's read
   // of the box's content height: the height or min-height floor they
   // flexed in is the caller's to apply.
@@ -620,22 +489,64 @@ export function alignedOffset(
   );
 }
 
+/** A flex line's item positions along the main axis, content-box
+ * relative: auto margins share what flexing leaves (CSS §8.1) and then
+ * override justify-content, which aligns an overflowing line too;
+ * fixed margins and the gap step between. */
+function mainAxisPositions(
+  justify: CellStyle["justifyContent"],
+  items: readonly { margin: NullableInsets }[],
+  sizes: number[],
+  available: number,
+  gap: number,
+  axis: "x" | "y",
+): number[] {
+  const [before, after] =
+    axis === "x" ? (["left", "right"] as const) : (["top", "bottom"] as const);
+  const leftover = available - sizes.reduce((s, v) => s + v, 0);
+  const autoCount = items.reduce(
+    (n, { margin }) => n + (margin[before] === null ? 1 : 0) + (margin[after] === null ? 1 : 0),
+    0,
+  );
+  const shares =
+    autoCount > 0 && leftover > 0
+      ? distributeInteger(
+          Array.from({ length: autoCount }, () => 1),
+          leftover,
+        )
+      : undefined;
+  const offsets = shares
+    ? mainAxisOffsets("start", sizes, 0)
+    : mainAxisOffsets(justify, sizes, leftover);
+  let shareIndex = 0;
+  let marginOffset = 0;
+  return items.map(({ margin }, i) => {
+    marginOffset += margin[before] ?? (shares ? shares[shareIndex++]! : 0);
+    const position = offsets[i]! + i * gap + marginOffset;
+    marginOffset += margin[after] ?? (shares ? shares[shareIndex++]! : 0);
+    return position;
+  });
+}
+
 /**
- * Position each item along the main axis given its size and leftover space.
- * Returns the offset from container inner origin for each item.
+ * Position each item along the main axis given its size and leftover
+ * space. Returns the offset from container inner origin for each item.
+ * Overflow alignment is always safe: a negative leftover aligns as start
+ * (specs/cell-model.md deviation 21).
  */
 export function mainAxisOffsets(
   justify: CellStyle["justifyContent"],
   sizes: number[],
-  leftover: number,
+  freeSpace: number,
 ): number[] {
+  const leftover = Math.max(0, freeSpace);
   const count = sizes.length;
   if (count === 0) return [];
 
   const offsets: number[] = [];
   let cursor = 0;
 
-  if (justify === "space-between" && count > 1) {
+  if (justify === "space-between" && count > 1 && leftover > 0) {
     const gapBase = Math.floor(leftover / (count - 1));
     const extra = leftover - gapBase * (count - 1);
     for (let i = 0; i < count; i++) {
@@ -663,7 +574,7 @@ export function mainAxisOffsets(
   }
 
   if (justify === "center") cursor = Math.floor(leftover / 2);
-  else if (justify === "end") cursor = leftover;
+  else if (justify === "end" || justify === "flex-end") cursor = leftover;
 
   for (let i = 0; i < count; i++) {
     offsets.push(cursor);
@@ -788,18 +699,32 @@ export function distributeInteger(weights: number[], total: number): number[] {
 /** A flex item's cross alignment: its own align-self, else the parent's
  * align-items. */
 export function effectiveAlign(child: LayoutNode, parent: LayoutNode): CellStyle["alignItems"] {
-  return child.style.alignSelf === "auto"
-    ? parent.style.alignItems
-    : (child.style.alignSelf as CellStyle["alignItems"]);
+  return child.style.alignSelf === "auto" ? parent.style.alignItems : child.style.alignSelf;
 }
 
+/** Where a flex item sits in its line, or an out-of-flow child's static
+ * position (`inLine` false): `stretch` as its fallback `flex-start`. */
+export function lineAlign(
+  child: LayoutNode,
+  parent: LayoutNode,
+  inLine = true,
+): CellStyle["alignItems"] {
+  const align = effectiveAlign(child, parent);
+  const edge = align === "stretch" ? "flex-start" : align;
+  return resolveFlexEdge(edge, parent.style.wrapReverse, inLine);
+}
+
+/** An item's cross offset in `container`: center floors the half
+ * leftover and end takes it all — an overflowing item at the start, as
+ * mainAxisOffsets aligns. */
 export function alignCrossOffset(
   align: CellStyle["alignItems"],
   container: number,
   child: number,
 ): number {
-  if (align === "center") return Math.max(0, Math.floor((container - child) / 2));
-  if (align === "end") return Math.max(0, container - child);
+  const leftover = Math.max(0, container - child);
+  if (align === "center") return Math.floor(leftover / 2);
+  if (align === "end" || align === "flex-end" || align === "last baseline") return leftover;
   return 0;
 }
 
@@ -807,21 +732,15 @@ export function alignCrossOffset(
  * A flex-row item's base main size, per CSS `flex-basis`: an explicit basis
  * if set, else the item's explicit width (cells, percent, or an intrinsic
  * keyword), else its max-content size. Percentages resolve against the
- * container's content box (`innerWidth`). NOT clamped by min/max —
- * distribution starts from the raw base per CSS §9.7 (clamping happens via
- * the freeze/violation loop); pre-clamping would e.g. leave `flex-1`
- * columns unequal at their content minimums.
+ * container's content box (`innerWidth`). The raw base: distribution
+ * starts from it per CSS §9.7 (the freeze/violation loop clamps), which
+ * keeps `flex-1` columns equal where their content minimums allow.
  */
 function flexBaseOuterWidth(child: LayoutNode, innerWidth: number, cache: IntrinsicCache): number {
-  const basis = child.style.flexBasis;
-  const width = child.style.width;
-  if (basis !== undefined && basis.kind !== "auto") {
-    return resolveSizeAgainst(basis, innerWidth, child, cache);
-  }
-  if (width !== undefined && width.kind !== "auto") {
-    return resolveSizeAgainst(width, innerWidth, child, cache);
-  }
-  return intrinsicOuterWidth(child, cache);
+  const basis = child.style.flexBasis ?? child.style.width;
+  return basis === undefined
+    ? intrinsicOuterWidth(child, "max", cache)
+    : resolveSizeAgainst(basis, innerWidth, child, cache);
 }
 
 /**
@@ -831,32 +750,38 @@ function flexBaseOuterWidth(child: LayoutNode, innerWidth: number, cache: Intrin
  * flipped justify start/end is equivalent.
  */
 function flexOrderedChildren(node: LayoutNode): LayoutNode[] {
-  const children = node.children
-    .filter((c) => !isOutOfFlow(c.style))
-    .sort((a, b) => a.style.order - b.style.order);
+  const children = node.children.filter(isInFlowBox).sort((a, b) => a.style.order - b.style.order);
   if (node.style.flexReverse) children.reverse();
   return children;
 }
 
-/** wrap-reverse runs the cross axis backwards: start/end swap, the
- * symmetric values are unaffected (the line order is already reversed at
- * collection time). */
-function effectiveAlignContent(style: CellStyle): CellStyle["alignContent"] {
-  if (!style.wrapReverse) return style.alignContent;
-  if (style.alignContent === "start") return "end";
-  if (style.alignContent === "end") return "start";
-  return style.alignContent;
+/** `flex-start` and `flex-end` as the start and end of an axis, swapped
+ * where it runs backwards (the collection order is already reversed); a
+ * baseline as them for an item in a flex line, its fallback elsewhere. */
+export function resolveFlexEdge<T extends string>(
+  value: T,
+  backwards: boolean,
+  inLine = false,
+): T | "start" | "end" {
+  if (value === "baseline" && !inLine) return "start";
+  if (value === "last baseline" && !inLine) return "end";
+  if (value === "flex-start" || value === "baseline") return backwards ? "end" : "start";
+  if (value === "flex-end" || value === "last baseline") return backwards ? "start" : "end";
+  return value;
 }
 
-export function effectiveJustify(style: CellStyle): CellStyle["justifyContent"] {
-  // `stretch` (CSS `normal`/`stretch`) behaves as `start` in flex, per
-  // css-align — normalize before the reverse flip so `row-reverse` still
-  // packs from the main-start (right) edge under the default value.
-  const justify = style.justifyContent === "stretch" ? "start" : style.justifyContent;
-  if (!style.flexReverse) return justify;
-  if (justify === "start") return "end";
-  if (justify === "end") return "start";
-  return justify;
+/** A distribution over `count` subjects as its `flex-start` fallback
+ * (css-align): `stretch`'s, and `space-between`'s for a sole one. */
+function flexStartFallback<T extends string>(value: T, count: number): T | "flex-start" {
+  return value === "stretch" || (value === "space-between" && count < 2) ? "flex-start" : value;
+}
+
+function effectiveAlignContent(style: CellStyle, lines: number): CellStyle["alignContent"] {
+  return resolveFlexEdge(flexStartFallback(style.alignContent, lines), style.wrapReverse);
+}
+
+export function effectiveJustify(style: CellStyle, items: number): CellStyle["justifyContent"] {
+  return resolveFlexEdge(flexStartFallback(style.justifyContent, items), style.flexReverse);
 }
 
 /**
@@ -890,8 +815,11 @@ function flexItemMinWidth(
   const { minWidth, width, overflow } = child.style;
   if (minWidth !== "auto") return resolveWidthLimit(minWidth, innerWidth, child, cache) ?? 0;
   const specified =
-    width === undefined || width.kind === "auto"
-      ? undefined
-      : resolveSizeAgainst(width, innerWidth, child, cache);
-  return automaticMinimum(overflow.x, () => minContentOuterWidth(child, cache), specified, max);
+    width === undefined ? undefined : resolveSizeAgainst(width, innerWidth, child, cache);
+  return automaticMinimum(
+    overflow.x,
+    () => intrinsicOuterWidth(child, "min", cache),
+    specified,
+    max,
+  );
 }

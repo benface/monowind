@@ -3,115 +3,13 @@
  * component over each (specs/ui.md "Component layer"). Both read from
  * the same machines, so a page may mix them.
  */
-export {
-  useCombobox,
-  useDialog,
-  useListbox,
-  useMenu,
-  usePopover,
-  useSelect,
-  useTooltip,
-  type Composed,
-  type InFlow,
-} from "./composables.ts";
-export {
-  ComboboxClearTrigger,
-  ComboboxContent,
-  ComboboxControl,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxItemGroup,
-  ComboboxItemGroupLabel,
-  ComboboxItemIndicator,
-  ComboboxItemText,
-  ComboboxLabel,
-  ComboboxList,
-  ComboboxPositioner,
-  ComboboxRoot,
-  ComboboxRootProvider,
-  ComboboxTrigger,
-  useComboboxContext,
-  useComboboxItemContext,
-} from "./components/combobox.ts";
-export {
-  DialogCloseTrigger,
-  DialogContent,
-  DialogDescription,
-  DialogPositioner,
-  DialogRoot,
-  DialogRootProvider,
-  DialogTitle,
-  DialogTrigger,
-  useDialogContext,
-} from "./components/dialog.ts";
-export {
-  MenuContent,
-  MenuItem,
-  MenuItemGroup,
-  MenuItemGroupLabel,
-  MenuPositioner,
-  MenuRoot,
-  MenuRootProvider,
-  MenuSeparator,
-  MenuTrigger,
-  MenuTriggerItem,
-  useMenuContext,
-} from "./components/menu.ts";
-/** The collections a listbox and a select take, Zag's own: `items`
- * and, for a grid of them, `columnCount`. Both components build the
- * same `ListCollection`, so one export serves each. */
+export * from "./composables.ts";
+export * from "./components/combobox.ts";
+export * from "./components/dialog.ts";
+export * from "./components/menu.ts";
+/** The three lists' collections, `@monowind/ui/listbox`'s. */
 export { collection, gridCollection } from "@monowind/ui/listbox";
-export {
-  ListboxContent,
-  ListboxItem,
-  ListboxItemGroup,
-  ListboxItemGroupLabel,
-  ListboxItemIndicator,
-  ListboxItemText,
-  ListboxLabel,
-  ListboxRoot,
-  ListboxRootProvider,
-  useListboxContext,
-  useListboxItemContext,
-} from "./components/listbox.ts";
-export {
-  PopoverCloseTrigger,
-  PopoverContent,
-  PopoverDescription,
-  PopoverIndicator,
-  PopoverPositioner,
-  PopoverRoot,
-  PopoverRootProvider,
-  PopoverTitle,
-  PopoverTrigger,
-  usePopoverContext,
-} from "./components/popover.ts";
-export {
-  SelectClearTrigger,
-  SelectContent,
-  SelectControl,
-  SelectHiddenSelect,
-  SelectIndicator,
-  SelectItem,
-  SelectItemGroup,
-  SelectItemGroupLabel,
-  SelectItemIndicator,
-  SelectItemText,
-  SelectLabel,
-  SelectList,
-  SelectPositioner,
-  SelectRoot,
-  SelectRootProvider,
-  SelectTrigger,
-  SelectValueText,
-  useSelectContext,
-  useSelectItemContext,
-} from "./components/select.ts";
-export {
-  TooltipContent,
-  TooltipPositioner,
-  TooltipRoot,
-  TooltipRootProvider,
-  TooltipTrigger,
-  useTooltipContext,
-} from "./components/tooltip.ts";
+export * from "./components/listbox.ts";
+export * from "./components/popover.ts";
+export * from "./components/select.ts";
+export * from "./components/tooltip.ts";

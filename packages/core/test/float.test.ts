@@ -149,6 +149,21 @@ describe("lines beside floats", () => {
     expect(rect(p).height).toBe(4);
   });
 
+  it("opens every line when the text ends on a box wider than its band", () => {
+    const { root } = build(
+      `<div style="width: 40px">
+        <div style="float: left; width: 32px; height: 16px"></div>
+        <p>ab <span style="display: inline-block; width: 20px">xyz</span></p>
+      </div>`,
+    );
+    const p = root.children[1]!;
+    expect(bands(p)).toEqual([
+      [0, 8, 2],
+      [1, 8, 2],
+    ]);
+    expect(rect(p).height).toBe(2);
+  });
+
   it("aligns a line within its band; a truncating leaf is a root and steps aside", () => {
     const { root } = build(
       `<div style="width: 80px">

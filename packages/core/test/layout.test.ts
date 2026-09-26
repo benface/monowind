@@ -478,6 +478,36 @@ describe("absolute children and intrinsic sizing", () => {
   });
 });
 
+describe("a w-fit box contributes its min- and max-content (css-sizing-3)", () => {
+  const label = () => makeNode({ text: "Save changes", style: { width: { kind: "fit-content" } } });
+
+  it("sizes a flex item around it at its max-content", () => {
+    const inner = label();
+    const item = makeNode({ children: [inner] });
+    const row = makeNode({ style: { display: "flex", flexDirection: "row" }, children: [item] });
+    layoutRoot(makeNode({ children: [row] }), 40);
+    expect(item.localRect.width).toBe(12);
+    expect(inner.localRect.height).toBe(1);
+  });
+
+  it("shrink-wraps a float and an absolute box around it", () => {
+    const float = makeNode({ style: { float: "left" }, children: [label()] });
+    const absolute = makeNode({
+      style: { position: "absolute", insets: { top: 0, right: null, bottom: null, left: 0 } },
+      children: [label()],
+    });
+    layoutRoot(makeNode({ style: { position: "relative" }, children: [float, absolute] }), 40);
+    expect(float.localRect.width).toBe(12);
+    expect(absolute.localRect.width).toBe(12);
+  });
+
+  it("sizes a w-min box around it at its min-content", () => {
+    const box = makeNode({ style: { width: { kind: "min-content" } }, children: [label()] });
+    layoutRoot(makeNode({ children: [box] }), 40);
+    expect(box.localRect.width).toBe(7);
+  });
+});
+
 describe("intrinsic keywords as min/max limits", () => {
   it("max-w-max caps a fill-width box at its max-content size", () => {
     const box = makeNode({ text: "hello world", style: { maxWidth: "max-content" } });

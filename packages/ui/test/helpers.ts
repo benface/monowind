@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 /** A tick past Zag's deferred sends and the mount's first spread. */
 export const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -104,4 +107,19 @@ export function popoverApi(element: HTMLElement) {
       for (const animation of animations.splice(0)) animation.end();
     },
   };
+}
+
+/** The components of `names` that no other test in an adapter's test
+ * directory renders, as `rendered` spots one in their source: a part
+ * nothing instantiates is a part nothing type-checks or runs. */
+export function unrendered(
+  directory: string,
+  names: readonly string[],
+  rendered: (name: string) => RegExp,
+): string {
+  const source = readdirSync(directory)
+    .filter((file) => /\.(tsx?|vue|svelte)$/.test(file) && file !== "coverage.test.ts")
+    .map((file) => readFileSync(join(directory, file), "utf8"))
+    .join("\n");
+  return names.filter((name) => !rendered(name).test(source)).join(", ");
 }

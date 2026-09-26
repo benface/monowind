@@ -160,13 +160,11 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
     Select.connect(machine.service, normalizeProps).getHiddenSelectProps(),
   );
   machine.start();
-  const mounted = mountAnchored(
+  return mountAnchored(
     root,
     machine,
     (service) => connect(service, normalizeProps, live.machine),
     (current, spread) => {
-      // The root is the element the mount was given, its id the
-      // markup's — the page finds it by that.
       spread(root, omit(current.getRootProps(), "id"));
       spread(label, current.getLabelProps());
       spread(control, current.getControlProps());
@@ -184,19 +182,12 @@ export function select(root: Element, machineProps: MountProps): Mounted<Api> {
       if (hiddenSelect) syncHiddenSelect(hiddenSelect, current, machine.service);
     },
     live,
+    {
+      cleanup: () => {
+        // The placeholder goes back, so a mount on the same markup
+        // reads it again rather than the value it showed.
+        if (valueText) valueText.textContent = placeholder;
+      },
+    },
   );
-  return {
-    get api() {
-      return mounted.api;
-    },
-    updateProps(partial) {
-      mounted.updateProps(partial);
-    },
-    destroy() {
-      mounted.destroy();
-      // The placeholder goes back, so a mount on the same markup
-      // reads it again rather than the value it showed.
-      if (valueText) valueText.textContent = placeholder;
-    },
-  };
 }

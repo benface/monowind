@@ -3,23 +3,33 @@ import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   cellSize,
+  channels,
+  countLayouts,
   dragTo,
+  expectColor,
+  expectRow,
+  faded,
+  frames,
   gridOf,
+  layerBox,
   moveTo,
+  nearColor,
   paintedSpan,
   pressAt,
   readyGrid,
   readyHost,
   release,
   rowsOf,
+  shown,
   testHooks,
+  transitionLayouts,
 } from "./helpers.ts";
 import type { Point } from "./helpers.ts";
 
 /**
  * Visual effects on the grid: opacity, outlines, box shadows,
- * gradients, and layers (specs/cell-model.md "Opacity" and
- * "Outlines", specs/box-shadow.md, specs/gradients.md,
+ * gradients, and layers (specs/cell-model.md "Opacity and
+ * translucency" and "Outlines", specs/box-shadow.md, specs/gradients.md,
  * specs/layers.md), then motion — the transitions and keyframe
  * animations the engine samples every frame (specs/cell-model.md
  * "Animation", specs/animations.md).
@@ -34,7 +44,7 @@ export const Opacity: StoryObj = {
     <mono-wind>
       <div class="flex flex-col gap-1">
         <div class="flex gap-2">
-          <div class="border border-cyan-400 px-1">opacity-100</div>
+          <div data-test="full" class="border border-cyan-400 px-1">opacity-100</div>
           <div class="border border-cyan-400 px-1 opacity-75">opacity-75</div>
           <div class="border border-cyan-400 px-1 opacity-50">opacity-50</div>
           <div class="border border-cyan-400 px-1 opacity-25">opacity-25</div>
@@ -50,31 +60,34 @@ export const Opacity: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
+    const ink = getComputedStyle(host).color;
     await waitFor(() => {
-      // Every paint of a translucent element carries the effective
-      // alpha; the span composites against the page.
+      // With nothing beneath it on the grid, a faded element is its
+      // spans' opacity, for the browser to composite over the page.
+      const spans = Array.from(gridOf(host).querySelectorAll("span"));
       expect(paintedSpan(host, "opacity-75")!.style.opacity).toBe("0.75");
-      expect(paintedSpan(host, "opacity-50")!.style.opacity).toBe("0.5");
-      // Ancestors multiply (CSS opacity nests, it doesn't inherit).
-      expect(paintedSpan(host, "nested opacity-50")!.style.opacity).toBe("0.25");
-      // An inline element with no background fades its glyphs' color,
-      // the block's background beneath it staying whole.
-      const faded = paintedSpan(host, "a span at opacity-50")!;
-      expect(faded.style.opacity).toBe("");
-      expect(getComputedStyle(faded).color).toMatch(/\/ 0\.5\)$/);
-      // opacity-0 still paints its glyphs — invisible, but present
+      const color = (text: string) => shown(paintedSpan(host, text))!;
+      expectColor(color("opacity-75"), faded(ink, 0.75), "opacity-75");
+      expectColor(color("opacity-50"), faded(ink, 0.5), "opacity-50");
+      // Groups nest (CSS opacity nests, it doesn't inherit).
+      expectColor(color("nested opacity-50"), faded(ink, 0.25), "nested");
+      expectColor(color("a span at opacity-50"), faded(ink, 0.5), "a span");
+      // opacity-0 still paints its glyphs — transparent, but present
       // and selectable in select="grid" mode (unlike `invisible`).
-      expect(paintedSpan(host, "opacity-0")!.style.opacity).toBe("0");
+      expectColor(color("opacity-0"), faded(ink, 0), "opacity-0");
       expect(gridOf(host).textContent).toContain("opacity-0");
-      // A translucent border glyph is boxed to its cell, so its
-      // overshoot never composites twice where rows join.
-      const line = Array.from(host.shadowRoot!.querySelectorAll("#grid span")).find(
-        (span) => span.textContent === "│" && (span as HTMLElement).style.opacity === "0.75",
-      ) as HTMLElement | undefined;
-      // The shape every box shares is one rule in the shadow; the
-      // marker is what says a span wears it.
-      expect(line?.dataset.box).toBeDefined();
-      expect(line && getComputedStyle(line).overflow).toBe("clip");
+      // A border glyph whose color stays translucent is boxed to its
+      // cell, its overshoot otherwise composited twice where rows join.
+      // Tailwind's cyan-400 lies past sRGB, which the canvas clips.
+      const border = getComputedStyle(testHooks(canvasElement)("full")).borderTopColor;
+      const cyan = `rgb(${channels(border).slice(0, 3).join(" ")})`;
+      const lines = spans.filter((span) => span.textContent === "│");
+      const translucent = lines.filter((line) => nearColor(shown(line)!, faded(cyan, 0.75)));
+      expect(translucent.length, "the opacity-75 box's lines").toBeGreaterThan(0);
+      expect(
+        translucent.filter((line) => line.dataset.box === undefined),
+        "translucent lines unboxed",
+      ).toEqual([]);
     });
   },
 };
@@ -389,9 +402,9 @@ export const Gradients: StoryObj = {
       const spans = Array.from(gridOf(host).querySelectorAll("span"));
       // A color per cell, a row of them one span's hard stops: far
       // more distinct colors than boxes.
-      const colors = spans.flatMap(
-        (span) => span.style.backgroundImage.match(/rgb\([^)]*\)/g) ?? [],
-      );
+      const stops = (span: HTMLElement) =>
+        span.style.backgroundImage.match(/(?:rgb|color)\([^)]*\)/g) ?? [];
+      const colors = spans.flatMap(stops);
       expect(new Set(colors).size).toBeGreaterThan(200);
       // The transparent stop over bg-red-500 starts beside red-500 at
       // the left edge, its text over the same colors.
@@ -404,9 +417,8 @@ export const Gradients: StoryObj = {
       // The longer hue arc from cyan to blue runs the long way round:
       // its middle is nowhere near the oklch row's.
       const middle = (name: string) => {
-        const span = spans.find((span) => span.textContent!.startsWith(name))!;
-        const stops = span.style.backgroundImage.match(/rgb\([^)]*\)/g)!;
-        return stops[Math.floor(stops.length / 2)]!;
+        const run = stops(spans.find((span) => span.textContent!.startsWith(name))!);
+        return run[Math.floor(run.length / 2)]!;
       };
       expect(middle("bg-linear-to-r/longer")).not.toBe(middle("bg-linear-to-r/oklch"));
       // Clipped to text, the row is one span whose hard stops show
@@ -414,13 +426,13 @@ export const Gradients: StoryObj = {
       const clipped = spans.find((span) => span.textContent!.startsWith("bg-clip-text"))!;
       expect(clipped.style.backgroundClip).toBe("text");
       expect(clipped.style.color).toBe("transparent");
-      expect(clipped.style.backgroundImage.match(/rgb\(/g)!.length).toBeGreaterThan(40);
+      expect(stops(clipped).length).toBeGreaterThan(40);
       // Over a filled parent the glyphs keep a span each, the
       // parent's color under every one.
       const onSky = spans.filter(
         (span) =>
           span.textContent!.length === 1 &&
-          span.style.color.startsWith("rgb(") &&
+          /^(?:rgb|color)\(/.test(span.style.color) &&
           span.style.backgroundColor !== "" &&
           span.style.backgroundClip === "",
       );
@@ -458,7 +470,7 @@ export const LayerHit: StoryObj = {
     const drawn = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
     const hover = async (at: Point) => {
       moveTo(grid, at);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await frames();
       return shifted.hasAttribute("data-mw-hover");
     };
     // Its box's first cell untranslated: blank on the main grid.
@@ -651,11 +663,12 @@ export const LayerCover: StoryObj = {
 };
 
 /**
- * The pointer through a layer (specs/layers.md): a text-mode drag
- * across the scaled dialog, and across the rotated badge, selects the
- * characters under the pointer — a cell of the scaled layer's grid is
- * half again as wide as the main grid's, and the badge's cells turn
- * with it, so the press and the drag are mapped through the effects.
+ * Test-only: the pointer through a layer (specs/layers.md): a
+ * text-mode drag across the scaled dialog, and across the rotated
+ * badge, selects the characters under the pointer — a cell of the
+ * scaled layer's grid is half again as wide as the main grid's, and
+ * the badge's cells turn with it, so the press and the drag are mapped
+ * through the effects.
  */
 export const LayerSelection: StoryObj = {
   tags: ["!dev", "!golden"],
@@ -698,11 +711,11 @@ export const LayerSelection: StoryObj = {
 };
 
 /**
- * A transform transition on a layer root (specs/layers.md "Animation
- * is sampled"): the engine re-copies the root's computed effects onto
- * the layer's box every frame — the box follows the browser's own
- * easing and lands on the target — the one layout the settle at its
- * end.
+ * Test-only: a transform transition on a layer root (specs/layers.md
+ * "Animation is sampled"): the engine re-copies the root's computed
+ * effects onto the layer's box every frame — the box follows the
+ * browser's own easing and lands on the target — the one layout the
+ * settle at its end.
  */
 export const LayerTransition: StoryObj = {
   tags: ["!dev", "!golden"],
@@ -722,9 +735,7 @@ export const LayerTransition: StoryObj = {
     const host = await readyHost(canvasElement);
     const dialog = canvasElement.querySelector<HTMLElement>('[data-test="dialog"]')!;
     const layers = host.shadowRoot!.getElementById("layers")!;
-    let layouts = 0;
-    const observer = new MutationObserver(() => layouts++);
-    observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    const layouts = countLayouts(host);
     dialog.classList.add("scale-125");
     // The box's scale every frame it exists, until the dialog's lands:
     // the layer opens on the identity the delay holds.
@@ -732,17 +743,215 @@ export const LayerTransition: StoryObj = {
     while (getComputedStyle(dialog).scale !== "1.25") {
       const box = layers.querySelector<HTMLElement>(".layer");
       if (box) scales.add(getComputedStyle(box).scale);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await frames();
     }
     await waitFor(() =>
       expect(getComputedStyle(layers.querySelector(".layer")!).scale).toBe("1.25"),
     );
-    observer.disconnect();
+    layouts.stop();
     expect(scales.has("1"), "the box at the identity").toBe(true);
     expect(scales.size, "sampled intermediate scales").toBeGreaterThanOrEqual(4);
-    // At most three layouts, the attribute set and removed by each: the
-    // class change's, the transition's start, and the settle at its end.
-    expect(layouts, "layouts during the transition").toBeLessThanOrEqual(6);
+    // At most three layouts: the class change's, the transition's start,
+    // and the settle at its end.
+    expect(layouts.count, "layouts during the transition").toBeLessThanOrEqual(3);
+  },
+};
+
+/**
+ * Test-only: a transform transition on an element that is a layer
+ * root already starts with no layout of its own, a rule outside the
+ * host setting it: the box its frames copy onto exists.
+ */
+export const LayerRootTransition: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="p-2">
+        <div
+          data-test="tilted"
+          class="w-max origin-top-left rotate-3 border px-1 transition-transform duration-3000"
+        >
+          tilted
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    await waitFor(() => expect(layerBox(host, "tilted")).toBeDefined());
+    const layouts = countLayouts(host);
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync('[data-test="tilted"] { rotate: 6deg; }');
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    try {
+      const rotations = new Set<string>();
+      for (let i = 0; i < 10; i++) {
+        await frames();
+        rotations.add(getComputedStyle(layerBox(host, "tilted")!).rotate);
+      }
+      expect(layouts.count, "layouts over the transition's first frames").toBe(0);
+      expect(rotations.size, "the box's sampled rotations").toBeGreaterThanOrEqual(5);
+    } finally {
+      layouts.stop();
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((each) => each !== sheet);
+    }
+  },
+};
+
+/**
+ * Test-only: an opacity transition is sampled as its keyframe
+ * animation is (specs/animations.md): each frame repaints the last
+ * layout at the frame's opacity, no layout between frames, and the end
+ * lands the cells; a layer root's fades its box. A color
+ * changing beside it relays out each frame, the color reaching what
+ * inherits it.
+ */
+export const OpacityTransitions: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex items-start gap-4 p-2">
+        <div
+          data-test="fade"
+          class="bg-[rgb(37,99,235)] px-1 text-[rgb(255,255,0)] transition-opacity duration-500"
+        >
+          fade
+        </div>
+        <div
+          data-test="moving"
+          class="scale-90 bg-[rgb(37,99,235)] px-1 text-[rgb(255,255,0)] transition duration-500"
+        >
+          moving
+        </div>
+        <div
+          data-test="colored"
+          class="bg-[rgb(37,99,235)] px-1 text-[rgb(255,255,0)] transition duration-500"
+        >
+          colored
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const layouts = countLayouts(host);
+    /** A class change's fade to half: the layouts over its frames to
+     * its end, their count, and what they showed. */
+    const fade = async (name: string, change: (classes: DOMTokenList) => void) => {
+      const el = by(name);
+      const seen = new Set<string>();
+      const faded = await transitionLayouts(
+        layouts,
+        () => change(el.classList),
+        () => getComputedStyle(el).opacity === "0.5",
+        {
+          sample: () => {
+            const box = layerBox(host, name);
+            seen.add(
+              box
+                ? getComputedStyle(box).opacity
+                : shown(paintedSpan(host, name), "backgroundColor")!,
+            );
+          },
+        },
+      );
+      return { ...faded, shown: seen.size };
+    };
+    /** The cells landed on the grid, nothing beneath them: the label
+     * over the fill, the span at half. */
+    const landed = (name: string, label: string) =>
+      waitFor(() => {
+        expect(layerBox(host, name)).toBeUndefined();
+        const cells = paintedSpan(host, name)!;
+        expect(cells.style.opacity, `${name}'s opacity`).toBe("0.5");
+        expectColor(cells.style.color, label, `${name}'s label`);
+        expectColor(cells.style.backgroundColor, "rgb(37, 99, 235)", `${name}'s fill`);
+      });
+    const opacity = await fade("fade", (classes) => classes.add("opacity-50"));
+    expect(opacity.during, "layouts during the fade").toBe(0);
+    expect(opacity.shown, "the fade's colors").toBeGreaterThanOrEqual(3);
+    await landed("fade", "rgb(255, 255, 0)");
+    // Scaling back to the identity: a layer root while it moves.
+    const moving = await fade("moving", (classes) => {
+      classes.remove("scale-90");
+      classes.add("opacity-50");
+    });
+    expect(moving.during, "layouts during the moving fade").toBe(0);
+    expect(moving.shown, "the moving box's opacities").toBeGreaterThanOrEqual(3);
+    await landed("moving", "rgb(255, 255, 0)");
+    const colored = await fade("colored", (classes) => {
+      classes.replace("text-[rgb(255,255,0)]", "text-[rgb(0,255,255)]");
+      classes.add("opacity-50");
+    });
+    expect(colored.during, "layouts during the colored fade").toBeGreaterThanOrEqual(
+      colored.frames / 2,
+    );
+    await landed("colored", "rgb(0, 255, 255)");
+    layouts.stop();
+  },
+};
+
+/** Test-only: transitions staggered to end one after another land with
+ * the frames the loop runs anyway — an ended fade's cells repainted at
+ * its value, an ended effect's box placed again — and the loop's last
+ * layout; none lays out at its own end (specs/animations.md). */
+export const StaggeredTransitions: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex gap-2 p-2">
+        ${[0, 1, 2, 3].map(
+          (i) => html`
+            <div
+              data-test="moving-${i}"
+              class="border px-1 transition-transform duration-200"
+              style="transition-delay: ${i * 150}ms"
+            >
+              m${i}
+            </div>
+            <div
+              data-test="fading-${i}"
+              class="px-1 text-[rgb(255,255,0)] transition-opacity duration-200"
+              style="transition-delay: ${i * 150}ms"
+            >
+              f${i}
+            </div>
+          `,
+        )}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const items = [0, 1, 2, 3];
+    const runs = (name: string) => by(name).getAnimations().length > 0;
+    const layouts = countLayouts(host);
+    for (const i of items) {
+      by(`moving-${i}`).classList.add("translate-y-2");
+      by(`fading-${i}`).classList.add("opacity-50");
+    }
+    await frames();
+    // The first fade's cells, each frame from its end to the last's.
+    const landing: string[] = [];
+    let ran = 0;
+    while (items.some((i) => runs(`moving-${i}`) || runs(`fading-${i}`)) && ran++ < 120) {
+      if (!runs("fading-0") && runs("fading-3")) landing.push(shown(paintedSpan(host, "f0"))!);
+      await frames();
+    }
+    await frames(3);
+    layouts.stop();
+    expect(landing.length, "frames from the first fade's end to the last's").toBeGreaterThan(4);
+    const half = faded("rgb(255, 255, 0)", 0.5);
+    for (const color of landing.slice(1)) expectColor(color, half, "the first fade's cells");
+    await waitFor(() => {
+      const box = getComputedStyle(layerBox(host, "m3")!);
+      expect(box.translate).toBe(getComputedStyle(by("moving-3")).translate);
+    });
+    // The class changes' layout, the one opening the moving items'
+    // layers, and the loop's last.
+    expect(layouts.count, "layouts across the staggered transitions").toBeLessThanOrEqual(3);
   },
 };
 
@@ -819,7 +1028,7 @@ export const TransitionSampling: StoryObj = {
     await waitFor(() => expect(paintedSpan(host, "Toggle")).toBeDefined());
     const colors = new Set<string>();
     const backgrounds = new Set<string>();
-    const opacities = new Set<string>();
+    const snaps = new Set<string>();
     fader.classList.replace("text-cyan-400", "text-rose-400");
     fader.classList.add("bg-indigo-600");
     snapper.classList.add("opacity-25");
@@ -831,20 +1040,254 @@ export const TransitionSampling: StoryObj = {
         backgrounds.add(span.style.backgroundColor);
       }
       const snapped = paintedSpan(host, "My opacity");
-      if (snapped) opacities.add(snapped.style.opacity);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (snapped) snaps.add(shown(snapped)!);
+      await frames();
     }
     // Several distinct interpolated values each, ending exactly on the
     // authored targets.
     expect(colors.size, "sampled intermediate colors").toBeGreaterThanOrEqual(3);
     expect(backgrounds.size, "synthesized intermediate backgrounds").toBeGreaterThanOrEqual(3);
     // The authored transition-property list is respected: opacity is
-    // not in transition-colors, so it snaps — full (no opacity string)
-    // straight to the target, nothing interpolated.
-    expect(Array.from(opacities).sort(), "opacity snaps").toEqual(["", "0.25"]);
+    // not in transition-colors, so it snaps — its color at full
+    // straight to the target's, nothing interpolated.
+    const ink = getComputedStyle(snapper).color;
+    expect(snaps.size, "opacity snaps").toBe(2);
+    expect([...snaps].some((color) => nearColor(color, ink))).toBe(true);
+    expect([...snaps].some((color) => nearColor(color, faded(ink, 0.25)))).toBe(true);
     await waitFor(() =>
       expect(paintedSpan(host, "Toggle")!.style.color).toBe(getComputedStyle(fader).color),
     );
+  },
+};
+
+/** Test-only: one layout a frame while a color transition relays out
+ * each one — a change between frames, or in a frame's callbacks before
+ * the sampling's, lays out once with it. A frame's layouts are those
+ * from its first callback to the next frame's, a stray between frames
+ * counting with the frame before it. */
+export const OneLayoutAFrame: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="colored" class="text-[rgb(255,255,0)] transition-colors duration-1000">
+        colored
+      </div>
+      <div data-test="timer">0</div>
+      <div data-test="frames">0</div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const layouts = countLayouts(host);
+    const perFrame: number[] = [];
+    let count = 0;
+    let timer = 0;
+    await new Promise<void>((done) => {
+      let frame = 0;
+      let last = 0;
+      // Registered before the change and again first thing: first in
+      // every frame, ahead of the engine's callbacks.
+      const onFrame = () => {
+        if (frame < 30) requestAnimationFrame(onFrame);
+        const now = layouts.count;
+        if (frame > 0) perFrame.push(now - last);
+        last = now;
+        if (frame === 0) {
+          by("colored").classList.replace("text-[rgb(255,255,0)]", "text-[rgb(0,255,255)]");
+          timer = window.setInterval(() => (by("timer").textContent = String(++count)), 4);
+        } else {
+          by("frames").textContent = String(count);
+        }
+        if (frame++ === 30) done();
+      };
+      requestAnimationFrame(onFrame);
+    });
+    clearInterval(timer);
+    layouts.stop();
+    expect(perFrame.filter((each) => each > 1).length, "frames laid out twice").toBe(0);
+    expect(perFrame.filter((each) => each === 1).length, "frames laid out").toBeGreaterThanOrEqual(
+      15,
+    );
+    await expectRow(host, String(count));
+  },
+};
+
+/** Test-only: an element removed mid transition ends its sampling —
+ * each frame asks what runs under the host, where the cancel event
+ * reaches the host no more (specs/animations.md). */
+export const RemovedMidTransition: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="colored" class="text-[rgb(255,255,0)] transition-colors duration-1000">
+        colored
+      </div>
+      <p>stays</p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const layouts = countLayouts(host);
+    by("colored").classList.replace("text-[rgb(255,255,0)]", "text-[rgb(0,255,255)]");
+    await frames(5);
+    expect(layouts.count, "layouts while it transitions").toBeGreaterThanOrEqual(3);
+    // The removal's layout, and the loop's last.
+    by("colored").remove();
+    await frames(3);
+    const removed = layouts.count;
+    await frames(20);
+    layouts.stop();
+    expect(layouts.count - removed, "layouts once it left").toBe(0);
+  },
+};
+
+/** Test-only: a layout's settling round (specs/cell-model.md
+ * "Animation") masks what a lock's snap back could start a transition
+ * on — an element, or the host, with a non-zero duration or delay —
+ * and nothing else: an element without either drops its measuring
+ * flag with no settling flag, and no layout starts a transition. */
+export const SettleRound: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="still" class="border bg-neutral-800 px-1">No transition.</div>
+      <div data-test="fading" class="border bg-neutral-800 px-1 transition-colors duration-300">
+        A transition.
+      </div>
+      <div data-test="delayed" class="border bg-neutral-800 px-1 delay-300">A delay alone.</div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const settled = new Set<Element>();
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.oldValue === null) settled.add(record.target as Element);
+      }
+    });
+    observer.observe(host, {
+      subtree: true,
+      attributeFilter: ["settling", "data-mw-settling"],
+      attributeOldValue: true,
+    });
+    const transitions = () =>
+      host.getAnimations({ subtree: true }).filter((each) => each instanceof CSSTransition);
+    by("still").dataset.state = "a";
+    await waitFor(() => expect(settled.has(by("fading"))).toBe(true));
+    expect(settled.has(by("delayed"))).toBe(true);
+    expect(settled.has(by("still"))).toBe(false);
+    expect(settled.has(host)).toBe(false);
+    expect(transitions()).toEqual([]);
+    // The host's own transition settles it.
+    host.classList.add("transition-colors");
+    await waitFor(() => expect(settled.has(host)).toBe(true));
+    expect(settled.has(by("still"))).toBe(false);
+    expect(transitions()).toEqual([]);
+    observer.disconnect();
+  },
+};
+
+/** The fades TransitionEasing runs, each over a second. */
+const EASED_FADES = [
+  { name: "bezier", easing: "cubic-bezier(0.4, 0, 0.2, 1)", delay: "0s" },
+  { name: "ease-in", easing: "ease-in", delay: "300ms" },
+  { name: "steps", easing: "steps(4)", delay: "0s" },
+  { name: "jump-start", easing: "steps(1, start)", delay: "300ms" },
+  { name: "jump-none", easing: "steps(3, jump-none)", delay: "0s" },
+  { name: "linear", easing: "linear(0, 0.8 20%, 1)", delay: "0s" },
+  // A transition fills backwards: its delay shows the easing's start.
+  { name: "halfway", easing: "linear(0.5, 1)", delay: "300ms" },
+];
+
+/** Test-only: a synthesized background fade eases as CSS does. Each
+ * box's text color, which the browser transitions with the same
+ * duration, delay, and timing function, is the reference: each frame's
+ * painted red lies within the reds the text took from the fade's lag
+ * back through the next frame. The fade trails the browser's by frames
+ * — the layout that arms it, its timing starting then or a frame later,
+ * and the paint after each read — so the lag is read off those frames'
+ * own times, and a long frame keeps the sample before it. */
+export const TransitionEasing: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="flex max-w-max flex-col gap-1">
+        ${EASED_FADES.map(
+          ({ name, easing, delay }) => html`
+            <div
+              data-test=${name}
+              class="px-1"
+              style="transition-property: color, background-color; transition-duration: 1s; transition-timing-function: ${easing}; transition-delay: ${delay}; color: rgb(0, 0, 0); background-color: rgb(0, 0, 0)"
+            >
+              ${name}
+            </div>
+          `,
+        )}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const red = (color = ""): number => channels(color)[0]! / 255;
+    const samples = EASED_FADES.map(
+      () => [] as { time: number; text: number; background: number }[],
+    );
+    const running = () => samples.some((fade) => fade.at(-1)!.text < 1);
+    const change = 2;
+    let held = false;
+    let time = await frames();
+    for (let frame = 0; frame <= change || (running() && frame < 600); frame++) {
+      EASED_FADES.forEach(({ name }, i) =>
+        samples[i]!.push({
+          time,
+          text: red(getComputedStyle(by(name)).color),
+          background: red(paintedSpan(host, name)?.style.backgroundColor),
+        }),
+      );
+      if (frame === change) {
+        for (const { name } of EASED_FADES) {
+          by(name).style.color = "rgb(255, 0, 0)";
+          by(name).style.backgroundColor = "rgb(255, 0, 0)";
+        }
+      }
+      // One frame held 200 ms, as a loaded machine holds one, across the
+      // delays' end.
+      if (!held && frame > change && time - samples[0]![change]!.time > 250) {
+        held = true;
+        const until = performance.now() + 200;
+        while (performance.now() < until);
+      }
+      time = await frames();
+    }
+    await waitFor(() => {
+      for (const { name } of EASED_FADES) {
+        expect(red(paintedSpan(host, name)?.style.backgroundColor), name).toBe(1);
+      }
+    });
+    const lag = samples[0]![change + 2]!.time - samples[0]![change]!.time;
+    EASED_FADES.forEach(({ name }, i) => {
+      const fade = samples[i]!;
+      fade.forEach(({ background }, j) => {
+        // The text over time[j − 1] − lag − 1 ms ≤ t ≤ time[j + 1] bounds
+        // background[j], ± 0.02. A fade whose timing starts a frame later
+        // reads at time[j − 1] − lag itself, a text sample's time, where a
+        // step can land and each clock rounds to its own side of it: the
+        // millisecond keeps both.
+        const since = fade[Math.max(0, j - 1)]!.time - lag - 1;
+        const texts = fade
+          .slice(0, j + 2)
+          .filter((_, k) => (fade[k + 1]?.time ?? Infinity) > since)
+          .map(({ text }) => text);
+        expect(background, `${name}, frame ${j}`).toBeGreaterThanOrEqual(Math.min(...texts) - 0.02);
+        expect(background, `${name}, frame ${j}`).toBeLessThanOrEqual(Math.max(...texts) + 0.02);
+      });
+    });
+    const shades = new Set(samples[0]!.map(({ background }) => background));
+    expect(shades.size, "the bezier's intermediate backgrounds").toBeGreaterThanOrEqual(5);
   },
 };
 
@@ -852,10 +1295,10 @@ export const TransitionSampling: StoryObj = {
  * Keyframe animations (specs/animations.md): the engine samples a
  * running CSS animation as it samples a transition — a spinner's
  * layer turns every frame, a pulsing skeleton's cells fade with a
- * repaint and no layout between frames, `animate-ping` does both, a
- * bouncing hint moves its box, an enter keyframe lands on its end
- * state, and a background keyframe reads through the relayout with
- * no synthesized fade on top.
+ * repaint and no layout between frames, `animate-ping` scales and
+ * fades its box, a bouncing hint moves its box, an enter keyframe
+ * lands on its end state, and a background keyframe reads through the
+ * relayout with no synthesized fade on top.
  */
 export const Animations: StoryObj = {
   // Infinite animations have no still state a golden could pin.
@@ -912,46 +1355,42 @@ export const Animations: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
-    // A layer's box by the text its grid holds.
-    const boxOf = (name: string) =>
-      Array.from(host.shadowRoot!.querySelectorAll<HTMLElement>(".layer")).find((box) =>
-        box.querySelector("pre")!.textContent!.includes(name),
-      );
-    let layouts = 0;
-    const observer = new MutationObserver(() => layouts++);
-    observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    const layouts = countLayouts(host);
     // Over half a second and at least two dozen frames: the spinner's
-    // box turns, the pulse's cells fade, the ping does both, the
+    // box turns, the pulse's cells fade, the ping's box scales, the
     // bounce moves.
     const turns = new Set<string>();
     const fades = new Set<string>();
     const pings = new Set<string>();
     const bounces = new Set<string>();
     const until = performance.now() + 600;
-    let frames = 0;
-    while (performance.now() < until || frames < 24) {
-      frames++;
-      const spin = boxOf("spin");
+    let sampled = 0;
+    while (performance.now() < until || sampled < 24) {
+      sampled++;
+      const spin = layerBox(host, "spin");
       if (spin) turns.add(getComputedStyle(spin).transform);
-      fades.add(paintedSpan(host, "pulse")?.style.opacity ?? "");
-      const ping = boxOf("ping");
+      const pulse = paintedSpan(host, "pulse");
+      fades.add(`${shown(pulse)} ${shown(pulse, "backgroundColor")}`);
+      const ping = layerBox(host, "ping");
       if (ping) pings.add(getComputedStyle(ping).transform);
-      const bounce = boxOf("bounce");
+      const bounce = layerBox(host, "bounce");
       if (bounce) bounces.add(getComputedStyle(bounce).transform);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await frames();
     }
-    observer.disconnect();
+    layouts.stop();
     expect(turns.size, "spinner frames").toBeGreaterThanOrEqual(5);
     expect(fades.size, "pulse frames").toBeGreaterThanOrEqual(5);
     expect(pings.size, "ping frames").toBeGreaterThanOrEqual(5);
     expect(bounces.size, "bounce frames").toBeGreaterThanOrEqual(5);
     // The background keyframe reads through the relayout, a layout a
     // frame; the pulse alone would take the repaint path.
-    expect(layouts, "layouts under the background keyframe").toBeGreaterThanOrEqual(frames / 2);
-    // The enter keyframe has landed: the box is gone, the cells are at
-    // full opacity. The leave keyframe holds its end (`forwards`): the
-    // settle layout reads the filled values, the box scaled, the cells
-    // at a quarter.
+    expect(layouts.count, "layouts under the background keyframe").toBeGreaterThanOrEqual(
+      sampled / 4,
+    );
+    // The enter keyframe has landed: the box is gone, the cells at full
+    // opacity. The leave keyframe holds its end (`forwards`): the settle
+    // layout reads the filled values, the box scaled and at a quarter,
+    // the cells unfaded inside it.
     await waitFor(() => {
       for (const name of ["enter", "leave"]) {
         const running = by(name)
@@ -959,26 +1398,27 @@ export const Animations: StoryObj = {
           .some((a) => a.playState === "running");
         expect(running, `${name} running`).toBe(false);
       }
-      expect(boxOf("enter")).toBeUndefined();
-      expect(paintedSpan(host, "enter")?.style.opacity ?? "").toBe("");
-      const leave = boxOf("leave")!;
+      expect(layerBox(host, "enter")).toBeUndefined();
+      expectColor(paintedSpan(host, "enter")!.style.color, getComputedStyle(by("enter")).color);
+      const leave = layerBox(host, "leave")!;
       expect(getComputedStyle(leave).transform).toBe(getComputedStyle(by("leave")).transform);
+      expect(getComputedStyle(leave).opacity).toBe("0.25");
       const cells = Array.from(leave.querySelectorAll("span")).find((span) =>
         span.textContent!.includes("leave"),
-      );
-      expect(cells?.style.opacity).toBe("0.25");
+      )!;
+      expectColor(cells.style.color, getComputedStyle(by("leave")).color);
     });
     // The spinner keeps its box through the identity at each turn.
-    expect(boxOf("spin")).toBeDefined();
+    expect(layerBox(host, "spin")).toBeDefined();
   },
 };
 
 /**
- * The lighter paths of an animation (specs/animations.md): a pulse
- * alone resamples opacity onto its node and repaints, a spin alone
- * places its box again — neither lays out per frame; a paused spin
- * holds its frame and turns again once resumed; an animation ending
- * beside one still running lands its value with a layout.
+ * Test-only: the lighter paths of an animation (specs/animations.md):
+ * a pulse alone resamples opacity onto its node and repaints, a spin
+ * alone places its box again — neither lays out per frame; a paused
+ * spin holds its frame and turns again once resumed; an animation
+ * ending beside one still running lands its value with a layout.
  */
 export const AnimationPaths: StoryObj = {
   tags: ["!dev", "!golden"],
@@ -1010,33 +1450,27 @@ export const AnimationPaths: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const boxOf = (text: string) =>
-      Array.from(host.shadowRoot!.querySelectorAll<HTMLElement>(".layer")).find((box) =>
-        box.querySelector("pre")!.textContent!.includes(text),
-      );
-    await waitFor(() => expect(boxOf("spin")).toBeDefined());
+    await waitFor(() => expect(layerBox(host, "spin")).toBeDefined());
     // The animations' first layouts have run; from here, frames repaint
     // and place the box with no layout between them.
     await new Promise((resolve) => setTimeout(resolve, 200));
-    let layouts = 0;
-    const observer = new MutationObserver(() => layouts++);
-    observer.observe(host, { attributes: true, attributeFilter: ["measuring"] });
+    const layouts = countLayouts(host);
     const sample = async (ms: number) => {
       const fades = new Set<string>();
       const turns = new Set<string>();
       const until = performance.now() + ms;
       while (performance.now() < until) {
-        fades.add(paintedSpan(host, "pulse")?.style.opacity ?? "");
-        turns.add(getComputedStyle(boxOf("spin")!).transform);
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        fades.add(shown(paintedSpan(host, "pulse")) ?? "");
+        turns.add(getComputedStyle(layerBox(host, "spin")!).transform);
+        await frames();
       }
       return { fades, turns };
     };
     const running = await sample(600);
-    observer.disconnect();
+    layouts.stop();
     expect(running.fades.size, "pulse frames").toBeGreaterThanOrEqual(5);
     expect(running.turns.size, "spin frames").toBeGreaterThanOrEqual(5);
-    expect(layouts, "layouts during the animations").toBe(0);
+    expect(layouts.count, "layouts during the animations").toBe(0);
     // Paused, the spin's box holds its frame while the pulse goes on;
     // resumed, its next iteration brings it back.
     const spin = canvasElement.querySelector<HTMLElement>('[data-test="spin"]')!;
@@ -1051,10 +1485,19 @@ export const AnimationPaths: StoryObj = {
     // frames read it through the relayout, and its end lands the
     // authored background while the fade's repaints go on.
     const mixed = canvasElement.querySelector<HTMLElement>('[data-test="mixed"]')!;
-    const background = () => paintedSpan(host, "mixed")?.style.backgroundColor;
+    // The authored green at the fade's opacity of the moment, nothing
+    // lying beneath the box.
+    const green = (): boolean => {
+      const span = paintedSpan(host, "mixed");
+      return (
+        span !== undefined &&
+        nearColor(span.style.backgroundColor, "rgb(0, 128, 0)") &&
+        Number(span.style.opacity || 1) >= 0.5
+      );
+    };
     mixed.style.animation = "story-flash 300ms linear, story-fade 1s linear infinite";
-    await waitFor(() => expect(background()).not.toBe("rgb(0, 128, 0)"));
-    await waitFor(() => expect(background()).toBe("rgb(0, 128, 0)"));
+    await waitFor(() => expect(green()).toBe(false));
+    await waitFor(() => expect(green()).toBe(true));
     expect(mixed.getAnimations().some((a) => a.playState === "running")).toBe(true);
   },
 };

@@ -1,6 +1,15 @@
 import { html } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
-import { paintedBackground, readyHost, readyHosts, testHooks } from "./helpers.ts";
+import {
+  expectColor,
+  faded,
+  paintedBackground,
+  paintedSpan,
+  readyHost,
+  readyHosts,
+  shown,
+  testHooks,
+} from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 
 /**
@@ -161,5 +170,97 @@ export const Tokens: StoryObj = {
     await waitFor(() =>
       expect(paintedBackground(clear, "the page's colors")).toBe("rgb(127, 29, 29)"),
     );
+  },
+};
+
+/** Test-only: the tokens take the background a transition lands on
+ * (specs/theming.md): the host's own, whose read ends it, and an
+ * ancestor's, whose end lays the host out again. */
+export const TransitionedTokens: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <div class="flex flex-col gap-2">
+      <mono-wind data-test="own" class="transition-colors duration-300">
+        <p class="px-1">its own background</p>
+      </mono-wind>
+      <div data-test="page" class="bg-[rgb(255,0,0)] p-2 transition-colors duration-300">
+        <mono-wind data-test="clear"><p class="px-1">the page's background</p></mono-wind>
+      </div>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const by = testHooks(canvasElement);
+    await readyHosts(canvasElement);
+    const ground = (host: HTMLElement) => getComputedStyle(host).getPropertyValue("--mw-bg").trim();
+    expect(ground(by("clear"))).toBe("rgb(255, 0, 0)");
+    by("own").classList.add("bg-[rgb(0,255,0)]");
+    by("page").classList.replace("bg-[rgb(255,0,0)]", "bg-[rgb(0,0,255)]");
+    await waitFor(() =>
+      expect([ground(by("own")), ground(by("clear"))]).toEqual([
+        "rgb(0, 255, 0)",
+        "rgb(0, 0, 255)",
+      ]),
+    );
+  },
+};
+
+/** Test-only: the ground (specs/cell-model.md "Opacity and
+ * translucency"): a translucent host's background composited over the
+ * page's, and the canvas in the host's own color scheme where nothing
+ * behind it is opaque — the color a selected translucent cell
+ * composites over for its swap — while a translucent color, or a faded
+ * box, over an unpainted cell stays translucent for the browser to
+ * composite. */
+export const Ground: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <div class="flex flex-col gap-2">
+      <div data-test="page" class="bg-[#0c4a6e] p-2">
+        <mono-wind data-test="veiled" class="bg-white/20">
+          <div class="bg-black/50 px-1">a shade over the veiled page</div>
+          <div class="bg-black px-1 text-white opacity-50">a faded label</div>
+        </mono-wind>
+      </div>
+      <mono-wind data-test="dark" class="scheme-dark">
+        <div class="bg-white/50 px-1">half white over the page</div>
+        <div class="bg-white px-1 text-black opacity-50">a faded label over the page</div>
+      </mono-wind>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const by = testHooks(canvasElement);
+    await readyHosts(canvasElement);
+    const veiled = by("veiled");
+    const ground = `color-mix(in srgb, white 20%, ${getComputedStyle(by("page")).backgroundColor})`;
+    expectColor(getComputedStyle(veiled).getPropertyValue("--mw-bg"), ground, "the veiled ground");
+    await waitFor(() => {
+      // Translucent where no opaque background lies under it: the
+      // browser composites it over the host's own background.
+      expectColor(paintedBackground(veiled, "a shade"), "rgb(0 0 0 / 0.5)", "a shade");
+      // A faded box with nothing beneath it is its span's opacity.
+      expectColor(
+        shown(paintedSpan(veiled, "a faded label"), "backgroundColor")!,
+        faded("black", 0.5),
+      );
+    });
+    // Nothing opaque behind the host: its ground is the canvas in its
+    // own scheme, while what stays translucent composites over the
+    // page's canvas, as CSS composites it.
+    const dark = by("dark");
+    document.body.style.setProperty("background", "transparent", "important");
+    try {
+      await waitFor(() =>
+        expect(getComputedStyle(dark).getPropertyValue("--mw-bg").trim()).toBe("canvas"),
+      );
+      await waitFor(() => {
+        expectColor(paintedBackground(dark, "half white"), "rgb(255 255 255 / 0.5)", "half white");
+        expectColor(
+          shown(paintedSpan(dark, "a faded label"), "backgroundColor")!,
+          faded("white", 0.5),
+        );
+      });
+    } finally {
+      document.body.style.removeProperty("background");
+    }
   },
 };

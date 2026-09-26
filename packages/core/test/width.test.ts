@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clusterAdvances, clusterWidth, graphemes, textCells } from "../src/width.ts";
+import { clusterAdvances, clusterWidth, graphemes, isColorEmoji, textCells } from "../src/width.ts";
 
 describe("clusterWidth", () => {
   it("counts East Asian wide and fullwidth clusters as two cells", () => {
@@ -49,11 +49,29 @@ describe("clusterWidth", () => {
     }
   });
 
+  it("counts a text-presentation pictograph by the East Asian width table", () => {
+    for (const cluster of ["〰", "㊗", "〽", "🈂"]) {
+      expect(clusterWidth(cluster), cluster).toBe(2);
+      expect(isColorEmoji(cluster), cluster).toBe(false);
+    }
+  });
+
   it("counts default-ignorable and control clusters as no cell", () => {
     for (const cluster of ["​", "­", "‍", "️", "", "⁠"]) {
       expect(clusterWidth(cluster), JSON.stringify(cluster)).toBe(0);
     }
     expect(clusterWidth("")).toBe(0);
+  });
+});
+
+describe("isColorEmoji", () => {
+  it("is a two-cell emoji cluster", () => {
+    for (const cluster of ["😀", "🇯🇵", "👨‍👩‍👧", "1️⃣", "♥️", "⌚", "👍🏽", "〰️"]) {
+      expect(isColorEmoji(cluster), cluster).toBe(true);
+    }
+    for (const cluster of ["🇯", "♥", "⌚︎", "中", "a", "★"]) {
+      expect(isColorEmoji(cluster), cluster).toBe(false);
+    }
   });
 });
 

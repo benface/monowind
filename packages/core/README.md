@@ -201,6 +201,20 @@ color, and `bg-clip-text text-transparent` shows the gradient through
 it. Sizes, positions, and repeats of the background image are ignored,
 as are `url()` images: a gradient always covers the box once.
 
+## Opacity
+
+Translucent colors (`bg-black/50`, `text-white/60`) and `opacity-*`
+blend into the cells beneath them as the browser composites them. An
+`opacity-*` element fades as a whole, as in a browser: on a white page,
+a `bg-blue-600 text-white opacity-50` button shows white text on a
+light blue fill. A cell is one character on one background, so a
+background of any alpha hides the glyph beneath it. A color at zero
+alpha paints nothing.
+
+Where nothing opaque lies beneath, a translucent color keeps its alpha
+and a faded element its opacity, and the browser composites them over
+whatever is behind the host: a background image, a gradient, the page.
+
 ## Companion packages
 
 The core is self-contained; these are optional:

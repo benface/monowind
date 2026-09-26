@@ -2,17 +2,17 @@ import { propNames } from "@monowind/ui/combobox";
 import type * as combobox from "@monowind/ui/combobox";
 import type { PropTypes } from "@zag-js/vue";
 import { useCombobox, type Composed } from "../composables.ts";
-import { defineItemParts } from "./items.ts";
-import { defineContext, definePart, defineRoot, defineRootProvider, partsOf } from "./part.ts";
+import { defineItemParts, defineListContext } from "./items.ts";
+import { defineRoot, defineRootProvider, partsOf, positionerPart } from "./part.ts";
 
 /** Zag's combobox as a compound component (specs/ui.md "Component
  * layer"): a listbox under an input, its root an element of its own
  * and its list anchored to the control. Filtering is the page's: hand
  * the root the collection the input's value narrows. */
 
-export type Api = Composed<combobox.Api<PropTypes>, combobox.Service>;
+type Api = Composed<combobox.Api<PropTypes>, combobox.Service>;
 
-const context = defineContext<Api>("Combobox");
+const context = defineListContext<Api>("Combobox");
 
 /** The combobox a part is in, as `useCombobox()` returns it. */
 export const useComboboxContext = (): Api => context.use();
@@ -24,7 +24,7 @@ export const ComboboxRoot = defineRoot<combobox.Props, Api>(
   propNames,
   context,
   useCombobox,
-  { propsOf: ({ api }) => api.value.getRootProps() },
+  ({ api }) => api.value.getRootProps(),
 );
 
 export const ComboboxRootProvider = defineRootProvider<Api>("ComboboxRootProvider", context);
@@ -43,14 +43,9 @@ export const ComboboxClearTrigger = part(
 export const ComboboxContent = part("Content", (api) => api.getContentProps());
 export const ComboboxList = part("List", (api) => api.getListProps());
 
-/** The floating part, carrying the ref that keeps it in the top layer
- * with the machine. */
-export const ComboboxPositioner = definePart<Api>("ComboboxPositioner", context, (value) => ({
-  ...value.api.value.getPositionerProps(),
-  ref: value.positioner,
-}));
+export const ComboboxPositioner = positionerPart("Combobox", context);
 
-const items = defineItemParts<combobox.Api<PropTypes>, Api>("Combobox", context);
+const items = defineItemParts("Combobox");
 export const useComboboxItemContext = items.useItemContext;
 export const ComboboxItem = items.Item;
 export const ComboboxItemText = items.ItemText;

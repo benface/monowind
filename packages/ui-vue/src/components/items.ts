@@ -1,82 +1,100 @@
 import { computed, defineComponent, type ComputedRef } from "vue";
 import { itemOf, itemProps, type ItemApi } from "@monowind/ui/framework";
-import { defineContext, renderPart, partsOf } from "./part.ts";
+import { BOOLEAN, defineContext, definePart, renderPart, type Part } from "./part.ts";
 
 /**
- * The parts a listbox and a select share (specs/ui.md "Component
- * layer"): the items of their collection, the text and the indicator
- * inside one, and the groups around them. Zag gives both the same
- * five getters, so both build their parts here.
+ * The item parts a listbox, a select and a combobox share (specs/ui.md
+ * "Component layer", `ItemApi`): the items, the text and the indicator
+ * inside one, and the groups around them.
  */
 
 type Props = Record<string, unknown>;
 
-export function defineItemParts<A extends ItemApi, V extends { api: ComputedRef<A> }>(
-  prefix: string,
-  context: { use: () => V },
-) {
-  /** The item an `Item` holds, for the text and the indicator inside
-   * it: whatever the collection holds, which is the author's shape. */
-  const held = defineContext<ComputedRef<unknown>>(`${prefix}Item`);
-  const part = partsOf<A, V>(prefix, context);
+type List = { api: ComputedRef<ItemApi> };
 
+type ItemProps = { item?: unknown; value?: string };
+
+const list = defineContext<List>(
+  "List",
+  "an item part must be inside <ListboxRoot>, <SelectRoot> or <ComboboxRoot>",
+);
+
+/** The item an `Item` holds, for the text and the indicator inside
+ * it: whatever the collection holds, which is the author's shape. */
+const held = defineContext<ComputedRef<unknown>>(
+  "Item",
+  "an item's text and indicator must be inside its Item",
+);
+
+/** A list component's context, whose root provides the item parts'
+ * list as well. */
+export function defineListContext<V extends List>(name: string) {
+  const own = defineContext<V>(name);
+  return {
+    ...own,
+    provide: (value: V) => {
+      own.provide(value);
+      list.provide(value);
+    },
+  };
+}
+
+const insideItem = { use: () => ({ api: list.use().api, item: held.use() }) };
+
+export function defineItemParts(prefix: string) {
   /** An item is named either by the collection's own item or by the
    * value that finds it there. */
   const Item = defineComponent(
-    (props: { item?: unknown; value?: string; asChild?: boolean }, { slots, attrs }) => {
-      const { api } = context.use();
-      const item = computed(() => itemOf(api.value, props));
-      held.provide(item);
+    (props: ItemProps & { asChild?: boolean }, { slots, attrs }) => {
+      const { api } = list.use();
+      const own = computed(() => itemOf(api.value, props));
+      held.provide(own);
       return () =>
         renderPart(
           "div",
-          itemProps(api.value, item.value),
+          itemProps(api.value, own.value),
           attrs as Props,
           Boolean(props.asChild),
           slots["default"]?.(),
           `${prefix}Item`,
         );
     },
-    { name: `${prefix}Item`, inheritAttrs: false, props: ["item", "value", "asChild"] },
-  );
-
-  const inside = (name: string, propsOf: (api: A, item: unknown) => object) =>
-    defineComponent(
-      (props: { asChild?: boolean }, { slots, attrs }) => {
-        const { api } = context.use();
-        const item = held.use();
-        return () =>
-          renderPart(
-            "span",
-            propsOf(api.value, item.value),
-            attrs as Props,
-            Boolean(props.asChild),
-            slots["default"]?.(),
-            name,
-          );
-      },
-      { name, inheritAttrs: false, props: ["asChild"] },
-    );
+    {
+      name: `${prefix}Item`,
+      inheritAttrs: false,
+      props: { item: null, value: null, asChild: BOOLEAN },
+    },
+  ) as unknown as Part<"div", ItemProps>;
 
   return {
     /** The collection's item the part is inside. */
     useItemContext: held.use,
     Item,
-    ItemText: inside(`${prefix}ItemText`, (api, item) => api.getItemTextProps({ item })),
-    ItemIndicator: inside(`${prefix}ItemIndicator`, (api, item) =>
-      api.getItemIndicatorProps({ item }),
+    ItemText: definePart(
+      `${prefix}ItemText`,
+      insideItem,
+      ({ api, item }) => api.value.getItemTextProps({ item: item.value }),
+      "span",
     ),
-    ItemGroup: part(
-      "ItemGroup",
-      (api, own) => api.getItemGroupProps(own as { id: string }),
-      "div",
-      ["id"],
+    ItemIndicator: definePart(
+      `${prefix}ItemIndicator`,
+      insideItem,
+      ({ api, item }) => api.value.getItemIndicatorProps({ item: item.value }),
+      "span",
     ),
-    ItemGroupLabel: part(
-      "ItemGroupLabel",
-      (api, own) => api.getItemGroupLabelProps(own as { htmlFor: string }),
+    ItemGroup: definePart<List, "div", { id: string }>(
+      `${prefix}ItemGroup`,
+      list,
+      ({ api }, own) => api.value.getItemGroupProps(own as { id: string }),
       "div",
-      ["htmlFor"],
+      { id: null },
+    ),
+    ItemGroupLabel: definePart<List, "div", { htmlFor: string }>(
+      `${prefix}ItemGroupLabel`,
+      list,
+      ({ api }, own) => api.value.getItemGroupLabelProps(own as { htmlFor: string }),
+      "div",
+      { htmlFor: null },
     ),
   };
 }

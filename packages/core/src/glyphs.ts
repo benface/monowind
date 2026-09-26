@@ -70,8 +70,8 @@ const LINE_ROLES = [
   "teeRight",
   "cross",
 ] as const;
-export type LineRole = (typeof LINE_ROLES)[number];
-export type LineRoles = Record<LineRole, string>;
+type LineRole = (typeof LINE_ROLES)[number];
+type LineRoles = Record<LineRole, string>;
 
 /** A weight band: the glyphs a `border-width` draws (per-glyph
  * fallback to the plain table) and its thickness in `cells`, 1
@@ -280,118 +280,42 @@ export function cornerGlyph(
   return best.glyph;
 }
 
-/** The role a junction bitmask (up 8 / down 4 / left 2 / right 1)
- * plays — stubs (≤1 arm per axis alone) read as plain lines. */
-export function junctionRole(mask: number): LineRole | null {
-  switch (mask) {
-    case 1:
-    case 2:
-    case 3:
-      return "h";
-    case 4:
-    case 8:
-    case 12:
-      return "v";
-    case 5:
-      return "tl";
-    case 6:
-      return "tr";
-    case 9:
-      return "bl";
-    case 10:
-      return "br";
-    case 7:
-      return "teeDown";
-    case 11:
-      return "teeUp";
-    case 13:
-      return "teeRight";
-    case 14:
-      return "teeLeft";
-    case 15:
-      return "cross";
-    default:
-      return null; // mask 0: no arms
-  }
-}
-
 /* === Junction tables ================================================== */
 
-// Indexed by the up/down/left/right bitmask (8/4/2/1).
-const LIGHT_JUNCTIONS = [
-  " ",
-  "─",
-  "─",
-  "─", // no vertical arm
-  "│",
-  "┌",
-  "┐",
-  "┬",
-  "│",
-  "└",
-  "┘",
-  "┴",
-  "│",
-  "├",
-  "┤",
-  "┼",
-];
-const DOUBLE_JUNCTIONS = [
-  " ",
-  "═",
-  "═",
-  "═",
-  "║",
-  "╔",
-  "╗",
-  "╦",
-  "║",
-  "╚",
-  "╝",
-  "╩",
-  "║",
-  "╠",
-  "╣",
-  "╬",
+/** The role each junction bitmask (up 8 / down 4 / left 2 / right 1)
+ * plays — stubs (≤1 arm per axis alone) read as plain lines, no arms
+ * as none. */
+export const JUNCTION_ROLES: readonly (LineRole | null)[] = [
+  null,
+  "h",
+  "h",
+  "h",
+  "v",
+  "tl",
+  "tr",
+  "teeDown",
+  "v",
+  "bl",
+  "br",
+  "teeUp",
+  "v",
+  "teeRight",
+  "teeLeft",
+  "cross",
 ];
 
-/** A full role table read off a junction table — first mask wins per
- * role, so every role resolves to its canonical glyph. */
-function tableFrom(junctions: readonly string[]): LineRoles {
-  const table: Partial<LineRoles> = {};
-  for (let mask = 1; mask < 16; mask++) {
-    const role = junctionRole(mask);
-    if (role && !(role in table)) table[role] = junctions[mask]!;
-  }
-  return table as LineRoles;
+/** A role table from its glyphs, one per role in `LINE_ROLES` order. */
+function rolesFrom(glyphs: string): LineRoles {
+  const each = Array.from(glyphs);
+  return Object.fromEntries(LINE_ROLES.map((role, i) => [role, each[i]])) as LineRoles;
 }
 
 /** Every role drawn with one glyph, for sets with no junction geometry. */
-const uniformTable = (glyph: string): LineRoles =>
-  tableFrom(Array.from({ length: 16 }, () => glyph));
+const uniformTable = (glyph: string): LineRoles => rolesFrom(glyph.repeat(LINE_ROLES.length));
 
-const HEAVY_JUNCTIONS = [
-  " ",
-  "━",
-  "━",
-  "━",
-  "┃",
-  "┏",
-  "┓",
-  "┳",
-  "┃",
-  "┗",
-  "┛",
-  "┻",
-  "┃",
-  "┣",
-  "┫",
-  "╋",
-];
-
-const lightTable = tableFrom(LIGHT_JUNCTIONS);
-const doubleTable = tableFrom(DOUBLE_JUNCTIONS);
-const heavyTable = tableFrom(HEAVY_JUNCTIONS);
+const lightTable = rolesFrom("─│┌┐└┘┴┬┤├┼");
+const doubleTable = rolesFrom("═║╔╗╚╝╩╦╣╠╬");
+const heavyTable = rolesFrom("━┃┏┓┗┛┻┳┫┣╋");
 
 /** The engine's own tables per style: light junctions with the dashed
  * (`╌ ╎` — the double dash pair reads cleaner than the triple dash,
@@ -415,7 +339,7 @@ const DEFAULT_WEIGHTS: Partial<Record<BorderStyle, WeightBand[]>> = {
 /** A style at a weight through a set: the line roles to draw with,
  * the cells the border takes, and the band that won (null for the
  * plain table). */
-export interface Weighted {
+interface Weighted {
   readonly roles: Readonly<LineRoles>;
   readonly cells: number;
   readonly band: Readonly<WeightBand> | null;

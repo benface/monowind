@@ -1,43 +1,74 @@
 import { paintOrderedChildren, paintsInPositionedStep } from "./borders.ts";
 import { isFormattingContextRoot } from "./layout.ts";
-import type { StickyBox } from "./sticky.ts";
-import type { AreaSide, LayoutNode, PerSide, PositionArea } from "./types.ts";
+import { placePainted } from "./paint-origin.ts";
+import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
 /**
- * Write geometry custom properties, quantized inline padding, and z-index
- * markers on each source element in the light DOM. Coordinates on
- * LayoutNode are parent-relative; the companion stylesheet turns them
- * into px via the measured cell size. No painting: decoration and text
- * glyphs land in the shadow grid via `paint.ts`.
- *
- * Every write is change-checked: a relayout that computes the same
- * result mutates nothing. Chrome dismisses an open <select> popup on
- * style mutations near it, and the dynamic-state listeners relayout on
- * the very events that open one (focusin/pointerover) — idempotent
- * writes keep the popup up.
+ * Write each light element's geometry as custom properties in cells,
+ * which the companion stylesheet turns into px, change-checked so a
+ * relayout of the same result mutates nothing and an open <select>
+ * picker stays up (element.ts `#openSelectPicker`).
  */
 export function render(root: LayoutNode): void {
-  const inlineInsetElements = new Set<Element>();
-  walk(root, true, inlineInsetElements);
-  // Clear engine-written inset vars from inline elements that no longer
-  // carry authored relative insets.
-  for (const el of Array.from(root.source.querySelectorAll("[data-mw-inline-inset]"))) {
-    if (!inlineInsetElements.has(el)) {
-      el.removeAttribute("data-mw-inline-inset");
-      const style = (el as HTMLElement).style;
-      for (const prop of ["--mw-it", "--mw-ir", "--mw-ib", "--mw-il"]) style.removeProperty(prop);
+  const boxes = new Set<Element>();
+  const insets = new Set<Element>();
+  walk(root, null, boxes, insets);
+  // Where this layout wrote no box, or no inline insets, on an element
+  // an earlier one did, that one's writes go: found by their flags.
+  clearUnwritten(root.source, BOX_MARKS, boxes, BOX_NAMES);
+  clearUnwritten(root.source, "[data-mw-inline-inset]", insets, INSET_NAMES);
+}
+
+/** The flags one of which marks every box's element (`positionElement`). */
+const BOX_MARKS =
+  "[data-mw-laid-out], [data-mw-inline-box], [data-mw-multicol-flow], " +
+  "[data-mw-multicol-flow-span], [data-mw-flow], [data-mw-float]";
+
+/** Every flag and variable a box's writes leave on its element — the
+ * tracking and the pointer flag aside, an inline element's writes too. */
+const BOX_NAMES = (
+  "data-mw-top data-mw-top-shown data-mw-laid-out data-mw-inline-box data-mw-multicol-flow " +
+  "data-mw-multicol-flow-span data-mw-float data-mw-flow data-mw-area data-mw-vbottom " +
+  "data-mw-vmiddle data-mw-nowrap data-mw-multicol data-mw-multicol-balance data-mw-pre " +
+  "data-mw-clip data-mw-scroll data-mw-text-align-blocked data-mw-table-hidden " +
+  "data-mw-force-hidden data-mw-invisible data-mw-hidden-runs --mw-z --mw-sx --mw-sy --mw-mt " +
+  "--mw-mr --mw-mb --mw-ml --mw-va --mw-vb --mw-lh --mw-lhs --mw-colc --mw-colg --mw-x --mw-y " +
+  "--mw-w --mw-h --mw-se-x --mw-se-y --mw-gr --mw-gb --mw-pt --mw-pr --mw-pb --mw-pl --mw-bt " +
+  "--mw-br --mw-bb --mw-bl --mw-ti --mw-ink --mw-ground"
+).split(" ");
+
+/** An inline element's insets' flag and variables. */
+const INSET_NAMES = ["data-mw-inline-inset", "--mw-it", "--mw-ir", "--mw-ib", "--mw-il"];
+
+/** `names` cleared from each element under `root` a `selector` flag
+ * marks and this layout did not write. */
+function clearUnwritten(
+  root: Element,
+  selector: string,
+  written: Set<Element>,
+  names: readonly string[],
+): void {
+  for (const el of root.querySelectorAll<HTMLElement>(selector)) {
+    if (written.has(el)) continue;
+    for (const name of names) {
+      if (name.startsWith("--")) setVar(el, name, null);
+      else el.removeAttribute(name);
     }
   }
 }
 
-/** setProperty, skipped when the value is already there. */
-function setVar(el: HTMLElement, prop: string, value: string): void {
-  if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value);
-}
-
-/** removeProperty, skipped when the property isn't set. */
-function clearVar(el: HTMLElement, prop: string): void {
-  if (el.style.getPropertyValue(prop) !== "") el.style.removeProperty(prop);
+/** A custom property on an element's or a rule's style, removed when
+ * null, written only on change. */
+export function setVar(
+  target: { readonly style: CSSStyleDeclaration },
+  property: string,
+  value: string | number | null,
+): void {
+  const { style } = target;
+  const text = value === null ? "" : String(value);
+  if (style.getPropertyValue(property) === text) return;
+  if (value === null) style.removeProperty(property);
+  else style.setProperty(property, text);
 }
 
 /** A valued attribute, removed when null, written only on change. */
@@ -56,36 +87,35 @@ function setFlag(el: Element, name: string, on: boolean): void {
 
 function walk(
   node: LayoutNode,
-  isRoot: boolean,
-  inlineInsetElements: Set<Element>,
+  parent: LayoutNode | null,
+  boxes: Set<Element>,
+  insets: Set<Element>,
   ground?: string,
   forced = false,
 ): void {
   if (node.inlineElements) {
     for (const entry of node.inlineElements) {
-      const { element, tracking, padLeft, padRight, insets, sticky } = entry;
+      const { element, tracking, padLeft, padRight, sticky } = entry;
       const el = element as HTMLElement;
-      setVar(el, "--mw-ls", String(tracking));
+      setVar(el, "--mw-ls", tracking);
       setFlag(el, "data-mw-pointer-none", !entry.pointerEvents);
       // Quantized horizontal padding (specs/cell-model.md): the companion
       // stylesheet applies these cells as the element's real padding —
       // its typography lock zeroes any authored value, so browser padding
       // always equals the cells the run reserved.
-      if (padLeft > 0) setVar(el, "--mw-ipl", String(padLeft));
-      else clearVar(el, "--mw-ipl");
-      if (padRight > 0) setVar(el, "--mw-ipr", String(padRight));
-      else clearVar(el, "--mw-ipr");
-      if (insets || sticky) {
-        inlineInsetElements.add(element);
-        // A sticky element's shift arrives with the paint (syncStickyVars).
-        applyInlineInsets(el, insets ?? { top: 0, right: null, bottom: null, left: 0 });
+      setVar(el, "--mw-ipl", padLeft > 0 ? padLeft : null);
+      setVar(el, "--mw-ipr", padRight > 0 ? padRight : null);
+      if (entry.insets || sticky) {
+        insets.add(element);
+        applyInlineInsets(el, entry.insets ?? stuckInsets(entry));
       }
     }
   }
 
-  if (isRoot) markRoot(node);
+  if (!parent) markRoot(node);
   else if (!node.anonymous) {
-    positionElement(node);
+    boxes.add(node.source);
+    positionElement(node, parent);
     // A top-layer element's box is the viewport's, so a box
     // position-visibility hides around it leaves it shown (styles.css).
     const escapes = forced && node.topLayerRank !== undefined && node.style.visible;
@@ -98,7 +128,7 @@ function walk(
   const own = node.style.visible
     ? (node.style.backgroundColor ?? (node.style.backgroundClear ? undefined : ground))
     : ground;
-  if (!isRoot && !node.anonymous) syncEditableColors(node.source as HTMLElement, node, own);
+  if (parent && !node.anonymous) syncEditableColors(node.source as HTMLElement, node, own);
   // A hidden table box (misparented content, <col>) hides its whole
   // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
@@ -109,12 +139,10 @@ function walk(
     // `--mw-z`, written only where CSS applies it. A run's element is
     // its container, whose own value is already written.
     if (!child.anonymous) {
-      const el = child.source as HTMLElement;
-      if (child.style.zIndex !== null && paintsInPositionedStep(child, node) && !child.inlineBox)
-        setVar(el, "--mw-z", String(child.style.zIndex));
-      else clearVar(el, "--mw-z");
+      const applies = paintsInPositionedStep(child, node) && !child.inlineBox;
+      setVar(child.source as HTMLElement, "--mw-z", applies ? child.style.zIndex : null);
     }
-    walk(child, false, inlineInsetElements, own, forcedBelow);
+    walk(child, node, boxes, insets, own, forcedBelow);
   }
 }
 
@@ -123,12 +151,13 @@ function walk(
 const EDITABLE = "input, textarea, select, [contenteditable], [contenteditable] *";
 
 /** An editable's ink and ground for its native selection (styles.css),
- * which swaps them as the grid swaps a selected cell's colors. */
+ * which swaps them as the grid swaps a selected cell's colors. Its
+ * inline descendants inherit both, so the theme's ground is written out
+ * too, over a filled ancestor's. */
 function syncEditableColors(el: HTMLElement, node: LayoutNode, ground: string | undefined): void {
   if (!el.matches(EDITABLE)) return;
   if (node.style.color !== undefined) setVar(el, "--mw-ink", node.style.color);
-  if (ground !== undefined) setVar(el, "--mw-ground", ground);
-  else clearVar(el, "--mw-ground");
+  setVar(el, "--mw-ground", ground ?? "var(--mw-bg)");
 }
 
 /** The host's flags when its own text is on the grid — the root leaf,
@@ -145,8 +174,7 @@ function markRoot(node: LayoutNode): void {
   setFlag(el, "data-mw-nowrap", leaf && whiteSpace !== "normal");
   setFlag(el, "data-mw-pre", leaf && whiteSpace === "pre");
   setFlag(el, "data-mw-text-align-blocked", leaf && textAlignBlocked);
-  if (leaf) setVar(el, "--mw-ti", String(textIndent));
-  else clearVar(el, "--mw-ti");
+  setVar(el, "--mw-ti", leaf ? textIndent : null);
 }
 
 /**
@@ -155,55 +183,52 @@ function markRoot(node: LayoutNode): void {
  * properties consumed by a measuring-gated companion rule —
  * writing `top` etc. directly would be read back as the authored value on
  * the next measure pass and compound (a feedback loop). Sides the author
- * left `auto` get no var: the companion declaration is then invalid at
- * computed-value time and the inset falls back to `auto`.
+ * left `auto` get no var of their own: the companion's reset leaves the
+ * declaration invalid at computed-value time and the inset falls back
+ * to `auto`.
  */
 function applyInlineInsets(el: HTMLElement, insets: PerSide<number | null>): void {
   setFlag(el, "data-mw-inline-inset", true);
-  const write = (prop: string, cells: number | null) => {
-    if (cells === null) clearVar(el, prop);
-    else setVar(el, prop, String(cells));
-  };
-  write("--mw-it", insets.top);
-  write("--mw-ir", insets.right);
-  write("--mw-ib", insets.bottom);
-  write("--mw-il", insets.left);
+  setVar(el, "--mw-it", insets.top);
+  setVar(el, "--mw-ir", insets.right);
+  setVar(el, "--mw-ib", insets.bottom);
+  setVar(el, "--mw-il", insets.left);
 }
 
-/** The sticky shifts for the current scroll offsets (specs/sticky.md),
- * written after the paint computes them: a box's as `--mw-sx`/`--mw-sy`
- * beside its position, an inline element's as its inset properties. */
-export function syncStickyVars(boxes: StickyBox[]): void {
-  for (const { node, ancestors } of boxes) {
-    if (node.style.position === "sticky") {
-      const el = node.source as HTMLElement;
-      const shift = node.stickyShift;
-      if (shift) {
-        setVar(el, "--mw-sx", String(shift.x));
-        setVar(el, "--mw-sy", String(shift.y));
-      } else {
-        clearVar(el, "--mw-sx");
-        clearVar(el, "--mw-sy");
-      }
-    } else if (node.hostRect) {
-      // A fixed box's light element takes back its ancestors' scroll,
-      // and their sticky shifts, which a fixed box escapes, so it sits
-      // at the host's cells the grid paints it on (specs/positioning.md).
-      const el = node.source as HTMLElement;
-      let x = 0;
-      let y = 0;
-      for (const ancestor of ancestors) {
-        x += (ancestor.scroll?.x ?? 0) - (ancestor.stickyShift?.x ?? 0);
-        y += (ancestor.scroll?.y ?? 0) - (ancestor.stickyShift?.y ?? 0);
-      }
-      setVar(el, "--mw-sx", String(x));
-      setVar(el, "--mw-sy", String(y));
-    }
+/** A sticky inline element's shift for the scroll (specs/sticky.md) as
+ * its inset properties. */
+function stuckInsets({ stickyShift }: InlineElement): PerSide<number | null> {
+  return { top: stickyShift?.y ?? 0, right: null, bottom: null, left: stickyShift?.x ?? 0 };
+}
+
+/** A box's light element moved from where its parent places it to where
+ * it paints: a sticky box by its shift (specs/sticky.md), a fixed one by
+ * the scroll and shifts it escapes (specs/positioning.md). A top-layer
+ * box's light element is placed on its painted cells: its shift is
+ * zero. */
+function writeShift(node: LayoutNode, parent: LayoutNode): void {
+  const el = node.source as HTMLElement;
+  const top = node.topLayerRank !== undefined;
+  const { paintOrigin: at, scroll } = parent;
+  const x = top ? 0 : node.paintOrigin.x - (at.x - (scroll?.x ?? 0) + node.localRect.x);
+  const y = top ? 0 : node.paintOrigin.y - (at.y - (scroll?.y ?? 0) + node.localRect.y);
+  setVar(el, "--mw-sx", x === 0 ? null : x);
+  setVar(el, "--mw-sy", y === 0 ? null : y);
+}
+
+/** A scroll repaint: the offsets `sync` writes, every box placed where
+ * they paint it (paint-origin.ts), and the light elements the scroll
+ * moves moved with it — a box's shift beside its position, a sticky
+ * inline element's as its inset properties. */
+export function renderScroll(root: LayoutNode, sync: (root: LayoutNode) => void): void {
+  sync(root);
+  for (const { node, parent } of placePainted(root)) {
+    // A run's element is its container, a box of its own.
+    if (!node.anonymous) writeShift(node, parent);
     for (const entry of node.inlineElements ?? []) {
-      if (entry.sticky === undefined) continue;
-      const el = entry.element as HTMLElement;
-      setVar(el, "--mw-it", String(entry.stickyShift?.y ?? 0));
-      setVar(el, "--mw-il", String(entry.stickyShift?.x ?? 0));
+      if (entry.sticky !== undefined) {
+        applyInlineInsets(entry.element as HTMLElement, stuckInsets(entry));
+      }
     }
   }
 }
@@ -243,7 +268,7 @@ function nativeBaselineRow(node: LayoutNode): number | undefined {
   return undefined;
 }
 
-function positionElement(node: LayoutNode): void {
+function positionElement(node: LayoutNode, parent: LayoutNode): void {
   const el = node.source as HTMLElement;
   // A top-layer element's box is the viewport's (specs/top-layer.md):
   // the companion places it from the grid's client origin, in the
@@ -254,11 +279,7 @@ function positionElement(node: LayoutNode): void {
   // An authored `pointer-events: none` the grid-mode opt-in leaves be
   // (styles.css).
   setFlag(el, "data-mw-pointer-none", !node.style.pointerEvents);
-  // A sticky box's shift and a fixed one's are syncStickyVars' to write.
-  if (node.style.position !== "sticky" && (node.hostRect === undefined || top)) {
-    clearVar(el, "--mw-sx");
-    clearVar(el, "--mw-sy");
-  }
+  writeShift(node, parent);
   const padding = node.resolvedPadding;
   const { border, textAlignBlocked, overflow, whiteSpace, tracking, lineGap } = node.style;
   // Atomic inline boxes and paragraph-flow multicol children stay IN
@@ -282,17 +303,10 @@ function positionElement(node: LayoutNode): void {
     node.flow && !float ? (isFormattingContextRoot(node) ? "box" : "text") : null,
   );
   const flowMargins = flow ?? flowSpan ?? node.flow;
-  if (flowMargins) {
-    setVar(el, "--mw-mt", String(flowMargins.top ?? 0));
-    setVar(el, "--mw-mr", String(flowMargins.right ?? 0));
-    setVar(el, "--mw-mb", String(flowMargins.bottom ?? 0));
-    setVar(el, "--mw-ml", String(flowMargins.left ?? 0));
-  } else {
-    clearVar(el, "--mw-mt");
-    clearVar(el, "--mw-mr");
-    clearVar(el, "--mw-mb");
-    clearVar(el, "--mw-ml");
-  }
+  setVar(el, "--mw-mt", flowMargins ? (flowMargins.top ?? 0) : null);
+  setVar(el, "--mw-mr", flowMargins ? (flowMargins.right ?? 0) : null);
+  setVar(el, "--mw-mb", flowMargins ? (flowMargins.bottom ?? 0) : null);
+  setVar(el, "--mw-ml", flowMargins ? (flowMargins.left ?? 0) : null);
   // The area an anchored box took (specs/anchor-positioning.md), for a
   // style to follow a flip.
   setAttr(el, "data-mw-area", node.anchorArea ? areaKeywords(node.anchorArea) : null);
@@ -307,15 +321,13 @@ function positionElement(node: LayoutNode): void {
     Boolean(node.inlineBox) && verticalAlign === "center" && node.inlineTextRow !== undefined;
   setFlag(el, "data-mw-vmiddle", middle);
   const baseline = middle ? nativeBaselineRow(node) : undefined;
-  if (middle) setVar(el, "--mw-va", String(node.inlineTextRow! - (baseline ?? rect.height)));
-  else clearVar(el, "--mw-va");
-  if (middle && baseline === undefined) setVar(el, "--mw-vb", "1");
-  else clearVar(el, "--mw-vb");
+  setVar(el, "--mw-va", middle ? node.inlineTextRow! - (baseline ?? rect.height) : null);
+  setVar(el, "--mw-vb", middle && baseline === undefined ? 1 : null);
   // Grid typography (specs/cell-model.md): extra cells per character, rows
   // per wrapped line, and the half-leading cancellation shift.
-  setVar(el, "--mw-ls", String(tracking));
-  setVar(el, "--mw-lh", String(lineGap + 1));
-  setVar(el, "--mw-lhs", String(-lineGap / 2));
+  setVar(el, "--mw-ls", tracking);
+  setVar(el, "--mw-lh", lineGap + 1);
+  setVar(el, "--mw-lhs", -lineGap / 2);
   setFlag(el, "data-mw-nowrap", whiteSpace !== "normal");
   // A multicol TEXT LEAF or paragraph-flow container keeps native
   // columns, driven by the engine's used values so the browser
@@ -328,60 +340,45 @@ function positionElement(node: LayoutNode): void {
   const multicol = flow || flowSpan ? undefined : node.multicolGeometry;
   setFlag(el, "data-mw-multicol", Boolean(multicol));
   setFlag(el, "data-mw-multicol-balance", Boolean(multicol?.nativeBalance));
-  if (multicol) {
-    setVar(el, "--mw-colc", String(multicol.columnCount));
-    setVar(el, "--mw-colg", String(multicol.gap));
-  } else {
-    clearVar(el, "--mw-colc");
-    clearVar(el, "--mw-colg");
-  }
+  setVar(el, "--mw-colc", multicol?.columnCount ?? null);
+  setVar(el, "--mw-colg", multicol?.gap ?? null);
   // `white-space: pre` leaves also keep their preserved spaces
   // browser-side (the tree builder kept them in the run) — see styles.css.
   setFlag(el, "data-mw-pre", whiteSpace === "pre");
-  setVar(el, "--mw-x", String(rect.x));
-  setVar(el, "--mw-y", String(rect.y));
-  setVar(el, "--mw-w", String(rect.width));
-  setVar(el, "--mw-h", String(rect.height));
+  setVar(el, "--mw-x", rect.x);
+  setVar(el, "--mw-y", rect.y);
+  setVar(el, "--mw-w", rect.width);
+  setVar(el, "--mw-h", rect.height);
   setFlag(el, "data-mw-clip", overflow.x === "clip" || overflow.y === "clip");
-  setFlag(el, "data-mw-scroll", node.scrollRange !== undefined);
-  if (node.scrollRange) {
-    // Native range == engine range by construction: a 1px ::after
-    // spacer (companion CSS) ends at exactly max + box cells, so
-    // scrollHeight - clientHeight lands on the engine's max in every
-    // engine (browsers disagree about end padding in the scrollable
-    // overflow area). An axis with no range parks the spacer in the
-    // first cell — a box outside the padding box (at -1px) is dropped
-    // from the overflow area on BOTH axes.
-    const { maxX, maxY } = node.scrollRange;
-    setVar(el, "--mw-se-x", String(maxX > 0 ? maxX + node.localRect.width : 1));
-    setVar(el, "--mw-se-y", String(maxY > 0 ? maxY + node.localRect.height : 1));
-    // The bars' cells, which --mw-pr/--mw-pb include, for scroll-padding.
-    setVar(el, "--mw-gr", String(node.scrollGutterCells?.right ?? 0));
-    setVar(el, "--mw-gb", String(node.scrollGutterCells?.bottom ?? 0));
-  } else {
-    clearVar(el, "--mw-se-x");
-    clearVar(el, "--mw-se-y");
-    clearVar(el, "--mw-gr");
-    clearVar(el, "--mw-gb");
-  }
-  // The browser insets content by border + padding; the engine has already
-  // allocated cells for both. We expose them separately so the companion CSS
-  // reads naturally, and the CSS sums them into the actual `padding` (since
-  // engine border is painted as glyphs, native border-width stays 0).
-  setVar(el, "--mw-pt", String(padding.top));
-  setVar(el, "--mw-pr", String(padding.right));
-  setVar(el, "--mw-pb", String(padding.bottom));
-  setVar(el, "--mw-pl", String(padding.left));
-  setVar(el, "--mw-bt", String(border.top));
-  setVar(el, "--mw-br", String(border.right));
-  setVar(el, "--mw-bb", String(border.bottom));
-  setVar(el, "--mw-bl", String(border.left));
+  const range = node.scrollRange;
+  setFlag(el, "data-mw-scroll", range !== undefined);
+  // The scroll-range spacer's end (styles.css), the first cell for an
+  // axis with no range.
+  const { width, height } = node.localRect;
+  setVar(el, "--mw-se-x", range ? (range.maxX > 0 ? range.maxX + width : 1) : null);
+  setVar(el, "--mw-se-y", range ? (range.maxY > 0 ? range.maxY + height : 1) : null);
+  // The bars' cells, which --mw-pr/--mw-pb include, for scroll-padding.
+  setVar(el, "--mw-gr", range ? (node.scrollGutterCells?.right ?? 0) : null);
+  setVar(el, "--mw-gb", range ? (node.scrollGutterCells?.bottom ?? 0) : null);
+  // Border and padding cells apart: styles.css sums them as native
+  // padding and reads the border cells alone for scroll-padding.
+  setVar(el, "--mw-pt", padding.top);
+  setVar(el, "--mw-pr", padding.right);
+  setVar(el, "--mw-pb", padding.bottom);
+  setVar(el, "--mw-pl", padding.left);
+  // A box's padding is these cells alone, an inline element's cleared.
+  setVar(el, "--mw-ipl", null);
+  setVar(el, "--mw-ipr", null);
+  setVar(el, "--mw-bt", border.top);
+  setVar(el, "--mw-br", border.right);
+  setVar(el, "--mw-bb", border.bottom);
+  setVar(el, "--mw-bl", border.left);
   // Native text-indent is authored in px; overwrite it in cells so the
   // browser's own line (the selectable, transparent-locked text under
   // the grid) sits under the glyphs the engine painted. Always set —
   // custom properties inherit, so an unset var on an `indent-0` child
   // would resolve to an indented ancestor's value.
-  setVar(el, "--mw-ti", String(node.style.textIndent));
+  setVar(el, "--mw-ti", node.style.textIndent);
   setFlag(el, "data-mw-text-align-blocked", textAlignBlocked);
   setFlag(el, "data-mw-table-hidden", Boolean(node.tableHidden));
   setFlag(el, "data-mw-force-hidden", Boolean(node.forceHidden));

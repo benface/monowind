@@ -337,6 +337,43 @@ describe("grid track sizing via layout", () => {
   });
 });
 
+describe("overflowing alignment at the start edge (specs/cell-model.md deviation 23)", () => {
+  const lay = (style: Partial<CellStyle>, child: LayoutNode) => {
+    const container = makeNode({
+      style: { display: "grid", width: { kind: "cells", value: 10 }, ...style },
+      children: [child],
+    });
+    layoutRoot(makeNode({ children: [container] }), 40);
+    return child.localRect;
+  };
+
+  // CSS centers or ends these past the start edge (probed: every engine).
+  it("starts tracks wider than the container", () => {
+    const x = (justifyContent: CellStyle["justifyContent"]) =>
+      lay({ gridTemplateColumns: tracks(fixed(20)), justifyContent }, makeNode({ text: "a" })).x;
+    expect([x("center"), x("end")]).toEqual([0, 0]);
+  });
+
+  it("starts an item wider or taller than its area", () => {
+    const item = (width: number, height: number) =>
+      makeNode({
+        text: "a",
+        style: {
+          width: { kind: "cells", value: width },
+          height: { kind: "cells", value: height },
+        },
+      });
+    const x = (justifyItems: CellStyle["justifyItems"]) =>
+      lay({ gridTemplateColumns: tracks(fixed(10)), justifyItems }, item(20, 1)).x;
+    expect([x("center"), x("end")]).toEqual([0, 0]);
+    const rows = {
+      gridTemplateRows: tracks(fixed(2)),
+      height: { kind: "cells", value: 2 },
+    } as const;
+    expect(lay({ ...rows, alignItems: "center" }, item(1, 4)).y).toBe(0);
+  });
+});
+
 describe("grid items in their areas", () => {
   it("stretches items to their track by default; explicit widths align start", () => {
     const stretchy = makeNode({ text: "ab" });
@@ -368,6 +405,25 @@ describe("grid items in their areas", () => {
     layoutRoot(root, 20);
     expect(centered.localRect.x).toBe(3); // floor((10 − 4) / 2)
     expect(ended.localRect.x).toBe(16); // 10 + (10 − 4)
+  });
+
+  it("aligns flex-end as end, items and tracks", () => {
+    const item = makeNode({ text: "ab", style: { width: { kind: "cells", value: 4 } } });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(fixed(6)),
+        gridTemplateRows: tracks(fixed(3)),
+        height: { kind: "cells", value: 5 },
+        justifyContent: "flex-end",
+        alignContent: "flex-end",
+        justifyItems: "flex-end",
+        alignItems: "flex-end",
+      },
+      children: [item],
+    });
+    layoutRoot(root, 20);
+    expect([item.localRect.x, item.localRect.y]).toEqual([16, 4]);
   });
 
   it("lets auto margins absorb the area over alignment", () => {
@@ -545,6 +601,37 @@ describe("the automatic minimum over the spanned tracks (css-grid §6.6)", () =>
     expect(
       columns([minmax({ kind: "auto" }, cellsB(5))], [item], 10, { justifyContent: "start" }),
     ).toEqual([[1, 4]]);
+  });
+
+  it("grows a fixed maximum to a fit-content item's min-content, capping an auto one's", () => {
+    // WPT grid-item-min-contribution-fit-content-001: fit-content is no
+    // auto size, so its minimum contribution is its min-content one.
+    const list = [minmax({ kind: "auto" }, cellsB(4)), fixed(2)];
+    const fit = word(8, { width: { kind: "fit-content" } });
+    expect(columns(list, [fit, makeNode({})], 30)).toEqual([
+      [0, 8],
+      [8, 2],
+    ]);
+    expect(columns(list, [word(8), makeNode({})], 30)).toEqual([
+      [0, 4],
+      [4, 2],
+    ]);
+  });
+
+  it("sizes a fit-content grid to a fit-content scroll-container item's min-content", () => {
+    // Probed: Firefox and WebKit (Chromium takes the automatic minimum, 0).
+    const item = word(7, {
+      width: { kind: "fit-content" },
+      overflow: { x: "auto", y: "visible" },
+      padding: { top: 0, right: 0, bottom: 0, left: 1 },
+    });
+    const grid = makeNode({
+      style: { display: "grid", width: { kind: "fit-content" } },
+      children: [item],
+    });
+    const root = makeNode({ style: { width: { kind: "cells", value: 7 } }, children: [grid] });
+    layoutRoot(makeNode({ children: [root] }), 20);
+    expect(grid.localRect.width).toBe(8);
   });
 
   it("grows a minmax(min-content, <fixed>) column past its maximum", () => {

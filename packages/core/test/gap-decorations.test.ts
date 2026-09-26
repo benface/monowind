@@ -257,6 +257,39 @@ describe("gap rules", () => {
     expect(art).toBe(["+-------+", "|+--+--+|", "||aa|bb||", "|+--+--+|", "+-------+"].join("\n"));
   });
 
+  it("crosses the border ring where a rule over overflowing tracks runs past it", () => {
+    // Chromium paints a rule over its tracks' whole extent, over the
+    // border and past it (probed).
+    const grid = (columns: string, rows = "") =>
+      plainText(
+        `<div style="padding-left: 12px"><div style="display: grid; grid-template-columns: ${columns}; ${rows} gap: 4px; width: 32px; border: 1px solid; --mw-rule-x-width: 1px; --mw-rule-y-width: 1px"><div>a</div><div>b</div><div>c</div><div>d</div></div></div>`,
+      );
+    expect(grid("16px 16px")).toBe(
+      ["   ┌────┬─┐", "   │a   │b│", "   ├────┼─┼──", "   │c   │d│", "   └────┴─┘"].join("\n"),
+    );
+    // Rows past the box's bottom: the rule crosses the border there.
+    expect(grid("16px 16px", "grid-template-rows: 8px 8px; height: 20px;")).toBe(
+      [
+        "   ┌────┬─┐",
+        "   │a   │b│",
+        "   │    │ │",
+        "   ├────┼─┼──",
+        "   └c───┼d┘",
+        "        │",
+      ].join("\n"),
+    );
+    // A rule past the box's side meets no border: no tee above it.
+    expect(grid("16px 16px 16px")).toBe(
+      [
+        "   ┌────┬─┐",
+        "   │a   │b│  │c",
+        "   ├────┼─┼──┼────",
+        "   │d   │ │  │",
+        "   └────┴─┘",
+      ].join("\n"),
+    );
+  });
+
   it("widens the gap for a rule whose band is wider than the authored gap", () => {
     const art = plainText(
       `<div style="display: flex; column-gap: 4px; --mw-rule-x-width: 2px; --mw-border-glyphs: ascii"><div>aa</div><div>bb</div></div>`,

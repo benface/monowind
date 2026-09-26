@@ -87,19 +87,46 @@ const loaded = (root: string): { engine: string; css: string; added: object | un
   };
 };
 
-/** The page's engine is the dev server's pre-bundled one, and the
- * pre-bundled leaf imports it, or the chunk it re-exports. */
+/** The pre-bundled leaf imports the page's engine: the engine's own
+ * bundle or a chunk it re-exports where the engine is pre-bundled, the
+ * same file where it is served as is. */
 const expectOneEngine = async (server: ViteDevServer, root: string): Promise<void> => {
-  const virtual = await server.environments.client.transformRequest("virtual:monowind");
-  expect(virtual!.code).toMatch(/"\/node_modules\/\.vite\/deps\/monowind\.js/);
+  const client = server.environments.client;
   const deps = path.join(root, "node_modules", ".vite", "deps");
   await expect.poll(() => existsSync(path.join(deps, "leaf.js"))).toBe(true);
-  const imported = (file: string) =>
-    [...readFileSync(path.join(deps, file), "utf8").matchAll(/from "(\.\/[^"]+)"/g)].map(
-      (match) => match[1],
+  const imports = async (url: string): Promise<string[]> =>
+    [...(await client.transformRequest(url))!.code.matchAll(/from "([^"?]+)/g)].map((match) =>
+      match[1]!.startsWith("./") ? `/node_modules/.vite/deps/${match[1]!.slice(2)}` : match[1]!,
     );
-  const engine = ["./monowind.js", ...imported("monowind.js")];
-  expect(imported("leaf.js").some((file) => engine.includes(file))).toBe(true);
+  const [page] = await imports("virtual:monowind");
+  const engine = page!.startsWith("/node_modules/.vite/deps/")
+    ? [page!, ...(await imports(page!))]
+    : [page!];
+  expect(
+    (await imports("/node_modules/.vite/deps/leaf.js")).some((url) => engine.includes(url)),
+  ).toBe(true);
+};
+
+/** A temporary app whose own engine is linked, as a workspace or `npm
+ * link` lays it out: its source outside node_modules, behind a symlink. */
+const linkedApp = (): { root: string; source: string } => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "monowind-app-")));
+  roots.push(root);
+  write(path.join(root, "package.json"), '{ "name": "app", "type": "module" }');
+  const source = path.join(root, "engine");
+  write(
+    path.join(source, "package.json"),
+    JSON.stringify({
+      name: "monowind",
+      type: "module",
+      exports: { ".": "./index.js", "./styles.css": "./styles.css" },
+    }),
+  );
+  write(path.join(source, "index.js"), 'export function defineMonoWind() { return "first"; }\n');
+  write(path.join(source, "styles.css"), "");
+  mkdirSync(path.join(root, "node_modules"), { recursive: true });
+  symlinkSync(source, path.join(root, "node_modules", "monowind"), "dir");
+  return { root, source };
 };
 
 it("loads the engine by name and its stylesheet from the app's own copy", () => {
@@ -119,7 +146,8 @@ it("falls back to the plugin's own copy where the app has none", () => {
   expect(engine).toBe("monowind");
   expect(css).toContain(own.resolve("monowind/styles.css"));
   expect(added).toEqual({
-    optimizeDeps: { include: ["monowind"] },
+    // This workspace links the plugin's own engine.
+    optimizeDeps: { exclude: ["monowind"] },
     resolve: { alias: [{ find: /^monowind$/, replacement: own.resolve("monowind") }] },
   });
 });
@@ -181,6 +209,63 @@ it("serves one engine in dev, the pre-bundled leaf renderer sharing it", async (
   try {
     await server.listen();
     await expectOneEngine(server, root);
+  } finally {
+    await server.close();
+  }
+});
+
+it("serves a linked engine as is, not pre-bundled, so an edit reaches the dev server", async () => {
+  // The dep optimizer's cache would never see its edits.
+  const { root, source } = linkedApp();
+  write(path.join(root, "index.html"), "<p>app</p>");
+  const serve = async (): Promise<string> => {
+    const server = await createServer({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [monowind()],
+      server: { port: 0 },
+    });
+    try {
+      await server.listen();
+      const virtual = await server.environments.client.transformRequest("virtual:monowind");
+      const url = /from "([^"]+)"/.exec(virtual!.code)![1]!;
+      const engine = await server.environments.client.transformRequest(url);
+      return engine!.code;
+    } finally {
+      await server.close();
+    }
+  };
+  expect(await serve()).toContain("first");
+  write(path.join(source, "index.js"), 'export function defineMonoWind() { return "second"; }\n');
+  expect(await serve()).toContain("second");
+});
+
+it("serves one engine in dev, the app's own linked, the installed leaf renderer pre-bundled against it", async () => {
+  const { root } = linkedApp();
+  const leaf = path.join(root, "node_modules", "leaf");
+  write(
+    path.join(leaf, "package.json"),
+    JSON.stringify({ name: "leaf", type: "module", exports: "./index.js" }),
+  );
+  write(
+    path.join(leaf, "index.js"),
+    'import { defineMonoWind } from "monowind";\ndefineMonoWind();\n',
+  );
+  write(path.join(root, "index.html"), '<script type="module" src="/main.js"></script>');
+  write(path.join(root, "main.js"), 'import "leaf";\n');
+  const server = await createServer({
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [monowind()],
+    server: { port: 0 },
+  });
+  try {
+    await server.listen();
+    await expectOneEngine(server, root);
+    const leafBundle = path.join(root, "node_modules", ".vite", "deps", "leaf.js");
+    expect(readFileSync(leafBundle, "utf8")).not.toContain("first");
   } finally {
     await server.close();
   }

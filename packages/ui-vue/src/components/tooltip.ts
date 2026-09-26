@@ -4,17 +4,17 @@ import type { PropTypes } from "@zag-js/vue";
 import { useTooltip, type Composed } from "../composables.ts";
 import {
   defineContext,
-  definePart,
   defineRoot,
   defineRootProvider,
   partsOf,
+  positionerPart,
   triggerPart,
 } from "./part.ts";
 
 /** Zag's tooltip as a compound component (specs/ui.md "Component
  * layer"). */
 
-export type Api = Composed<tooltip.Api<PropTypes>, tooltip.Service>;
+type Api = Composed<tooltip.Api<PropTypes>, tooltip.Service>;
 
 const context = defineContext<Api>("Tooltip");
 
@@ -34,14 +34,7 @@ export const TooltipRootProvider = defineRootProvider<Api>("TooltipRootProvider"
 
 const part = partsOf<tooltip.Api<PropTypes>, Api>("Tooltip", context);
 
-/** The floating part, carrying the ref that keeps it in the top layer
- * with the machine. */
-export const TooltipPositioner = definePart<Api>(
-  "TooltipPositioner",
-  context,
-  (value) => ({ ...value.api.value.getPositionerProps(), ref: value.positioner }),
-  "span",
-);
+export const TooltipPositioner = positionerPart("Tooltip", context, "span");
 
 export const TooltipTrigger = triggerPart<tooltip.Api<PropTypes>, Api>("Tooltip", context);
 export const TooltipContent = part("Content", (api) => api.getContentProps(), "span");

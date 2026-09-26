@@ -48,7 +48,9 @@ Setups without an `index.html` can load everything manually with
 
 Every `monowind` import on the page — the plugin's, yours, and those of
 the packages built on it, such as `@monowind/ascii` — reaches one copy:
-your app's own where it has one, the plugin's dependency otherwise.
+your app's own where it has one, the plugin's dependency otherwise. A
+linked engine (a workspace, `npm link`) is served as is, not
+pre-bundled, so its edits reach the dev server.
 
 ## Docs
 
