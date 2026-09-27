@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
 import { paintGrid } from "../src/paint.ts";
-import { renderPlainText } from "../src/plain-text.ts";
-import { cellAtPoint, hitChain, nearestCells, pointKey, scrollStep } from "../src/pointer.ts";
+import { renderCellSegments, renderPlainText } from "../src/plain-text.ts";
+import {
+  cellAtPoint,
+  hitChain,
+  hitStack,
+  nearestCells,
+  pointKey,
+  scrollStep,
+} from "../src/pointer.ts";
 import { placePainted } from "../src/paint-origin.ts";
 import { buildTree } from "../src/tree.ts";
-import { layered, makeNode } from "./helpers.ts";
+import { cells, layered, makeNode, random } from "./helpers.ts";
 import type { LayoutNode } from "../src/types.ts";
 
 /** A node with a hand-set border-box rect, its subtree placed where it
@@ -45,16 +52,16 @@ describe("hitChain", () => {
   });
 
   it("resolves overlapping siblings to the topmost in paint order", () => {
-    const under = box("under", [0, 0, 4, 1]);
-    const over = box("over", [2, 0, 4, 1]);
-    const root = box("root", [0, 0, 10, 2], { children: [under, over] });
+    const siblings = (style: Partial<LayoutNode["style"]>) =>
+      box("root", [0, 0, 10, 2], {
+        children: [box("under", [0, 0, 4, 1], { style }), box("over", [2, 0, 4, 1])],
+      });
     // Document order breaks the tie in the overlap.
-    expect(names(hitChain(root, 3, 0, null))).toEqual(["over"]);
+    expect(names(hitChain(siblings({}), 3, 0, null))).toEqual(["over"]);
     // z-index beats document order — where CSS lets it apply (a
     // positioned child; it stays inert on static block-flow ones).
-    under.style.position = "relative";
-    under.style.zIndex = 1;
-    expect(names(hitChain(root, 3, 0, null))).toEqual(["under"]);
+    const lifted = siblings({ position: "relative", zIndex: 1 });
+    expect(names(hitChain(lifted, 3, 0, null))).toEqual(["under"]);
   });
 
   it("passes through a box that takes no pointer events, to what is beneath", () => {
@@ -117,6 +124,164 @@ describe("hitChain", () => {
     hidden.tableHidden = true;
     const root = box("root", [0, 0, 10, 2], { children: [hidden] });
     expect(hitChain(root, 1, 0, null)).toEqual([]);
+  });
+});
+
+describe('hitChain in the paint order (specs/positioning.md "Paint order")', () => {
+  const card = (menuStyle: Partial<LayoutNode["style"]> = {}, clip = false) => {
+    const menu = box("menu", [0, 2, 6, 3], {
+      style: { position: "absolute", zIndex: 10, ...menuStyle },
+    });
+    const overflow = clip ? { x: "clip", y: "clip" } : { x: "visible", y: "visible" };
+    const wrapper = box("wrapper", [0, 0, 10, 2], {
+      style: { position: "relative", overflow: overflow as LayoutNode["style"]["overflow"] },
+      children: [menu],
+    });
+    const next = box("next", [0, 2, 10, 2], { style: { position: "relative" } });
+    return box("root", [0, 0, 12, 6], { children: [wrapper, next] });
+  };
+
+  it("hits a menu below its wrapper, over the next card", () => {
+    expect(names(hitChain(card(), 1, 3, null))).toEqual(["wrapper", "menu"]);
+    expect(names(hitChain(card(), 1, 4, null))).toEqual(["wrapper", "menu"]);
+    expect(names(hitChain(card(), 8, 3, null))).toEqual(["next"]);
+  });
+
+  it("passes a member that takes no pointer events to the box beneath", () => {
+    expect(names(hitChain(card({ pointerEvents: false }), 1, 3, null))).toEqual(["next"]);
+  });
+
+  it("cuts a member at the clips of its chain", () => {
+    expect(names(hitChain(card({}, true), 1, 3, null))).toEqual(["next"]);
+    expect(names(hitChain(card({}, true), 1, 4, null))).toEqual([]);
+  });
+
+  it("hits an absolute box past a static clipping box its chain skips", () => {
+    const a = box("a", [0, 4, 3, 2], { style: { position: "absolute" } });
+    const clipper = box("clipper", [0, 0, 6, 3], {
+      style: { overflow: { x: "clip", y: "clip" } },
+      children: [a],
+    });
+    const containingBlock = box("containing block", [0, 0, 10, 8], {
+      style: { position: "relative" },
+      children: [clipper],
+    });
+    const root = box("root", [0, 0, 12, 10], { children: [containingBlock] });
+    expect(names(hitChain(root, 1, 5, null))).toEqual(["containing block", "clipper", "a"]);
+  });
+
+  it("orders z-auto boxes across parents by tree order", () => {
+    const a1 = box("a1", [0, 0, 5, 5], { style: { position: "absolute" } });
+    const p1 = box("p1", [0, 0, 10, 2], { style: { position: "relative" }, children: [a1] });
+    const b1 = box("b1", [2, 1, 5, 5], { style: { position: "absolute" } });
+    const p2 = box("p2", [0, 2, 10, 2], { children: [b1] });
+    const root = box("root", [0, 0, 12, 8], { children: [p1, p2] });
+    expect(names(hitChain(root, 3, 4, null))).toEqual(["p2", "b1"]);
+    expect(names(hitChain(root, 0, 4, null))).toEqual(["p1", "a1"]);
+  });
+
+  it("hits the top layer over a fixed box at the highest z-index", () => {
+    const popover = box("popover", [0, 0, 6, 2], { style: { position: "fixed" } });
+    popover.topLayerRank = 0;
+    popover.hostRect = { x: 0, y: 0 };
+    const fixed = box("fixed", [0, 0, 8, 3], { style: { position: "fixed", zIndex: 2147483647 } });
+    fixed.hostRect = { x: 0, y: 0 };
+    const root = box("root", [0, 0, 10, 4], { children: [fixed, popover] });
+    root.topLayer = [{ node: popover, ancestors: [root] }];
+    expect(names(hitChain(root, 1, 1, null))).toEqual(["popover"]);
+    expect(names(hitChain(root, 7, 1, null))).toEqual(["fixed"]);
+  });
+
+  it("hits a block's overflowing text at its glyphs, over a later block's fill", () => {
+    const text = makeNode({ style: { width: cells(2), height: cells(1) }, text: "aa bb" });
+    const later = makeNode({ style: { backgroundColor: "blue", height: cells(2) } });
+    const root = makeNode({ children: [text, later] });
+    layoutRoot(root, 4);
+    expect(hitStack(root, 1, 1, null).at(-1)).toBe(text);
+    expect(hitStack(root, 3, 1, null).at(-1)).toBe(later);
+  });
+});
+
+describe("hit and paint agree", () => {
+  it("hits the box whose fill each cell shows, on 300 random trees", () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const { root, fills } = filledTree(seed);
+      layoutRoot(root, 16);
+      const rows = renderCellSegments(root).map((row) =>
+        row.flatMap((segment) => Array.from(segment.text, () => segment.backgroundColor)),
+      );
+      rows.forEach((row, y) =>
+        row.forEach((color, x) => {
+          const shown = color === undefined ? undefined : fills.get(color);
+          expect(hitStack(root, x, y, null).at(-1), `seed ${seed} at ${x},${y}`).toBe(shown);
+        }),
+      );
+    }
+  });
+});
+
+/** A random tree of boxes, each a distinct opaque fill: every position,
+ * z-indexes, context-forming and clipping boxes, flex parents, floats
+ * and negative margins. */
+function filledTree(seed: number): {
+  root: LayoutNode;
+  fills: Map<string, LayoutNode | undefined>;
+} {
+  const next = random(seed);
+  const int = (lo: number, hi: number) => lo + Math.floor(next() * (hi - lo + 1));
+  const pick = <T>(values: readonly T[]): T => values[Math.floor(next() * values.length)]!;
+  const fills = new Map<string, LayoutNode | undefined>();
+  const root = makeNode({ style: { backgroundColor: "rgb(0 0 0)" } });
+  fills.set("rgb(0 0 0)", undefined);
+  const nodes = [root];
+  for (let i = 1, size = int(3, 14); i < size; i++) {
+    const position = pick(["static", "static", "relative", "absolute", "fixed"] as const);
+    const color = `rgb(${i} 0 0)`;
+    const node = makeNode({
+      style: {
+        position,
+        zIndex: pick([null, null, -1, 0, 1, 2]),
+        backgroundColor: color,
+        width: cells(int(1, 8)),
+        height: cells(int(1, 4)),
+        margin: { top: next() < 0.25 ? -int(1, 2) : 0, right: 0, bottom: 0, left: 0 },
+        insets:
+          position === "static"
+            ? { top: null, right: null, bottom: null, left: null }
+            : { top: int(-1, 3), right: null, bottom: null, left: int(0, 5) },
+        stacking: next() < 0.1,
+        display: next() < 0.15 ? "flex" : "block",
+        float: position === "static" && next() < 0.15 ? "left" : "none",
+        overflow: next() < 0.1 ? { x: "clip", y: "clip" } : { x: "visible", y: "visible" },
+      },
+    });
+    fills.set(color, node);
+    pick(nodes).children.push(node);
+    nodes.push(node);
+  }
+  return { root, fills };
+}
+
+describe("hitChain on an inline member's glyph", () => {
+  it("hits the span's paragraph where its glyph paints over the next one", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 40px"><p data-test="p">ab <span style="position: relative; top: 4px">XY</span></p><p data-test="next">zzzzzz</p></div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 10);
+    const chain = (col: number) =>
+      hitChain(root, col, 1, null).map((el) => el.getAttribute("data-test"));
+    expect(chain(3)).toEqual(["p"]);
+    expect(chain(1)).toEqual(["next"]);
+  });
+
+  it("hits a static element's glyph where its relative span moves it", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 40px"><p data-test="p">ab <span style="position: relative; top: 4px">X<b>Y</b></span></p><p data-test="next">zzzzzz</p></div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 10);
+    expect(hitChain(root, 4, 1, null).map((el) => el.getAttribute("data-test"))).toEqual(["p"]);
   });
 });
 

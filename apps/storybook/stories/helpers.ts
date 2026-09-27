@@ -139,6 +139,15 @@ export async function frames(count = 1): Promise<number> {
   return time;
 }
 
+/** A transition duration of `count` of this runner's frames, 500 ms at
+ * least: a loaded runner's long frames would end a fixed one before a
+ * frame-counting check could see it run. */
+export async function framesLong(count: number): Promise<string> {
+  const start = performance.now();
+  const end = await frames(5);
+  return `${Math.max(500, Math.round(((end - start) / 5) * count))}ms`;
+}
+
 /** A tally of a host's layouts, each of which sets its `measuring` flag
  * once, read with the records not yet delivered. */
 export interface LayoutCount {

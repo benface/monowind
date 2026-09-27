@@ -1,5 +1,10 @@
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type { ColorSpace, HueMode, Rgba } from "./color.ts";
+
+/** A rect by its edges, the far ones exclusive: as a clip, the cells
+ * overflow leaves visible (specs/scrolling.md). */
+export type Clip = { x0: number; y0: number; x1: number; y1: number };
+
 export interface Rect {
   x: number;
   y: number;
@@ -636,6 +641,10 @@ export interface CellStyle {
   /** Set on a layer root — an element with a transform or a filter —
    * whose subtree paints into its own node (specs/layers.md). */
   layer: Layer | null;
+  /** Forms a stacking context by a property the paint reads nowhere
+   * else (style.ts `readLayer`, `readStacking`; specs/positioning.md
+   * "Paint order"). */
+  stacking: boolean;
   /** Anchor positioning (specs/anchor-positioning.md): the element's
    * `anchor-name`s (an invoker's is synthesized from its target's id),
    * the name it is anchored to (a popover's implicit anchor from its
@@ -775,6 +784,12 @@ export interface InlineElement {
    * nest (specs/cell-model.md "Opacity and translucency"). */
   opacity: number;
   parent: number;
+  /** Relative or sticky, its `z-index` (null for `auto`), and whether
+   * it forms a stacking context: its glyphs paint in the positioned
+   * step (specs/positioning.md "Paint order"). */
+  positioned: boolean;
+  zIndex: number | null;
+  context: boolean;
 }
 
 export interface LayoutNode {
@@ -794,6 +809,10 @@ export interface LayoutNode {
    * the current scroll offsets (paint-origin.ts `placePainted`): what the
    * paint, hit-testing and focus read. */
   paintOrigin: { x: number; y: number };
+  /** The clips of its containing-block chain where it paints, in its
+   * layer's cells (paint-origin.ts), a layer root's those of its box;
+   * absent or null where nothing clips. */
+  paintClip?: Clip | null;
   /** Where an out-of-flow (absolute) box would have sat in normal flow —
    * its CSS "static position", parent-relative, recorded by the parent's
    * flow pass and consumed by the absolute-positioning pass for inset-less
@@ -825,6 +844,13 @@ export interface LayoutNode {
    * its relative insets rewritten to whole cells (specs/positioning.md);
    * `null` insets = not positioned. */
   inlineElements?: InlineElement[];
+  /** The leaf's inline elements whose glyphs paint in its stacking
+   * context's positioned step, those inside another that forms a
+   * context aside (stacking.ts); absent for none. */
+  inlineMembers?: number[];
+  /** With `inlineMembers`, each inline element's glyph turn: the member
+   * whose turn paints its glyphs, -1 for the leaf's own (stacking.ts). */
+  inlineOwners?: number[];
   /** Per-character index into `inlineElements` (-1 = direct leaf text);
    * present only when the run contains inline elements. Plain-text
    * rendering maps colors, font styling, and relative inset shifts from
@@ -874,8 +900,8 @@ export interface LayoutNode {
   decorationRuns?: BorderRun[];
   /** A collapsed table's border lattice, resolved at paint (lattice.ts). */
   lattice?: TableLattice;
-  /** A sticky table part's lattice cells for this paint, in grid cells,
-   * handed over by its table to paint in the part's own turn. */
+  /** A table part's lattice cells for this paint, in grid cells, handed
+   * over by its table to paint in the part's own turn (lattice.ts). */
   latticeRuns?: BorderRun[];
   /** True on a node the table pass removed from rendering: misparented
    * table content (no anonymous boxes — specs/table.md) and `<col>`/
@@ -956,6 +982,10 @@ export interface LayoutNode {
    * column vars; its children carry their own line maps in
    * container-content coordinates. */
   multicolGeometry?: MulticolLeafGeometry;
+  /** A text leaf's lines as its layout wrapped them, and each one's text
+   * row in its content box: the paint and the hit place its glyphs by
+   * them. */
+  lines?: Pick<MulticolLeafGeometry, "spans" | "textY">;
   /** Paragraph-flow multicol child (specs/multicol.md "Fragmenting
    * text-leaf children"): stays IN FLOW in the browser inside the
    * container's native columns so the browser fragments it itself.
@@ -1119,6 +1149,7 @@ export function defaultCellStyle(): CellStyle {
     visible: true,
     pointerEvents: true,
     layer: null,
+    stacking: false,
     anchorNames: [],
     positionAnchor: null,
     positionArea: null,

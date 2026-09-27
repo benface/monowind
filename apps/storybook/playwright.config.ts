@@ -1,5 +1,13 @@
 import { defineConfig } from "@playwright/test";
 
+/** The specs WebKit and Firefox run too. Selection painting differs per
+ * engine (Safari draws selection ink through text-fill-color) — the
+ * selection spec has goldens for each. The others are goldenless: glyph
+ * rendering, scroll physics, hit-testing, layout rounding, the window's
+ * own metrics, and compositing differ per engine. */
+const EVERY_ENGINE =
+  /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement|blend|stacking)\.spec\.ts/;
+
 /**
  * Visual regression tests — ALWAYS run inside the official Playwright Docker
  * image (see scripts/test-visual.mjs) so screenshots are byte-identical
@@ -12,23 +20,8 @@ export default defineConfig({
   fullyParallel: true,
   projects: [
     { name: "chromium" },
-    // Selection painting differs per engine (Safari draws selection ink
-    // through text-fill-color) — the selection spec runs in all three,
-    // each with its own goldens. The QR decode, keyboard, pointer,
-    // top-layer, agreement, and blend specs run in all three too,
-    // goldenless: glyph rendering, scroll physics, hit-testing, layout
-    // rounding, the window's own metrics, and compositing differ per
-    // engine.
-    {
-      name: "webkit",
-      use: { browserName: "webkit" },
-      testMatch: /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement|blend)\.spec\.ts/,
-    },
-    {
-      name: "firefox",
-      use: { browserName: "firefox" },
-      testMatch: /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement|blend)\.spec\.ts/,
-    },
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: EVERY_ENGINE },
+    { name: "firefox", use: { browserName: "firefox" }, testMatch: EVERY_ENGINE },
   ],
   webServer: {
     command: "node ../../scripts/serve-static.mjs storybook-static 6007",

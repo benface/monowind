@@ -1141,7 +1141,7 @@ describe("wrap-reverse runs the cross axis backwards (probed: every engine)", ()
 
   it("stacks overflowing lines from the top, overflow alignment being safe", () => {
     // CSS runs them past the top, stretch's flex-start fallback
-    // (specs/cell-model.md deviation 23).
+    // (specs/cell-model.md deviation 21).
     const [first, second] = [box(4, 2), box(4, 2)];
     lay({ flexDirection: "row", width: cells(4), height: cells(2) }, [first, second]);
     expect([first.localRect.y, second.localRect.y]).toEqual([2, 0]);
@@ -1531,7 +1531,7 @@ describe("justify-content offsets through layoutRoot", () => {
   });
 });
 
-describe("overflowing alignment at the start edge (specs/cell-model.md deviation 23)", () => {
+describe("overflowing alignment at the start edge (specs/cell-model.md deviation 21)", () => {
   const wide = (width: number, height = 1) =>
     makeNode({
       text: "a",

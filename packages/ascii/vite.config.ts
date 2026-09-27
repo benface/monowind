@@ -1,8 +1,10 @@
 import { defineConfig } from "vite";
 import { globSync } from "node:fs";
 import { resolve } from "node:path";
+import { css } from "../../scripts/vite-css.mjs";
 
 export default defineConfig({
+  css,
   build: {
     lib: {
       // One entry per public module: the element + every font module

@@ -83,6 +83,16 @@ the percentage already, so a percentage inset utility — a fraction,
 list, like the sizing utilities' fallback, negative ones too, whether
 the minus leads the utility or the value (`-top-1/2`, `top-[-50%]`).
 
+Without Typed OM an inline width, height or inset is read as authored,
+as it computes: `px`, `rem` and viewport units by the terms above (on
+the spacing scale for an inset, as its computed px has them), a
+percentage kept, and a length in another unit (`em`, `ch`, `lh`, a
+`calc()` of one) through `getComputedStyle`'s px — the authored length
+for an inset. **Deviation (no Typed OM — Firefox before 157):** that px
+is a size's USED one, so a size in such a unit that the browser's own
+layout has moved (a shrunk flex item, a table cell) reads as moved, as
+an arbitrary-value sizing utility (`h-[3ch]`) does.
+
 ### Rounding
 
 After conversion to cells, every value is rounded to the **nearest integer,
@@ -174,8 +184,9 @@ Visible overflow paints past the host, as CSS paints it past any box: the
 grid is sized to the INK extent along each visible axis (a root leaf
 under `truncate` keeps its box — specs/host-leaf.md) while the host
 keeps its in-flow height, so
-a box's overflowing rows overlay what follows (later siblings paint on top,
-per paint order), and the host's background follows the ink — the host is
+a box's overflowing rows overlay what follows (its text over a later
+block's fill, that block's text over its fills, per positioning.md
+"Paint order"), and the host's background follows the ink — the host is
 the canvas, as a document's root background covers its overflow. Ink above or
 left of the host has no cells and is dropped (deviation).
 
@@ -291,9 +302,16 @@ element's padding cells.
   and truncation use per-character advances. Negative tracking clamps to 0
   (a grid can't squeeze). Rendering: the engine rewrites `letter-spacing`
   to exactly `root letter-spacing + extra × cell width`.
-- Paint-only typography (weight, style, decoration, color) passes through.
-  Note: bold/italic can render wider in some monospace fonts — listed under
-  font risks, mitigated by font recommendations.
+- Paint-only typography (weight, style, `text-decoration-line`, color)
+  passes through. Note: bold/italic can render wider in some monospace
+  fonts — listed under font risks, mitigated by font recommendations.
+  A box's text shows the decoration lines its in-flow ancestors
+  propagate beside its own (css-text-decor-3 §2): a paragraph in an
+  `underline` block, and a span's text in an `underline` link, are
+  underlined; an out-of-flow box, a float and an atomic inline box
+  start without them. **Deviation**: the grid draws a decoration line in its glyph's color,
+  solid, at the font's thickness; `text-decoration-color`, `-style` and
+  `-thickness` are never read.
 - Inline content must not disturb row height: `vertical-align` and any other
   baseline-shifting properties are neutralized on inline descendants.
   On ATOMIC inline boxes, authored `vertical-align: bottom` is honored —
@@ -470,9 +488,12 @@ breaking (em dashes, CJK, soft hyphens, …) is not modeled — a deviation.
 (above). Styles and colors are per-side (`border-t-cyan-400`,
 `[border-top-style:double]`): each edge uses its own style's glyphs and its
 own color. A corner where both adjacent edges share a style uses that
-style's corner glyph; mixed-style corners fall back to the light corners
-(Unicode has no mixed junction glyphs for most pairs — same convention as
-dashed/dotted). Corner color comes from the horizontal (top/bottom) edge.
+style's corner glyph; mixed-style corners fall back to the light corners,
+as dashed/dotted do — deferred, not a Unicode gap: its mixed glyphs cover
+light×heavy completely and single×double wherever a junction's
+through-lines share a style (every corner: `╒ ╓ ╕ ╖ …`); only
+heavy×double has none. Corner color comes from the horizontal
+(top/bottom) edge.
 
 | style           | H   | V   | corners       | junctions       |
 | --------------- | --- | --- | ------------- | --------------- |
@@ -556,9 +577,12 @@ value in cells (`--mw-ti × --mw-cw`, always set — the custom property
 inherits, so an `indent-0` child under an indented ancestor must pin
 its own 0) so the selectable light-DOM copy sits under the grid's
 glyphs; an authored `1rem` would otherwise resolve against the font
-size, not the cell width. **Deviations**: negative values clamp to 0
-(hanging indents are off-grid), percentages resolve to 0, and the
-indent doesn't count toward intrinsic sizing.
+size, not the cell width. **Deviations**, each a shortcut, not a grid
+limit: negative values clamp to 0 (a negative indent is whole cells
+too), percentages resolve to 0 (the computed value keeps the `%`, which
+resolves once, against the block's content width), and the indent
+doesn't count toward intrinsic sizing (browsers count it in min- and
+max-content).
 
 ## Opacity and translucency
 
@@ -781,7 +805,9 @@ frame the request laid out).
 This works because the text-visibility lock is
 `-webkit-text-fill-color: transparent`, NOT `color: transparent` — the
 computed `color` stays live and authored transitions actually run on
-it (decoration ink follows `color` and gets its own transparent lock).
+it (the native decoration ink takes its own transparent lock, on
+`text-decoration-color`; the grid's decoration, in its glyph's color,
+follows `color`).
 A light element's gate is its own flag — `data-mw-measuring`, set on
 every light element as the layout sets the host's `measuring`, then
 `data-mw-settling` on the elements that settle — never the host's
@@ -830,8 +856,9 @@ start nothing. CSS `animation` keyframes are sampled by the same loop,
 per element by what their properties need — a repaint for live
 paint-only ones, a box placement for a layer's effects, a relayout for
 the rest (specs/animations.md). **Deviations**: transitions of other
-non-sampled properties (decoration color, geometry) flip to their
-target on the next relayout instead of fading.
+non-sampled properties (geometry, say) flip to their target on the
+next relayout instead of fading; a `text-decoration-color` transition
+shows nothing, as the grid reads no decoration color ("Typography").
 
 ## Selection
 
@@ -1321,7 +1348,8 @@ For "Opacity and translucency":
   (deviation 17).
 - tree.ts: an inline entry's own opacity and its `parent` entry; a
   split element's entry (`collectRunNodes`), its split ancestors'
-  opacity multiplied in (`splitOpacity`, deviation 18).
+  opacity multiplied in (`splitOpacity`, deviation 18); each box's and
+  entry's decoration lines, its ancestors' added (`propagateDecorations`).
 - color.ts: `parseColor`, `lab()`, `lch()` and every `color()` space
   read through css-color-4's conversions (prophoto-rgb's D50 white
   adapted to D65); `colorAlpha`, 1 for a form it cannot read;

@@ -107,11 +107,13 @@ nested host, which never lays out, is never hidden.
   renderer leaves' from their element, and an entry for the text an
   inline element split around a block leaves in a run
   (`collectRunNodes`).
-- plain-text.ts: `walk` guards each piece of a node's own ink on
-  `visible`, and each text cell on its inline element's or the leaf's;
-  a table hands its lines to a stuck part only while it shows.
-- pointer.ts: `descend` passes a hidden box through unless something
-  of it shows at the cell (`shows`); the top-layer stack likewise.
+- plain-text.ts: `paintBox` and `paintText` guard each piece of a
+  node's own ink on `visible`, and each text cell on its inline
+  element's or the leaf's; a table hands its lines to a stuck part
+  only while it shows (`resolveLattices`).
+- pointer.ts: `takes` passes a hidden box's cell to what paints
+  beneath it, a visible descendant's box or glyph taking it; the
+  top-layer stack likewise.
 - paint.ts: a hidden layer root's box takes no hit and applies no
   `backdrop-filter`.
 - focus.ts: candidates skip a hidden box or inline element.

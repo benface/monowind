@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * `@monowind/qr-code` — QR codes on the monowind grid: the `<mono-qr>`
  * element, a leaf renderer (specs/leaf-renderers.md, specs/qr-code.md
@@ -11,6 +12,7 @@ import { glyphSetFor, registerLeafRenderer } from "monowind";
 import type { LeafContent } from "monowind";
 import { LEVELS, encode, pack, resolveGlyphs, scaleUp, snapAspect } from "./render.ts";
 import type { Aspect, Encoded, Level } from "./render.ts";
+import shadowCss from "./shadow.css?inline";
 
 export {
   DEFAULT_GLYPHS,
@@ -34,14 +36,7 @@ const HTMLElementBase = (
  * inherits the engine's typography lock, so the pre aligns cell for
  * cell) — what a selection reads and a copy pastes — and the slotted
  * value, visually hidden for the accessibility tree. */
-const SHADOW_TEMPLATE = `<style>
-  :host { display: block; }
-  #mirror { margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; color: transparent; }
-  /* The engine paints a selection on its grid (specs/wide-characters.md);
-   * the transcript's own highlight stays invisible, ungated: one element. */
-  #mirror::selection { color: transparent; text-shadow: none; background: transparent; }
-  .alt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; user-select: none; -webkit-user-select: none; }
-</style><pre id="mirror" aria-hidden="true"></pre><span class="alt"><slot></slot></span>`;
+const SHADOW_TEMPLATE = `<style>${shadowCss}</style><pre id="mirror" aria-hidden="true"></pre><span class="alt"><slot></slot></span>`;
 
 /** `<mono-qr>`: renders its text content as a QR code. Attributes:
  * `level` (L | M | Q | H, default M), `aspect` (auto, or the cell's

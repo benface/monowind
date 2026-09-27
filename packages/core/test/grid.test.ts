@@ -337,7 +337,7 @@ describe("grid track sizing via layout", () => {
   });
 });
 
-describe("overflowing alignment at the start edge (specs/cell-model.md deviation 23)", () => {
+describe("overflowing alignment at the start edge (specs/cell-model.md deviation 21)", () => {
   const lay = (style: Partial<CellStyle>, child: LayoutNode) => {
     const container = makeNode({
       style: { display: "grid", width: { kind: "cells", value: 10 }, ...style },

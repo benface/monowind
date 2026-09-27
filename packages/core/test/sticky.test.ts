@@ -275,6 +275,26 @@ const TABLE_CELL = "border: 1px solid";
 const cell = (tag: string, text: string, extra = "") =>
   `<${tag} style="${TABLE_CELL}; ${extra}">${text}</${tag}>`;
 
+describe("a sticky box in an absolute box", () => {
+  it("sticks to a scroller on its own chain, not to a static one the absolute box escapes", () => {
+    const heading = sticky("H", { top: 0 });
+    const menu = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 0, right: null, bottom: null, left: 0 },
+        width: { kind: "cells", value: 6 },
+      },
+      children: [spacer(2), heading, spacer(2)],
+    });
+    const list = scroller([spacer(10), menu]);
+    const root = makeNode({ style: { position: "relative" }, children: [list] });
+    layoutRoot(root, 20);
+    scrollBox(root, list, 0, 3);
+    expect(heading.stickyShift).toBeUndefined();
+    expect(heading.paintOrigin.y).toBe(2);
+  });
+});
+
 describe("sticky table parts", () => {
   const build = (html: string, cols: number) => {
     const host = document.createElement("div");
@@ -374,13 +394,14 @@ describe("sticky table parts", () => {
     const { root, box } = build(
       `<div><div style="overflow: auto; width: 28px; height: 28px">` +
         `<table style="border-collapse: collapse">` +
-        `<thead style="position: sticky; top: 0px"><tr>` +
+        `<thead style="position: sticky; top: 0px; z-index: 1"><tr>` +
         `${cell("th", "hh", "position: sticky; left: 0px")}${cell("th", "ii")}</tr></thead>` +
         `<tbody>${body}</tbody></table></div></div>`,
       7,
     );
     // The stuck column's line meets the stuck header's bottom line and
-    // runs on into the body's next line, both scrolled a cell.
+    // runs on into the body's next line, both scrolled a cell; the
+    // header's z-index lifts it over the column's cells (CSS's order).
     const rows = rowsAt(root, box, 1, 1);
     expect(rows.slice(0, 6).map((r) => r.slice(0, 4))).toEqual([
       "┌──┬",
@@ -390,6 +411,62 @@ describe("sticky table parts", () => {
       "│dd│",
       "├──┼",
     ]);
+  });
+
+  it("paints a relative row's lines over its fill, as its own", () => {
+    const { root } = build(
+      `<div><table style="border-collapse: collapse"><tbody>` +
+        `<tr style="position: relative; background-color: red">${cell("td", "aa")}${cell("td", "bb")}</tr>` +
+        `<tr>${cell("td", "cc")}${cell("td", "dd")}</tr></tbody></table></div>`,
+      10,
+    );
+    expect(renderPlainText(root).split("\n").slice(0, 3)).toEqual([
+      "┌──┬──┐",
+      "│aa│bb│",
+      "├──┼──┤",
+    ]);
+  });
+
+  it("hands a negative row its lines before it paints, under its table", () => {
+    const { root, box } = build(
+      `<div><div style="overflow-y: auto; height: 32px">` +
+        `<table style="border-collapse: collapse"><tbody>` +
+        `<tr style="position: relative; z-index: -1">${cell("td", "aa")}${cell("td", "bb")}</tr>` +
+        `<tr>${cell("td", "cc")}${cell("td", "dd")}</tr></tbody></table></div></div>`,
+      10,
+    );
+    const lines = ["┌──┬──┐", "│aa│bb│", "├──┼──┤"];
+    expect(renderPlainText(root).split("\n").slice(0, 3)).toEqual(lines);
+    expect(rowsAt(root, box, 1).slice(0, 2)).toEqual(lines.slice(1));
+  });
+
+  it("covers a z-auto stuck header's corner with the body's stuck column, lines and all", () => {
+    const table = (theadStyle: string) => {
+      const body = ["aa", "dd", "ee"]
+        .map(
+          (name) =>
+            `<tr>${cell("th", name, "position: sticky; left: 0px")}${cell("td", "bb")}</tr>`,
+        )
+        .join("");
+      const { root, box } = build(
+        `<div><div style="overflow: auto; width: 28px; height: 28px">` +
+          `<table style="border-collapse: collapse">` +
+          `<thead style="position: sticky; top: 0px; ${theadStyle}"><tr>` +
+          `${cell("th", "hh", "position: sticky; left: 0px")}${cell("th", "ii")}</tr></thead>` +
+          `<tbody>${body}</tbody></table></div></div>`,
+        7,
+      );
+      return rowsAt(root, box, 1, 1)
+        .slice(0, 4)
+        .map((row) => row.slice(0, 4));
+    };
+    // The body's first cell, scrolled up a row under the header, paints
+    // after it in tree order: its lines and its text over the header's
+    // corner (CSS's order, probed), its side line meeting the header's
+    // bottom line where that runs on.
+    expect(table("")).toEqual(["┌──┬", "├──┤", "│aa├", "├──┼"]);
+    // The header's z-index lifts it over the column.
+    expect(table("z-index: 1")).toEqual(["┌──┬", "│hh│", "├──┼", "├──┼"]);
   });
 
   it("adds a sticky cell's shift to its sticky group's", () => {

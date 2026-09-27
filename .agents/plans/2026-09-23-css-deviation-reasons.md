@@ -8,11 +8,11 @@ Firefox and WebKit. Origins: **deliberate** (a stated reason),
 **deferred** (scope or time), **shortcut** (an implementation
 simplification), **none** (no evidence).
 
-Several stated reasons are factually wrong and need correcting whatever
-is decided: borders' "most pairs", text indent's "off-grid" and
-"per-line", positioning.md 2's "per-line", flex.md's "moot" and
-table.md's "exact", host-leaf.md's "they never did", and the
-decoration-color claim.
+Several stated reasons were factually wrong: borders' "most pairs",
+text indent's "off-grid" and "per-line", positioning.md 2's
+"per-line", flex.md's "moot" and table.md's "exact", host-leaf.md's
+"they never did", and the decoration-color claim. All are corrected in
+the specs (2026-09-27), the deviations themselves still to decide.
 
 ## Main list
 
@@ -80,7 +80,7 @@ decoration-color claim.
   `absolute z-10` menu in a `relative` card paints under the next
   card; `-z-1` paints over its parent. Fix, medium–large; first step:
   lift z-indexed positioned descendants through `z-index: auto`
-  ancestors.
+  ancestors. **Done 2026-09-27** (Order item 4).
 - **`text-align: justify` as start** (cell-model 6) — deliberate,
   expired: the unified render removed its premise. Whole-space
   justification fits the grid, the native copy drifting under a cell
@@ -88,9 +88,18 @@ decoration-color claim.
 - **`aspect-ratio` deferred** (cell-model 9) — deferred, stated. The
   metrics reach the reader, and precedent (viewport units, shadows,
   gradients) settles on physical. Fix, medium.
+- **An absolute box counts toward no scroll range** (scrolling,
+  listed 2026-09-27) — shortcut: the range is taken in flow layout,
+  before the positioning pass. Fix, medium: the ranges of the
+  scrollers on each placed box's chain taken again after the pass, a
+  scrollbar that appears laying out again.
 
 ## Lower value
 
+- **`mix-blend-mode`, `clip-path`, `mask-image` draw nothing**
+  (layers 8, listed 2026-09-27) — none: a layer opens for a transform
+  or a filter alone. Fix, medium: each as a layer effect, the browser
+  drawing it on the layer's cells.
 - **`leading-*` on inline elements ignored** — deliberate, holds: a
   taller inline line-height moves the line's text by half-leading, half
   a row for even multiples. Keep, with that wording.
@@ -157,6 +166,18 @@ order.
 Decided 2026-09-25: overflow alignment past the start edge follows
 stacking (cell-model.md deviation 21, `2026-09-25-overflow-alignment.md`).
 
+Decided 2026-09-27: an absolute box's scroll range is fixed with
+overflow alignment, whose plan now holds it (both rework the range
+`contentExtent` takes); `mix-blend-mode`, `clip-path` and `mask-image`
+wait behind new features. Before item 1, this Order becomes a plan of
+its own: each "Fix" entry above in or out, item 5's remainder defined,
+and a short spec change for each medium item as it comes up. In for
+0.3.4 beside the numbered items: mixed-weight and mixed-style corners,
+sticky elements as anchors, a grid holding only text (content
+alignment and track sizing), the caption outside the table's border
+(its margins are in item 7) and the subgrid gap. Later:
+`visibility: collapse`, column flex wrapping, `scroll-smooth`.
+
 Decided 2026-09-23, after the follow-ups commit: opacity becomes one
 color-blending model — each translucent glyph or background color
 composited over what the cell already holds, cell `opacity` kept for
@@ -172,9 +193,13 @@ stay. The parsing is done since: `lab()`, `lch()` and, from
 1. Lock `columns` on the host.
 2. Margins on inline-blocks.
 3. Percent sizes against the space minus margins.
-4. Stacking: lift z-indexed positioned descendants.
+4. Stacking: lift z-indexed positioned descendants. **Done
+   2026-09-27** (`2026-09-27-stacking-contexts.md`): every member of a
+   stacking context lifted, the in-flow phases, the containing-block
+   chain and inline members with it.
 5. Gradient color fidelity (lab/lch/`color()`, unclamped,
-   interpolation spaces, the fade drift).
+   interpolation spaces, the fade drift). **Partly done** (above): the
+   parsing and the unclamped stops.
 6. Baseline alignment: flex rows, then tables.
 7. The smalls: text indent ×3, additive `scroll-padding`,
    `fit-content()`/`calc()` tracks, multicol min-content, subgrid

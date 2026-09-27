@@ -14,6 +14,8 @@ import {
   readTextStyle,
   trackingCells,
 } from "./style.ts";
+import { animatedProperties } from "./animation.ts";
+import { inlineMembersOf, inlineOwners } from "./stacking.ts";
 import { createNode, defaultCellStyle } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import { clusterAdvance, clusterAdvances, graphemes, textCells } from "./width.ts";
@@ -50,7 +52,9 @@ export function buildTree(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
 ): LayoutNode | null {
-  return buildNode(root, { rootFontSizePx, cellMetrics, textareaWidths });
+  const tree = buildNode(root, { rootFontSizePx, cellMetrics, textareaWidths });
+  if (tree) propagateDecorations(tree, "none");
+  return tree;
 }
 
 /** What every node of a tree is built with (buildTree). */
@@ -185,9 +189,47 @@ export function buildRoot(
     !roles.includes("block") &&
     !splitsForBlock(elementChildren, roles) &&
     (hasDirectText(host) || roles.includes("inline"));
-  return isLeaf
+  const tree = isLeaf
     ? buildLeaf(host, style, elementChildren, roles, context, nodes)
     : createNode(host, style, buildChildren(host, nodes, context, style));
+  propagateDecorations(tree, "none");
+  return tree;
+}
+
+/** Each box's and inline element's decoration lines, its own and those
+ * its in-flow ancestors propagate (css-text-decor-3 §2), an inline
+ * element a block split among them; an out-of-flow box, a float and an
+ * atomic inline box take none. */
+function propagateDecorations(node: LayoutNode, propagated: string): void {
+  const { style } = node;
+  style.textDecorationLine = decorationLines(style.textDecorationLine, propagated);
+  const entries = node.inlineElements ?? [];
+  for (const entry of entries) {
+    const above =
+      entry.parent >= 0 ? entries[entry.parent]!.textDecorationLine : style.textDecorationLine;
+    entry.textDecorationLine = decorationLines(entry.textDecorationLine, above);
+  }
+  for (const child of node.children) {
+    const { position, float } = child.style;
+    if (position === "absolute" || position === "fixed" || float !== "none" || child.inlineBox) {
+      propagateDecorations(child, "none");
+      continue;
+    }
+    let lines = style.textDecorationLine;
+    if (!child.anonymous) {
+      for (let at = child.source.parentElement; at && at !== node.source; at = at.parentElement) {
+        lines = decorationLines(getComputedStyle(at).textDecorationLine, lines);
+      }
+    }
+    propagateDecorations(child, lines);
+  }
+}
+
+/** Two `text-decoration-line` values together. */
+function decorationLines(own: string, propagated: string): string {
+  if (propagated === "none" || propagated === "" || own === propagated) return own;
+  if (own === "none" || own === "") return propagated;
+  return [...new Set(`${propagated} ${own}`.split(" "))].join(" ");
 }
 
 /** A leaf's style from an element's text and inherited paint
@@ -347,6 +389,11 @@ function buildLeaf(
   if (run.inlineElements.length > 0) {
     node.inlineElements = run.inlineElements;
     node.charInline = charInline;
+    const members = inlineMembersOf(run.inlineElements, -1);
+    if (members.length > 0) {
+      node.inlineMembers = members;
+      node.inlineOwners = inlineOwners(run.inlineElements);
+    }
   }
   const charSource = charSourceRuns(run);
   if (charSource.length > 0) node.charSource = charSource;
@@ -402,6 +449,9 @@ function buildRendererLeaf(
       pointerEvents: node.style.pointerEvents,
       opacity: 1,
       parent: -1,
+      positioned: false,
+      zIndex: null,
+      context: false,
     }));
     runs.forEach((run, index) => {
       const line = lines[run.line];
@@ -566,6 +616,7 @@ function collectRunNodes(
     } else {
       const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx, -1);
       entry.opacity *= splitOpacity(owner, container);
+      entry.context ||= entry.opacity < 1;
       collectOwned(run, entry, (index) =>
         collectNodes(group, entry.tracking, ctx, run, entry.opacity, index),
       );
@@ -619,13 +670,23 @@ function inlineEntry(
   parent: number,
 ): LeafRun["inlineElements"][number] {
   const { position, backgroundColor } = cs;
+  const positioned = position === "relative" || position === "sticky";
+  const zIndex =
+    positioned && cs.zIndex !== "auto" && cs.zIndex !== "" ? Number(cs.zIndex) || 0 : null;
+  const opacity = readOpacity(cs.opacity);
+  const { letterSpacing } = cs;
+  const rootLetterSpacing = ctx.cellMetrics?.letterSpacing ?? 0;
   return {
     element,
-    tracking: trackingCells(
-      cs.letterSpacing,
-      parseFloat(cs.fontSize) || ctx.rootFontSizePx,
-      ctx.cellMetrics?.letterSpacing ?? 0,
-    ),
+    // The font size scales only a letter spacing past the root's.
+    tracking:
+      letterSpacing === "normal" && rootLetterSpacing >= 0
+        ? 0
+        : trackingCells(
+            letterSpacing,
+            parseFloat(cs.fontSize) || ctx.rootFontSizePx,
+            rootLetterSpacing,
+          ),
     padLeft,
     padRight,
     insets: position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
@@ -638,8 +699,16 @@ function inlineEntry(
     textDecorationLine: cs.textDecorationLine,
     visible: readVisible(cs, element),
     pointerEvents: cs.pointerEvents !== "none",
-    opacity: readOpacity(cs.opacity),
+    opacity,
     parent,
+    positioned,
+    zIndex,
+    // By the properties its entry holds (specs/positioning.md deviation 8).
+    context:
+      position === "sticky" ||
+      zIndex !== null ||
+      opacity < 1 ||
+      animatedProperties(element).has("opacity"),
   };
 }
 

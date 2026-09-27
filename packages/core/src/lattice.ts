@@ -9,7 +9,8 @@
  * it slid over; parts moving together merge where they meet.
  */
 
-import { junctionGlyph, lineGlyph, paintOrderedChildren } from "./borders.ts";
+import { junctionGlyph, lineGlyph } from "./borders.ts";
+import { inPositionedStep, paintTurn } from "./stacking.ts";
 import type { BorderRun, BorderStyle, LatticeSegment, LayoutNode, TableLattice } from "./types.ts";
 
 export const STYLE_RANK: Record<BorderStyle, number> = {
@@ -43,8 +44,9 @@ interface Shift {
 
 /** One placement of a segment: the shift of the cells beside it that
  * share it, the parts painting it — for each such cell the innermost
- * sticky-shifted node among the cell, its row, and its row group, or
- * null for the table — and the latest of them in paint order. */
+ * among the cell, its row, and its row group that paints in a turn of
+ * its own, or null for the table — and the latest of them in paint
+ * order. */
 interface Placement {
   shift: Shift;
   owners: (LayoutNode | null)[];
@@ -80,13 +82,13 @@ function lineEdges(lattice: TableLattice): {
   };
 }
 
-/** What the shifted parts cover. Each part's region is its box, lines
- * included, where it paints now; inside it the part covers what paints
- * before it (`rankOf`, the table's own lattice at -1) and moves
- * differently — parts moving together, the cells of a stuck column or
- * a cell and its stuck row, form one piece and merge where they meet.
- * Regions are indexed by row — a stuck column is one per cell — for
- * the lookup every arm makes. */
+/** What the parts that paint in turns of their own cover. Each part's
+ * region is its box, lines included, where it paints now; inside it the
+ * part covers what paints before it (`rankOf`, the table's own lattice
+ * at -1) and moves differently — parts moving together, the cells of a
+ * stuck column or a cell and its stuck row, form one piece and merge
+ * where they meet. Regions are indexed by row — a stuck column is one
+ * per cell — for the lookup every arm makes. */
 function coverage(
   table: LayoutNode,
   lattice: TableLattice,
@@ -97,13 +99,18 @@ function coverage(
 } {
   const { vLines, hLines, widths, cells } = lattice;
   const C = widths.length;
-  const rank = new Map<LayoutNode, number>();
-  const order = (node: LayoutNode): void => {
-    rank.set(node, rank.size);
-    for (const child of paintOrderedChildren(node)) order(child);
+  // The parts' turns in paint order (stacking.ts), the table's members
+  // ordered among themselves as in the whole tree.
+  let ranks: Map<LayoutNode, number> | null = null;
+  const rankOf = (owner: LayoutNode | null): number => {
+    if (!owner) return -1;
+    if (!ranks) {
+      const order = new Map<LayoutNode, number>();
+      paintTurn(table, true, { enter: (node) => order.set(node, order.size) });
+      ranks = order;
+    }
+    return ranks.get(owner) ?? -1;
   };
-  order(table);
-  const rankOf = (owner: LayoutNode | null): number => (owner ? (rank.get(owner) ?? -1) : -1);
   interface Region {
     x0: number;
     x1: number;
@@ -115,7 +122,7 @@ function coverage(
   for (const row of cells) {
     for (const cell of row) {
       if (!cell) continue;
-      const { shift, owner } = placementOf(cell);
+      const { shift, owner } = placementOf(cell, table);
       if (!owner || seen.has(owner)) continue;
       seen.add(owner);
       const { r0, r1, c0, c1 } = partExtent(lattice, owner)!;
@@ -152,7 +159,7 @@ function coverage(
 }
 
 /** The lattice's glyph runs, in table-local cells: the table's own, and
- * each shifted part's (for the part's paint step). `visible` says
+ * each owning part's (for the part's turn). `visible` says
  * whether a table-local cell reaches the grid. */
 export function resolveLattice(
   table: LayoutNode,
@@ -227,7 +234,7 @@ export function resolveLattice(
     const out: Placement[] = [];
     for (const cell of beside) {
       if (!cell) continue;
-      const { shift, owner } = placementOf(cell);
+      const { shift, owner } = placementOf(cell, table);
       const same = out.find((p) => p.shift.x === shift.x && p.shift.y === shift.y);
       if (!same) out.push({ shift, owners: [owner], rank: rankOf(owner) });
       else if (!same.owners.includes(owner)) {
@@ -372,16 +379,24 @@ export function partExtent(
 }
 
 /** A cell's shift — its own, its row's, and its row group's — and the
- * innermost of them that has one, which paints its lines. */
-function placementOf(cell: LatticeCell): { shift: Shift; owner: LayoutNode | null } {
-  const chain = [cell.node, cell.row, cell.group];
+ * innermost of them in the positioned step, a sticky one among them,
+ * which paints its lines in its turn (specs/positioning.md "Paint
+ * order"). */
+function placementOf(
+  cell: LatticeCell,
+  table: LayoutNode,
+): { shift: Shift; owner: LayoutNode | null } {
   const shift = { x: 0, y: 0 };
   let owner: LayoutNode | null = null;
-  for (const node of chain) {
-    if (!node?.stickyShift) continue;
-    shift.x += node.stickyShift.x;
-    shift.y += node.stickyShift.y;
-    owner ??= node;
+  const chain = [cell.node, cell.row, cell.group];
+  for (let i = 0; i < chain.length; i++) {
+    const node = chain[i];
+    if (!node) continue;
+    if (node.stickyShift) {
+      shift.x += node.stickyShift.x;
+      shift.y += node.stickyShift.y;
+    }
+    if (owner === null && inPositionedStep(node, chain[i + 1] ?? table)) owner = node;
   }
   return { shift, owner };
 }

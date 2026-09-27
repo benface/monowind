@@ -10,6 +10,7 @@ import {
   expectRow,
   faded,
   frames,
+  framesLong,
   gridOf,
   layerBox,
   moveTo,
@@ -835,6 +836,8 @@ export const OpacityTransitions: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
+    const duration = await framesLong(20);
+    for (const name of ["fade", "moving", "colored"]) by(name).style.transitionDuration = duration;
     const layouts = countLayouts(host);
     /** A class change's fade to half: the layouts over its frames to
      * its end, their count, and what they showed. */

@@ -222,12 +222,11 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   not points on the host's parent: _verified_ Firefox's
   `getComposedRanges` re-expresses a point on the host itself inside
   the host's shadow slot, which would read as outside the light DOM.
-- **Cell → character.** The leaf's line geometry (`leafLineGeometry`,
-  or the multicol leaf's stored fragmentation) with its per-character
-  advances gives, for a cell inside the leaf, the index into
-  `LayoutNode.text` painted there, or none. Recomputed at event time
-  from the last layout — a pure function of the node, as the paint
-  walk uses it.
+- **Cell → character.** The lines the leaf's layout wrapped (`lines`,
+  or the multicol leaf's fragmentation) with its per-character
+  advances give, for a cell inside the leaf, the index into
+  `LayoutNode.text` painted there, or none, from the last layout, as
+  the paint walk places them.
 - **Character ↔ DOM position.** The tree builder already records
   per-character metadata for a leaf (`charInline`); it also records
   which source Text node and offset every character of `node.text`

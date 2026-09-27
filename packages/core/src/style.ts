@@ -1,5 +1,5 @@
 import { trackBackground } from "./animate.ts";
-import { EFFECTS, animatesEffect } from "./animation.ts";
+import { EFFECTS, animatedProperties, animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
 import { colorAlpha, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
@@ -196,12 +196,19 @@ export function readCellStyle(
   const anchorInsets = anchorSource ? readAnchorInsets(anchorSource) : {};
   const { flexDirection, flexWrap, flexShrink, columnGap, rowGap, zIndex, breakInside } = cs;
   const ruleInset = cs.getPropertyValue("--mw-rule-inset").trim();
-  const justifyContent = readAlignment(el, "justify-content", JUSTIFY, cs.justifyContent);
+  // A flex column's main axis is block-wise, where `left` and `right` fall back to `start`.
+  const justifyContent = readAlignment(
+    el,
+    "justify-content",
+    display === "flex" && flexDirection.startsWith("column") ? JUSTIFY_BLOCK : JUSTIFY,
+    cs.justifyContent,
+  );
   const alignContent = readAlignment(el, "align-content", JUSTIFY, cs.alignContent);
   const alignItems = readAlignment(el, "align-items", ALIGN, cs.alignItems);
   const alignSelf = readAlignment(el, "align-self", ALIGN_SELF, cs.alignSelf);
   const justifyItems = readAlignment(el, "justify-items", ALIGN, cs.justifyItems);
   const justifySelf = readAlignment(el, "justify-self", ALIGN_SELF, cs.justifySelf);
+  const effects = readLayer(el, cs);
   const style: CellStyle = {
     display,
     tableRole,
@@ -313,7 +320,8 @@ export function readCellStyle(
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
-    layer: readLayer(el, cs),
+    layer: effects.layer,
+    stacking: effects.set || readStacking(el, cs),
     visible: readVisible(cs, el),
     pointerEvents: cs.pointerEvents !== "none",
     ...anchoring,
@@ -906,6 +914,8 @@ function applyBorderCollapse(style: CellStyle, cs: CSSStyleDeclaration): void {
  * form, or the empty string and `currentcolor` happy-dom leaves
  * unresolved. */
 export function isTransparentColor(value: string): boolean {
+  // Every element's unset background, read without a parse.
+  if (value === "rgba(0, 0, 0, 0)") return true;
   const normalized = value.trim().toLowerCase();
   return normalized === "" || normalized === "currentcolor" || colorAlpha(normalized) === 0;
 }
@@ -1232,6 +1242,8 @@ const JUSTIFY: Record<string, JustifyContent> = {
   "": "stretch",
 };
 
+const JUSTIFY_BLOCK: Record<string, JustifyContent> = { ...JUSTIFY, right: "start" };
+
 /** Item alignment: `normal` behaves as `stretch` in flex and grid, and
  * `anchor-center` centers on the anchor for an anchored box
  * (specs/anchor-positioning.md), plainly for any other. */
@@ -1391,7 +1403,10 @@ function readInsets(source: ReadSource): PerSide<CellLength | null> {
       return readSpacing(value, rootFontSizePx);
     }
     const inline = inlineStyle[prop];
-    if (inline) return inline === "auto" ? null : readSpacing(inline, rootFontSizePx);
+    if (inline) {
+      if (inline === "auto") return null;
+      return inlineLength(inline, cs.getPropertyValue(prop), rootFontSizePx) ?? 0;
+    }
     if (!new RegExp(`(?:^|[\\s:.[!])-?(?:${stems})-`).test(classAttr)) return null;
     // An inactive variant resolves to `auto`; no resolved value at all
     // (headless, stylesheet not loaded) trusts the class.
@@ -1719,6 +1734,23 @@ function readSpacing(value: string, rootFontSizePx: number): CellLength {
   return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : 0;
 }
 
+/** An inline length without Typed OM (specs/cell-model.md "Mixed-unit
+ * calc()"): the modeled units as authored, a percentage kept, another
+ * unit through the `resolved` px unless a percentage shares the value;
+ * undefined for a keyword. */
+function inlineLength(
+  inline: string,
+  resolved: string,
+  rootFontSizePx: number,
+): CellLength | undefined {
+  const value =
+    lengthValue(inline, "width", rootFontSizePx) ??
+    (/^-?[\d.]|^(?:calc|min|max|clamp)\(/.test(inline) && !inline.includes("%")
+      ? lengthValue(resolved, "width", rootFontSizePx)
+      : null);
+  return value ? lengthCells(value) : undefined;
+}
+
 /** Computed `opacity`, clamped to [0, 1]; a non-numeric read is opaque. */
 export function readOpacity(value: string): number {
   const parsed = parseFloat(value);
@@ -1742,16 +1774,56 @@ const IDENTITY = new Set([
   "0px 0px 0px",
 ]);
 
-function readLayer(el: Element, cs: CSSStyleDeclaration): Layer | null {
+function readLayer(el: Element, cs: CSSStyleDeclaration): { layer: Layer | null; set: boolean } {
+  // Any value but `none`, an identity included, forms a stacking context.
+  let set = false;
   const effect = (property: string): string => {
     const value = cs.getPropertyValue(property).trim();
+    set ||= value !== "" && value !== "none";
     return value === "" || IDENTITY.has(value) ? "none" : value;
   };
   const backdropFilter = effect("backdrop-filter");
   let layered = backdropFilter !== "none";
   for (const property of EFFECTS) layered ||= effect(property) !== "none";
   layered ||= animatesEffect(el);
-  return layered ? { backdropFilter, resampled: resamples(effect) } : null;
+  return { layer: layered ? { backdropFilter, resampled: resamples(effect) } : null, set };
+}
+
+/** The properties a `will-change` names to form a stacking context. */
+const CONTEXT_PROPERTIES = new Set([
+  ...EFFECTS,
+  "opacity",
+  "backdrop-filter",
+  "isolation",
+  "mix-blend-mode",
+  "perspective",
+  "clip-path",
+  "mask",
+  "mask-image",
+  "contain",
+]);
+
+/** Whether an element forms a stacking context by what the paint reads
+ * nowhere else (specs/positioning.md "Paint order"): position, `z-index`,
+ * a resting opacity and the layer effects are read already. */
+function readStacking(el: Element, cs: CSSStyleDeclaration): boolean {
+  const other = (property: string, initial: string): boolean => {
+    const value = cs.getPropertyValue(property).trim();
+    return value !== "" && value !== initial;
+  };
+  if (cs.getPropertyValue("isolation") === "isolate") return true;
+  if (other("mix-blend-mode", "normal") || other("perspective", "none")) return true;
+  if (cs.getPropertyValue("transform-style") === "preserve-3d") return true;
+  if (other("clip-path", "none") || other("mask-image", "none")) return true;
+  if (/\b(?:layout|paint|strict|content)\b/.test(cs.getPropertyValue("contain"))) return true;
+  const willChange = cs.getPropertyValue("will-change");
+  if (
+    willChange !== "auto" &&
+    willChange.split(",").some((name) => CONTEXT_PROPERTIES.has(name.trim()))
+  ) {
+    return true;
+  }
+  return animatedProperties(el).has("opacity");
 }
 
 /** Whether the effects draw the layer's cells at another size or angle
@@ -1789,9 +1861,8 @@ export function readPaintStyle(
   };
 }
 
-/** `text-indent` in cells. Percentages come through as `Npx` after
- * `getComputedStyle` only when a definite width is around, and even then
- * they'd need per-line resolution; treat them as 0. */
+/** `text-indent` in cells; a percentage or a negative indent reads 0
+ * (specs/cell-model.md "Text indent"). */
 function readTextIndent(cs: CSSStyleDeclaration, rootFontSizePx: number): number {
   const value = cs.textIndent;
   if (!value || value.endsWith("%")) return 0;
@@ -1825,9 +1896,9 @@ function readSize(source: ReadSource, key: "width" | "height", computed: string)
     if (inline === "auto") return undefined;
     const intrinsic = intrinsicSizeKeyword(inline);
     if (intrinsic) return intrinsic;
-    if (inline.endsWith("%")) return { kind: "percent", value: parseFloat(inline) };
-    const px = parseFloat(inline);
-    if (Number.isFinite(px)) return { kind: "cells", value: pxToCells(px, rootFontSizePx) };
+    const length = inlineLength(inline, resolved, rootFontSizePx);
+    if (typeof length === "number") return { kind: "cells", value: length };
+    if (length && length.cells === undefined) return { kind: "percent", value: length.percent };
   }
   // Intrinsic-keyword utilities (`w-min`…) must be caught by class scan here:
   // getComputedStyle would hand back the browser's *used* px width, which is

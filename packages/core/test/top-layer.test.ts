@@ -36,7 +36,7 @@ describe("top layer read", () => {
   });
 
   it("keeps the author's classes and inline style over the defaults", () => {
-    const el = opened({ popover: "", class: "mt-2 w-10", style: "left: 3ch" });
+    const el = opened({ popover: "", class: "mt-2 w-10", style: "left: 3rem" });
     const style = readCellStyle(el, 16);
     expect(style.margin.top).not.toBeNull();
     expect(style.margin.left).toBeNull();
@@ -65,8 +65,7 @@ describe("top layer read", () => {
 
 /** A laid-out tree with its stack assigned. */
 const painted = (root: LayoutNode, width = 20, stack = new TopLayer()) => {
-  layoutRoot(root, width);
-  stack.assign(root);
+  layoutRoot(root, width, undefined, undefined, stack);
   return renderGridRows(root);
 };
 const rowsOf = (root: LayoutNode, width = 20, stack?: TopLayer) =>
@@ -259,6 +258,24 @@ describe("top layer paint", () => {
       ["turned"],
     );
   });
+
+  it("paints an element in a clipping layer root from its layout's first paint, its fixed descendants with it", () => {
+    const fixed = makeNode({
+      text: "FX",
+      style: { position: "fixed", insets: { top: 3, right: null, bottom: null, left: 0 } },
+    });
+    const pop = top("", 0, 2, { children: [makeNode({ text: "POP" }), fixed] });
+    const card = makeNode({
+      style: {
+        layer: layered(),
+        height: { kind: "cells", value: 1 },
+        overflow: { x: "clip", y: "clip" },
+      },
+      children: [pop],
+    });
+    const page = makeNode({ style: { minHeight: 5 }, children: [card] });
+    expect(rowsOf(page).slice(2, 4)).toEqual(["POP", "FX"]);
+  });
 });
 
 describe("top layer opacity", () => {
@@ -289,8 +306,7 @@ describe("the backdrop box", () => {
       style: { minHeight: 3 },
       children: [makeNode({ text: "page" }), dialog],
     });
-    layoutRoot(root, 12);
-    new TopLayer().assign(root);
+    layoutRoot(root, 12, undefined, undefined, new TopLayer());
     const layers = document.createElement("div");
     const target = document.createElement("pre");
     paintGrid(root, target, { layers, cell });

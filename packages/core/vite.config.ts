@@ -1,13 +1,6 @@
 import { defineConfig } from "vite";
-import type { CSSOptions } from "vite";
 import { resolve } from "node:path";
-
-/** The CSS a build inlines as a string (`?inline`), its comments dropped. */
-export const css: CSSOptions = {
-  postcss: {
-    plugins: [{ postcssPlugin: "strip-comments", Comment: (comment) => void comment.remove() }],
-  },
-};
+import { css } from "../../scripts/vite-css.mjs";
 
 export default defineConfig({
   css,

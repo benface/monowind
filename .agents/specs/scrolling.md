@@ -263,13 +263,14 @@ none` on EVERY element — a one-time pristine-probe detects that and
 - **Authored `scroll-snap` is unsupported inside a host** for now:
   native snap targets on light elements would fight the engine's
   cell settle-snap. Documented, revisit on demand.
-- **Hit-testing follows the ink.** `hitChain` applies each scroll
-  container's cell offset while descending, so hover, active, cursor
-  mirroring, and semantic selection (`semantic-selection.md`) see the
-  element actually under the pointer in a scrolled container, and stops
-  descending where the paint's clip does (`clipBounds`, shared with the
-  paint): a cell on a clipping container's border or gutter hits the
-  container itself, never a child scrolled beneath it. A text leaf's
+- **Hit-testing follows the ink.** The hit takes each box where it
+  paints, its scroll containers' cell offsets applied (`paintOrigin`),
+  so hover, active, cursor mirroring, and semantic selection
+  (`semantic-selection.md`) see the element actually under the pointer
+  in a scrolled container, inside the clips the paint uses
+  (`paintClip`, `clipBounds`): a cell on a clipping container's border
+  or gutter hits the container itself, never a child scrolled beneath
+  it. A text leaf's
   hit rect is its box grown to its ink (`hitRect`): an unwrapped line
   running past its box on a visible axis hits like any of its text, so
   a horizontal scroller's overflowing line is selectable to its end.
@@ -295,6 +296,12 @@ none` on EVERY element — a one-time pristine-probe detects that and
 - `scroll-behavior: smooth` is not applied to a scroll container
   ("Scroll containers scroll at once"); a script's own
   `scrollTo({ behavior: "smooth" })` still animates.
+- An absolutely positioned box counts toward no scroll range: a
+  `relative overflow-auto` list scrolls no further for an absolute
+  child past its end, where CSS counts the child toward the
+  scrollable overflow of the boxes on its containing-block chain. The
+  cause: the range is taken in flow layout, before the positioning
+  pass places the box.
 
 ## Resolved (were open questions)
 

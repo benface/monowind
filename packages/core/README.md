@@ -31,12 +31,13 @@ npm install monowind
 ```
 
 ```css
-/* app.css */
+/* your main stylesheet */
 @import "tailwindcss";
 @import "monowind";
 ```
 
 ```js
+// your entry script
 import { defineMonoWind } from "monowind";
 defineMonoWind();
 ```

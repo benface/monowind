@@ -154,6 +154,24 @@ it("clears every name render.ts writes from an element that is no box, but an in
   expect(engineNames(em)).toEqual(["--mw-ls"]);
 });
 
+it("takes back the scroll an absolute box escapes, through a scroll repaint", () => {
+  const rows = Array.from({ length: 12 }, (_, i) => `<p>Row ${i + 1}</p>`).join("");
+  const host = mount(
+    `<div><div style="position: relative"><div style="overflow-y: auto; width: 112px; height: 24px">` +
+      `${rows}<div data-test="menu" style="position: absolute; top: 32px; left: 0px">Menu</div>` +
+      `</div></div></div>`,
+  );
+  const root = layoutPass(host, 80, 3);
+  const menu = host.querySelector('[data-test="menu"]')!;
+  const scroller = root.children[0]!.children[0]!;
+  const node = scroller.children.at(-1)!;
+  expect(node.paintOrigin.y).toBe(8);
+  expect(cells(menu, "--mw-sy")).toBe(3);
+  renderScroll(root, () => (scroller.scroll = { x: 0, y: 5 }));
+  expect(node.paintOrigin.y).toBe(8);
+  expect(cells(menu, "--mw-sy")).toBe(5);
+});
+
 it("takes back the scroll a fixed box escapes, once: a fixed box inside it sits on its cells", () => {
   const rows = Array.from({ length: 12 }, (_, i) => `<p>Row ${i + 1}</p>`).join("");
   const host = mount(

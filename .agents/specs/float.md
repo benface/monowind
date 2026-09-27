@@ -115,11 +115,12 @@ available))` against the container's content width. Height is content
   browser's own clearance comes out zero.
 
 - **Floats paint after the blocks they sit over.** CSS 2.1 Appendix E
-  paints floats after in-flow blocks and before inline content and
-  positioned boxes; `paintOrderedChildren` gives them that bucket, so
-  a later block's background and border pass under the float on the
-  grid, in the plain-text transcript, and in the decoration lattice
-  alike, as they do natively.
+  paints a stacking context's floats after all of its in-flow blocks'
+  backgrounds and before its inline content and positioned boxes, each
+  float whole (positioning.md "Paint order"), so a later block's
+  background and border pass under the float wherever the block sits
+  in the context, and its text over the float, on the grid, in the
+  transcript and in the hit alike, as browsers paint them.
 
 - **The browser does the native wrapping.** A container holding a float
   lays out its in-flow children as FLOW CHILDREN (`cell-model.md`
@@ -209,12 +210,12 @@ float's own top margin on top.
   moved down past any row with no free cell, and that row's band.
   Without it a line has the full content width, as today.
 - `layout.ts` `leafLineGeometry`: the rows the opener recorded are the
-  lines' `lineY`; the per-line x and width are the leaf's `lineBands`,
-  which the paint's cell walk (`forEachLeafCell`, so selection and
-  hit-testing follow), the plain-text transcript, and per-line
-  alignment and truncation read beside multicol's `lineX`.
-- `borders.ts` `paintOrderedChildren`: a floats bucket between the
-  in-flow blocks and the inline boxes.
+  lines' `lineY`, kept as the leaf's `lines`; the per-line x and width
+  are its `lineBands`, which the paint's cell walk (`forEachLeafCell`,
+  so selection and hit-testing follow), the plain-text transcript, and
+  per-line alignment and truncation read beside multicol's `lineX`.
+- `stacking.ts` `paintTurn`: a context's floats (`floatsOf`) between
+  its in-flow boxes' ink and its inline content.
 - `render.ts` / `styles.css`: `data-mw-float` — native `float: left`/
   `right`, `position: static`, the shared engine geometry, the authored
   margins in cells; the container's other in-flow children become

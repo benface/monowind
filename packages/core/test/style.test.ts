@@ -117,6 +117,32 @@ describe("sizing fallbacks", () => {
     expect(read({ style: "width: fit-content" }).width).toEqual({ kind: "fit-content" });
   });
 
+  it("reads an inline size in any unit as its computed value has it", () => {
+    // rem on the root font size, em on the element's, in at 96px.
+    expect(read({ style: "height: 0.25rem" }).height).toEqual({ kind: "cells", value: 1 });
+    expect(read({ style: "width: 2.5rem" }).width).toEqual({ kind: "cells", value: 10 });
+    expect(read({ style: "height: 2em" }).height).toEqual({ kind: "cells", value: 8 });
+    expect(read({ style: "width: 1in" }).width).toEqual({ kind: "cells", value: 24 });
+    expect(read({ style: "height: calc(1em + 4px)" }).height).toEqual({ kind: "cells", value: 5 });
+    // A percentage beside a length has no size of its own, as with Typed OM.
+    expect(read({ style: "width: calc(50% + 1rem)" }).width).toBeUndefined();
+  });
+
+  it("takes the used px for a unit whose basis is the font's glyphs", () => {
+    // `.used` stands in for the px a real pre-157 Firefox resolves `ch` to.
+    const sheet = document.createElement("style");
+    sheet.textContent = ".used { height: 48px !important }";
+    document.head.appendChild(sheet);
+    try {
+      expect(read({ class: "used", style: "height: 3ch" }).height).toEqual({
+        kind: "cells",
+        value: 12,
+      });
+    } finally {
+      sheet.remove();
+    }
+  });
+
   it("detects percent utilities via class scan (used px would mislead)", () => {
     expect(read({ class: "w-1/2" }).width).toEqual({ kind: "percent", value: 50 });
     expect(read({ class: "md:w-2/3" }).width).toEqual({ kind: "percent", value: (100 * 2) / 3 });
@@ -181,6 +207,17 @@ describe("inset fallbacks", () => {
     expect(insets.left).toBe(-2);
     expect(insets.bottom).toEqual({ percent: 50 });
     expect(insets.right).toBeNull();
+  });
+
+  it("reads inline insets in any unit as their computed px", () => {
+    const insets = read({
+      style: "position: absolute; top: 0.5rem; left: -1em; bottom: 10vh; right: 1in",
+    }).insets;
+    expect(insets.top).toBe(2);
+    expect(insets.left).toBe(-4);
+    // A viewport length on the spacing scale, as Typed OM's px reads.
+    expect(insets.bottom).toBe(Math.round((0.1 * window.innerHeight) / 4));
+    expect(insets.right).toBe(24);
   });
 });
 
@@ -442,6 +479,48 @@ describe("float and clear (specs/float.md)", () => {
   });
 });
 
+describe('stacking context triggers (specs/positioning.md "Paint order")', () => {
+  it("reads each property that forms one, a layer effect's identity included", () => {
+    for (const trigger of [
+      "isolation: isolate",
+      "mix-blend-mode: multiply",
+      "perspective: 100px",
+      "transform-style: preserve-3d",
+      "clip-path: inset(0px)",
+      "mask-image: linear-gradient(black, black)",
+      "contain: paint",
+      "contain: layout",
+      "contain: strict",
+      "contain: content",
+      "will-change: transform",
+      "will-change: top, opacity",
+      "transform: matrix(1, 0, 0, 1, 0, 0)",
+      "scale: 1",
+      "translate: 0px",
+      "filter: blur(0px)",
+      "backdrop-filter: blur(0px)",
+    ]) {
+      expect(read({ style: trigger }).stacking, trigger).toBe(true);
+    }
+  });
+
+  it("forms none on the properties that leave the box in its parent's context", () => {
+    for (const style of [
+      "",
+      "container-type: inline-size",
+      "container-type: size",
+      "will-change: top",
+      "contain: size",
+      "isolation: auto",
+      "mix-blend-mode: normal",
+      "z-index: 5",
+      "opacity: 0.5",
+    ]) {
+      expect(read({ style }).stacking, style).toBe(false);
+    }
+  });
+});
+
 describe("alignment keywords", () => {
   it("reads an overflow position beside the keyword", () => {
     // justify-center-safe, items-end-safe, justify-items-end-safe
@@ -473,6 +552,16 @@ describe("alignment keywords", () => {
     expect(read({ style: "align-items: flex-start" }).alignItems).toBe("flex-start");
     expect(read({ style: "align-self: self-end" }).alignSelf).toBe("end");
     expect(read({ style: "justify-content: left" }).justifyContent).toBe("start");
+  });
+
+  it("reads left and right as start off the inline axis", () => {
+    const column = "display: flex; flex-direction: column; justify-content:";
+    expect(read({ style: `${column} right` }).justifyContent).toBe("start");
+    expect(read({ style: `${column} left` }).justifyContent).toBe("start");
+    expect(read({ style: "display: flex; justify-content: right" }).justifyContent).toBe("end");
+    // A grid's columns run on the inline axis, whatever its `flex-direction`.
+    const grid = "display: grid; flex-direction: column; justify-content: right";
+    expect(read({ style: grid }).justifyContent).toBe("end");
   });
 
   it("reads a safe self-alignment as its keyword, not the start", () => {

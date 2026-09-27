@@ -1,5 +1,5 @@
 /**
- * Time to interactive on a page the grid finds hard, in one of four
+ * Time to interactive on a page the grid finds hard, in one of five
  * shapes (`SHAPES` below). Reports the median of several runs so a
  * number is comparable across commits; record what it gives in
  * .agents/architecture/performance.md when it moves.
@@ -8,6 +8,7 @@
  *   pnpm bench --shape blocks  a field of block glyphs instead
  *   pnpm bench --shape prose   paragraphs of nested inline elements
  *   pnpm bench --shape faded   filled boxes, every other at half opacity
+ *   pnpm bench --shape positioned  cards with badges over the next, in a scroller
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
@@ -73,6 +74,19 @@ const SHAPES = {
         (i) =>
           `<div class="border bg-slate-700 px-1 rounded-sm${i % 2 ? " opacity-50" : ""}"><span>item ${i}</span></div>`,
       )}</div><div class="absolute inset-x-0 top-0 h-8 bg-black/50"></div></div>`,
+  },
+  // Stacking (specs/positioning.md "Paint order"): in a scroller, cards
+  // each with a badge over the card below, every fifth faded, every
+  // twentieth after a sticky heading.
+  positioned: {
+    label: "positioned cards",
+    body: () =>
+      `<div class="h-[80vh] overflow-auto"><div class="flex flex-wrap">${repeat(
+        (i) =>
+          (i % 20 ? "" : `<h2 class="sticky top-0 z-20 basis-full bg-clear">Group ${i / 20}</h2>`) +
+          `<div class="relative border px-1${i % 5 ? "" : " opacity-90"}"><span>card ${i}</span>` +
+          `<span class="absolute -bottom-1 left-1 z-10 bg-clear">badge</span></div>`,
+      )}</div></div>`,
   },
 };
 if (!Object.hasOwn(SHAPES, shape)) {

@@ -1,0 +1,28 @@
+:host {
+  display: block;
+}
+#mirror {
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: pre;
+  color: transparent;
+}
+/* The engine paints a selection on its grid (specs/wide-characters.md);
+ * the transcript's own highlight stays invisible, ungated: one element. */
+#mirror::selection {
+  color: transparent;
+  text-shadow: none;
+  background: transparent;
+}
+.alt {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+}

@@ -1,16 +1,18 @@
-import { collectBorderRuns, collectShadowRuns, paintOrderedChildren } from "./borders.ts";
+import { collectBorderRuns, collectShadowRuns } from "./borders.ts";
 import { resolveLattice } from "./lattice.ts";
+import { glyphTurns, inlineOpacity, paintOrder } from "./stacking.ts";
+import type { PaintVisitor } from "./stacking.ts";
 import type { BorderRun } from "./borders.ts";
 import { compositeColors, parseColor, serializeColor } from "./color.ts";
 import type { Rgba } from "./color.ts";
 import { DEFAULT_CELL, gradientCells } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { contentOrigin, edges, isInFlowBox, leafLineGeometry, lineStart } from "./layout.ts";
+import { contentOrigin, edges, isInFlowBox, lineStart } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
 import { zeroInsets } from "./types.ts";
-import type { InlineElement, Insets, LayoutNode, Rect } from "./types.ts";
+import type { Clip, InlineElement, Insets, LayoutNode, Rect } from "./types.ts";
 import { clusterWidth, isColorEmoji } from "./width.ts";
 
 /**
@@ -660,8 +662,7 @@ interface Walk {
   covers: Covers;
   width: number;
   height: number;
-  /** The grid's own put, unclipped: a fixed box paints through it past
-   * its ancestors' clips, into the groups it sits in. */
+  /** The grid's own put, unclipped: each box's clips cut it. */
   put: PutGlyph;
   /** The same, covering no layer: a group's close places its cells
    * through it, its puts having covered as they arrived. */
@@ -693,10 +694,7 @@ function renderGrids(
     place: store.put,
     alpha: 1,
   };
-  walk(root, walking, put);
-  // The stack after the tree (specs/top-layer.md), each element at its
-  // own opacity alone: the top layer escapes its ancestors'.
-  for (const { node } of root.topLayer ?? []) walk(node, walking, put);
+  paintOrder(root, painter(walking, root));
   return { store, layers: walking.layers, palette };
 }
 
@@ -716,12 +714,13 @@ function compositeLayers(store: CellStore, layers: PaintedLayer[]): void {
   }
 }
 
-/** The cells the ancestors' overflow leaves visible (specs/scrolling.md):
- * their clips intersected; null where nothing clips. */
-export type Clip = { x0: number; y0: number; x1: number; y1: number };
-
-const inClip = (clip: Clip | null, x: number, y: number): boolean =>
+export const inClip = (clip: Clip | null, x: number, y: number): boolean =>
   clip === null || (x >= clip.x0 && x < clip.x1 && y >= clip.y0 && y < clip.y1);
+
+/** The clips that cut a box's own ink, its chain's: none for a layer
+ * root, which paints unclipped in its layer, the layer cut by them. */
+export const inkClip = (node: LayoutNode): Clip | null =>
+  node.style.layer ? null : (node.paintClip ?? null);
 
 /** Whether a main-grid cell of a layer lies inside its clip and every
  * enclosing layer's. */
@@ -732,7 +731,7 @@ function layerShows(layer: PaintedLayer, x: number, y: number): boolean {
   return true;
 }
 
-const intersect = (a: Clip | null, b: Clip): Clip =>
+export const intersect = (a: Clip | null, b: Clip): Clip =>
   a === null
     ? b
     : {
@@ -916,73 +915,151 @@ function inlinePaint(
   const entry = entries[index]!;
   let paint = textPaint(entry, color);
   if (entry.backgroundColor !== undefined) paint.backgroundColor = entry.backgroundColor;
-  // Each paint here is this call's own.
-  for (let at: InlineElement | undefined = entry; at; at = entries[at.parent]) {
-    if (at.opacity < 1) paint.opacity = (paint.opacity ?? 1) * at.opacity;
-    const beneath = entries[at.parent]?.backgroundColor;
+  // Each paint here is this call's own. The walk stops before reading
+  // `entries[-1]`, a slow lookup.
+  for (let i = index; i >= 0; i = entries[i]!.parent) {
+    const { opacity, parent } = entries[i]!;
+    if (opacity < 1) paint.opacity = (paint.opacity ?? 1) * opacity;
+    const beneath = parent >= 0 ? entries[parent]!.backgroundColor : undefined;
     if (beneath !== undefined) paint = palette.composite(beneath, undefined, paint, 1, true, emoji);
   }
   return paint;
 }
 
-function walk(
-  node: LayoutNode,
-  parentWalk: Walk,
-  parentPut: PutGlyph,
-  parentClip: Clip | null = null,
-): void {
+/** The paint's visitor (stacking.ts): each box's ink, a leaf's glyphs,
+ * a table's lattice and a scroller's bars, put through the walk of the
+ * group or layer they paint in, under the box's own clips. */
+function painter(root: Walk, tree: LayoutNode): PaintVisitor {
+  let walking = root;
+  // Each open turn's scope, null for none, and the walk it opened in.
+  const scopes: (Scope | null)[] = [];
+  const outers: Walk[] = [];
+  // Every table's lattice, resolved at the first table or part painted.
+  let lattices: Map<LayoutNode, BorderRun[]> | null = null;
+  const clipped = new Map<Clip, { base: PutGlyph; put: PutGlyph }>();
+  /** The walk's put cut to a box's ink clip, made once per clip and walk. */
+  const putOf = (node: LayoutNode): PutGlyph => {
+    const clip = inkClip(node);
+    if (!clip) return walking.put;
+    let cut = clipped.get(clip);
+    if (cut?.base !== walking.put) {
+      clipped.set(clip, (cut = { base: walking.put, put: clipPut(walking.put, clip) }));
+    }
+    return cut.put;
+  };
+  // A leaf walks its glyphs once, at its first turn, holding its later turns'.
+  const heldGlyphs = new Map<LayoutNode, [number, ...Parameters<PutGlyph>][]>();
+  /** A leaf's glyphs of `member`'s turn, -1 its own, under its content clip. */
+  const glyphs = (node: LayoutNode, member: number): void => {
+    if (node.children.some(isInFlowBox)) return;
+    const own = clipBounds(node, node.paintOrigin.x, node.paintOrigin.y);
+    const put = clipPut(putOf(node), own);
+    const held = heldGlyphs.get(node);
+    if (held) {
+      for (const [turn, ...args] of held) if (turn === member) put(...args);
+      return;
+    }
+    const later: [number, ...Parameters<PutGlyph>][] = [];
+    if (node.inlineMembers) heldGlyphs.set(node, later);
+    paintText(node, walking, (turn, x, y, glyph, paint, cells) => {
+      if (turn === member) put(x, y, glyph, paint, cells);
+      else later.push([turn, x, y, glyph, paint, cells]);
+    });
+  };
+  return {
+    enter(node) {
+      const inline = inlineOpacity(node);
+      const opacity = node.style.opacity * inline;
+      // A layer root paints into a grid of its own, its opacity on the
+      // box (specs/layers.md); any other box below 1 opacity paints as a
+      // group.
+      let scope: Scope | null = null;
+      if (node.style.layer) {
+        const { x, y } = node.paintOrigin;
+        const box = { x, y, width: node.localRect.width, height: node.localRect.height };
+        scope = openLayer(walking, node, box, node.paintClip ?? null, walking.alpha * inline);
+      } else if (opacity < 1) scope = openGroup(walking, opacity);
+      scopes.push(scope);
+      outers.push(walking);
+      if (scope) walking = scope.walking;
+    },
+    leave() {
+      scopes.pop()?.close();
+      walking = outers.pop()!;
+    },
+    box(node) {
+      if (!lattices && (node.lattice || node.style.tableRole !== "none")) {
+        resolveLattices(tree, (lattices = new Map()));
+      }
+      paintBox(node, putOf(node), walking);
+    },
+    lattice(node) {
+      const runs = lattices?.get(node);
+      if (runs && node.style.visible) {
+        putRuns(putOf(node), runs, node.paintOrigin.x, node.paintOrigin.y);
+      }
+    },
+    text: glyphs,
+    bars(node) {
+      paintBars(node, putOf(node));
+    },
+  };
+}
+
+/** Each shown collapsed table's lattice (lattice.ts), its own runs kept
+ * in `lattices` and its parts' handed to them: all at once, as a part's
+ * turn comes before its table's where it is a negative member. */
+function resolveLattices(node: LayoutNode, lattices: Map<LayoutNode, BorderRun[]>): void {
   if (node.tableHidden || node.forceHidden) return;
-  // A fixed box, a top-layer element's included, paints outside its
-  // ancestors' clips (specs/positioning.md, specs/top-layer.md).
-  const hoisted = node.hostRect !== undefined;
+  if (node.lattice) {
+    const { x: absX, y: absY } = node.paintOrigin;
+    const clip = inkClip(node);
+    const lattice = resolveLattice(node, node.lattice, (x, y) => inClip(clip, absX + x, absY + y));
+    for (const part of node.lattice.handed ?? []) delete part.latticeRuns;
+    // The lattice is the table's ink, handed only while the table shows.
+    node.lattice.handed = node.style.visible ? [...lattice.parts.keys()] : [];
+    for (const part of node.lattice.handed) {
+      const own = lattice.parts.get(part)!;
+      part.latticeRuns = own.map((run) => ({ ...run, x: absX + run.x, y: absY + run.y }));
+    }
+    lattices.set(node, lattice.runs);
+  }
+  for (const child of node.children) resolveLattices(child, lattices);
+}
+
+/** Glyph runs in their colors, `dx`, `dy` from the grid's origin. */
+function putRuns(put: PutGlyph, runs: readonly BorderRun[], dx = 0, dy = 0): void {
+  for (const run of runs) {
+    const paint = run.color === undefined ? undefined : { color: run.color };
+    for (let i = 0; i < run.length; i++) put(dx + run.x + i, dy + run.y, run.glyph, paint);
+  }
+}
+
+/** A box's own ink: its shadows, fill, borders and rules, a table part's
+ * lattice lines. */
+function paintBox(node: LayoutNode, put: PutGlyph, walking: Walk): void {
   const { x: absX, y: absY } = node.paintOrigin;
   const style = node.style;
-  const { options, palette } = parentWalk;
-  // Its opacity with its inline ancestors' (specs/cell-model.md
-  // "Opacity and translucency"); a top-layer element's alone.
-  const inline = node.topLayerRank === undefined ? (node.inlineOpacity ?? 1) : 1;
-  const opacity = style.opacity * inline;
-  // A layer root paints into a grid of its own, its opacity on the box
-  // and its subtree unclipped (specs/layers.md); any other element below
-  // 1 opacity paints as a group, its fixed descendants in it.
   const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
-  const scope = style.layer
-    ? openLayer(parentWalk, node, box, parentClip, parentWalk.alpha * inline)
-    : opacity < 1
-      ? openGroup(parentWalk, opacity)
-      : null;
-  const walking = scope?.walking ?? parentWalk;
-  const clip = style.layer || hoisted ? null : parentClip;
-  const put = scope ? clipPut(walking.put, clip) : hoisted ? parentWalk.put : parentPut;
-  /** Glyph runs in their colors, `dx`, `dy` from the grid's origin. */
-  const putRuns = (runs: readonly BorderRun[], dx = 0, dy = 0): void => {
-    for (const run of runs) {
-      const paint = run.color === undefined ? undefined : { color: run.color };
-      for (let i = 0; i < run.length; i++) put(dx + run.x + i, dy + run.y, run.glyph, paint);
-    }
-  };
   // A hidden box's own ink stays unpainted, its subtree walking on
   // (specs/visibility.md).
   const visible = style.visible;
-
-  // Shadows (specs/box-shadow.md): the outer ones before the box's own
-  // fill, behind it and over what painted before; the inset ones after
-  // the fill, over its background and under its borders and text.
-  const paintShadows = (inset: boolean): void => {
-    const runs: BorderRun[] = [];
-    collectShadowRuns(style, box, inset, runs);
-    putRuns(runs);
-  };
-  const layers = style.backgroundImage;
-  let tint: (string | null)[][] | null = null;
   if (visible) {
-    paintShadows(false);
+    // Shadows (specs/box-shadow.md): the outer ones before the box's own
+    // fill, behind it and over what painted before; the inset ones after
+    // the fill, over its background and under its borders and text.
+    const shadows = (inset: boolean): void => {
+      const runs: BorderRun[] = [];
+      collectShadowRuns(style, box, inset, runs);
+      putRuns(put, runs);
+    };
+    shadows(false);
     // The box `background-clip` names fills with painted spaces,
     // `bg-clear` wiping the border box first; gradient layers fill a
-    // color per cell over the plain color, or tint the glyphs where
-    // clipped to `text` (specs/gradients.md).
+    // color per cell over the plain color (specs/gradients.md), a
+    // `text` clip's tint going to the glyphs instead.
     const { width, height } = node.localRect;
-    const cellSize = options.cell ?? DEFAULT_CELL;
+    const layers = style.backgroundImage;
     const fill = (paint: CellPaint, within: Insets): void => {
       for (let dy = within.top; dy < height - within.bottom; dy++) {
         for (let dx = within.left; dx < width - within.right; dx++) {
@@ -991,12 +1068,8 @@ function walk(
       }
     };
     if (style.backgroundClear) fill(WIPE, zeroInsets());
-    if (
-      style.backgroundClip === "text" &&
-      (layers.length > 0 || style.backgroundColor !== undefined)
-    ) {
-      tint = gradientCells(layers, style.backgroundColor, width, height, cellSize);
-    } else if (layers.length > 0) {
+    if (style.backgroundClip !== "text" && layers.length > 0) {
+      const cellSize = walking.options.cell ?? DEFAULT_CELL;
       const colors = gradientCells(layers, style.backgroundColor, width, height, cellSize);
       const inset = backgroundInset(node);
       for (let dy = inset.top; dy < height - inset.bottom; dy++) {
@@ -1005,145 +1078,139 @@ function walk(
           if (color) put(absX + dx, absY + dy, " ", { backgroundColor: color, gradient: "fill" });
         }
       }
-    } else if (style.backgroundColor !== undefined) {
+    } else if (style.backgroundClip !== "text" && style.backgroundColor !== undefined) {
       fill({ backgroundColor: style.backgroundColor }, backgroundInset(node));
     }
-    paintShadows(true);
+    shadows(true);
 
     const borderRuns: BorderRun[] = [];
     collectBorderRuns(style, box, borderRuns);
-    putRuns(borderRuns);
-    if (node.decorationRuns) putRuns(node.decorationRuns, absX, absY);
+    putRuns(put, borderRuns);
+    if (node.decorationRuns) putRuns(put, node.decorationRuns, absX, absY);
   }
-  // A collapsed table's lattice (lattice.ts): a sticky part paints its
-  // cells in its turn, the table the rest after its rows, as CSS layers
-  // collapsed borders.
-  const lattice = node.lattice
-    ? resolveLattice(node, node.lattice, (x, y) => inClip(clip, absX + x, absY + y))
-    : null;
-  if (node.lattice && lattice) {
-    for (const part of node.lattice.handed ?? []) delete part.latticeRuns;
-    // The lattice is the table's ink, handed only while the table shows.
-    node.lattice.handed = visible ? [...lattice.parts.keys()] : [];
-    for (const part of node.lattice.handed) {
-      const own = lattice.parts.get(part)!;
-      part.latticeRuns = own.map((run) => ({ ...run, x: absX + run.x, y: absY + run.y }));
-    }
-  }
-  if (node.latticeRuns) putRuns(node.latticeRuns);
-
-  // Overflow culls the content's ink at the padding box, the gutter
-  // excluded (specs/scrolling.md); nested clips chain.
-  const own = clipBounds(node, absX, absY);
-  const contentClip = own ? intersect(clip, own) : clip;
-  const contentPut = clipPut(put, own);
-
-  if (!node.children.some(isInFlowBox) && node.text) {
-    const leaf = textPaint(style, style.color);
-    const entries = node.inlineElements ?? [];
-    const inlines = entries.map((_, index) => inlinePaint(entries, index, palette));
-    const selection = options.selection?.get(node);
-    const paintCell = (
-      k: number,
-      length: number,
-      x: number,
-      y: number,
-      index: number,
-      selected: boolean,
-    ): void => {
-      // INLINE_PAD marks a blank inline-padding cell: no glyph, but
-      // its element's background, alone, still fills it.
-      if (node.text[k] === INLINE_PAD) {
-        const pad = inlines[index];
-        if (pad?.backgroundColor !== undefined) {
-          contentPut(x, y, " ", { backgroundColor: pad.backgroundColor, opacity: pad.opacity });
-        }
-        return;
-      }
-      const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
-      const cells = clusterWidth(cluster);
-      if (cells === 0) return;
-      // Clipped to `text`, a glyph's own color composites over the
-      // background's at its cell (specs/gradients.md).
-      const color = index >= 0 ? entries[index]!.color : style.color;
-      const under = tint?.[y - absY]?.[x - absX];
-      const tinted = under && color !== undefined ? palette.blend(color, 1, under) : color;
-      // A color emoji keeps its color through its chain (inlinePaint).
-      const emoji = index >= 0 && cells > 1 && isColorEmoji(cluster);
-      let paint = index >= 0 ? inlines[index]! : leaf;
-      if (tinted !== color || emoji) {
-        paint =
-          index >= 0
-            ? inlinePaint(entries, index, palette, tinted, emoji)
-            : textPaint(style, tinted);
-        if (tinted !== color) paint = { ...paint, gradient: "text" };
-      }
-      contentPut(x, y, cluster, selected ? { ...paint, selected: true } : paint, cells);
-    };
-    // A sticky inline element's glyphs paint after the rest of the
-    // leaf's, over the line they were shifted onto (specs/sticky.md).
-    const shifted: Parameters<typeof paintCell>[] = [];
-    forEachLeafCell(
-      node,
-      absX - (node.scroll?.x ?? 0),
-      absY - (node.scroll?.y ?? 0),
-      (k, length, x, y) => {
-        const index = node.charInline?.[k] ?? -1;
-        const entry = index >= 0 ? entries[index] : undefined;
-        // An inline element's own visibility, else the leaf's: its cells
-        // stay blank, their space kept.
-        if (!(entry ? entry.visible : visible)) return;
-        const selected = selection !== undefined && k >= selection.start && k < selection.end;
-        if (entry?.stickyShift) shifted.push([k, length, x, y, index, selected]);
-        else paintCell(k, length, x, y, index, selected);
-      },
-      (x, y) => {
-        if (visible) contentPut(x, y, "…", leaf);
-      },
-    );
-    for (const args of shifted) paintCell(...args);
-  }
-
-  for (const child of paintOrderedChildren(node)) {
-    // The stack paints after the tree (specs/top-layer.md).
-    if (child.topLayerRank !== undefined) continue;
-    walk(child, walking, contentPut, contentClip);
-  }
-  if (visible && lattice) putRuns(lattice.runs, absX, absY);
-
-  // Scrollbars last, over content (specs/scrolling.md), the corner
-  // cell of two bars blank.
-  const range = node.scrollRange;
-  const gutter = node.scrollGutterCells;
-  if (visible && range && gutter && (gutter.right > 0 || gutter.bottom > 0)) {
-    const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
-    // `scrollbar-color: auto` is the container's own color, as a border's.
-    const trackPaint = barPaint(style.scrollbarColor?.track ?? style.color);
-    const thumbPaint = barPaint(style.scrollbarColor?.thumb ?? style.color);
-    const bars = scrollbarGeometry(node, absX, absY);
-    for (const axis of ["y", "x"] as const) {
-      const bar = bars[axis];
-      if (!bar) continue;
-      const vertical = axis === "y";
-      const { at, len } = vertical
-        ? thumbSpan(bar.len, range.sizeY, range.maxY, node.scroll?.y ?? 0)
-        : thumbSpan(bar.len, range.sizeX, range.maxX, node.scroll?.x ?? 0);
-      for (let across = 0; across < bar.thick; across++) {
-        for (let i = 0; i < bar.len; i++) {
-          const isThumb = i >= at && i < at + len;
-          const x = bar.col + (vertical ? across : i);
-          const y = bar.row + (vertical ? i : across);
-          put(x, y, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
-        }
-      }
-    }
-  }
-  scope?.close();
+  if (node.latticeRuns) putRuns(put, node.latticeRuns);
 }
 
-/** The cells a leaf's text occupies: the per-line placement — line
- * geometry (a multicol leaf's stored fragmentation, else recomputed),
- * first-line indent, alignment, truncation, inline relative shifts,
+/** A leaf's glyphs through `put`, each with the glyph turn that paints
+ * it (stacking.ts `glyphTurns`), -1 the leaf's own. */
+function paintText(
+  node: LayoutNode,
+  walking: Walk,
+  put: (turn: number, ...args: Parameters<PutGlyph>) => void,
+): void {
+  const { options, palette } = walking;
+  const { x: absX, y: absY } = node.paintOrigin;
+  const style = node.style;
+  const visible = style.visible;
+  // Clipped to `text`, the background tints the glyphs (specs/gradients.md).
+  const tint =
+    visible &&
+    style.backgroundClip === "text" &&
+    (style.backgroundImage.length > 0 || style.backgroundColor !== undefined)
+      ? gradientCells(
+          style.backgroundImage,
+          style.backgroundColor,
+          node.localRect.width,
+          node.localRect.height,
+          options.cell ?? DEFAULT_CELL,
+        )
+      : null;
+  const leaf = textPaint(style, style.color);
+  const entries = node.inlineElements ?? [];
+  const inlines = entries.map((_, index) => inlinePaint(entries, index, palette));
+  const selection = options.selection?.get(node);
+  const owners = node.inlineOwners;
+  const paintCell = (
+    k: number,
+    length: number,
+    x: number,
+    y: number,
+    index: number,
+    selected: boolean,
+  ): void => {
+    const turn = owners && index >= 0 ? owners[index]! : -1;
+    // INLINE_PAD marks a blank inline-padding cell: no glyph, but
+    // its element's background, alone, still fills it.
+    if (node.text[k] === INLINE_PAD) {
+      const pad = inlines[index];
+      if (pad?.backgroundColor !== undefined) {
+        put(turn, x, y, " ", { backgroundColor: pad.backgroundColor, opacity: pad.opacity });
+      }
+      return;
+    }
+    const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
+    const cells = clusterWidth(cluster);
+    if (cells === 0) return;
+    // Clipped to `text`, a glyph's own color composites over the
+    // background's at its cell (specs/gradients.md).
+    const color = index >= 0 ? entries[index]!.color : style.color;
+    const under = tint?.[y - absY]?.[x - absX];
+    const tinted = under && color !== undefined ? palette.blend(color, 1, under) : color;
+    // A color emoji keeps its color through its chain (inlinePaint).
+    const emoji = index >= 0 && cells > 1 && isColorEmoji(cluster);
+    let paint = index >= 0 ? inlines[index]! : leaf;
+    if (tinted !== color || emoji) {
+      paint =
+        index >= 0 ? inlinePaint(entries, index, palette, tinted, emoji) : textPaint(style, tinted);
+      if (tinted !== color) paint = { ...paint, gradient: "text" };
+    }
+    put(turn, x, y, cluster, selected ? { ...paint, selected: true } : paint, cells);
+  };
+  forEachLeafCell(
+    node,
+    absX - (node.scroll?.x ?? 0),
+    absY - (node.scroll?.y ?? 0),
+    (k, length, x, y) => {
+      const index = node.charInline?.[k] ?? -1;
+      const entry = index >= 0 ? entries[index] : undefined;
+      // An inline element's own visibility, else the leaf's: its cells
+      // stay blank, their space kept.
+      if (!(entry ? entry.visible : visible)) return;
+      const selected = selection !== undefined && k >= selection.start && k < selection.end;
+      paintCell(k, length, x, y, index, selected);
+    },
+    (x, y) => {
+      if (visible) put(-1, x, y, "…", leaf);
+    },
+  );
+}
+
+/** A scroll container's bars, over its content (specs/scrolling.md), the
+ * corner cell of two bars blank. */
+function paintBars(node: LayoutNode, put: PutGlyph): void {
+  const range = node.scrollRange;
+  const gutter = node.scrollGutterCells;
+  const style = node.style;
+  if (!style.visible || !range || !gutter || (gutter.right === 0 && gutter.bottom === 0)) return;
+  const { track, thumb } = scrollGlyphs(glyphSetFor(style.glyphSet));
+  // `scrollbar-color: auto` is the container's own color, as a border's.
+  const trackPaint = barPaint(style.scrollbarColor?.track ?? style.color);
+  const thumbPaint = barPaint(style.scrollbarColor?.thumb ?? style.color);
+  const bars = scrollbarGeometry(node, node.paintOrigin.x, node.paintOrigin.y);
+  for (const axis of ["y", "x"] as const) {
+    const bar = bars[axis];
+    if (!bar) continue;
+    const vertical = axis === "y";
+    const { at, len } = vertical
+      ? thumbSpan(bar.len, range.sizeY, range.maxY, node.scroll?.y ?? 0)
+      : thumbSpan(bar.len, range.sizeX, range.maxX, node.scroll?.x ?? 0);
+    for (let across = 0; across < bar.thick; across++) {
+      for (let i = 0; i < bar.len; i++) {
+        const isThumb = i >= at && i < at + len;
+        const x = bar.col + (vertical ? across : i);
+        const y = bar.row + (vertical ? i : across);
+        put(x, y, isThumb ? thumb : track, isThumb ? thumbPaint : trackPaint);
+      }
+    }
+  }
+}
+
+/** A leaf laid out with no text. */
+const NO_LINES = { spans: [], textY: [] };
+
+/** The cells a leaf's text occupies: the per-line placement — the
+ * lines its layout wrapped (a multicol leaf's fragmentation, else
+ * `lines`), first-line indent, alignment, truncation, inline shifts,
  * per-character advances — in ONE place, so mapping a cell back to a
  * character (charIndexAtCell) cannot drift from the paint. `absX/absY`
  * is the leaf's border-box origin with its own scroll applied; U+FFFC
@@ -1163,8 +1230,10 @@ function forEachLeafCell(
   const contentX = absX + origin.x;
   const contentY = absY + origin.y;
   const contentWidth = node.localRect.width - edges(style.border, node.resolvedPadding, "x");
-  const multicol = node.multicolGeometry;
-  const { spans, textY } = multicol ?? leafLineGeometry(node, contentWidth);
+  const { spans, textY } = node.multicolGeometry ?? node.lines ?? NO_LINES;
+  // Only an inline member and what it holds shift.
+  const { inlineElements: entries, inlineMembers } = node;
+  const shifts = inlineMembers && entries?.map((_, index) => inlineShift(entries, index));
   for (let i = 0; i < spans.length; i++) {
     const span = spans[i]!;
     const row = contentY + textY[i]!;
@@ -1181,18 +1250,9 @@ function forEachLeafCell(
       let length = 1;
       if (advances) while (k + length < truncated.end && advances[k + length] === 0) length++;
       if (node.text[k] !== OBJECT_REPLACEMENT && advance > 0) {
-        // Inline relative shifts, whole cells (specs/positioning.md):
-        // the over-constrained sides resolve like CSS (top/left win);
-        // a sticky element's shift for the scroll (specs/sticky.md).
-        const entry = node.inlineElements?.[node.charInline?.[k] ?? -1];
-        const insets = entry?.insets;
-        const dx =
-          (insets ? (insets.left ?? (insets.right !== null ? -insets.right : 0)) : 0) +
-          (entry?.stickyShift?.x ?? 0);
-        const dy =
-          (insets ? (insets.top ?? (insets.bottom !== null ? -insets.bottom : 0)) : 0) +
-          (entry?.stickyShift?.y ?? 0);
-        onChar(k, length, x + dx, row + dy, advance);
+        const inline = node.charInline?.[k] ?? -1;
+        const shift = shifts && inline >= 0 ? shifts[inline] : undefined;
+        onChar(k, length, x + (shift?.x ?? 0), row + (shift?.y ?? 0), advance);
       }
       x += advance;
       k += length;
@@ -1201,11 +1261,29 @@ function forEachLeafCell(
   }
 }
 
+/** An inline element's shift in whole cells, its inline ancestors'
+ * added: each relative one's insets, the over-constrained sides
+ * resolving like CSS (top/left win; specs/positioning.md), and each
+ * sticky one's for the scroll (specs/sticky.md). */
+export function inlineShift(entries: InlineElement[], index: number): { x: number; y: number } {
+  const shift = { x: 0, y: 0 };
+  for (let i = index; i >= 0; i = entries[i]!.parent) {
+    const { insets, stickyShift } = entries[i]!;
+    if (insets) {
+      shift.x += insets.left ?? (insets.right !== null ? -insets.right : 0);
+      shift.y += insets.top ?? (insets.bottom !== null ? -insets.bottom : 0);
+    }
+    shift.x += stickyShift?.x ?? 0;
+    shift.y += stickyShift?.y ?? 0;
+  }
+  return shift;
+}
+
 /** The cells a clipping container's content shows through, in
  * absolute cells (specs/scrolling.md): its padding box on each
  * clipping axis, the gutter excluded, unbounded on a visible axis;
- * null for a container clipping neither. The paint culls ink here and
- * hit-testing stops descending here. */
+ * null for a container clipping neither. The paint and the hit cut
+ * the content here. */
 export function clipBounds(node: LayoutNode, absX: number, absY: number): Clip | null {
   const { overflow, border } = node.style;
   const clipsX = overflow.x !== "visible";
@@ -1250,26 +1328,34 @@ export function leafLineCovers(
 }
 
 /** The index into `node.text` of the character painted at a cell, or
- * null for a blank cell (specs/semantic-selection.md). `absX/absY` is
- * the leaf's border-box origin, its `paintOrigin` for the paint's. */
+ * null for a blank cell (specs/semantic-selection.md): the one painted
+ * last there, or in the glyph turn `member` alone where it is given
+ * (stacking.ts `glyphTurns`). `absX/absY` is the leaf's border-box
+ * origin, its `paintOrigin` for the paint's. */
 export function charIndexAtCell(
   node: LayoutNode,
   absX: number,
   absY: number,
   col: number,
   row: number,
+  member?: number,
 ): number | null {
+  const owners = node.inlineOwners;
+  const turns = member === undefined ? glyphTurns(node) : [member];
   let found: number | null = null;
+  let latest = -1;
   forEachLeafCell(
     node,
     absX - (node.scroll?.x ?? 0),
     absY - (node.scroll?.y ?? 0),
     (k, _length, x, y, advance) => {
       if (y !== row || col < x || col >= x + advance) return;
-      // A sticky inline element's glyph paints over the line it was
-      // shifted onto, so it is the one at the cell.
-      const sticky = node.inlineElements?.[node.charInline?.[k] ?? -1]?.stickyShift !== undefined;
-      if (found === null || sticky) found = k;
+      const inline = node.charInline?.[k] ?? -1;
+      const turn = turns.indexOf(owners && inline >= 0 ? owners[inline]! : -1);
+      if (turn > latest) {
+        found = k;
+        latest = turn;
+      }
     },
   );
   return found;

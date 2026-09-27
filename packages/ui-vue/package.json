@@ -52,7 +52,7 @@
     "@zag-js/vue": "^1.44.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "@zag-js/core": "^1.44.0",
     "happy-dom": "^20.14.5",
     "typescript": "^7.0.2",

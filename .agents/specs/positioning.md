@@ -1,8 +1,10 @@
 # Spec: positioning and insets
 
-Status: normative. Written spec-first for the positioning work (Milestone 3
-scope, expanded to include `absolute`). Cell-unit fundamentals live in
-`cell-model.md`; this spec covers `position` and the inset properties.
+Status: normative, implemented. Written spec-first for the positioning
+work (Milestone 3 scope, expanded to include `absolute`), "Paint order"
+rewritten spec-first for `../plans/2026-09-27-stacking-contexts.md`.
+Cell-unit fundamentals live in `cell-model.md`; this spec covers
+`position` and the inset properties.
 Two sibling specs build on it: `anchor-positioning.md` places an
 out-of-flow box against a named anchor (`position-area`), and
 `top-layer.md` lays out an open popover or a modal dialog as a fixed
@@ -75,7 +77,7 @@ nearest positioned ancestor** (`position` ≠ static — relative, absolute,
 fixed, or sticky), or the `<mono-wind>` host's content box when there is
 none. The companion stylesheet's own `position: absolute` on laid-out
 elements is an implementation detail and does NOT make an element a
-containing block — only the author's `position` does.
+containing block — only the author's `position` does (deviation 7).
 
 For a relative element, percent insets resolve against its own parent's
 content box (its containing block in flow).
@@ -123,12 +125,17 @@ rewrites the offset through engine-owned custom properties so the browser
 applies a whole-cell shift (`calc(n × cell)`), keeping the author's
 `position: relative` itself intact. An inline sticky element's insets are
 constraints for its scroll-time shift (`sticky.md`), carried natively
-through the same properties.
+through the same properties. An inline element's glyphs move by its own
+shift plus every inline ancestor's, as CSS moves an inline box's
+content with it: a static `<b>` in a `relative top-1` span moves with
+the span, and a relative span in another moves by both (`inlineShift`).
 
 - Only cell-mappable lengths are supported on inline insets; **percent
-  insets on inline elements are treated as 0** (deviation — their CSS
-  basis is the containing block of the text run, which the engine doesn't
-  model per-line).
+  insets on inline elements are treated as 0** (deviation, a shortcut:
+  their basis is the block container's content box, which the engine
+  has). In Firefox, whose computed style gives them as used px where
+  Chromium and WebKit keep the `%`, the engine reads that px as a
+  length instead, so the element shifts by it, rounded to cells.
 - `absolute`/`fixed` on an inline element blockifies it, per CSS: it
   leaves the text run entirely (the text reflows without it) and becomes
   an out-of-flow box positioned like any other. **Deviation:** its static
@@ -138,18 +145,159 @@ through the same properties.
 
 ## Paint order
 
-All laid-out elements are browser-positioned; stacking is DOM order by
-default, with `z-*` honored exactly where CSS applies it — positioned
-elements and flex/grid items; inert on static block-flow children (the
-engine gates the browser side through `--mw-z`, since absolutization
-would otherwise activate it everywhere, reset on every element so
-each box reads its own — cell-model.md "Engine variables"). The
-renderers walk children in the same order (stable effective-z sort,
-document-order ties) so decoration glyphs and `renderPlainText` agree
-with the browser at overlaps — a simplified model: no stacking
-contexts, and a negative `z-*` still paints over its parent's own
-glyphs. Relative/absolute
-elements may overlap anything; `overflow` clipping applies natively.
+The grid paints as CSS does (CSS 2.1 Appendix E, css-position-4
+"Painting order"): each box within its nearest stacking context, not
+among its siblings. So an `absolute z-10` menu in a `relative` card
+paints over the next card, a stuck `sticky top-0` header cell paints
+over the table body, and a `-z-1` box paints under its parent's
+background unless the parent is a stacking context. The paint walk
+(the grid and `renderPlainText` alike), hit testing and the
+collapsed-table lattice follow one order.
+
+**Stacking contexts.** A box forms one when it is:
+
+- the host;
+- positioned with a `z-index` other than `auto` (`relative z-0`
+  included), or a flex or grid item with one: wherever `z-index`
+  applies;
+- `fixed` or `sticky`, whatever its `z-index`;
+- faded: an `opacity` below 1 as the frame paints it (its own times
+  its inline ancestors', cell-model.md "Opacity and translucency"),
+  or an `opacity` in transition or animation (animations.md), so a
+  fade stays one context through its opaque frames;
+- a layer root (layers.md). An identity effect counts too:
+  `scale-100` at rest or `translate: 0` leaves the cells on the grid,
+  and any value other than `none` still forms a context;
+- `isolation: isolate`, a `mix-blend-mode` other than `normal`, a
+  `perspective`, `transform-style: preserve-3d`, a `clip-path` or
+  `mask-image` other than `none`, `contain` with `layout` or `paint`
+  (`strict` and `content` among them), or a `will-change` that names
+  a property forming one;
+- a top-layer element or its backdrop (top-layer.md).
+
+`container-type` forms none (probed 2026-09-27 in all three engines,
+though MDN lists it). An inline element forms one by its position,
+`z-index` and opacity alone (deviation 8).
+
+**Members and steps.** A box paints in the positioned step when it is
+positioned or forms a stacking context. Every other box is in flow.
+A box in the positioned step is a **member** of its nearest ancestor
+that forms a stacking context, reached through in-flow ancestors and
+through positioned ancestors that form none. It orders by its
+`z-index`, as 0 where that is `auto` or does not apply, with tree
+order breaking ties. A stacking context paints, in order:
+
+1. its own shadows, fill, borders and gap rules;
+2. its negative members, lowest first;
+3. its in-flow content, in CSS's phases:
+   - every in-flow box's shadows, fill, borders and gap rules, in tree
+     order, a collapsed table's lattice (table.md) over its parts'
+     fills;
+   - its floats, each whole (float.md);
+   - its text and every in-flow leaf's, and its atomic inline boxes,
+     each whole, in tree order, a scroll container's bars
+     (scrolling.md) over its content;
+4. its members at 0, in tree order;
+5. its positive members, lowest first.
+
+A member that forms a context paints all five steps in its turn. A
+positioned member at `z-index: auto` that forms none paints steps 1
+and 3 only, and its own positioned descendants stay members of the
+context above it. A float and an atomic inline box paint the same
+way, whole, in their phase. So does a flex or grid item, which paints
+as an inline block does (css-flexbox §5.4, css-grid §9), a flex or
+grid container's items in order-modified document order (`order`).
+So a block's text that overflows onto a later block's fill shows over
+it, and a float over a later block from another parent (probed
+2026-09-27, all three engines).
+
+**A member keeps its own state.** It paints later than its tree
+position, but what it paints under is still its own:
+
+- _Origin_: where it paints for the current scroll (scrolling.md,
+  sticky.md), with the scroll offsets and sticky shifts of its
+  containing-block chain applied.
+- _Clip_: the overflow clips of the boxes on its containing-block
+  chain (below).
+- _Group and layer_: every group (a faded box) and every layer (a
+  transformed or filtered box) above it forms a stacking context, so
+  its context's turn paints inside them. A `z-10` descendant of an
+  `opacity-50` card fades with the card and stays under a later
+  `relative z-1` sibling of it (probed 2026-09-27).
+- _Hiding_: a box that `position-visibility` hides hides its members
+  with it (anchor-positioning.md); `visibility: hidden` hides its own
+  ink alone (visibility.md).
+
+**Clips and scrolls follow the containing-block chain.** In CSS an
+ancestor's overflow clips a box only when the box's containing block
+is that ancestor or lies inside it (CSS 2.1 §11.1.1), and a scroll
+container moves only such boxes. The grid does the same. The chain
+runs from a box to its containing block ("Containing block"): the
+parent for an in-flow box, the nearest positioned ancestor for an
+absolute box, the host for a fixed box. It goes on the same way from
+there. A layer root ends the chain for the boxes in its layer, whose
+clips are in the layer's own space (layers.md), as a transformed box
+contains its positioned descendants in CSS. So an `absolute` menu in
+an `overflow-hidden` box whose `relative` ancestor lies outside that
+box shows whole past the box's edge. In a scrolled `overflow-auto`
+list with such an ancestor, it holds still while the list scrolls
+(probed 2026-09-27, all three engines). Its light element takes back
+the scroll it escapes (`--mw-sx`/`--mw-sy`), as a fixed box's does.
+A `sticky` box inside it sticks to a scroller on its own chain
+(sticky.md), an anchored box's scrollers and clips are those on its
+chain (anchor-positioning.md), and the grid grows to show it past a
+static clipping box, as visible overflow does (cell-model.md
+"Overflow"); no scroller's range counts it (scrolling.md, Deviations).
+
+**Hit testing** follows the same order (pointer.ts). The box at a cell
+is the last one painted there, inside its own clip, that shows and
+takes pointer events. That includes a descendant painted outside its
+ancestors' boxes, such as a menu below its button's card. A box
+takes a cell where its border box lies (a text leaf's grown to its
+ink, scrolling.md), in the phase its fill paints in, and a leaf takes
+it again where its glyphs paint, in theirs: a block's text
+overflowing onto a later block takes the cells of its glyphs, the
+later block the rest. (WebKit hits the text there too; Chromium and
+Firefox hit the later block, probed 2026-09-27.) The hit stack is
+that box and all its ancestors, outermost first, as native `:hover`
+climbs them. The top layer paints last, so it is tried first
+(top-layer.md); a hit through a layer scans the layer's own entries
+(layers.md).
+
+**The lattice** ranks a collapsed table's parts by the same order
+(sticky.md "Table parts stick"): a part covers the lines of an
+earlier part it slides over. A `sticky top-0` `<thead>` at
+`z-index: auto` comes before the body in tree order, so a sticky
+first column's cells paint over its corner as they scroll up beneath
+it, as in CSS. A `z-*` on the `<thead>` lifts it over them (probed
+2026-09-27). A part in the positioned step, a sticky one among them,
+paints its own lines in its turn, over its background, even where
+that turn comes before its table's. Chromium and WebKit paint them
+that way; Firefox paints a positioned row's background over them
+(probed 2026-09-27).
+
+**Inline elements.** A positioned inline element (`relative`,
+`sticky`) and one that forms a stacking context — a faded one, a
+positioned one with a `z-index` — paint their glyphs in the positioned
+step of their leaf's stacking context, as members ordered like boxes
+(probed 2026-09-27): a `relative` span shifted onto a later block's
+text paints over it, and a `relative z-10` span paints over a later
+`relative` block. The leaf's other
+glyphs paint in its own turn. A nested one is a member of its own,
+ordered after the one it sits in, or it paints inside that one where
+that one forms a context. A glyph a member paints over the leaf's
+own is the character at that cell, for the hit and the selection.
+
+**Native stacking.** The light elements stack as the browser stacks
+them: every laid-out element absolutely positioned (cell-model.md),
+with `z-index` in effect only where CSS applies it, positioned
+elements and flex and grid items. The engine writes `--mw-z` there
+alone (cell-model.md "Engine variables"), since the absolute
+positioning would otherwise let it apply everywhere. In grid mode the
+covered marks give the pointer to what the grid shows (cell-model.md
+"Pointer states").
+
+**Deviations**: 5–8 below.
 
 ## Plain-text renderer
 
@@ -160,9 +308,92 @@ character's inline element, so its whole-cell insets move the glyphs.
 ## Deviations from CSS (summary)
 
 1. `fixed` anchors to the `<mono-wind>` host, not the viewport.
-2. Percent insets on inline elements are treated as 0.
+2. Percent insets on inline elements are treated as 0 (in Firefox, as
+   the px it resolves them to).
 3. An out-of-flow element extracted from a text run takes its leaf's
    content-box origin as its static position, not CSS's hypothetical
    inline position.
 4. All cell-model deviations (integer rounding, etc.) apply; sticky's
    own are in `sticky.md`.
+5. **The light DOM stacks and clips as absolutely positioned boxes.**
+   Natively every laid-out element is `position: absolute`, so the
+   in-flow ones stack with the positioned ones in tree order, and
+   every clipping ancestor clips each one. Two effects follow. In
+   `select="text"`, where the light DOM takes the pointer, an in-flow
+   box that overlaps an earlier positioned one takes the native hover
+   and press where the grid paints the positioned one. In either mode,
+   a native control past a clip that its box escapes on the grid (an
+   `absolute` box past a static `overflow-hidden` box, a `fixed` box)
+   takes no press there. The cause: the engine places every box
+   natively as an absolute one.
+6. **An inline element forms a stacking context for its glyphs
+   alone.** An out-of-flow box inside an inline element that forms one
+   is a member of its leaf's context, with its inline
+   ancestors' opacity folded into its own group (cell-model.md
+   "Opacity and translucency"). CSS makes it a member of the inline
+   element's context. And an inline member orders at its leaf's place
+   in tree order, before the leaf's out-of-flow boxes, where CSS puts
+   a box that precedes it in the document first. The cause: an inline
+   element is no node of the layout tree.
+7. **Only `position` makes a containing block.** A `transform`,
+   `filter`, `perspective`, `contain: layout | paint` or a
+   `will-change` of one makes none for layout, where CSS makes one for
+   absolute and fixed descendants. They are placed against the nearest
+   positioned ancestor, or the host. A layer root still ends their
+   paint's chain ("Paint order"). The cause: the positioning pass
+   reads the author's `position` alone.
+8. **An inline element's own effects form no stacking context.** A
+   `filter`, `backdrop-filter`, `mix-blend-mode`, `clip-path`,
+   `mask-image`, `isolation: isolate` or `will-change` of one leaves an
+   inline element's glyphs in its leaf's turn, where CSS paints them in
+   the positioned step. The cause: the grid draws none of those
+   effects on an inline element, and reading them for every inline
+   element cost 2.8% of a prose relayout's script
+   (`../architecture/performance.md` "Stacking contexts").
+
+## Touch points on implementation
+
+For "Paint order":
+
+- stacking.ts: the rules — `zIndexApplies`, `formsContext`,
+  `inPositionedStep`, `inlineOpacity`; a context's members
+  (`membersOf`), a leaf's inline members among them
+  (`inlineMembersOf`, `inlineOwners`, `glyphTurns`); the one traversal
+  (`paintOrder`, `paintTurn`), its phases (`boxesOf`, `floatsOf`,
+  `contentOf`, each child's by `phaseOf`) in order-modified document
+  order (`ordered`), handed to a `PaintVisitor`; and `paintIndex`, the
+  layout's paint order for the hit, each layer's span and each box's
+  parent.
+- style.ts: `readStacking` into `CellStyle.stacking`, `readLayer`
+  counting an effect's identity.
+- types.ts: `CellStyle.stacking`; a node's `paintClip` and a leaf's
+  `inlineMembers` and `inlineOwners`; an `InlineElement`'s
+  `positioned`, `zIndex` and `context`.
+- tree.ts: `inlineEntry` reads an inline element's position,
+  `z-index` and context (sticky, a `z-index`, an opacity below 1 or
+  running); `buildLeaf` records the leaf's `inlineMembers` and each
+  entry's glyph turn (`inlineOwners`).
+- paint-origin.ts: `placePainted` — each box's `paintOrigin` and
+  `paintClip` from the frame its chain continues from (its parent's,
+  an absolute box's containing block's with the scroll between taken
+  back, a fixed box's the host's or its layer's), and the boxes that
+  escape a scroller among those a scroll shifts.
+- layout.ts: `containsAbsolute`, where the chain continues;
+  `contentExtent` counts an absolute box where its chain reaches (the
+  grid's ink extent, a scroller's range).
+- plain-text.ts: `painter`, the paint's visitor — every table's
+  lattice resolved first (`resolveLattices`), a turn's group or layer
+  on `enter`, `paintBox`, a leaf's glyphs by turn (`paintText` tells
+  each glyph's, a leaf with inline members walked once and held),
+  `paintBars`, a table's lattice; `inkClip`; `inlineShift`, a member's
+  shift; `charIndexAtCell`, the glyph painted last at a cell.
+- pointer.ts: `lastTaking` scans `paintIndex` from its end (`takes`,
+  a member's glyphs where its shift moves them), `cellAtPoint`
+  covering a layer by its span.
+- lattice.ts: `coverage` ranks a table's parts by `paintTurn`, and
+  `placementOf`'s owner is the innermost part in the positioned step.
+- render.ts: `--mw-z` where `zIndexApplies`; `writeShift` takes back
+  the scroll an absolute box escapes.
+- positioning.ts: `containingChain`, the frames whose scroll and
+  clips reach an anchored box and its anchor.
+- sticky.ts: `stick` takes the scrollport of the box's chain.

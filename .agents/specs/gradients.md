@@ -133,7 +133,7 @@ parsed. Positions in px convert on the spacing scale.
   sRGB, written unclipped.
 - gradient.ts: the color at a cell (direction math, stop resolution,
   compositing), kept per box.
-- plain-text.ts `walk`: the fill step paints per-cell colors when
+- plain-text.ts `paintBox`: the fill paints per-cell colors when
   gradients are present, a plain color or a gradient inside the
   `background-clip` box (`backgroundInset`), which the store blends
   over the cells beneath; the leaf's paint tints a glyph through the

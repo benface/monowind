@@ -10,6 +10,7 @@ import {
   expectGridOnItsCells,
   expectOnItsCells,
   frames,
+  framesLong,
   gridOf,
   hoverOver,
   pressAt,
@@ -396,6 +397,7 @@ export const Transitioned: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
+    host.style.transitionDuration = await framesLong(20);
     const layouts = countLayouts(host);
     /** The layouts a class change's transition makes after the change's
      * own, to three frames past its end, and the frames it ran. */

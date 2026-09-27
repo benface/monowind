@@ -3,14 +3,19 @@ import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   cellSize,
+  channels,
   countLayouts,
   expectOnItsCells,
   expectTouching,
   frames,
+  gridOf,
   hasTypedOM,
+  hoverOver,
+  moveTo,
   readsAutoMinimum,
   readyGrid,
   readyHost,
+  readyHosts,
   rowsOf,
   testHooks,
 } from "./helpers.ts";
@@ -106,6 +111,474 @@ export const ZIndexStaysOwn: StoryObj = {
     expect(document.elementFromPoint(link.left + link.width / 2, link.top + link.height / 2)).toBe(
       by("link"),
     );
+  },
+};
+
+/**
+ * Stacking contexts (positioning.md "Paint order"): each box paints
+ * within its nearest stacking context. A card's `z-10` menu over the
+ * next card; a `-z-1` shadow under its card's fill; a `z-10` badge over
+ * the next card's border, and held under it where its card forms a
+ * context (`opacity-90`, `isolate`); stuck header cells over a table
+ * body; and a block's overflowing text over a later block's fill.
+ */
+export const Stacking: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="grid max-w-104 grid-cols-2 gap-x-3 gap-y-1">
+        <div>
+          <div class="relative border border-neutral-500 px-1">
+            File Edit View
+            <div class="absolute top-2 left-1 z-10 w-16 border border-cyan-400 bg-clear px-1">
+              <p data-test="open" class="hover:text-cyan-300">Open…</p>
+              <p>Save as…</p>
+            </div>
+          </div>
+          <div data-test="next" class="relative h-4 border border-neutral-500 px-1">
+            The next card
+          </div>
+        </div>
+        <div class="pt-1 pr-2">
+          <div class="relative border border-neutral-400 bg-neutral-800 px-1 text-neutral-100">
+            A card over its shadow
+            <div class="absolute top-2 left-3 -z-1 size-full bg-neutral-600"></div>
+          </div>
+        </div>
+        ${["relative", "relative opacity-90", "relative isolate"].map(
+          (card) => html`
+            <div>
+              <div class="${card} border border-amber-400 bg-amber-950 px-1 text-amber-200">
+                ${card}
+                <span
+                  data-test="badge"
+                  class="absolute right-1 -bottom-2 z-10 bg-amber-400 px-1 text-black"
+                >
+                  z-10
+                </span>
+              </div>
+              <div class="relative z-1 border border-sky-400 bg-sky-950 px-1 text-sky-200">
+                relative z-1
+              </div>
+            </div>
+          `,
+        )}
+        <div data-test="scroller" class="h-6 overflow-y-auto">
+          <table class="border-collapse">
+            <thead>
+              <tr>
+                ${["#", "mon", "tue"].map(
+                  (c) =>
+                    html`<th
+                      class="sticky top-0 border border-neutral-400 bg-clear px-1 text-amber-300"
+                    >
+                      ${c}
+                    </th>`,
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              ${ROWS.map(
+                (r, i) => html`
+                  <tr>
+                    <th class="border border-neutral-400 px-1 text-left text-cyan-300">${r}</th>
+                    <td class="border border-neutral-400 px-1">${i + 1}</td>
+                    <td class="border border-neutral-400 px-1">${(i + 1) * 2}</td>
+                  </tr>
+                `,
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <p data-test="overflowing" class="h-1 text-lime-300">
+            A block's text overflowing its one-row box, over the next block's fill
+          </p>
+          <div class="h-3 bg-blue-900"></div>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, width, measure } = await readyGrid(canvasElement);
+    const scroller = by("scroller");
+    scroller.scrollTo({ top: 3 * cellSize(host).height, behavior: "instant" });
+    const header = scroller.querySelector("th")!;
+    await waitFor(() => expect(cells(header, "--mw-sy")).toBe(3));
+    const { rows, boxOf } = measure();
+    expect(rows[boxOf(scroller).row + 1]).toMatch(/# *│ *mon *│ *tue/);
+    // The overflowing text's second line shows over the fill below its box.
+    const overflowing = by("overflowing");
+    const box = boxOf(overflowing);
+    expect(rows[box.row + 1]!.slice(box.col, box.col + width(overflowing)).trim()).not.toBe("");
+    // A badge shows over the next card's border where its card forms no
+    // context, under it where its card does.
+    const badges = [...canvasElement.querySelectorAll<HTMLElement>('[data-test="badge"]')];
+    const shown = badges.map((badge) => {
+      const { row, col } = boxOf(badge);
+      return rows[row]!.slice(col, col + width(badge)).includes("z-10");
+    });
+    expect(shown).toEqual([true, false, false]);
+    // The menu's item over the next card takes the hover there.
+    if (host.getAttribute("select") !== "grid") return;
+    expect(boxOf(by("open")).row).toBeGreaterThanOrEqual(boxOf(by("next")).row);
+    hoverOver(by("open"));
+    await waitFor(() => expect(by("open")).toHaveAttribute("data-mw-hover"));
+    expect(by("next")).not.toHaveAttribute("data-mw-hover");
+    host.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+  },
+};
+
+/**
+ * Clips and scrolls follow the containing-block chain
+ * (positioning.md "Paint order"): a menu whose containing block lies
+ * outside an `overflow-hidden` card shows whole past the card's edge,
+ * and one outside a scrolled list holds still while the list scrolls,
+ * its light element on the cells the grid paints it on.
+ */
+export const ContainingBlockClip: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="relative flex max-w-104 gap-4 pb-6">
+        <div data-test="card" class="h-5 w-40 overflow-hidden border border-neutral-500 px-1">
+          A card clips its own content: these lines run on past its bottom edge and are cut there,
+          where its menu shows whole
+          <div
+            data-test="card-menu"
+            class="absolute top-3 left-2 z-10 w-24 border border-cyan-400 bg-clear px-1"
+          >
+            <p>A menu past the card's edge</p>
+            <p>shows whole</p>
+          </div>
+        </div>
+        <div data-test="list" class="h-6 w-40 overflow-y-auto border border-neutral-500 px-1">
+          ${ROWS.map((row) => html`<p>${row}</p>`)}
+          <p
+            data-test="list-menu"
+            class="absolute top-4 left-60 w-24 border border-amber-400 bg-clear px-1"
+          >
+            Held still
+          </p>
+        </div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, height, measure } = await readyGrid(canvasElement);
+    const { rows, boxOf } = measure();
+    // The card's menu past its bottom edge, its text and border whole.
+    const menu = boxOf(by("card-menu"));
+    const bottom = menu.row + height(by("card-menu")) - 1;
+    expect(bottom).toBeGreaterThan(boxOf(by("card")).row + height(by("card")) - 1);
+    expect(rows[bottom - 1]).toContain("shows whole");
+    expect(rows[bottom]!.slice(menu.col, menu.col + 2)).toBe("└─");
+    const held = boxOf(by("list-menu"));
+    by("list").scrollTo({ top: 3 * cellSize(host).height, behavior: "instant" });
+    await waitFor(() => expect(cells(by("list-menu"), "--mw-sy")).toBe(3));
+    expect(measure().boxOf(by("list-menu"))).toEqual(held);
+    expect(measure().rows[held.row + 1]!.indexOf("Held still")).toBe(held.col + 2);
+    measure().expectNativeOnGrid(by("list-menu"));
+  },
+};
+
+/** The distinct fills of `StackingAgainstNative`'s boxes. */
+const FILLS = [
+  "rgb(230, 25, 75)",
+  "rgb(60, 180, 75)",
+  "rgb(255, 225, 25)",
+  "rgb(0, 130, 200)",
+  "rgb(245, 130, 48)",
+  "rgb(145, 30, 180)",
+  "rgb(70, 240, 240)",
+  "rgb(240, 50, 230)",
+  "rgb(210, 245, 60)",
+  "rgb(250, 190, 212)",
+  "rgb(0, 128, 128)",
+  "rgb(170, 110, 40)",
+];
+
+/** A length in cells along an axis, as CSS. */
+type Unit = (cells: number, axis: "x" | "y") => string;
+
+/** A box of a stacking layout, its lengths in cells. */
+interface StackedBox {
+  position: "static" | "relative" | "absolute" | "fixed" | "sticky";
+  z: number | null;
+  width: number | null;
+  height: number;
+  top: number;
+  left: number;
+  marginTop: number;
+  opacity: boolean;
+  isolate: boolean;
+  flex: boolean;
+  overflow: "visible" | "hidden" | "auto";
+  fill: number;
+  children: StackedBox[];
+}
+
+/** A seeded layout of 6 to 12 filled boxes stacked every way: each
+ * position, z-indexes, `opacity-90`, `isolate`, flex parents, negative
+ * margins, and clipping and scrolling boxes. */
+function stackedLayout(seed: number): StackedBox[] {
+  let state = seed >>> 0;
+  const next = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const int = (lo: number, hi: number) => lo + Math.floor(next() * (hi - lo + 1));
+  const pick = <T>(values: readonly T[]): T => values[Math.floor(next() * values.length)]!;
+  const roots: StackedBox[] = [];
+  const all: StackedBox[] = [];
+  for (let i = 0, count = int(6, 12); i < count; i++) {
+    const parent = next() < 0.35 || all.length === 0 ? null : pick(all);
+    const position = pick([
+      "static",
+      "static",
+      "static",
+      "relative",
+      "absolute",
+      "fixed",
+      "sticky",
+    ] as const);
+    const siblings = parent ? parent.children : roots;
+    const inFlow = position !== "absolute" && position !== "fixed";
+    const box: StackedBox = {
+      position,
+      z: pick([null, null, null, -1, 0, 1, 2]),
+      width: !inFlow || parent?.flex || next() < 0.5 ? int(2, 12) : null,
+      height: int(1, 4),
+      top: position === "relative" || !inFlow ? int(-1, 3) : 0,
+      left: position === "relative" || !inFlow ? int(0, 6) : 0,
+      // A first child's margin would collapse through its parent's.
+      marginTop:
+        inFlow &&
+        siblings.some((s) => s.position !== "absolute" && s.position !== "fixed") &&
+        next() < 0.3
+          ? -int(1, 2)
+          : 0,
+      opacity: next() < 0.1,
+      isolate: next() < 0.1,
+      flex: next() < 0.15,
+      // Scrollers in every other layout (the play's gutters).
+      overflow: pick([
+        "visible",
+        "visible",
+        "visible",
+        "hidden",
+        seed % 2 ? "visible" : "auto",
+      ] as const),
+      fill: i,
+      children: [],
+    };
+    siblings.push(box);
+    all.push(box);
+  }
+  return roots;
+}
+
+/** A stacking layout's markup, its lengths in `unit`. */
+function stackedMarkup(boxes: StackedBox[], unit: Unit): string {
+  return boxes
+    .map((box) => {
+      const style = [
+        `position: ${box.position}`,
+        box.z === null ? "" : `z-index: ${box.z}`,
+        box.width === null ? "" : `width: ${unit(box.width, "x")}`,
+        `height: ${unit(box.height, "y")}`,
+        box.position === "static" || box.position === "sticky"
+          ? ""
+          : `top: ${unit(box.top, "y")}; left: ${unit(box.left, "x")}`,
+        box.marginTop === 0 ? "" : `margin-top: ${unit(box.marginTop, "y")}`,
+        box.opacity ? "opacity: 0.9" : "",
+        box.isolate ? "isolation: isolate" : "",
+        box.flex ? "display: flex" : "",
+        box.overflow === "hidden" ? "overflow: hidden" : "",
+        // A scroller's filler overflows it; its bars take no cells.
+        box.overflow === "auto" ? "overflow: auto; scrollbar-width: none" : "",
+        `flex-shrink: 0; background-color: ${FILLS[box.fill]}`,
+      ].filter(Boolean);
+      const filler =
+        box.overflow === "auto"
+          ? `<div style="flex-shrink: 0; height: ${unit(6, "y")}"></div>`
+          : "";
+      return `<div data-test="box-${box.fill}" style="${style.join("; ")}">${filler}${stackedMarkup(box.children, unit)}</div>`;
+    })
+    .join("");
+}
+
+/** Fixed layouts for the in-flow phases: an atomic inline box and a
+ * float past their block, over a later block's fill. */
+const PHASE_LAYOUTS = [
+  (unit: Unit) =>
+    `<div data-test="box-0" style="height: ${unit(1, "y")}; background-color: ${FILLS[0]}"><span data-test="box-1" style="display: inline-block; vertical-align: top; width: ${unit(4, "x")}; height: ${unit(3, "y")}; background-color: ${FILLS[1]}"></span></div>` +
+    `<div data-test="box-2" style="height: ${unit(3, "y")}; background-color: ${FILLS[2]}"></div>`,
+  (unit: Unit) =>
+    `<div data-test="box-0" style="height: ${unit(1, "y")}; background-color: ${FILLS[0]}"><div data-test="box-1" style="float: left; width: ${unit(4, "x")}; height: ${unit(3, "y")}; background-color: ${FILLS[1]}"></div></div>` +
+    `<div data-test="box-2" style="height: ${unit(3, "y")}; background-color: ${FILLS[2]}"></div>`,
+];
+
+/** `StackingAgainstNative`'s layouts, their lengths in `unit`: 30
+ * seeded, then the in-flow phases'. */
+const stackingLayouts = (unit: Unit): string[] => [
+  ...Array.from({ length: 30 }, (_, i) => stackedMarkup(stackedLayout(i + 1), unit)),
+  ...PHASE_LAYOUTS.map((layout) => layout(unit)),
+];
+
+/** Each grid cell's fill, row by row: its span's background, "" for none. */
+function cellFills(host: HTMLElement): string[][] {
+  const rows: string[][] = [[]];
+  for (const node of gridOf(host).childNodes) {
+    const fill = node instanceof HTMLElement ? node.style.backgroundColor : "";
+    for (const glyph of node.textContent!) {
+      if (glyph === "\n") rows.push([]);
+      else rows.at(-1)!.push(fill);
+    }
+  }
+  return rows;
+}
+
+/** Test-only (hidden from the sidebar and the visual sweep): 30 seeded
+ * layouts of filled boxes and the in-flow phases' two, each painted by
+ * the engine and, beside it, by the browser at the measured cell in a
+ * `contain: layout` box (the host's containing block for a fixed box,
+ * and a stacking context as the host is), each scroller scrolled a
+ * row. At every cell centre the grid's fill is the fill of the
+ * browser's topmost box there, and where two boxes share a cell the
+ * synthesized hover lands on that box. */
+export const StackingAgainstNative: StoryObj = {
+  tags: ["!dev", "!golden"],
+  // Cells on the spacing scale, in rem.
+  render: () =>
+    html`${stackingLayouts((cells) => `${cells * 0.25}rem`).map(
+      (markup, i) => html`
+        <div data-test="layout-${i}" class="mb-2 flex gap-4">
+          <mono-wind class="w-40" .innerHTML=${markup}></mono-wind>
+          <div data-test="native" style="contain: layout"></div>
+        </div>
+      `,
+    )}`,
+  play: async ({ canvasElement }) => {
+    const hosts = await readyHosts(canvasElement);
+    const { width: cellWidth, height: cellHeight } = cellSize(hosts[0]!);
+    const layouts = stackingLayouts(
+      (cells, axis) => `${cells * (axis === "x" ? cellWidth : cellHeight)}px`,
+    );
+    const cells = (el: HTMLElement, name: string) => Number(el.style.getPropertyValue(name));
+    // The fill a painted color lies nearest: a faded box's is blended.
+    const fillChannels = FILLS.map((fill) => channels(fill));
+    const nearest = (color: string): number => {
+      const [r, g, b] = channels(color);
+      const distances = fillChannels.map(
+        ([red, green, blue]) => (r! - red!) ** 2 + (g! - green!) ** 2 + (b! - blue!) ** 2,
+      );
+      return distances.indexOf(Math.min(...distances));
+    };
+    let checked = 0;
+    for (const [i, host] of hosts.entries()) {
+      const native = canvasElement.querySelector<HTMLElement>(
+        `[data-test="layout-${i}"] [data-test="native"]`,
+      )!;
+      native.style.width = `${host.getBoundingClientRect().width}px`;
+      native.innerHTML = layouts[i]!;
+      // Each scroller a row down, in the host and natively.
+      const scrollers = (root: Element) =>
+        [...root.querySelectorAll<HTMLElement>('[data-test^="box-"]')].filter(
+          (el) => el.style.overflow === "auto",
+        );
+      for (const scroller of [...scrollers(host), ...scrollers(native)]) {
+        scroller.scrollTop = cellHeight;
+      }
+      await frames(2);
+      // Where every scrollbar-width reads none (headless Firefox's overlay
+      // bars), the engine gives a scroller gutter cells the browser draws
+      // none of: the other engines check that layout.
+      const gutters = (el: HTMLElement) => cells(el, "--mw-gr") + cells(el, "--mw-gb");
+      if (scrollers(host).some((el) => gutters(el) > 0)) continue;
+      checked++;
+      // A point outside the viewport hits nothing.
+      host.parentElement!.scrollIntoView({ block: "start" });
+      const fills = cellFills(host);
+      const grid = gridOf(host).getBoundingClientRect();
+      const origin = native.getBoundingClientRect();
+      const shared: { col: number; row: number; box: string }[] = [];
+      expect(fills.flat().some(Boolean), `layout ${i} paints`).toBe(true);
+      fills.forEach((row, y) =>
+        row.forEach((fill, x) => {
+          const point = { x: (x + 0.5) * cellWidth, y: (y + 0.5) * cellHeight };
+          const stack = document
+            .elementsFromPoint(origin.left + point.x, origin.top + point.y)
+            .filter((el) => native.contains(el) && el.matches('[data-test^="box-"]'));
+          const top = stack[0]?.getAttribute("data-test") ?? "none";
+          const shown = fill === "" ? "none" : `box-${nearest(fill)}`;
+          expect(shown, `layout ${i}, cell ${x},${y}`).toBe(top);
+          if (stack.length > 1) shared.push({ col: x, row: y, box: top });
+        }),
+      );
+      if (host.getAttribute("select") !== "grid") continue;
+      const hovered = () => host.querySelectorAll('[data-test^="box-"][data-mw-hover]');
+      for (const { col, row, box } of shared.filter((_, k) => k % 7 === 0).slice(0, 4)) {
+        moveTo(host, {
+          x: grid.left + (col + 0.5) * cellWidth,
+          y: grid.top + (row + 0.5) * cellHeight,
+        });
+        await waitFor(() =>
+          expect(
+            [...hovered()].at(-1)?.getAttribute("data-test"),
+            `layout ${i}, hover at ${col},${row}`,
+          ).toBe(box),
+        );
+      }
+      host.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+    }
+    expect(checked).toBeGreaterThan(hosts.length / 3);
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): the in-flow
+ * phases' text cases, twice — in the host, and natively in the host's
+ * font at the measured cell, which the play sizes. Each `█` lies past
+ * its block over a later fill, or over an earlier float, whose parent
+ * holds it as a `flow-root`, as every container does on the grid
+ * (float.md deviation 2); `visual/stacking.spec.ts` samples it on both
+ * sides in all three engines. */
+export const StackingTwins: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => {
+    const cases = html`
+      <div>
+        <p data-size="1 2" class="h-1 w-2 text-[rgb(0,255,0)]">
+          xx <span data-test="over-fill">█</span>
+        </p>
+        <div data-size="3" class="h-3 bg-[rgb(0,0,255)]"></div>
+      </div>
+      <div class="mt-4">
+        <div data-size="1" class="flow-root h-1">
+          <div data-size="3 4" class="float-left h-3 w-4 bg-[rgb(0,0,255)]"></div>
+        </div>
+        <p class="text-[rgb(0,255,0)]"><span data-test="over-float">█</span></p>
+      </div>
+    `;
+    return html`
+      <div class="flex gap-8 p-2">
+        <div data-test="engine" class="w-40"><mono-wind>${cases}</mono-wind></div>
+        <div data-test="native" class="w-40">${cases}</div>
+      </div>
+    `;
+  },
+  play: async ({ canvasElement }) => {
+    const [host] = await readyHosts(canvasElement);
+    const { width, height } = cellSize(host!);
+    const native = testHooks(canvasElement)("native");
+    const { fontFamily, fontSize } = getComputedStyle(host!);
+    Object.assign(native.style, { fontFamily, fontSize, lineHeight: `${height}px` });
+    for (const box of native.querySelectorAll<HTMLElement>("[data-size]")) {
+      const [rows, columns] = box.dataset.size!.split(" ").map(Number);
+      box.style.height = `${rows! * height}px`;
+      if (columns !== undefined) box.style.width = `${columns * width}px`;
+    }
   },
 };
 
@@ -322,14 +795,15 @@ const ROWS = ["loaves", "rolls", "bagels", "scones", "buns", "rye", "pita", "naa
  * A bordered table in a scroller with a sticky header row and a sticky
  * first column: the collapsed lattice follows each — the header's lines
  * with it, joined to the column lines running on below — and the corner
- * cell sticks both ways.
+ * cell sticks both ways. The header's `z-10` keeps the column's cells
+ * under it as they scroll up (positioning.md "Paint order").
  */
 export const StickyTable: StoryObj = {
   render: () => html`
     <mono-wind>
       <div data-test="scroller" class="h-8 max-w-40 overflow-auto pe-1 scrollbar-y-2">
         <table class="border-collapse">
-          <thead data-test="thead" class="sticky top-0 bg-clear text-amber-300">
+          <thead data-test="thead" class="sticky top-0 z-10 bg-clear text-amber-300">
             <tr>
               <th data-test="corner" class="sticky left-0 border border-neutral-400 bg-clear px-1">
                 #
@@ -404,8 +878,8 @@ export const StickyTable: StoryObj = {
 /**
  * Header cells sticky on their own, `<thead>` not: left at
  * `z-index: auto`, right at `z-10`. Scrolled four rows, the stuck
- * cells paint under the body rows, where CSS paints them over
- * (positioning.md "Paint order": stacking among siblings only).
+ * cells paint over the body rows in both, as members of the host's
+ * stacking context (positioning.md "Paint order").
  */
 export const StickyHeaderCells: StoryObj = {
   tags: ["!golden"],
@@ -452,9 +926,20 @@ export const StickyHeaderCells: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { host } = await readyGrid(canvasElement);
-    for (const scroller of canvasElement.querySelectorAll<HTMLElement>('[data-test="scroller"]'))
+    const { host, cells, width, measure } = await readyGrid(canvasElement);
+    const scrollers = [...canvasElement.querySelectorAll<HTMLElement>('[data-test="scroller"]')];
+    for (const scroller of scrollers) {
       scroller.scrollTo({ top: 4 * cellSize(host).height, behavior: "instant" });
+    }
+    const headers = scrollers.map((scroller) => scroller.querySelector("th")!);
+    await waitFor(() => headers.forEach((th) => expect(cells(th, "--mw-sy")).toBe(4)));
+    // The header row on the scrollport's second row, its own text there.
+    const { rows, boxOf } = measure();
+    for (const scroller of scrollers) {
+      const { row, col } = boxOf(scroller);
+      const line = rows[row + 1]!.slice(col, col + width(scroller));
+      expect(line).toMatch(/#.*mon.*tue.*wed/);
+    }
   },
 };
 

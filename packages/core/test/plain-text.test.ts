@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   applyCellPaint,
   charIndexAtCell,
+  inlineElementRects,
   isBarePaint,
   PAINT_FIELDS,
   renderGridRows,
@@ -542,6 +543,39 @@ describe("inline fidelity in segments", () => {
     ]);
   });
 
+  it("finds no cells for an inline element in a leaf without text", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 80px"><span style="position: sticky; top: 0"></span></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 20);
+    expect(inlineElementRects(node, 0, 0)).toEqual([]);
+    expect(charIndexAtCell(node, 0, 0, 0, 0)).toBeNull();
+  });
+
+  it("adds the decoration lines a box's in-flow ancestors propagate to its own", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      `<div style="width: 200px; text-decoration-line: underline">` +
+      `<p>hi <span style="text-decoration-line: line-through">there <i style="color: red">you</i></span></p>` +
+      `<span style="text-decoration-line: overline">split<div>block</div></span>` +
+      `<div style="position: absolute; top: 40px">out</div>` +
+      `</div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 50);
+    const lines = (text: string) =>
+      renderCellSegments(node)
+        .flat()
+        .find((segment) => segment.text.trim() === text)?.textDecorationLine;
+    expect(lines("hi")).toBe("underline");
+    expect(lines("there")).toBe("underline line-through");
+    expect(lines("you")).toBe("underline line-through");
+    expect(lines("split")).toBe("underline overline");
+    expect(lines("block")).toBe("underline overline");
+    expect(lines("out")).toBeUndefined();
+  });
+
   it("maps inline descendants' color/weight and relative insets per character", () => {
     const host = document.createElement("div");
     host.innerHTML = `<div style="height: 8px"><div style="width: 40px">ab <b style="color: red; font-weight: 700">cd</b> <span style="position: relative; top: 4px; color: blue">ef</span></div></div>`;
@@ -745,6 +779,292 @@ const over = (
     },
     text,
   });
+
+/** Each cell's background on row `y`. */
+const backgroundsOf = (root: LayoutNode, y: number): (string | undefined)[] =>
+  renderCellSegments(root)[y]!.flatMap((segment) =>
+    Array.from(segment.text, () => segment.backgroundColor),
+  );
+
+/** A filled box `height` rows tall. */
+const filled = (
+  backgroundColor: string,
+  height: number,
+  style: Partial<LayoutNode["style"]> = {},
+  children: LayoutNode[] = [],
+): LayoutNode =>
+  makeNode({ style: { backgroundColor, height: cells(height), ...style }, children });
+
+describe('stacking contexts (specs/positioning.md "Paint order")', () => {
+  it("paints a z-10 menu over the next card, its card forming no context", () => {
+    const card = filled("red", 2, { position: "relative" }, [
+      over(0, 1, 3, 3, { zIndex: 10, backgroundColor: "lime" }),
+    ]);
+    const next = filled("blue", 2, { position: "relative" });
+    const root = makeNode({ children: [card, next] });
+    layoutRoot(root, 6);
+    expect(backgroundsOf(root, 2)).toEqual(["lime", "lime", "lime", "blue", "blue", "blue"]);
+  });
+
+  it("paints a -z-1 child under its parent's fill where the parent forms no context", () => {
+    for (const position of ["static", "relative"] as const) {
+      const parent = filled("red", 2, { position }, [
+        over(0, 1, 2, 2, { zIndex: -1, backgroundColor: "blue" }),
+      ]);
+      const root = makeNode({ style: { position: "relative" }, children: [parent] });
+      layoutRoot(root, 3);
+      expect(backgroundsOf(root, 1), position).toEqual(["red", "red", "red"]);
+      expect(backgroundsOf(root, 2)[0], position).toBe("blue");
+    }
+    const context = filled("red", 2, { stacking: true }, [
+      over(0, 1, 2, 2, { zIndex: -1, backgroundColor: "blue" }),
+    ]);
+    const root = makeNode({ children: [context] });
+    layoutRoot(root, 3);
+    expect(backgroundsOf(root, 1)).toEqual(["blue", "blue", "red"]);
+  });
+
+  it("paints a box that forms a context over an earlier positioned box", () => {
+    const relative = filled("blue", 2, {
+      position: "relative",
+      margin: { top: 0, right: 0, bottom: -1, left: 0 },
+    });
+    const isolated = filled("lime", 2, { stacking: true });
+    const root = makeNode({ children: [relative, isolated] });
+    layoutRoot(root, 2);
+    expect(backgroundsOf(root, 1)).toEqual(["lime", "lime"]);
+  });
+
+  it("paints a fixed box over a later in-flow block", () => {
+    const fixed = over(0, 0, 2, 3, { position: "fixed", backgroundColor: "lime" });
+    const root = makeNode({
+      children: [makeNode({ style: { height: cells(1) }, children: [fixed] }), filled("blue", 2)],
+    });
+    layoutRoot(root, 3);
+    expect(backgroundsOf(root, 1)).toEqual(["lime", "lime", "blue"]);
+  });
+
+  it("paints a stuck heading over a later section's box", () => {
+    const heading = makeNode({
+      style: {
+        position: "sticky",
+        insets: { top: 0, right: null, bottom: null, left: null },
+        backgroundColor: "lime",
+      },
+      text: "H",
+    });
+    const sections = [
+      makeNode({ style: { height: cells(4) }, children: [heading] }),
+      makeNode({
+        style: { margin: { top: -3, right: 0, bottom: 0, left: 0 } },
+        children: [filled("blue", 3)],
+      }),
+    ];
+    const scroller = makeNode({
+      style: { height: cells(3), width: cells(4), overflow: { x: "visible", y: "auto" } },
+      children: sections,
+    });
+    const root = makeNode({ children: [scroller] });
+    layoutRoot(root, 4);
+    scrollBox(root, scroller, 0, 1);
+    expect(renderPlainText(root).split("\n")[0]).toMatch(/^H/);
+    expect(backgroundsOf(root, 0)[0]).toBe("lime");
+  });
+});
+
+describe('clips along the containing-block chain (specs/positioning.md "Paint order")', () => {
+  /** A relative block 8 rows tall holding a 6×3 box styled `clipper`
+   * that holds `inner` and `a`, an absolute box of the block's. */
+  const escaping = (
+    clipper: Partial<LayoutNode["style"]>,
+    a: LayoutNode,
+    inner: LayoutNode[] = [],
+  ) =>
+    makeNode({
+      style: { position: "relative", height: cells(8) },
+      children: [
+        makeNode({
+          style: { width: cells(6), height: cells(3), ...clipper },
+          children: [...inner, a],
+        }),
+      ],
+    });
+  /** A lime 3×2 absolute box on row 4, past the clipper. */
+  const lime = () => over(0, 4, 3, 2, { backgroundColor: "lime" });
+
+  it("paints an absolute box past a static clipping box between it and its containing block", () => {
+    const root = escaping({ overflow: { x: "clip", y: "clip" } }, lime());
+    layoutRoot(root, 12);
+    expect(backgroundsOf(root, 4).slice(0, 3)).toEqual(["lime", "lime", "lime"]);
+    // A positioned clipping box is its containing block, and clips it.
+    const clipped = escaping({ position: "relative", overflow: { x: "clip", y: "clip" } }, lime());
+    layoutRoot(clipped, 12);
+    expect(backgroundsOf(clipped, 4)[0]).toBeUndefined();
+  });
+
+  it("holds an absolute box still through a static scroller's scroll", () => {
+    const a = lime();
+    const root = escaping({ overflow: { x: "visible", y: "auto" } }, a, [filled("blue", 10)]);
+    layoutRoot(root, 12);
+    scrollBox(root, root.children[0]!, 0, 2);
+    expect(a.paintOrigin).toEqual({ x: 0, y: 4 });
+    expect(backgroundsOf(root, 4).slice(0, 3)).toEqual(["lime", "lime", "lime"]);
+  });
+
+  it("clips a box at the clips of its own chain, two escapes deep", () => {
+    // `b`'s containing block is `a`: the static clipper inside `a` clips
+    // neither, and `a` clips nothing.
+    const b = over(0, 3, 2, 1, { backgroundColor: "lime" });
+    const inner = makeNode({
+      style: { width: cells(3), height: cells(2), overflow: { x: "clip", y: "clip" } },
+      children: [b],
+    });
+    const a = makeNode({
+      style: {
+        position: "absolute",
+        insets: { top: 4, right: null, bottom: null, left: 0 },
+        width: cells(3),
+        height: cells(2),
+      },
+      children: [inner],
+    });
+    const root = escaping({ overflow: { x: "clip", y: "clip" } }, a);
+    layoutRoot(root, 12);
+    expect(backgroundsOf(root, 7).slice(0, 2)).toEqual(["lime", "lime"]);
+  });
+
+  it("ends the chain at a layer root, whose own clip a fixed box inside it takes", () => {
+    // Inside a layer, an absolute box whose containing block is above it
+    // skips the static clipper there (the transcript composites layers).
+    const column = (position: "absolute" | "fixed") =>
+      makeNode({
+        style: {
+          position,
+          insets: { top: 1, right: null, bottom: null, left: 0 },
+          width: cells(1),
+        },
+        text: "a b c d",
+      });
+    const clipper = makeNode({
+      style: { height: cells(2), overflow: { x: "clip", y: "clip" } },
+      children: [column("absolute")],
+    });
+    const root = makeNode({
+      children: [makeNode({ style: { layer: layered() }, children: [clipper] })],
+    });
+    layoutRoot(root, 4);
+    expect(renderPlainText(root).split("\n").slice(1, 5)).toEqual(["a", "b", "c", "d"]);
+    // A fixed box's containing block is the host, and the layer's root
+    // clips it as a transformed box clips its fixed descendants.
+    const clipping = makeNode({
+      style: { layer: layered(), height: cells(2), overflow: { x: "clip", y: "clip" } },
+      children: [column("fixed")],
+    });
+    const host = makeNode({ style: { height: cells(6) }, children: [clipping] });
+    layoutRoot(host, 4);
+    expect(renderPlainText(host).split("\n").slice(0, 3)).toEqual(["", "a", ""]);
+  });
+});
+
+describe('inline members (specs/positioning.md "Paint order")', () => {
+  /** Rows of `html` laid out 10 cells wide. */
+  const rowsOf = (html: string): string[] => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="width: 40px">${html}</div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 10);
+    return renderPlainText(root).split("\n");
+  };
+  const shifted = (style: string, text = "XY") =>
+    `<p>ab <span style="position: relative; top: 4px; ${style}">${text}</span></p>`;
+
+  it("paints a relative span over the next paragraph's text", () => {
+    expect(rowsOf(`${shifted("")}<p>zzzzzz</p>`)[1]).toBe("zzzXYz");
+  });
+
+  it("orders a span among the boxes by its z-index", () => {
+    const block = `<div style="position: relative">zzzzzz</div>`;
+    expect(rowsOf(`${shifted("z-index: 10")}${block}`)[1]).toBe("zzzXYz");
+    expect(rowsOf(`${shifted("")}${block}`)[1]).toBe("zzzzzz");
+  });
+
+  it("paints a faded span over a later block's text", () => {
+    const later = `<p style="margin-top: -4px">zzzzzz</p>`;
+    expect(rowsOf(`<p>ab <span style="opacity: 0.5">XY</span></p>${later}`)[0]).toBe("zzzXYz");
+  });
+
+  it("paints a span nested in a member as a member of its own, after it", () => {
+    const nested = `<p>ab <span style="position: relative">X<span style="position: relative; top: 4px">Y</span></span></p>`;
+    expect(rowsOf(`${nested}<p>zzzzzz</p>`).slice(0, 2)).toEqual(["ab X", "zzzzYz"]);
+  });
+
+  it("moves an inline element's descendants with its shift", () => {
+    const moved = `<p>ab <span style="position: relative; top: 4px">X<b>Y</b><span style="position: relative; left: 8px">Z</span></span></p>`;
+    expect(rowsOf(`${moved}<p>zzzzzzzz</p>`).slice(0, 2)).toEqual(["ab", "zzzXYzzZ"]);
+  });
+
+  it("finds a z-auto member's glyph over the leaf's own at a cell", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<p>abc <span style="position: relative; left: -16px">XY</span></p>`;
+    document.body.appendChild(host);
+    const leaf = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(leaf, 10);
+    expect(renderPlainText(leaf)).toBe("XYc");
+    expect(leaf.text[charIndexAtCell(leaf, 0, 0, 0, 0)!]).toBe("X");
+  });
+
+  it("paints a negative member's glyphs under the leaf's own, painted after them", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<p>abc <span style="position: relative; z-index: -1; left: -16px">XY</span></p>`;
+    document.body.appendChild(host);
+    const leaf = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(leaf, 10);
+    expect(renderPlainText(leaf)).toBe("abc");
+    expect(leaf.text[charIndexAtCell(leaf, 0, 0, 0, 0)!]).toBe("a");
+  });
+});
+
+describe('in-flow phases (specs/positioning.md "Paint order")', () => {
+  it("paints a block's overflowing text over a later block's fill", () => {
+    const text = makeNode({ style: { height: cells(1) }, text: "aa bb" });
+    const root = makeNode({ children: [text, filled("blue", 2)] });
+    layoutRoot(root, 2);
+    expect(renderPlainText(root).split("\n")).toEqual(["aa", "bb", ""]);
+    expect(backgroundsOf(root, 1)).toEqual(["blue", "blue"]);
+  });
+
+  it("paints a float over a later block from another parent", () => {
+    const float = filled("lime", 3, { float: "left", width: cells(2) });
+    const later = filled("blue", 2, { margin: { top: -2, right: 0, bottom: 0, left: 0 } });
+    const root = makeNode({ children: [makeNode({ children: [float] }), later] });
+    layoutRoot(root, 4);
+    expect(backgroundsOf(root, 1)).toEqual(["lime", "lime", "blue", "blue"]);
+  });
+
+  it("paints a flex item whole, as an inline block, over a later block's fill", () => {
+    const item = makeNode({
+      style: { width: cells(2), height: cells(1) },
+      children: [filled("lime", 3)],
+    });
+    const flex = makeNode({ style: { display: "flex", height: cells(1) }, children: [item] });
+    const root = makeNode({ children: [flex, filled("blue", 2)] });
+    layoutRoot(root, 4);
+    expect(backgroundsOf(root, 1)).toEqual(["lime", "lime", "blue", "blue"]);
+  });
+
+  it("paints a later block's text over a float, and the float over its fill", () => {
+    const float = filled("lime", 2, { float: "left", width: cells(2) });
+    const later = makeNode({
+      style: { backgroundColor: "blue", margin: { top: -2, right: 0, bottom: 0, left: 0 } },
+      text: "xyzw",
+    });
+    const root = makeNode({ children: [makeNode({ children: [float] }), later] });
+    layoutRoot(root, 4);
+    expect(renderPlainText(root).split("\n")[0]).toBe("xyzw");
+    expect(backgroundsOf(root, 0)).toEqual(["lime", "lime", "blue", "blue"]);
+  });
+});
 
 describe("translucency (specs/cell-model.md)", () => {
   it("composites a translucent background over the one beneath", () => {

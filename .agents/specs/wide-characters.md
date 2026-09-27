@@ -474,16 +474,20 @@ unless named):
   extend no caret outside caret browsing), a drag pressed outside from
   its first move over the host, and the engine's own ranges set the
   flag first, and a change to a live selection keeps it.
-- **In WebKitGTK and WPE, a script's selection of a grid-mode host's
-  text shows no highlight while nothing else on the page is
-  selectable.** WebKit queues `selectionchange` only when its visible
-  selection, the range snapped to selectable positions, changes
-  (`FrameSelection::setSelection`); with the host's `user-select: none`
-  text the only text, the range snaps to none before and after, so no
-  event reaches the engine, though `getSelection()` holds the range
-  (probed 2026-09-26; macOS WebKit, Chromium and Firefox fire it). The
-  Selection API fires on any change of the selection's range. A press
-  or a key is seen through its `selectstart`.
+- **In WebKit, a script's selection of a grid-mode host's text can
+  send no `selectionchange` while nothing else on the page is
+  selectable.** WebKit queues the event only when its canonical
+  selection changes, the range snapped to selectable positions and its
+  directionality (`FrameSelection::setSelection`), and with the host's
+  `user-select: none` text the only text, the range snaps to none.
+  WebKitGTK and WPE, whose selections are always directional, never
+  fire it, and the grid shows no highlight; macOS WebKit fires it only
+  where the directionality flips (a first `selectAllChildren` or
+  `setBaseAndExtent`, a `removeAllRanges`) and misses an `addRange` or
+  a second selection (probed 2026-09-26). Chromium and Firefox fire it
+  on every change of the range, as the Selection API requires.
+  `getSelection()` holds the range throughout, and a press or a key is
+  seen through its `selectstart`.
 - **Keyboard selection extension follows the native wrap.** Shift+Down
   in text mode moves by the browser's line boxes, which can differ
   from the grid's rows on lines holding drifted glyphs; the painted
@@ -652,25 +656,26 @@ per change, the DOM patch is per row.
   the nearest unit over painted cells in `nearestCells` order; the
   grid's `line-height` and `letter-spacing`; the host's `--mw-bgpad`;
   the glyph cache configured per layout, `#baselineOf` lending the
-  tiling fit its baseline; the shadow's `[data-shade]` rules drawing a
-  shade's lattice at its phase and a period above, each clipped to its
-  strip, each shade's glyph a literal (performance.md "Shades drawn
-  once"); `#autoscroll` and `#followPointer`; the
+  tiling fit its baseline; `SHADE_RULES`, each shade's glyph a literal
+  in its `[data-shade]` copies (performance.md "Shades drawn once");
+  `#autoscroll` and `#followPointer`; the
   light DOM's `::selection` lock under `data-mw-selection`
   (`#onSelectStart`, a press's held on the window's `#pressHeld`, both
   its edges captured, `#onSelectionChange` and `#reachesLight`,
   `#selectThrough` and `#liftLock`, a press
   begun outside in `#onPointerMove`, the release in `#onPointerUp`,
-  the disconnect);
-  the shadow's transparent `slot::selection` and the grid's invert.
+  the disconnect).
+- shadow.css: the `[data-shade]` copies drawing a shade's lattice at its
+  phase and a period above, each clipped to its strip; the transparent
+  `slot::selection` and the grid's invert.
 - styles.css: the light `::selection` sites transparent outside forced
   colors; form controls and editables swapping their engine-written
   colors by a rule of their own, ungated.
 - render.ts: `--mw-ink` / `--mw-ground` on editables, the ground
   threaded down the walk.
-- packages/ascii/src/index.ts: the transcript's transparent
+- packages/ascii/src/shadow.css: the transcript's transparent
   `#mirror::selection`.
-- packages/qr-code/src/index.ts: the same, on its transcript.
+- packages/qr-code/src/shadow.css: the same, on its transcript.
 - cell-model.md "Selection", "Text alignment" and "Typography",
   semantic-selection.md's gesture model and core-architecture.md's
   display-width entry point here.

@@ -1,5 +1,7 @@
 # A theme declares the glyphs its font has not got
 
+Status: **implemented** (`daba027`).
+
 ## The bug
 
 `borders-rounded` (or `borders-default`) on a theme whose font has no

@@ -1,5 +1,7 @@
 # CSS `visibility`, the anchor functions, and the scrolling gestures
 
+Status: **implemented** (`fa37b24`).
+
 The engine paints `visibility: hidden` and `collapse` boxes as if
 visible (probed: a hidden `<p>` shows its text on the grid), so
 Tailwind's `invisible` does nothing. `position-visibility` builds on

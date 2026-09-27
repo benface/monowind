@@ -652,9 +652,18 @@ describe("an anchor in a scroller", () => {
     expect(root.anchorScrollers).toEqual(new Set([list.source]));
   });
 
-  it("leaves a box in the same scroller where the layout put it, scrolling with the anchor", () => {
+  it("places a box escaping a static scroller against the anchor where the scroll shows it", () => {
+    // The scroller is static: the box's chain skips it (positioning.md
+    // "Paint order"), so its scroll moves the anchor under the box.
     const box = anchored("x", { x: "end", y: "center" });
-    const { root, rect } = scrolledAnchor(box, 2);
+    const { root, list } = scrolledAnchor(box, 2);
+    expect(box.paintOrigin).toEqual({ x: 4, y: 1 });
+    expect(root.anchorScrollers).toEqual(new Set([list.source]));
+  });
+
+  it("leaves a box in its containing scroller where the layout put it, scrolling with the anchor", () => {
+    const box = anchored("x", { x: "end", y: "center" });
+    const { root, rect } = scrolledAnchor(box, 2, [], 1, { position: "relative" });
     expect(rect).toMatchObject({ x: 4, y: 2 });
     expect(root.anchorScrollers).toBeUndefined();
   });
@@ -1022,8 +1031,18 @@ describe("position-visibility", () => {
       { x: "end", y: "center" },
       { style: visibility({ anchorVisible: true }) },
     );
-    scrolledAnchor(box, 3);
+    scrolledAnchor(box, 3, [], 1, { position: "relative" });
     expect(box.forceHidden).toBe(false);
+  });
+
+  it("hides a box whose chain skips the scroller its anchor scrolled out of", () => {
+    const box = anchored(
+      "x",
+      { x: "end", y: "center" },
+      { style: visibility({ anchorVisible: true }) },
+    );
+    scrolledAnchor(box, 3);
+    expect(box.forceHidden).toBe(true);
   });
 
   it("counts an anchor() naming none as needing the default anchor, a named one not", () => {
@@ -1197,17 +1216,22 @@ describe("position-visibility", () => {
 });
 
 /** A 20×8 host with, a row down, a 3-row scroller scrolled down
- * `rows`: `first` on its row 2 and `rest` after five more, `outside`
- * after the scroller. */
+ * `rows`, with `style` too: `first` on its row 2 and `rest` after five
+ * more, `outside` after the scroller. */
 function inScroller(
   first: LayoutNode,
   rows: number,
   rest: LayoutNode[] = [],
   outside: LayoutNode[] = [],
+  style: Partial<CellStyle> = {},
 ) {
   const list = makeNode({
     source: document.createElement("div"),
-    style: { overflow: { x: "visible", y: "auto" }, height: { kind: "cells", value: 3 } },
+    style: {
+      overflow: { x: "visible", y: "auto" },
+      height: { kind: "cells", value: 3 },
+      ...style,
+    },
     children: [spacer(2), first, spacer(5), ...rest],
   });
   list.scroll = { x: 0, y: rows };
@@ -1221,9 +1245,15 @@ function inScroller(
 }
 
 /** The 4-wide anchor `--a`, `height` rows tall, on row 2 of that
- * scroller (3 rows down puts it out of view), the box inside the
- * scroller or, fixed, after it, then `after`. */
-function scrolledAnchor(box: LayoutNode, rows: number, after: LayoutNode[] = [], height = 1) {
+ * scroller in `listStyle` (3 rows down puts it out of view), the box
+ * inside the scroller or, fixed, after it, then `after`. */
+function scrolledAnchor(
+  box: LayoutNode,
+  rows: number,
+  after: LayoutNode[] = [],
+  height = 1,
+  listStyle: Partial<CellStyle> = {},
+) {
   const anchor = makeNode({
     text: height > 0 ? "ANCH" : "",
     source: document.createElement("div"),
@@ -1234,9 +1264,12 @@ function scrolledAnchor(box: LayoutNode, rows: number, after: LayoutNode[] = [],
     },
   });
   const inside = box.style.position !== "fixed";
-  const { root, list } = inScroller(anchor, rows, inside ? [box] : [], [
-    ...(inside ? [] : [box]),
-    ...after,
-  ]);
+  const { root, list } = inScroller(
+    anchor,
+    rows,
+    inside ? [box] : [],
+    [...(inside ? [] : [box]), ...after],
+    listStyle,
+  );
   return { root, list, rect: box.localRect };
 }

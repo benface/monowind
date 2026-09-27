@@ -210,6 +210,13 @@ describe("the read", () => {
     expect(readCellStyle(el, 16).layer).toBeNull();
   });
 
+  it("keeps an element whose opacity runs a stacking context through its opaque frames", () => {
+    const el = reading("transition-duration: 1s; opacity: 1", (a) => [transitioned(a, "opacity")]);
+    expect(readCellStyle(el, 16).stacking).toBe(true);
+    readingAnimations(null);
+    expect(readCellStyle(el, 16).stacking).toBe(false);
+  });
+
   it("samples the live paint-only properties", () => {
     const { a: el } = hostOf();
     el.setAttribute("style", "color: rgb(1, 2, 3); opacity: 0.5; border-top-color: rgb(4, 5, 6)");

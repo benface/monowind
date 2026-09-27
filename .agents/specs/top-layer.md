@@ -202,9 +202,11 @@ connected — join the stack in tree order.
   layer resolves against the viewport, not the host; the host's surface
   on `[popover]` and `dialog`, in the base layer.
 - positioning.ts: a fixed box's `hostRect`.
-- paint-origin.ts: `placePainted`, a fixed box's `paintOrigin`.
-- plain-text.ts: `walk` paints a fixed box outside its ancestors'
-  clips, and the stack after the tree.
+- layout.ts: `layoutRoot` assigns the stack before placing the boxes.
+- paint-origin.ts: `placePainted`, a fixed box's `paintOrigin`, and a
+  stack element's clips, which its fixed descendants escape with it.
+- stacking.ts: `paintOrder` paints the stack after the tree, and
+  `paintIndex` lists it last.
 - pointer.ts: `hitStack` likewise.
 - paint.ts: the backdrop box beneath a layer's.
 - render.ts: a fixed light element taking back the scroll and shifts

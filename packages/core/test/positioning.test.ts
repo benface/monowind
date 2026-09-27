@@ -512,7 +512,7 @@ describe("containing block and constraint edge cases", () => {
 
   it("starts an overflowing flex static position, both axes", () => {
     // As an overflowing line does, a 20 × 4 box in a 10 × 2 row
-    // (specs/cell-model.md deviation 23); CSS centers or ends it past the
+    // (specs/cell-model.md deviation 21); CSS centers or ends it past the
     // start edge, space-around and space-evenly centering it (probed:
     // every engine).
     const place = (style: Partial<CellStyle>) => {

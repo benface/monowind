@@ -158,9 +158,10 @@ engine's alone and takes no mark.
   or a relayout, and the light element takes the resolved cells like
   any positioned box, so its native hit-testing sits where the grid
   shows it. The anchor's box is where the scroll shows it: moved by
-  the scroll containers above the anchor that the box escapes (a
-  fixed box escapes them all), and a scroll of such a container lays
-  the host out again, so the box follows.
+  the scroll containers on the anchor's containing-block chain that
+  the box's own chain skips (positioning.md "Paint order"; a fixed box
+  skips them all), and a scroll of such a container lays the host out
+  again, so the box follows.
 - **`position-visibility` hides the box and its subtree**, whatever
   their own `visibility`, as the browsers' force-hidden: under
   `anchors-valid` where the box needs its default anchor (an area,
@@ -169,12 +170,12 @@ engine's alone and takes no mark.
   hidden — by its `visibility`, or by a `position-visibility` of its
   own or of a box above it, so a submenu goes with its menu — or
   clipped out of view: no cell of its border box inside the window of
-  a box that clips it and not the positioned box, each window moved by
-  its own scroll and the anchor by the scroll of the clipping boxes
-  inside it, a fixed box escaping those above it for the anchors
-  inside it as for itself; under `no-overflow` where the box overflows
-  after the fallbacks. A scroll of such a clipping box lays the host
-  out again, so the box shows as its anchor scrolls back. Hidden, it
+  a box on its containing-block chain that clips it and is not on the
+  positioned box's, each window moved by its own scroll and the anchor
+  by the scroll of the clipping boxes inside it; under `no-overflow`
+  where the box overflows after the fallbacks. A scroll of such a
+  clipping box lays the host out again, so the box shows as its anchor
+  scrolls back. Hidden, it
   paints and takes nothing (visibility.md), and the light element is
   hidden with its subtree — a top-layer element inside it aside, whose
   box is the viewport's, as in CSS.
@@ -221,12 +222,8 @@ engine's alone and takes no mark.
    insets, the margins, the self-alignment, and the area; `flip-start`
    leaves the box's own sizes where they are.
 2. `anchors-visible` tests the anchor's border box, not its ink
-   overflow, against the boxes that clip the anchor and not the
-   positioned box — CSS counts every clipping ancestor of the anchor
-   inside the box's containing block, which differs where a clipping
-   box holds both but is not the box's containing block. An inline
-   anchor is tested against the boxes above its paragraph, the
-   paragraph's own clip (`truncate`) aside.
+   overflow. An inline anchor is tested against the boxes above its
+   paragraph, the paragraph's own clip (`truncate`) aside.
 3. The anchor is the nearest preceding element by name in the host;
    CSS's acceptability rules (containing-block and stacking checks)
    are not applied, so an ancestor anchors its descendant, which the
@@ -312,8 +309,8 @@ engine's alone and takes no mark.
   box's last successful placement (`Remembered`); `walkPositioned`
   syncs a placed box's scroll offsets before reading the anchors
   inside it, and `recordAnchors` records each anchor's rect, the
-  scroll containers above it, the boxes above it that clip it
-  (`clipsOf`, from the nearest fixed box on), and whether it is
+  scroll containers and the clipping boxes on its containing-block
+  chain (`containingChain`, `scrollersOf`, `clipsOf`), and whether it is
   hidden, as it places it
   (an inline element's first fragment from `inlineElementRects`);
   `placeAbsolute` hands a box's `anchor-size()`s to

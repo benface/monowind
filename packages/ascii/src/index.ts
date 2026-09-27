@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * `@monowind/ascii` — FIGlet/TOIlet banner text on the monowind grid:
  * the `<mono-ascii>` element (a leaf renderer, specs/leaf-renderers.md
@@ -16,6 +17,7 @@ import "./fonts/mono9.ts";
 import { asciiFont } from "./registry.ts";
 import { renderAscii, trimAscii } from "./render.ts";
 import { effectRuns, isEffect } from "./effects.ts";
+import shadowCss from "./shadow.css?inline";
 import type { AsciiFont } from "./font.ts";
 import type { LeafContent } from "monowind";
 
@@ -52,14 +54,7 @@ const HTMLElementBase = (
 // No whitespace between top-level nodes: the host inherits the
 // engine's white-space: pre lock, so stray template newlines would
 // render as real empty lines above the transcript.
-const SHADOW_TEMPLATE = `<style>
-  :host { display: block; }
-  #mirror { margin: 0; font: inherit; line-height: inherit; letter-spacing: inherit; white-space: pre; color: transparent; }
-  /* The engine paints a selection on its grid (specs/wide-characters.md);
-   * the transcript's own highlight stays invisible, ungated: one element. */
-  #mirror::selection { color: transparent; text-shadow: none; background: transparent; }
-  .alt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; user-select: none; -webkit-user-select: none; }
-</style><pre id="mirror" aria-hidden="true"></pre><span class="alt"><slot></slot></span>`;
+const SHADOW_TEMPLATE = `<style>${shadowCss}</style><pre id="mirror" aria-hidden="true"></pre><span class="alt"><slot></slot></span>`;
 
 /** `<mono-ascii>`: renders its text content as ascii art. The `font`
  * ATTRIBUTE names a registered font (default: "standard"); the `font`

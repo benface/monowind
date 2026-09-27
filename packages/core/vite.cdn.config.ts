@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
-import { css } from "./vite.config.ts";
+import { css } from "../../scripts/vite-css.mjs";
 
 const { version } = JSON.parse(
   readFileSync(resolve(import.meta.dirname, "package.json"), "utf8"),

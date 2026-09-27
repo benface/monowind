@@ -1,5 +1,6 @@
 import {
   clampSize,
+  containsAbsolute,
   edges,
   fixedMargins,
   isPositioned,
@@ -21,7 +22,6 @@ import {
 } from "./flex.ts";
 import { roundHalfAwayFromZero } from "./metrics.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
-import type { Clip } from "./plain-text.ts";
 import { IMPLICIT_ANCHOR, setAnchorSize } from "./style.ts";
 import { SIDES } from "./types.ts";
 import type {
@@ -31,10 +31,12 @@ import type {
   AreaSide,
   CellLength,
   CellStyle,
+  Clip,
   Flip,
   LayoutNode,
   NullableInsets,
   PerSide,
+  Position,
   PositionArea,
   Rect,
   Side,
@@ -68,12 +70,13 @@ interface ClipFrame {
 }
 
 /** An anchor as the boxes after it see it: its border box in the
- * host's cells as laid out, and the scroll containers above it, whose
- * offsets move it (specs/anchor-positioning.md). */
+ * host's cells as laid out, and the scroll containers on its
+ * containing-block chain, whose offsets move it
+ * (specs/anchor-positioning.md). */
 interface Anchor {
   rect: Rect;
   scrollers: LayoutNode[];
-  /** The boxes above it that clip, outermost first (for
+  /** The boxes on its chain that clip, outermost first (for
    * `position-visibility`). */
   clips: ClipFrame[];
   /** Whether it paints nothing of its own: `visibility`, or a
@@ -98,23 +101,34 @@ interface Pass {
   placed: Set<Element>;
   /** The scroll offsets under a box, synced as the pass sizes it. */
   syncScroll: ((node: LayoutNode) => void) | undefined;
+  /** The boxes between an absolute box and its containing block. */
+  crossed: Set<LayoutNode>;
 }
 
 /** Places the out-of-flow boxes under `root`; `remembered` keeps each
  * anchored box's last successful placement from one pass to the next,
  * a box no pass places again forgotten. A placed box's scroll offsets
- * are synced before the anchors inside it are read (`syncScroll`). */
+ * are synced before the anchors inside it are read (`syncScroll`).
+ * Returns the boxes an absolute box crosses to its containing block. */
 export function positionOutOfFlow(
   root: LayoutNode,
   cache: IntrinsicCache,
   remembered: Map<Element, Remembered> = new Map(),
   syncScroll?: (node: LayoutNode) => void,
-): void {
-  const pass: Pass = { cache, anchors: new Map(), remembered, placed: new Set(), syncScroll };
+): ReadonlySet<LayoutNode> {
+  const pass: Pass = {
+    cache,
+    anchors: new Map(),
+    remembered,
+    placed: new Set(),
+    syncScroll,
+    crossed: new Set(),
+  };
   walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], pass);
   for (const element of remembered.keys()) {
     if (!pass.placed.has(element)) remembered.delete(element);
   }
+  return pass.crossed;
 }
 
 function walkPositioned(
@@ -138,6 +152,10 @@ function walkPositioned(
     } else if (effective === "absolute") {
       placeAbsolute(child, node, absX, absY, ancestors, pass);
       pass.syncScroll?.(child);
+      for (let i = ancestors.length - 1; i > 0 && child.style.position === "absolute"; i--) {
+        if (containsAbsolute(ancestors[i]!.node.style)) break;
+        pass.crossed.add(ancestors[i]!.node);
+      }
     }
     const x = absX + child.localRect.x;
     const y = absY + child.localRect.y;
@@ -155,7 +173,7 @@ function relativeOffset(start: CellLength | null, end: CellLength | null, basis:
 /** A placed box's names, for the boxes after it in tree order
  * (specs/anchor-positioning.md): its border box, or for a named inline
  * element in its runs the element's first fragment, with the scroll
- * containers above whose offsets move it. */
+ * containers and clips of its containing-block chain. */
 function recordAnchors(
   child: LayoutNode,
   absX: number,
@@ -165,10 +183,8 @@ function recordAnchors(
 ): void {
   const inline = child.inlineElements?.some((entry) => entry.anchorNames.length > 0) ?? false;
   if (child.style.anchorNames.length === 0 && !inline) return;
-  // A fixed box paints from the host, outside the scrolls and clips above.
-  const frames = child.style.position === "fixed" ? [] : ancestors;
-  const scrollers = scrollersOf(frames);
-  const clips = clipsOf(frames);
+  const scrollers = scrollersOf(ancestors, child.style.position);
+  const clips = clipsOf(ancestors, child.style.position);
   const hiddenAbove =
     child.forceHidden === true || ancestors.some((frame) => frame.node.forceHidden === true);
   const rect = { x: absX, y: absY, width: child.localRect.width, height: child.localRect.height };
@@ -223,20 +239,28 @@ function anchoredByName(style: CellStyle): boolean {
   );
 }
 
-/** The frames whose scroll and clip reach a box: from its nearest fixed
- * ancestor on, which paints from the host outside those above it
- * (specs/positioning.md). */
-function reachingFrames(ancestors: Frame[]): Frame[] {
-  for (let i = ancestors.length - 1; i >= 0; i--) {
-    if (ancestors[i]!.node.style.position === "fixed") return ancestors.slice(i);
+/** The frames on a box's containing-block chain, whose scroll and clip
+ * reach it (specs/positioning.md "Paint order"): its parent's for an
+ * in-flow box, the nearest positioned one or layer root's for an
+ * absolute box, and none above a fixed box, which paints from the
+ * host; each on in turn. */
+function containingChain(ancestors: Frame[], position: Position): Frame[] {
+  const chain: Frame[] = [];
+  let reach = position;
+  for (let i = ancestors.length - 1; i >= 0 && reach !== "fixed"; i--) {
+    const frame = ancestors[i]!;
+    const { style } = frame.node;
+    if (reach === "absolute" && i > 0 && !containsAbsolute(style)) continue;
+    chain.unshift(frame);
+    reach = style.position;
   }
-  return ancestors;
+  return chain;
 }
 
-/** The boxes among a box's ancestors that clip it, with their clips. */
-function clipsOf(ancestors: Frame[]): ClipFrame[] {
+/** The boxes on a box's chain that clip it, with their clips. */
+function clipsOf(ancestors: Frame[], position: Position): ClipFrame[] {
   const out: ClipFrame[] = [];
-  for (const { node, absX, absY } of reachingFrames(ancestors)) {
+  for (const { node, absX, absY } of containingChain(ancestors, position)) {
     const bounds = clipBounds(node, absX, absY);
     if (bounds) out.push({ node, bounds });
   }
@@ -271,10 +295,10 @@ function anchorClipped(anchor: Anchor, boxClips: LayoutNode[]): boolean {
   return false;
 }
 
-/** The scroll containers among a box's ancestors, whose offsets move
- * it (specs/scrolling.md). */
-function scrollersOf(ancestors: Frame[]): LayoutNode[] {
-  return reachingFrames(ancestors)
+/** The scroll containers on a box's chain, whose offsets move it
+ * (specs/scrolling.md). */
+function scrollersOf(ancestors: Frame[], position: Position): LayoutNode[] {
+  return containingChain(ancestors, position)
     .map((frame) => frame.node)
     .filter((box) => box.scroll);
 }
@@ -348,8 +372,7 @@ function placeAbsolute(
   const seen = (name: string | null): Rect | undefined => {
     const anchor = name === null ? undefined : pass.anchors.get(name);
     if (!anchor) return undefined;
-    // A fixed box, painted from the host, escapes every scroll.
-    boxScrollers ??= fixed ? [] : scrollersOf(ancestors);
+    boxScrollers ??= scrollersOf(ancestors, style.position);
     const { rect, movers } = anchorRectFor(anchor, boxScrollers);
     noteAnchorScrollers(root, movers);
     return rect;
@@ -362,7 +385,7 @@ function placeAbsolute(
   const anchor = name === null ? undefined : pass.anchors.get(name);
   let invisible = false;
   if (conditions.anchorVisible && anchor) {
-    const boxClips = fixed ? [] : clipsOf(ancestors).map((clip) => clip.node);
+    const boxClips = clipsOf(ancestors, style.position).map((clip) => clip.node);
     invisible = anchor.hidden || anchorClipped(anchor, boxClips);
     noteAnchorScrollers(
       root,

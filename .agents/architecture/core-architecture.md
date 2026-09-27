@@ -205,12 +205,12 @@ All three share one core. Concretely, the packages:
 - **CDN mode is a build output of core, not a package** — an extra IIFE bundle
   including `@tailwindcss/browser`, published with the core package and served
   via unpkg/jsdelivr. No separate versioning surface. _Implemented:_
-  `dist/cdn.js` (~157 KB gzip, measured 2026-09-26), built by
+  `dist/cdn.js` (~159 KB gzip, measured 2026-09-27), built by
   `vite.cdn.config.ts` from `src/cdn.ts` (its inlined stylesheets stripped
   of their comments), exercised by `apps/example-html`; it exposes
   `globalThis.monowind.version` plus the leaf-renderer extension API for
   sibling CDN bundles. `dist/sort.js` (`vite.sort.config.ts`,
-  ~77 KB gzip) is its optional companion adding
+  ~76 KB gzip, stripped likewise) is its optional companion adding
   `globalThis.monowind.sortClasses` — canonical Tailwind class order via
   the `tailwindcss` design system, kept out of cdn.js for size.
 - **`apps/`** — `storybook` (the showcase + dev environment; every story is

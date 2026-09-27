@@ -62,7 +62,8 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 - **An ancestor's clip applies after the transform, as in CSS.** A
   layer under a clipping ancestor paints its cells unclipped and sits
   in a clipping box (`<div class="clip">`, `overflow: clip`) at the
-  ancestors' clips intersected, so the browser clips the transformed
+  clips of its containing-block chain intersected (positioning.md
+  "Paint order"), so the browser clips the transformed
   result: a card scaled on hover in a scrolling list is cut at the
   list's edge, a drawer sliding in from an `overflow-hidden` shell's
   edge is hidden past it. A nested layer's box carries the clips
@@ -85,8 +86,8 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   to the viewport's layer container in the order the walk opens it,
   above the main grid; a layer root inside another's subtree opens
   its layer inside the outer layer's box, so transforms compose as
-  they do in CSS. `z-index` orders siblings through the same
-  paint-order walk the grid already uses.
+  they do in CSS. A layer root forms a stacking context, and layers
+  open in the order positioning.md "Paint order" gives every box.
 - **Later ink covers a layer.** A put painted after a layer closed, on
   one of the layer's cells, blanks that cell in the layer's grid (a
   nested layer's through its parent's) and paints its own in the
@@ -184,6 +185,10 @@ flat, the pointer mapping taking the rotate about z (Deviations).
    with the layer. That it covers them whole — a translucent overlay
    hiding them, a later text run's blank spaces covering too — is the
    grid's one glyph per cell (cell-model.md deviation 13).
+8. A `mix-blend-mode`, `clip-path` or `mask-image` draws nothing: the
+   element forms a stacking context (positioning.md "Paint order") and
+   its cells paint as without it. The cause: only a transform or a
+   filter opens a layer ("Reading").
 
 ## Testing
 
@@ -231,19 +236,19 @@ flat, the pointer mapping taking the rotate about z (Deviations).
 - styles.css: the leading lift in `top`, so the transforms and
   `filter` stay the author's; `backdrop-filter` locked on the light
   element.
-- plain-text.ts: `walk`'s layer open and close around a root's
-  subtree, on the `recorder` a group shares, the opacity of the groups
-  it opened under kept (`PaintedLayer.alpha`).
+- plain-text.ts: `openLayer` on the painter's `enter` at a root, closed
+  on its `leave`, on the `recorder` a group shares, the opacity of the
+  groups it opened under kept (`PaintedLayer.alpha`).
 - paint.ts: `paintGrid`'s per-layer grids and node reuse; the boxes'
   geometry and copied properties (`placeLayer`, `syncLayers`, the
   box's `opacity` among them); the pointer mapping (`layersAt`, every
   layer's cell under a point).
 - pointer.ts: `cellAtPoint`, the layer a point lands on and takes —
   nothing painted after it covering the point, by the layout's paint
-  order (`indexTree`) — else the main grid's cell, with the hit stack
-  it found; `hitStack` through a layer (`through`): its root's
-  ancestor path, then its subtree; `pointKey`, what a hit is a
-  function of.
+  order (stacking.ts `paintIndex`, the layer's span) — else the main
+  grid's cell, with the hit stack it found; `hitStack` through a layer
+  (`through`): its root's ancestor path, then its subtree's entries,
+  a nested layer's aside; `pointKey`, what a hit is a function of.
 - element.ts: the layer container in the shadow viewport; a
   transition of an effect starting the sampling loop, its start
   laying out only for an element not yet a layer root

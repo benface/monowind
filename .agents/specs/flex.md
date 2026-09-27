@@ -35,20 +35,22 @@ All sizes and positions are integer cells.
 
 Each alignment property (`justify-content`, `align-content`,
 `align-items`, `align-self`, `justify-items`, `justify-self`) reads as
-its keyword — `self-start` and `left` as `start`, their ends as `end`,
-`flex-start` and `flex-end` apart from them, as a reversed flex axis
-swaps them alone (steps 7–9) and they are `start` and `end` elsewhere —
-with css-align's overflow position beside it: `safe` (Tailwind's
-`*-safe` utilities) sets the field's flag (`justifyContentSafe`, …),
-which changes nothing while overflow alignment is always safe
-(cell-model.md deviation 21), `unsafe` reads as the bare keyword, and
-`legacy` (`justify-items`) drops out. A baseline is safe, and places
-an item at the line edge its baseline group sits at, as `flex-start`
-(`flex-end` for `last baseline`), and anything else — a grid item, an
-out-of-flow child's static position — at its fallback `start` (`end`);
-`align-content` reads it as `flex-start` (`end`) (deviation 2). Any other value warns once and reads as the property's
-initial value (`normal`, or `auto` for `align-self` and
-`justify-self`).
+its keyword — `self-start` and `left` as `start`, their ends as `end`
+(a flex column's `justify-content: right` as `start`, its fallback off the
+inline axis), `flex-start` and `flex-end` apart from them, as a
+reversed flex axis swaps them alone (steps 7–9) and they are `start`
+and `end` elsewhere — with css-align's overflow position beside it:
+`safe` (Tailwind's `*-safe` utilities) sets the field's flag
+(`justifyContentSafe`, …), which changes nothing while overflow
+alignment is always safe (cell-model.md deviation 21), `unsafe` reads
+as the bare keyword, and `legacy` (`justify-items`) drops out. A
+baseline is safe, and places an item at the line edge its baseline
+group sits at, as `flex-start` (`flex-end` for `last baseline`), and
+anything else — a grid item, an out-of-flow child's static position —
+at its fallback `start` (`end`); `align-content` reads it as
+`flex-start` (`end`) (deviation 2). Any other value warns once and
+reads as the property's initial value (`normal`, or `auto` for
+`align-self` and `justify-self`).
 
 ## Row algorithm
 
@@ -243,18 +245,15 @@ container itself has.
    never wrap.
 2. No baseline alignment: a baseline item sits at the line edge its
    baseline group starts from (`items-baseline` behaves as
-   `items-start`, `items-baseline-last` as `items-end`) — cells make
-   baselines moot anyway; revisit with the forms milestone. Under
-   `wrap-reverse` that puts a group's shorter items at the line's
-   bottom, where CSS lines their first rows up with the tallest's
-   (probed 2026-09-25).
+   `items-start`, `items-baseline-last` as `items-end`), where CSS
+   lines up the items' first text rows, which their margins, borders
+   and padding can set apart. Under `wrap-reverse` that puts a group's
+   shorter items at the line's bottom, where CSS lines their first rows
+   up with the tallest's (probed 2026-09-25).
 3. A column item's content height — its automatic minimum, an intrinsic
    basis — counts a percent-height child against the item's own
    definite height, as WebKit does: in an `h-20` column, an `h-15` item
    holding an `h-full` child keeps 15 rows beside an `h-15` sibling's 5,
    where Chromium and Firefox take the child's percent as `auto` for the
    minimum and share the column 10/10 (probed 2026-09-23).
-4. `justify-content: right` reads as `end` in a column too, where
-   css-align makes it `start` off the inline axis (probed 2026-09-25,
-   every engine); no utility writes it.
-5. All the cell-model deviations (integer rounding, etc.) apply.
+4. All the cell-model deviations (integer rounding, etc.) apply.

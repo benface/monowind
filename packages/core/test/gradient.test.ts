@@ -695,6 +695,9 @@ describe("gradient paint", () => {
         pointerEvents: true,
         opacity: 0.4,
         parent: -1,
+        positioned: false,
+        zIndex: null,
+        context: true,
       },
     ];
     const root = makeNode({ children: [box] });

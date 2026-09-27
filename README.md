@@ -11,7 +11,7 @@ forms, and accessibility semantics stay fully intact.
 
 ```html
 <mono-wind>
-  <div class="flex justify-between items-center min-h-5 px-1 border">
+  <div class="flex min-h-5 items-center justify-between border px-1">
     <div>This will be on the left</div>
     <button>This will be on the right</button>
   </div>
@@ -31,6 +31,56 @@ forms, and accessibility semantics stay fully intact.
 > can still change. Design docs live in
 > [.agents/architecture](.agents/architecture),
 > [.agents/specs](.agents/specs), and [.agents/plans](.agents/plans).
+
+## Getting started
+
+**No build step** — one script tag, then `<mono-wind>` markup anywhere
+on the page:
+
+```html
+<script src="https://unpkg.com/monowind/dist/cdn.js"></script>
+```
+
+**With Vite** — the plugin brings Tailwind with it and injects the
+stylesheet and the script, so `index.html` holds only your markup:
+
+```sh
+npm install -D @monowind/vite
+```
+
+```ts
+// vite.config.ts
+import monowind from "@monowind/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [monowind()],
+});
+```
+
+**With your own Tailwind v4 build:**
+
+```sh
+npm install monowind
+```
+
+```css
+/* your main stylesheet */
+@import "tailwindcss";
+@import "monowind";
+```
+
+```js
+// your entry script
+import { defineMonoWind } from "monowind";
+defineMonoWind();
+```
+
+See [packages/core/README.md](packages/core/README.md) for the engine
+and [packages/vite/README.md](packages/vite/README.md) for the plugin
+(its `css` option adds your own `@theme` tokens). The
+`pnpm --filter @monowind/example-* dev` lines under
+[Development](#development) each run one of these setups end to end.
 
 ## What works
 
@@ -54,8 +104,9 @@ which the browser transforms).
 
 **Scrolling and position** — scroll containers
 (`overflow-auto`/`-scroll`) with native physics and engine-drawn TUI
-scrollbars (drag the thumb, or press the track to page), sticky
-positioning (table headers and columns included), and anchor
+scrollbars (drag the thumb, or press the track to page), stacking
+contexts as CSS paints them (a card's `z-10` menu over the next card),
+sticky positioning (table headers and columns included), and anchor
 positioning (`anchor-name`, `position-area`, `anchor()`,
 `anchor-size()`, `position-try-fallbacks`, `position-try-order`,
 `position-visibility`) that places a menu under its button in cells.
@@ -69,42 +120,6 @@ behavior rather than a reimplementation. Drag-select the grid, or set
 `<mono-wind select="text">` for a semantic text mirror; `:hover` and
 `:active` work on any element without breaking selection (see
 [Pointer states](#pointer-states-in-grid-mode)).
-
-## Getting started
-
-**No build step** — one script tag, and `<mono-wind>` does the rest:
-
-```html
-<script src="https://unpkg.com/monowind/dist/cdn.js"></script>
-```
-
-**With Vite** — the plugin brings Tailwind with it, so there is nothing
-to configure:
-
-```sh
-npm install -D @monowind/vite
-```
-
-**With your own Tailwind v4 build:**
-
-```sh
-npm install monowind
-```
-
-```css
-@import "tailwindcss";
-@import "monowind";
-```
-
-```js
-import { defineMonoWind } from "monowind";
-defineMonoWind();
-```
-
-See [packages/core/README.md](packages/core/README.md) for the engine
-and [packages/vite/README.md](packages/vite/README.md) for the plugin.
-The `pnpm --filter @monowind/example-* dev` lines under
-[Development](#development) each run one of these setups end to end.
 
 ## Themes
 

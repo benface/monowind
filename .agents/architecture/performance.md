@@ -15,7 +15,10 @@ a glyph the font may draw off its row
 (paragraphs of nested inline elements), `faded` (filled bordered
 boxes, every other at `opacity-50`, on a `bg-white/10` card under a
 `bg-black/50` overlay — the blending, specs/cell-model.md "Opacity and
-translucency").
+translucency"), `positioned` (in a scroller, `relative` cards each
+with a `z-10` badge, every fifth `opacity-90`, every twentieth after a
+`sticky z-20` heading — the stacking, specs/positioning.md "Paint
+order").
 
 A plain desktop client: 1280×720 at one device pixel per CSS pixel,
 Chromium, no throttling. `--count`, `--runs` and `--rate` (CPU
@@ -30,37 +33,108 @@ node scripts/bench.mjs --bundle /tmp/v0.3.0/packages/core/dist/cdn.js
 
 Absolute numbers belong to the machine that took them, so a comparison
 is only worth reading when every row of it was taken in one sitting.
-Record what moves here.
+Record what moves under "History".
 
-## Where it stands (2026-09-24)
+## Where it stands (2026-09-27)
 
-Every release since v0.3.0 against `main`, the uncommitted tree on
-v0.3.2's commit (`51809d9`) with every round below. Chromium 153
-headless, six rounds alternated, medians. The machine was loaded (8–19)
-through the run, so the absolute numbers run high, but the builds
-alternate; two copies of the `main` build agreed within about 2%. The
-v0.3.0 and v0.3.1 bundles were built from their tags with the day's
-`node_modules`.
+Every release since v0.3.0, as npm serves its `dist/cdn.js`, against
+`main`, the tree on v0.3.3's commit (`c55cdd8`) with the rounds of
+2026-09-27 ("History"), and a second copy of `main`'s bundle for the
+noise. Chromium 153 headless, one sitting (load 7–11). Loads: six
+rounds of five runs alternated, the median of the 30. Relayouts,
+hovers and the fade: every bundle's page open at once, driven in
+alternation, the median of 10–12 rounds, relayouts and hovers taken
+in both tab orders and averaged.
 
-| measure (ms)                         | v0.3.0 | v0.3.1 | v0.3.2 | main |
-| ------------------------------------ | ------ | ------ | ------ | ---- |
-| prose 300 load, interactive          | 346    | 348    | 339    | 203  |
-| boxes 300 load, interactive          | 185    | 367    | 252    | 196  |
-| blocks 40 load, interactive          | 151    | 129    | 101    | 98   |
-| faded 300 load, interactive          | 275    | 377    | 264    | 191  |
-| prose relayout, CPU                  | 102.2  | 103.7  | 96.9   | 68.8 |
-| boxes relayout, CPU                  | 39.3   | 72.9   | 39.0   | 32.7 |
-| prose hover step, CPU                | 106.2  | 108.7  | 103.1  | 72.5 |
-| boxes hover step, CPU                | 52.4   | 95.7   | 62.8   | 55.5 |
-| 2 s fade (150 boxes), CPU per frame  | 130.4  | 159.8  | 141.3  | 51.2 |
-| 2 s fade, frames in its middle 1.2 s | 10     | 8      | 10     | 25   |
+| measure (ms)                         | v0.3.0 | v0.3.1 | v0.3.2 | v0.3.3 | main | copy |
+| ------------------------------------ | ------ | ------ | ------ | ------ | ---- | ---- |
+| prose 300 load, interactive          | 349    | 346    | 340    | 204    | 209  | 207  |
+| boxes 300 load, interactive          | 178    | 357    | 247    | 189    | 195  | 197  |
+| blocks 40 load, interactive          | 144    | 119    | 94     | 84     | 85   | 85   |
+| faded 300 load, interactive          | 281    | 391    | 275    | 203    | 209  | 208  |
+| positioned 300 load, interactive     | 238    | 268    | 279    | 175    | 177  | 177  |
+| prose relayout, CPU                  | 90.9   | 91.8   | 86.2   | 72.2   | 61.0 | 60.4 |
+| boxes relayout, CPU                  | 38.7   | 66.5   | 35.2   | 28.1   | 28.1 | 28.7 |
+| prose hover step, CPU                | 97.6   | 99.5   | 92.6   | 67.8   | 65.1 | 64.6 |
+| boxes hover step, CPU                | 54.0   | 89.8   | 56.7   | 49.5   | 55.4 | 55.7 |
+| 2 s fade (150 boxes), CPU per frame  | 131.1  | 187.1  | 133.1  | 50.0   | 47.9 | 48.0 |
+| 2 s fade, frames in its middle 1.2 s | 10     | 7      | 10     | 25     | 26   | 26   |
 
-Boxes load and boxes hover remain slightly behind v0.3.0: the open
-raster gap, 7,880 grid spans against 1,500 ("Against v0.3.0 and
-v0.3.1"). The fade's total CPU is flat; `main` spends it on two and a
-half times the frames.
+Two readings of v0.3.3 in that sitting did not hold up: its prose
+relayout read 62.1 in one tab order and 82.4 in the other, and its
+boxes hover 49.5 against `main`'s 55.4 in both. Three sittings of
+v0.3.3, `main` and the copy alone, each bundle at every tab place,
+read prose relayout 66.5 / 64.1 / 64.5, boxes relayout 30.1 / 30.3 /
+30.3, and boxes hover 53.5 / 54.1 / 54.2 (style recalc 5.7 / 5.9 /
+5.9): `main` 3.6% faster on the prose relayout, its script, and level
+on the boxes. The loads put `main` 2–6 ms behind v0.3.3 there; a
+sitting of v0.3.3 and the batch's stages alone, 30 loads each, read
+boxes 189 / 190, prose 198 / 197 and faded 209 / 211 ms: level. (npm's
+v0.3.3 bundle and one built from its commit today are byte for byte
+the same.)
 
-## Against v0.3.0 and v0.3.1 (2026-09-21)
+Boxes load and boxes hover remain behind v0.3.0: the open raster gap,
+7,880 grid spans against 1,500 (the next section; "Against v0.3.0 and
+v0.3.1" measured it). The fade's total CPU is flat; since v0.3.3 it is
+spent on two and a half times the frames.
+
+## What a box is for, and what it costs to skip one
+
+Four fifths of the boxes page's spans are `─`, one box a cell. In the
+default font `─` is drawn inside its row and on its cell, so it looks
+like it needs no clip, and leaving those runs as plain text does take
+the page back to 1500 spans and 167 ms. It also SEAMS, which is the
+thing to know before trying it again:
+
+- A run of `─` left as text abuts at the font's own advance, while the
+  corners and stems beside it stay boxed and stay scaled, so the joint
+  between a scaled `╭` and an unscaled `─` shows.
+- `█` takes its whole horizontal overhang from its scale, its ink
+  being its cell's width to within a hundredth. Trimming that scale to
+  the least overhang that seemed to serve `─` seams a shared block run
+  between its cells — which is what paints a box-shadow and a
+  scrollbar.
+- The baseline a box is pinned by cannot be read from one measurement
+  per font: engines round a font's ascent and descent at each size, so
+  the pair read at scale 1 does not predict the pair at 1.43, and a
+  shade's line-height came out 8px wrong.
+
+So the span count and the joints are one question, not two. The lead
+worth testing is the one that drops the per-cell element without
+changing what any glyph is scaled to: a tile repeated at the cell
+pitch as a `mask` over `currentColor`, which measured zero spread on
+every row but leaves webfonts, the other two engines, mixed runs and
+selection unanswered.
+
+## History
+
+Each round as it was measured, oldest first. A new round goes at the
+end, and "Where it stands" is retaken in place.
+
+### Tiling glyph boxes (2026-09-20 and 2026-09-21)
+
+What the tiling fit's boxes cost in nodes (wide-characters.md "A stroke
+is boxed one per cell"), in Chromium on macOS, one sitting each, no
+second copy for the noise:
+
+- A page of sixty bordered boxes at the macOS defaults, whose glyphs
+  run past the row: 360 grid nodes unboxed, 1,260 boxed (2026-09-20).
+- A run of one full-width band sharing a box: a page of seven QR
+  codes, bordered panels, a scroller and two shade rows paints 2,191
+  grid spans against 3,341 with a box a cell, and 220 with nothing
+  boxed (2026-09-21).
+- The measuring gate, not the boxes, set what the nodes cost a layout
+  (2026-09-20): read through descendant rules, the host's `measuring`
+  and `settling` flips walked the whole subtree, the shadow grid
+  included, four times a layout — 8.4 ms of the boxed page's style
+  recalc, 3.3 of the unboxed one's, where the relayout's own row costs
+  a fraction of a millisecond. With each light element gated by its
+  own flag (cell-model.md "Animation") the flips cost 0.07 ms, and the
+  page relays out in 13.2 ms boxed, against 10.7 unboxed and 18.5
+  boxed at the old gate (Chromium's own counters, 30 relayouts, three
+  rounds).
+
+### Against v0.3.0 and v0.3.1 (2026-09-21)
 
 Taken together on one machine (Apple silicon, 2026-09-21). Two builds
 of one commit taken minutes apart gave 323 ms and 327 ms, so read a
@@ -122,7 +196,42 @@ and the grid is the size it was in v0.3.0. Teletype is the exception —
 Courier New is an ordinary outline font and boxes like the default
 stack.
 
-## Visibility and the anchor extras (2026-09-22)
+### What the last round bought (0195883, 2026-09-21)
+
+None of these changed a pixel; the goldens that commit moved, it
+moved for the fills/strokes split and the overhang.
+
+- **A font settling no longer restyles the page.** `document.fonts`
+  settles on every page, webfont or not, and `invalidate()` bumped the
+  generation for it, which tells a paint its boxes are stale: every
+  boxed span was restyled in place (`paint.ts`, `refit`). Every
+  `measureText` a cached measurement rests on now records how the font
+  drew that glyph, and `invalidate()` measures exactly those again and
+  forgets nothing while they all draw as they did. Worth 60 ms of the
+  93, at one measurement per cached cluster.
+- **`--mw-host-w` does not inherit.** Only `mono-wind:not([measuring])`
+  reads it, and the layout writes it after the grid is painted, where
+  an inherited custom property restyles every span below. Declared
+  `@property { inherits: false }`.
+- **A box prototype is shared across rows.** The paint cached one per
+  segment AND row, though only a shade's style answers to its row, its
+  lattice shifting with it.
+
+What did NOT help, measured: sharing the fits across hosts (unsound
+besides — a fit keyed on the font string is wrong for two hosts whose
+font name resolves differently), warming the fits before the paint,
+moving the baseline probe out of the grid, and replacing five inline
+declarations with a class (Chromium shares the style either way; 7880
+spans cost 4.7 ms of recalc in isolation).
+
+The three attribute rounds a layout makes over every light element —
+`data-mw-measuring` on, swapped for `data-mw-settling`, then off — cost
+about 46 ms here and are not removable: the flags are what lift the
+engine's locks so the measurement reads authored values. v0.3.0 pays
+them too. (The settling round was, for every element without a
+transition: "Settling only what transitions".)
+
+### Visibility and the anchor extras (2026-09-22)
 
 Before (`df75985`) against the same tree with `visibility`, the anchor
 functions, `position-try-order` and `position-visibility`, the
@@ -157,7 +266,7 @@ level against the tree before them, alternated in a later sitting
 248, style recalc 52–53 ms in both; blocks 99 / 88 against 99 / 87;
 prose 350 / 309 against 345 / 310.
 
-## Pointer events and the hit through a layer (2026-09-23)
+### Pointer events and the hit through a layer (2026-09-23)
 
 Reading each light element's `pointer-events` under measuring
 (specs/cell-model.md "Pointer states") and hitting through layers
@@ -246,7 +355,7 @@ Six more boxes rounds put interactive level (after 222–236 ms, HEAD
 
 The lead this left, the editables' negations, is the next section.
 
-## The editables' negations (2026-09-23)
+### The editables' negations (2026-09-23)
 
 The three rules that cost most in the selector stats after that round
 were the two `::selection` locks and grid mode's `user-select` lock,
@@ -316,7 +425,7 @@ boxes 34.1 → 33.9, blocks (40) 5.7 → 5.7; page loads, four rounds
 alternated, boxes 227.5 ms both, prose 310 → 308.5, blocks (300)
 297.5 → 302.5 with its rounds ±10 ms apart.
 
-## The interactives as marks (2026-09-23)
+### The interactives as marks (2026-09-23)
 
 Grid mode's pointer opt-in and text cursor spelled the interactive
 list out as a twenty-way `:is()`, and the focus invert the composites'
@@ -356,7 +465,7 @@ build before for the noise (medians, ms; load 6–14):
 | blocks (40) | before | 83 ms       | 6.1 ms       |
 | blocks (40) | marks  | 82.5 ms     | 6.0 ms       |
 
-## One load layout (2026-09-23)
+### One load layout (2026-09-23)
 
 A page load ran two full layouts, the second a frame or two after
 the first, and any one of three triggers forced it: `document.fonts.ready`,
@@ -408,7 +517,7 @@ eight rounds, a second copy of the before bundle for the noise):
 
 A relayout costs what it did: nothing on its path changed.
 
-## Settling only what transitions (2026-09-23)
+### Settling only what transitions (2026-09-23)
 
 Every layout swapped each light element's measuring flag for a
 settling one, forced a style flush, and dropped the settling flags:
@@ -456,7 +565,7 @@ gauge):
 | blocks (300) | before | 248.5 (244–250) | 37.3 (35.7–37.9) |
 | blocks (300) | after  | 238.5 (228–243) | 36.1 (35.1–37.5) |
 
-## Two style rules Chromium could not cache (2026-09-23)
+### Two style rules Chromium could not cache (2026-09-23)
 
 Two companion rules matched every light element on every restyle and
 kept Chromium's style work from shrinking:
@@ -544,7 +653,7 @@ CPU through ready + 1 s):
 | boxes (300) | before #2 | 220         | 231.3 | 46.7         |
 | boxes (300) | after     | 170         | 176.3 | 25.0         |
 
-## One opacity model (2026-09-23)
+### One opacity model (2026-09-23)
 
 The engine blends every translucent color and every faded group into
 the cells (specs/cell-model.md "Opacity and translucency") where spans
@@ -596,7 +705,7 @@ again. The plan's lever (Decisions 5: an element animating its opacity
 a layer root while it animates, the frame a box copy) would take a
 sampled fade below both; it is not taken, the layer's other behaviors
 being the reason it is not the default. A fade repaints instead of
-relaying out (below).
+relaying out ("Opacity transitions repaint").
 
 Trimmed the same day (the plan's "Follow-ups"), its output unchanged
 on 5,000 fuzzed trees: the paint in Node faded 3.76 against 3.86 and a
@@ -614,6 +723,30 @@ style recalc prose 53.2 / 52.4 → 54.5 / 54.5 ms, boxes 25.8 / 25.4 →
 25.8 / 25.6; interactive 185 / 182 → 186 / 184 ms prose, 174 / 173 →
 172 / 173 boxes. Resetting all 21 variables render.ts may remove cost
 prose about 2 ms more, for resets no rule can read.
+
+### Against v0.3.2 (2026-09-24)
+
+`main` here is the uncommitted tree on `51809d9` (v0.3.2's commit) as
+this section was written: the removal pass, levers 1–3 ("One load
+layout", "Settling only what transitions", "Two style rules Chromium
+could not cache") and the one opacity model. Against v0.3.2's build
+with a second copy of it as the noise control (within 2% of the first
+throughout); 8 rounds alternated, medians, ms. "Where it stands"
+supersedes it:
+
+| page                    | v0.3.2 | main (uncommitted) |
+| ----------------------- | ------ | ------------------ |
+| prose 300, interactive  | 314    | 192                |
+| boxes 300, interactive  | 238    | 178                |
+| blocks 40, interactive  | 87     | 82                 |
+| prose 300, per relayout | 85.2   | 59.6               |
+| boxes 300, per relayout | 36.6   | 29.6               |
+| prose 300, per hover    | 93.9   | 67.9               |
+| boxes 300, per hover    | 56.8   | 49.6               |
+
+Style recalc halves on every page (prose relayout 37.3 → 17.7); script
+drops on loads (one layout) and barely per relayout, where the reads
+remain.
 
 ### Opacity transitions repaint (2026-09-24)
 
@@ -721,7 +854,7 @@ one that changes an attribute (the tokens unchanged) prose 64.9 →
 five alternated): prose 184/186 → 182/183 ms, boxes 170/169 →
 171/170.
 
-## Shades drawn once (2026-09-25)
+### Shades drawn once (2026-09-25)
 
 A shade's box draws its lattice in its two pseudo-elements, each
 clipped to the strip it fills (wide-characters.md "A shade keeps its
@@ -757,7 +890,7 @@ v0.3.2 (literal): boxes 233.5 → 181.5 ms, style 49.9 → 26.8; prose
 317.5 → 194.5, style 128.4 → 55.9; faded 274.5 → 204, style 55.0 →
 29.1.
 
-## A group over nothing on its spans (2026-09-25)
+### A group over nothing on its spans (2026-09-25)
 
 A faded group's cells with nothing opaque beneath keep its own colors
 and carry its opacity on their spans, where they were blended over the
@@ -802,112 +935,170 @@ alternated, ten for faded; medians, load 6–8): faded 192 → 193
 blocks 213 → 214.5 (215.5); style recalc level. Grid spans on the
 fade page over nothing: 8,139 → 8,091, 3,992 of them with an opacity.
 
-## Against v0.3.2 (2026-09-24)
+### Stacking contexts (2026-09-27)
 
-`main` here is the uncommitted tree on `51809d9` (v0.3.2's commit) as
-this section was written: the removal pass, levers 1–3 ("One load
-layout", "Settling only what transitions", "Two style rules Chromium
-could not cache") and the one opacity model. Against v0.3.2's build
-with a second copy of it as the noise control (within 2% of the first
-throughout); 8 rounds alternated, medians, ms. "Where it stands"
-supersedes it:
+Every box painting in its nearest stacking context, the in-flow
+phases, the containing-block chain and inline members
+(`../plans/2026-09-27-stacking-contexts.md`). Before is a copy of the
+tree taken before the first edit, noise a second copy of its bundle;
+the three alternated in every measure. Load: four rounds of five
+runs, the median of the 20 and their range. Relayout, hover and
+scroll: CPU per step, the median of 10–12 rounds, taken twice with the
+tabs' order reversed (the first tab ran about 2 ms slow whichever
+bundle it held) and the two averaged.
 
-| page                    | v0.3.2 | main (uncommitted) |
-| ----------------------- | ------ | ------------------ |
-| prose 300, interactive  | 314    | 192                |
-| boxes 300, interactive  | 238    | 178                |
-| blocks 40, interactive  | 87     | 82                 |
-| prose 300, per relayout | 85.2   | 59.6               |
-| boxes 300, per relayout | 36.6   | 29.6               |
-| prose 300, per hover    | 93.9   | 67.9               |
-| boxes 300, per hover    | 56.8   | 49.6               |
+| measure (ms)                | before        | noise         | after         |
+| --------------------------- | ------------- | ------------- | ------------- |
+| boxes 300 load, interactive | 171 (169–190) | 173 (169–191) | 173 (165–190) |
+| blocks 40 load, interactive | 81 (79–101)   | 82 (79–97)    | 81 (79–97)    |
+| prose 300 load, interactive | 180 (178–198) | 181 (178–196) | 181 (177–201) |
+| faded 300 load, interactive | 190 (188–207) | 191 (188–205) | 192 (189–204) |
+| positioned 300 load         | 171 (168–187) | 171 (167–184) | 173 (169–191) |
+| boxes relayout, CPU         | 27.0          | 27.1          | 27.2          |
+| prose relayout, CPU         | 58.8          | 58.7          | 58.7          |
+| positioned relayout, CPU    | 52.0          | 52.0          | 52.8          |
+| boxes hover step, CPU       | 47.9          | 47.2          | 48.2          |
+| prose hover step, CPU       | 67.2          | 66.4          | 65.4          |
+| positioned hover step, CPU  | 55.1          | 54.9          | 55.8          |
+| positioned scroll step, CPU | 21.5          | 21.5          | 21.6          |
+| Node paint, faded           | 3.75          | 3.74          | 3.80          |
+| Node paint, blocks          | 2.53          | 2.54          | 2.54          |
+| Node paint, faded bare      | 3.54          | 3.55          | 3.56          |
 
-Style recalc halves on every page (prose relayout 37.3 → 17.7); script
-drops on loads (one layout) and barely per relayout, where the reads
-remain.
+(Node paint: `renderGridRows` alone, the median of 21 rounds of forty
+paints.) Every existing shape is within the noise. The faded paint's
+0.05 ms is the traversal's 0.01–0.03 ms (a CPU profile: the phases'
+walks and the members' records) and variance in code the change did
+not touch. `positioned` is new: its relayout and hover pay about 0.8
+ms for 600 members and their order, recorded.
 
-## Tiling glyph boxes (2026-09-20 and 2026-09-21)
+Three causes were traced and fixed on the way (the same measures,
+before these fixes):
 
-What the tiling fit's boxes cost in nodes (wide-characters.md "A stroke
-is boxed one per cell"), in Chromium on macOS, one sitting each, no
-second copy for the noise:
+- **The hit's text entries.** A leaf's glyph entry walked its lines
+  (`charIndexAtCell`) for every entry the reverse scan passed: prose
+  hover +5.7 ms of script. It now tries the leaf's hit rect first.
+- **The ink extent's lists.** `contentExtent` gave every child a list
+  for the absolute boxes escaping it: positioned relayout +2.6 ms, now
+  one list a walk.
+- **Reading effects on inline elements.** Seven computed properties
+  for each of prose's 2100 inline elements cost 1.3 ms of a 47 ms
+  relayout's JS (2.8%, three alternated CPU profiles each; a build
+  without them matched before within 0.1 ms). The grid draws none of
+  those effects on an inline element, so it reads none of them
+  (positioning.md deviation 8). Reading every element's unset
+  background without a color parse, and an inline element's font size
+  only where its letter spacing needs it, took back another 0.5 ms.
 
-- A page of sixty bordered boxes at the macOS defaults, whose glyphs
-  run past the row: 360 grid nodes unboxed, 1,260 boxed (2026-09-20).
-- A run of one full-width band sharing a box: a page of seven QR
-  codes, bordered panels, a scroller and two shade rows paints 2,191
-  grid spans against 3,341 with a box a cell, and 220 with nothing
-  boxed (2026-09-21).
-- The measuring gate, not the boxes, set what the nodes cost a layout
-  (2026-09-20): read through descendant rules, the host's `measuring`
-  and `settling` flips walked the whole subtree, the shadow grid
-  included, four times a layout — 8.4 ms of the boxed page's style
-  recalc, 3.3 of the unboxed one's, where the relayout's own row costs
-  a fraction of a millisecond. With each light element gated by its
-  own flag (cell-model.md "Animation") the flips cost 0.07 ms, and the
-  page relays out in 13.2 ms boxed, against 10.7 unboxed and 18.5
-  boxed at the old gate (Chromium's own counters, 30 relayouts, three
-  rounds).
+Size, built at each step (`gzip -9` of `dist/cdn.js`; `dist/index.js`
+minified by esbuild, then `gzip -9`; core `src/*.ts` and `*.css`,
+code lines without blank lines and comments):
 
-## What the last round bought (0195883, 2026-09-21)
+| after      | cdn.js | index.js | src lines | code lines |
+| ---------- | ------ | -------- | --------- | ---------- |
+| before     | 157466 | 86790    | 23462     | 16847      |
+| 1 the read | 157731 | 87072    | 23509     | 16883      |
+| 2 order    | 157731 | 87072    | 23737     | 17048      |
+| 3 paint    | 158506 | 87762    | 23802     | 17103      |
+| 4 hit      | 158558 | 87823    | 23766     | 17082      |
+| 5 lattice  | 158498 | 87736    | 23740     | 17064      |
+| 6 chain    | 158818 | 88047    | 23831     | 17132      |
+| 7 inline   | 159427 | 88682    | 23985     | 17252      |
+| 8 bench    | 159459 | 88714    | 23986     | 17252      |
+| review     | 159164 | 88415    | 23909     | 17174      |
+| final      | 159671 | 88945    | 24051     | 17287      |
 
-None of these changed a pixel; the goldens that commit moved, it
-moved for the fills/strokes split and the overhang.
+Step 2's module ships from step 3, its first consumer; step 9 is docs
+alone. "Final" is the commit's tree: the second review, the last pass
+("The hit and the paint, leaner") and the batch's other fixes (the
+decoration lines, inline lengths without Typed OM, `justify-content`
+off the inline axis). In all, cdn.js grows 2,205 bytes (1.4%),
+index.js 2,155 (2.5%), the source 589 lines, 440 of them code.
 
-- **A font settling no longer restyles the page.** `document.fonts`
-  settles on every page, webfont or not, and `invalidate()` bumped the
-  generation for it, which tells a paint its boxes are stale: every
-  boxed span was restyled in place (`paint.ts`, `refit`). Every
-  `measureText` a cached measurement rests on now records how the font
-  drew that glyph, and `invalidate()` measures exactly those again and
-  forgets nothing while they all draw as they did. Worth 60 ms of the
-  93, at one measurement per cached cluster.
-- **`--mw-host-w` does not inherit.** Only `mono-wind:not([measuring])`
-  reads it, and the layout writes it after the grid is painted, where
-  an inherited custom property restyles every span below. Declared
-  `@property { inherits: false }`.
-- **A box prototype is shared across rows.** The paint cached one per
-  segment AND row, though only a shade's style answers to its row, its
-  lattice shifting with it.
+**The review pass** (the plan's Done notes), against the batch as it
+landed, alternated the same way. "Spread" is the gap between two
+copies of one bundle in the same run: the batch's for the hover rows
+and the positioned relayout, which put the batch and the review at
+the ends and the copy between them, the bundle before the batch's for
+the rest.
 
-What did NOT help, measured: sharing the fits across hosts (unsound
-besides — a fit keyed on the font string is wrong for two hosts whose
-font name resolves differently), warming the fits before the paint,
-moving the baseline probe out of the grid, and replacing five inline
-declarations with a class (Chromium shares the style either way; 7880
-spans cost 4.7 ms of recalc in isolation).
+| measure (ms)                | batch | review | spread |
+| --------------------------- | ----- | ------ | ------ |
+| boxes 300 load, interactive | 174   | 173    | 4      |
+| blocks 40 load, interactive | 91    | 88     | 2      |
+| prose 300 load, interactive | 190   | 191    | 1      |
+| faded 300 load, interactive | 197   | 199    | 1      |
+| positioned 300 load         | 185   | 181    | 1      |
+| boxes relayout, CPU         | 27.6  | 28.0   | 0.6    |
+| prose relayout, CPU         | 61.6  | 62.0   | 1.3    |
+| positioned relayout, CPU    | 54.4  | 54.7   | 0.8    |
+| boxes hover step, CPU       | 48.5  | 49.0   | 0.3    |
+| prose hover step, CPU       | 65.0  | 65.1   | 0.4    |
+| positioned hover step, CPU  | 57.2  | 56.5   | 1.1    |
+| positioned scroll step, CPU | 21.4  | 21.4   | 0.1    |
+| Node paint, faded           | 3.69  | 3.71   | 0.05   |
+| Node paint, blocks          | 2.57  | 2.59   | 0.01   |
+| Node paint, faded bare      | 3.64  | 3.67   | 0.01   |
 
-The three attribute rounds a layout makes over every light element —
-`data-mw-measuring` on, swapped for `data-mw-settling`, then off — cost
-about 46 ms here and are not removable: the flags are what lift the
-engine's locks so the measurement reads authored values. v0.3.0 pays
-them too. (The settling round was, for every element without a
-transition: "Settling only what transitions".)
+All within the noise. In Node, alone and over 100 alternated rounds:
+`placePainted` 30% faster on the positioned shape (no frame for a
+leaf), the paint index's build 25–40% (spans for layer roots alone),
+a hit on boxes 20% (one scan), level on the positioned shape; its
+paint level with a copy of the batch. Two first cuts moved the
+positioned paint and were redone: the clipped puts keyed by walk then
+clip (+8%, now one lookup) and a lattice walk before every paint (+2%,
+now only where a table paints).
 
-## What a box is for, and what it costs to skip one
+**The ink extent under clipping boxes**, found by a second review
+where no bench shape looks: `contentExtent` had lost its stop at a box
+clipping both axes, so a scroller's range walked every subtree under
+every `overflow-hidden` box in it. `layoutRoot` in Node, the mean of
+four alternated runs of 40-round medians (ms):
 
-Four fifths of this page's spans are `─`, one box a cell. In the
-default font `─` is drawn inside its row and on its cell, so it looks
-like it needs no clip, and leaving those runs as plain text does take
-the page back to 1500 spans and 167 ms. It also SEAMS, which is the
-thing to know before trying it again:
+| shape                                     | v0.3.3 | batch | now  |
+| ----------------------------------------- | ------ | ----- | ---- |
+| 150 `overflow-hidden` cards in a scroller | 19.2   | 25.5  | 19.7 |
+| `positioned` shape                        | 4.03   | 4.31  | 4.04 |
+| every card crossed by an absolute menu    | 21.3   | 28.1  | 23.8 |
 
-- A run of `─` left as text abuts at the font's own advance, while the
-  corners and stems beside it stay boxed and stay scaled, so the joint
-  between a scaled `╭` and an unscaled `─` shows.
-- `█` takes its whole horizontal overhang from its scale, its ink
-  being its cell's width to within a hundredth. Trimming that scale to
-  the least overhang that seemed to serve `─` seams a shared block run
-  between its cells — which is what paints a box-shadow and a
-  scrollbar.
-- The baseline a box is pinned by cannot be read from one measurement
-  per font: engines round a font's ascent and descent at each size, so
-  the pair read at scale 1 does not predict the pair at 1.43, and a
-  shade's line-height came out 8px wrong.
+It looks inside such a box now only where an absolute box crossed it
+on the way to its containing block (`crossed`, positioning.ts).
 
-So the span count and the joints are one question, not two. The lead
-worth testing is the one that drops the per-cell element without
-changing what any glyph is scaled to: a tile repeated at the cell
-pitch as a `mask` over `currentColor`, which measured zero spread on
-every row but leaves webfonts, the other two engines, mixed runs and
-selection unanswered.
+### The hit and the paint, leaner (2026-09-27)
+
+The hit scanned the paint index testing each entry through a new
+`hitRect` object, and a leaf's glyph entries through an `inlineShift`
+object and its owners' array; the paint and every glyph hit wrapped
+each leaf's text again, though its layout had wrapped it; and the
+walks up an inline element's ancestors, and the lookups of a
+character's element, read `entries[-1]` at the leaf's own text, a
+slow lookup in V8. Now the hit tests an entry's rect first, without
+allocating; a leaf keeps the lines its layout wrapped (`lines`) and
+its glyph owners (`inlineOwners`, at build); and the walks stop at -1.
+
+Node, the median of 15 alternated rounds; node trees in plain Node,
+prose (200 paragraphs, each span nesting two elements) in happy-dom:
+
+| shape                 | hit, µs: v0.3.3 / batch / now | paint, ms: v0.3.3 / batch / now |
+| --------------------- | ----------------------------- | ------------------------------- |
+| 300 boxes             | 3.1 / 7.8 / 3.4               | 1.10 / 1.13 / 1.05              |
+| 400 positioned cards  | 53.6 / 92.4 / 34.9            | 2.06 / 2.38 / 2.14              |
+| 150 paragraphs        | 2.0 / 6.8 / 1.8               | 1.53 / 1.59 / 1.10              |
+| prose                 | 17.7 / 28.4 / 3.6             | 4.01 / 3.71 / 2.39              |
+| prose, a faded span   | 17.2 / 71.3 / 16.3            | 4.08 / 5.03 / 2.95              |
+| prose, a shifted span | 17.7 / 74.6 / 18.2            | 4.30 / 5.29 / 2.94              |
+
+A hit right after a placement, as a scroll repaint's is, costs what
+the others do. The shifted span's hit tests three entries a paragraph
+where v0.3.3 tested one box, a glyph taking the cell where it paints.
+The placement of 300 boxes costs 14 µs where v0.3.3's cost 10, each
+box's clip and scroll chain, and 97 against 101 µs for the cards.
+Every paint, placement and hit read the same as the batch's over
+1,000 DOM and 3,000 node trees.
+
+Tried and left: the entries' rects taken once a placement (a hit
+after a scroll paid 19–160 µs to take them), frames shared down the
+placement until a box changes one (16 µs, slower), one shift object
+reused by the scan (0.7 µs of the shifted span's 18), and each glyph
+turn walking its leaf again in place of the held glyphs (the faded
+paint 20% slower).

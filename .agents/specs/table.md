@@ -170,12 +170,10 @@ height itself; that would be circular).
 `vertical-align: top | middle | bottom` normalizes to the engine's
 `start | center | end` and goes through the shared alignment-offset
 machinery (`center` floors the extra, as everywhere); `baseline` maps to
-`start`, the same rule as `items-baseline` in flex/grid — and exact for
-us: with one shared font size all first lines have identical metrics, so
-baseline alignment degenerates to top alignment. The default is
-`center` on `<td>`/`<th>` (UA `middle`, probed in all three engines;
-the companion's lock hides it, so the tag decides) and `start` on
-div-cells (CSS initial `baseline`). `text-align` follows the
+`start`, the same rule as `items-baseline` in flex/grid (deviation 4).
+The default is `center` on `<td>`/`<th>` (UA `middle`, probed in all
+three engines; the companion's lock hides it, so the tag decides) and
+`start` on div-cells (CSS initial `baseline`). `text-align` follows the
 cell-model rules (start/center/end honored, justify blocked) — the
 UA's `th`/`caption` centering applies as-is, engine-quantized. The
 legacy `align` attribute maps through the same reader.
@@ -203,9 +201,12 @@ only). Color comes from the winner.
 Rendering: the lattice is geometry until paint — the winning segment
 per line piece, kept on the table node — and `lattice.ts` resolves it
 then from the segments landing on each cell, so a sticky row group,
-row, or cell takes its own lines along (`sticky.md`); it paints after
-the table's rows and cells, over their backgrounds, as CSS layers
-collapsed borders above every background.
+row, or cell takes its own lines along (`sticky.md`); it paints over
+the backgrounds of the table's rows and cells and under their text,
+as CSS layers collapsed borders above every background; a part in
+the positioned step — a `relative` row, a sticky cell — paints its own
+lines in its turn, over its own background (positioning.md "Paint
+order").
 
 Rendering: junction glyphs. At each lattice intersection the glyph is
 picked from which of the four arms exist — `┼ ├ ┤ ┬ ┴ ─ │` and the
@@ -278,7 +279,8 @@ are ignored.
    match the formula on single-row cases, within a pixel). In intrinsic
    (indefinite-available) contexts percents behave as auto, as in grid.
 4. **`baseline` vertical alignment behaves as `start`** — the flex/grid
-   rule, and exact under the single-font-size model (see Cells).
+   rule — where CSS lines up the cells' first text rows, which their
+   padding can set apart.
 5. **Extra table height is distributed equally to the non-percent
    rows** (undefined in CSS; browsers vary).
 6. **`empty-cells`** is not supported, and **`visibility: collapse`**

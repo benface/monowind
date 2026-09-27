@@ -31,6 +31,7 @@ import type { TableData } from "./table.ts";
 import { positionOutOfFlow } from "./positioning.ts";
 import type { Remembered } from "./positioning.ts";
 import { placePainted } from "./paint-origin.ts";
+import type { TopLayer } from "./top-layer.ts";
 import { inlineBoxesOf, scrollGutter, scrollGutterBands, scrollsAxis } from "./types.ts";
 import { bandAt, clearanceBelow, floatsBottom, placeFloat } from "./floats.ts";
 import type { FloatBox } from "./floats.ts";
@@ -43,6 +44,7 @@ import type {
   MulticolLeafGeometry,
   NullableInsets,
   PerSide,
+  Rect,
   Size,
   SizeLimit,
 } from "./types.ts";
@@ -60,14 +62,16 @@ import type {
  * Layout entry point: mutates localRect on the root and each descendant.
  * Coordinates are parent-relative (root's rect is at 0,0). `remembered`
  * carries anchored boxes' last successful placements between layouts
- * (specs/anchor-positioning.md). Last, every box gets its `paintOrigin`
- * under the synced scroll offsets (paint-origin.ts).
+ * (specs/anchor-positioning.md). Last, the top-layer `stack` is assigned
+ * and every box gets its `paintOrigin` under the synced scroll offsets
+ * (paint-origin.ts).
  */
 export function layoutRoot(
   root: LayoutNode,
   availableWidth: number,
   syncScroll?: (node: LayoutNode) => void,
   remembered?: Map<Element, Remembered>,
+  stack?: TopLayer,
 ): { height: number } {
   const cache = makeIntrinsicCache();
   layoutNode(root, availableWidth, undefined, 0, 0, "fill", cache);
@@ -77,16 +81,17 @@ export function layoutRoot(
   // Positioning pass (specs/positioning.md): out-of-flow boxes were skipped
   // by flow layout; place them against their containing blocks, and apply
   // relative offsets. Runs top-down so ancestor rects are final first.
-  positionOutOfFlow(root, cache, remembered, syncScroll);
+  const crossed = positionOutOfFlow(root, cache, remembered, syncScroll);
   // The host keeps its in-flow height; the grid covers the INK — visible
   // overflow paints past the host like CSS paints it past any box
   // (specs/cell-model.md "Overflow"). A clipping axis keeps the box: the
   // root leaf under `truncate` (specs/host-leaf.md) cuts at its width.
   const height = root.localRect.height;
-  const ink = contentExtent(root);
+  const ink = contentExtent(root, null, crossed);
   const { overflow } = root.style;
   if (overflow.x === "visible") root.localRect.width = Math.max(root.localRect.width, ink.x);
   if (overflow.y === "visible") root.localRect.height = Math.max(height, ink.y);
+  stack?.assign(root);
   placePainted(root);
   return { height };
 }
@@ -145,6 +150,12 @@ export function isPositioned(style: CellStyle): boolean {
   return style.position !== "static";
 }
 
+/** Where an absolute descendant's containing-block chain continues:
+ * a positioned box, or a layer root (specs/positioning.md "Paint order"). */
+export function containsAbsolute(style: CellStyle): boolean {
+  return isPositioned(style) || style.layer !== null;
+}
+
 export type SizingMode = "fill" | "shrink";
 
 export interface IntrinsicCache {
@@ -200,6 +211,7 @@ export function layoutNode(
   delete node.lattice;
   delete node.latticeRuns;
   delete node.multicolGeometry;
+  delete node.lines;
   delete node.multicolFlow;
   delete node.multicolFlowSpan;
   delete node.flow;
@@ -338,7 +350,7 @@ export function layoutNode(
   // Scroll geometry (specs/scrolling.md): content extent and max
   // offset, from the ENGINE's layout — never native scrollHeight.
   if (scrollsAxis(style.overflow.x) || scrollsAxis(style.overflow.y)) {
-    const extent = contentExtent(node);
+    const extent = contentExtent(node, []);
     const origin = contentOrigin(node);
     const sizeX = Math.max(0, extent.x - origin.x);
     const sizeY = Math.max(0, extent.y - origin.y);
@@ -435,6 +447,7 @@ function layoutTextLeaf(
       geometry = leafLineGeometry(node, innerWidth, intrusions);
       if (geometry.bands) node.lineBands = geometry.bands;
     }
+    node.lines = geometry;
     contentHeight = geometry.totalRows;
     const lineWidths = geometry.spans.map((span) =>
       lineAdvance(node.text, span.start, span.end, node.advances, style.tracking),
@@ -1177,17 +1190,43 @@ function resolveWidth(
 }
 
 /** How far a box's content reaches past its border-box origin, in
- * cells: children's own scrollable extents plus its text's extent —
- * CSS scrollable overflow counts descendants' overflow unless a box
- * clips it (`scrollableExtent`). */
-function contentExtent(node: LayoutNode): { x: number; y: number } {
+ * cells: its children's scrollable extents and its text's — CSS
+ * scrollable overflow counts descendants' overflow unless a box clips
+ * it (`scrollableExtent`), an absolute box's at its containing block
+ * (specs/positioning.md "Paint order"). The absolute boxes below that
+ * it does not contain go to `escaped`, in its cells; null for the root,
+ * which contains them all. A box clipping both axes is looked inside
+ * only where an absolute box has `crossed` it (positioning.ts). */
+function contentExtent(
+  node: LayoutNode,
+  escaped: Rect[] | null,
+  crossed?: ReadonlySet<LayoutNode>,
+): { x: number; y: number } {
   let x = 0;
   let y = 0;
+  const contains = escaped === null || containsAbsolute(node.style);
+  // One list for the whole walk: a child's escapes follow `start`.
+  const sink = escaped ?? [];
   for (const child of node.children) {
     if (child.style.position === "fixed") continue;
-    const extent = scrollableExtent(child);
-    x = Math.max(x, child.localRect.x + extent.x);
-    y = Math.max(y, child.localRect.y + extent.y);
+    const start = sink.length;
+    const extent = scrollableExtent(child, sink, crossed);
+    const at = child.localRect;
+    for (let i = start; i < sink.length; i++) {
+      const rect = sink[i]!;
+      rect.x += at.x;
+      rect.y += at.y;
+      if (!contains) continue;
+      x = Math.max(x, rect.x + rect.width);
+      y = Math.max(y, rect.y + rect.height);
+    }
+    if (contains) sink.length = start;
+    if (child.style.position === "absolute" && !contains) {
+      sink.push({ x: at.x, y: at.y, width: extent.x, height: extent.y });
+    } else {
+      x = Math.max(x, at.x + extent.x);
+      y = Math.max(y, at.y + extent.y);
+    }
   }
   if (node.textExtent) {
     const origin = contentOrigin(node);
@@ -1199,13 +1238,18 @@ function contentExtent(node: LayoutNode): { x: number; y: number } {
 
 /** A box's contribution to its parent's scrollable overflow: its own
  * box, grown by its content's overflow on each axis it leaves
- * visible. */
-function scrollableExtent(node: LayoutNode): { x: number; y: number } {
+ * visible; what escapes it to a containing block above, whatever it
+ * clips, to `escaped`. */
+function scrollableExtent(
+  node: LayoutNode,
+  escaped: Rect[],
+  crossed: ReadonlySet<LayoutNode> | undefined,
+): { x: number; y: number } {
   const { width, height } = node.localRect;
   const clipsX = node.style.overflow.x !== "visible";
   const clipsY = node.style.overflow.y !== "visible";
-  if (clipsX && clipsY) return { x: width, y: height };
-  const content = contentExtent(node);
+  if (clipsX && clipsY && !crossed?.has(node)) return { x: width, y: height };
+  const content = contentExtent(node, escaped, crossed);
   return {
     x: clipsX ? width : Math.max(width, content.x),
     y: clipsY ? height : Math.max(height, content.y),

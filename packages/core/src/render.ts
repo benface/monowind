@@ -1,6 +1,6 @@
-import { paintOrderedChildren, paintsInPositionedStep } from "./borders.ts";
 import { isFormattingContextRoot } from "./layout.ts";
 import { placePainted } from "./paint-origin.ts";
+import { zIndexApplies } from "./stacking.ts";
 import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
 /**
@@ -133,13 +133,13 @@ function walk(
   // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
 
-  for (const child of paintOrderedChildren(node)) {
+  for (const child of node.children) {
     // Absolutization would otherwise activate z-index on static block
     // children too (CSS keeps it inert there): the companion reads
     // `--mw-z`, written only where CSS applies it. A run's element is
     // its container, whose own value is already written.
     if (!child.anonymous) {
-      const applies = paintsInPositionedStep(child, node) && !child.inlineBox;
+      const applies = zIndexApplies(child, node) && !child.inlineBox;
       setVar(child.source as HTMLElement, "--mw-z", applies ? child.style.zIndex : null);
     }
     walk(child, node, boxes, insets, own, forcedBelow);
@@ -202,10 +202,10 @@ function stuckInsets({ stickyShift }: InlineElement): PerSide<number | null> {
 }
 
 /** A box's light element moved from where its parent places it to where
- * it paints: a sticky box by its shift (specs/sticky.md), a fixed one by
- * the scroll and shifts it escapes (specs/positioning.md). A top-layer
- * box's light element is placed on its painted cells: its shift is
- * zero. */
+ * it paints: a sticky box by its shift (specs/sticky.md), a fixed or
+ * absolute one by the scroll and shifts it escapes (specs/positioning.md
+ * "Paint order"). A top-layer box's light element is placed on its
+ * painted cells: its shift is zero. */
 function writeShift(node: LayoutNode, parent: LayoutNode): void {
   const el = node.source as HTMLElement;
   const top = node.topLayerRank !== undefined;

@@ -62,7 +62,7 @@
   },
   "devDependencies": {
     "@types/figlet": "^1.7.0",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "figlet": "^1.11.4",
     "happy-dom": "^20.14.5",
     "monowind": "workspace:^",

@@ -112,8 +112,10 @@ position: relative }`). Laid-out elements are absolute and always
 - **The host's centered lines** keep the browser's fractional centering
   in text mode: the half-cell nudge is a transform and would move the
   whole component.
-- **Column utilities on the host itself** do not apply (they never
-  did); use a wrapper.
+- **Column utilities on the host itself** are not modeled: the engine
+  lays the host out in one column while the browser still breaks the
+  host's box into columns, the grid's rows and the laid-out elements
+  with it, so both land out of place; use a wrapper.
 - A mixed host's block children are flow children (cell-model.md):
   in the browser's flow, engine-sized and engine-margined, so the
   host's own runs sit natively on their rows; the shadow slot is a

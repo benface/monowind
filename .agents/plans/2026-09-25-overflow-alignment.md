@@ -2,7 +2,9 @@
 
 Status: **planned 2026-09-25**. Today every overflowing alignment is
 `safe` (cell-model.md deviation 21), as in v0.3.2. This plan makes it
-CSS's, and keeps what CSS keeps reachable reachable.
+CSS's, and keeps what CSS keeps reachable reachable. It also counts
+an absolute box toward the scroll ranges on its containing-block
+chain (added 2026-09-27: both rework the range `contentExtent` takes).
 
 ## What CSS does
 
@@ -72,23 +74,28 @@ static position's `soleItemMainOffset`). The review found:
    tracks a minimum as well as a maximum. The scroll sync reads the
    native offset's sign (element.ts), and paint, sticky and pointer
    offsets follow (scrolling.md).
-2. **Unclamp and consume `safe`.** Remove the clamps from
+2. **Absolute boxes in the range.** A scroller's range is taken in
+   flow layout, before the positioning pass places its absolute
+   descendants, so none counts (scrolling.md, Deviations). Take the
+   ranges of the scrollers on each placed box's chain again after the
+   pass, a scrollbar that appears laying out again.
+3. **Unclamp and consume `safe`.** Remove the clamps from
    `mainAxisOffsets` and `alignCrossOffset`, and add a `safe`
    parameter that clamps. An item's flag comes from its `align-self`,
    or from the parent's `align-items` when that is `auto`, next to
    `effectiveAlign`. `justify-self` works the same way in grid.
-3. **Signed free space to alignment only.** Flexing keeps its clamped
+4. **Signed free space to alignment only.** Flexing keeps its clamped
    `availableForItems`. Alignment gets the inner size minus the gaps,
    the fixed margins and the sizes.
-4. **Round the odd cell toward the end**: a negative leftover centers
+5. **Round the odd cell toward the end**: a negative leftover centers
    at `-Math.floor(-leftover / 2)`.
-5. **Host edge**: decide from the probe whether the grid grows left
+6. **Host edge**: decide from the probe whether the grid grows left
    and up or keeps the drop. At the root, CSS cannot scroll there
    either.
-6. **Docs**: remove deviation 21. Restore the unsafe wording in
-   flex.md steps 7-9, grid.md "Items in their areas" and
-   positioning.md's static position. Add the reversed origin to
-   scrolling.md.
+7. **Docs**: remove deviation 21 and scrolling.md's absolute-box
+   deviation. Restore the unsafe wording in flex.md steps 7-9,
+   grid.md "Items in their areas" and positioning.md's static
+   position. Add the reversed origin to scrolling.md.
 
 ## Tests
 
@@ -104,6 +111,10 @@ static position's `soleItemMainOffset`). The review found:
 - Reversed scroll: a `flex-col-reverse h-3 overflow-y-auto` log of 5
   rows scrolls over all 5, starts showing the end, and keeps its
   offset across relayouts. The same for row-reverse and wrap-reverse.
+- Absolute boxes: a `relative overflow-y-auto` list scrolls to show
+  an absolute child past its end (the menu below its last row), and
+  an `auto` list it overflows takes its scrollbar; a box whose
+  containing block lies outside the scroller changes no range.
 - Whatever the probe finds for `justify-end` and `justify-center`
   scroll panes.
 - Grid: tracks and items past the start. Static positions, with

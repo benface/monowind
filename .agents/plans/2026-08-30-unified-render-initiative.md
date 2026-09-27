@@ -1,9 +1,9 @@
 # Unified render initiative (Milestone 6)
 
-Status: **planning.** Delivers Milestone 6 in the top-level plan:
-collapses what were separately-scoped as "Native interaction" and
-"Visual system" into a single architectural reshape, plus the merger
-of "layered" and "plain-text" modes into one render.
+Status: **implemented** (`5252f42`). Delivered Milestone 6 in the
+top-level plan: collapses what were separately-scoped as "Native
+interaction" and "Visual system" into a single architectural reshape,
+plus the merger of "layered" and "plain-text" modes into one render.
 
 ## Motivation
 

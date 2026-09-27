@@ -41,8 +41,10 @@ the subtree for the query, where a play state costs nothing. A **sampled animati
 property: `color`, the `border-*-color` longhands, `opacity`,
 `background-color`, or a layer effect (`transform`, `translate`,
 `rotate`, `scale`, `filter`, `backdrop-filter`). Any other keyframe
-property (geometry, decoration color) is sampled by the same loop,
-through the relayout it drives.
+property (geometry, say) is sampled by the same loop, through the
+relayout it drives; a `text-decoration-color` keyframe drives it too,
+but no read takes a decoration's color (cell-model.md "Typography"),
+so it shows nothing.
 
 ## Locked decisions
 

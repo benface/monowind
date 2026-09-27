@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+import { css } from "../../scripts/vite-css.mjs";
 
 /**
  * Builds dist/sort.js — the optional companion to the CDN bundle that
@@ -9,6 +10,7 @@ import { defineConfig } from "vite";
  * would grow cdn.js by ~70%.
  */
 export default defineConfig({
+  css,
   build: {
     lib: {
       entry: resolve(import.meta.dirname, "src/sort.ts"),

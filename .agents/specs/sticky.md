@@ -31,9 +31,11 @@ scrollport's bottom.
 - **A sticky box is in flow, shifted at paint time.** It lays out as a
   static box — its insets shape no offset, CSS's sticky insets being
   constraints, not offsets — and it is positioned: a containing block
-  for absolute descendants, `z-index` applies, it paints in the
-  positioned step (`positioning.md`). Its painted position is its layout
-  position plus a STICKY SHIFT derived from its scroll container's
+  for absolute descendants, `z-index` applies, it forms a stacking
+  context and paints in its context's positioned step (`positioning.md`
+  "Paint order"), so a stuck header cell paints over the table body
+  scrolling beneath it. Its painted position is its layout position
+  plus a STICKY SHIFT derived from its scroll container's
   cell-quantized offset, moving the box and its whole subtree together —
   ink, hit-testing, focus rects, the selection — exactly as a scroll
   offset moves a container's content (`scrolling.md` "Scrolling is
@@ -42,18 +44,21 @@ scrollport's bottom.
   counts a sticky box's normal position in scrollable overflow.
 
 - **The scroll container and the sticky view rectangle.** The box's
-  scroll container is its nearest ancestor with a scrolling axis
+  scroll container is its nearest ancestor on its containing-block
+  chain (`positioning.md` "Paint order") with a scrolling axis
   (`overflow: auto | scroll` on x or y — `scrollsAxis`), the host
-  included. Its scrollport is its padding box less the reserved gutter
-  cells (`scrolling.md`); the sticky view rectangle is the scrollport
-  inset by the box's non-`auto` insets — with every inset `auto` the
-  box never shifts. No scrolling ancestor, no shift: the page's own
-  scroll is not modeled, as for `fixed` (deviation 1). A `fixed`
-  ancestor, a top-layer element's included, ends the search: it paints
-  outside the scrolling ancestors above it, so a sticky box inside it
-  sticks only to a scroller inside it, as CSS's scroll container for it
-  is the viewport's. An ancestor that only clips (`overflow: hidden`,
-  read as `clip` — `cell-model.md`) is passed over (deviation 2).
+  included: a sticky box inside an absolute box skips a static
+  scroller the absolute box escapes. Its scrollport is its padding box
+  less the reserved gutter cells (`scrolling.md`); the sticky view
+  rectangle is the scrollport inset by the box's non-`auto` insets —
+  with every inset `auto` the box never shifts. No scrolling ancestor,
+  no shift: the page's own scroll is not modeled, as for `fixed`
+  (deviation 1). A `fixed` ancestor, a top-layer element's included,
+  ends the search: it paints outside the scrolling ancestors above it,
+  so a sticky box inside it sticks only to a scroller inside it, as
+  CSS's scroll container for it is the viewport's. An ancestor that
+  only clips (`overflow: hidden`, read as `clip` — `cell-model.md`) is
+  passed over (deviation 2).
 
 - **The shift, per axis, per css-position-3 §3.4.** In the scroll
   container's coordinates with its current offset applied — a box
@@ -131,12 +136,15 @@ scrollport's bottom.
   margins ignored (cell-model deviation 5), and applied per
   glyph through the path inline relative insets already take
   (`forEachLeafCell`, so paint, hit-testing and selection follow) — its
-  sticky insets constrain, they offset nothing. Natively the same path
-  carries it: the inline-inset marker pins `position: relative` and its
-  custom properties hold the shift, so the browser never runs its own
-  sticky on the span. An atomic inline box (`inline-block`) is a box and
-  sticks as one, its containing block its leaf's content box, its native
-  shift a relative offset by the shift vars.
+  sticky insets constrain, they offset nothing. It forms a stacking
+  context, its glyphs painting in its leaf's context's positioned step,
+  over the line they land on (`positioning.md` "Paint order"). Natively
+  the same path carries it: the inline-inset marker pins
+  `position: relative` and its custom properties hold the shift, so the
+  browser never runs its own sticky on the span. An atomic inline box
+  (`inline-block`) is a box and sticks as one, its containing block its
+  leaf's content box, its native shift a relative offset by the shift
+  vars.
 
 ## Browser agreement
 
@@ -186,8 +194,12 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   first column in an x-scrolled table, the line two stuck cells of a
   column share, a stuck header's bottom line joined to a stuck column's
   lines with both axes scrolled, a sticky cell inside a sticky row
-  group; a sticky span pinned at its inset row with its glyphs
-  moved and the rest of the line still, and one in a scrolling leaf
+  group, a `z-auto` stuck header's corner covered by the stuck column,
+  lines and all, and lifted over it by a `z-index`; a relative row's
+  lines over its fill, and a negative row's; a sticky heading in an
+  absolute box unshifted by a static scroller the box escapes; a
+  sticky span pinned at its inset row with its glyphs moved and the
+  rest of the line still, and one in a scrolling leaf
   pinned to the leaf's own scroll; a relayout that moves nothing
   writes nothing, a stuck span's shift included; a fixed box inside a
   fixed box in a scrolled scroller keeps a zero takeback through a
@@ -214,13 +226,15 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
 
 - paint-origin.ts: `placePainted(root)`, one walk down the tree
   writing each box's `paintOrigin` for the current scroll offsets —
-  its parent's less the parent's scroll plus its own offset, a fixed
-  box's its `hostRect` — with a sticky box's shift on top, an
-  ancestor's origin in place before its descendants', each scroll
-  container's scrollport taken once as the walk enters it. The walk
-  returns the boxes whose light elements a scroll shifts — sticky
-  boxes, fixed boxes off the top-layer stack, and the leaves holding
-  sticky inline elements — with their parents.
+  from the frame its containing-block chain continues from: its
+  parent's content origin, an absolute box's containing block's with
+  the scroll between taken back, a fixed box's `hostRect` — with a
+  sticky box's shift on top, an ancestor's origin in place before its
+  descendants', each scroll container's scrollport taken once as the
+  walk enters it and handed down the chain. The walk returns the boxes
+  whose light elements a scroll shifts — sticky boxes, fixed boxes off
+  the top-layer stack, absolute boxes that escape a scroller, and the
+  leaves holding sticky inline elements — with their parents.
 - sticky.ts: `stickyShiftAxis(box, block, view, start, end)`, the
   per-axis rule above, pure rect math; `stick`, a sticky box's shift
   onto its `paintOrigin` (`node.stickyShift`, absent when zero), from
@@ -237,11 +251,12 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   offsets (`insets`).
 - positioning.ts: a sticky box keeps its static position in the
   positioning pass.
-- plain-text.ts: `walk` paints each box at its `paintOrigin`, a table
-  part's cells in the part's turn, the table's own paint after its
-  rows and cells, and the transcript takes the same path;
-  `forEachLeafCell` adds a sticky inline element's shift as it adds
-  relative insets, so paint, hit-testing and selection follow.
+- plain-text.ts: the paint's visitor (`painter`) paints each box at
+  its `paintOrigin`, a table part's lattice cells in the part's turn,
+  the table's own over its parts' fills, and the transcript takes the
+  same path; `forEachLeafCell` adds a sticky inline element's shift as
+  it adds relative insets (`inlineShift`), so paint, hit-testing and
+  selection follow, its glyphs painting in its own turn.
 - pointer.ts: `hitStack` hit-tests each box at its `paintOrigin`.
 - focus.ts: `focusableRects` places each box at its `paintOrigin`.
 - table.ts: the lattice as geometry on the table node — the winning
@@ -257,12 +272,14 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   merge where they meet; a covered contribution keeps the arms
   reaching a visible cell no such part covers, and a segment shared
   by two parts is both of theirs. A part's shift is the sticky-shifted
-  node's among the cell, its row and its row group.
+  node's among the cell, its row and its row group; its lines are the
+  innermost of them in the positioned step (`placementOf`), ranked by
+  the paint order (`coverage`).
 - render.ts: `writeShift` gives a box's light element the offset from
   where its parent places it to its `paintOrigin` as
-  `--mw-sx`/`--mw-sy` — a sticky box's shift, a fixed box's takeback
-  of the scroll and shifts it escapes (`positioning.md`), zero
-  (unwritten) elsewhere and on a top-layer box, which the companion
+  `--mw-sx`/`--mw-sy` — a sticky box's shift, a fixed or absolute
+  box's takeback of the scroll and shifts it escapes (`positioning.md`),
+  zero (unwritten) elsewhere and on a top-layer box, which the companion
   places on its painted cells — and `stuckInsets` a sticky inline
   element's shift as its inset properties: `render` writes both at a
   layout; `renderScroll`, a scroll repaint's one call, syncs the

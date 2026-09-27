@@ -2884,9 +2884,9 @@ export class MonoWindElement extends HTMLElementBase {
         availableCols,
         (node) => this.#syncScrollOffsets(metrics, scrollState, collectScrollContainers(node)),
         this.#placements,
+        this.#topLayer,
       );
       this.#scrollNodes = collectScrollContainers(virtualRoot);
-      this.#topLayer.assign(virtualRoot);
       // A stack element the UA centers follows the cells the reader
       // sees; an anchored one follows its anchor, which the host moves.
       this.#centeredTopLayer =
