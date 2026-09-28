@@ -43,6 +43,12 @@ day it is done.
 - Test hooks in stories and DOM-based tests use `data-test="<name>"`
   (queried as `[data-test="name"]`) — never ad-hoc attributes like
   `data-pane` or `data-inner`, and `id` only for label/control wiring.
+- A visible story's `play` only reads: it asserts what the story draws
+  and never changes it (no clicks, focus, typing, toggles or attribute
+  writes), as Storybook runs it in the canvas too. Interaction goes in
+  a test-only twin sharing the render, tagged `["!dev", "!golden"]`,
+  or `["!dev"]` where its end state earns a golden — each story's tags
+  in its own literal, which the indexer reads statically.
 - Tailwind classes in `class` and `className` attributes take their
   canonical form (`scrollbar-gutter-stable`, not `[scrollbar-gutter:stable]`):
   `pnpm check` reports any other form and `pnpm check:fix` rewrites it,

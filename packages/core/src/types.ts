@@ -715,6 +715,10 @@ export interface CellStyle {
    * or `collapse` — keeps its space and paints none of its own ink, and
    * a visible descendant still paints. */
   visible: boolean;
+  /** `content-visibility: hidden`, `hidden="until-found"`'s too: the box
+   * stays, as big as it is empty, and draws none of its contents
+   * (specs/visibility.md "Skipped contents"). */
+  skipsContents: boolean;
   /** Its computed `pointer-events` is other than `none`: the engine's
    * hit test takes it (specs/cell-model.md "Pointer states"). */
   pointerEvents: boolean;
@@ -1292,6 +1296,7 @@ export function defaultCellStyle(): CellStyle {
     boxShadow: [],
     opacity: 1,
     visible: true,
+    skipsContents: false,
     pointerEvents: true,
     layer: null,
     stacking: false,

@@ -1,6 +1,6 @@
 # Visibility
 
-Status: **implemented** (2026-09-22).
+Status: **implemented** (2026-09-22; skipped contents 2026-09-28).
 
 `visibility: hidden` (Tailwind's `invisible`) and `collapse` on the
 grid: a hidden box keeps its place in the layout and paints nothing of
@@ -60,6 +60,22 @@ nested host, which never lays out, is never hidden.
 - **A hidden `::backdrop` draws no box**, and a hidden box's fill is
   no ground for the editable colors above it.
 
+## Skipped contents
+
+- **A `details` without `open` shows its first `summary` alone**
+  (HTML's rendering rules): its other children and text take no part
+  in the layout, as under `display: none`.
+- **A box whose `content-visibility` is `hidden`** —
+  `hidden="until-found"` computes so in all three engines — keeps its
+  box, as big as it is empty (size containment), its border and fill
+  painting, and lays out and draws none of its contents. The engines
+  draw none of them, where the grid drew them all (probed 2026-09-28).
+  It applies where CSS's layout containment does: on no inline box,
+  and on no table part but a cell or a caption — no engine skips a
+  row's, Chromium no caption's, Firefox and WebKit no cell's (probed).
+- **Toggling `open`**, or find in page taking `hidden="until-found"`
+  off, lays the host out again, as any attribute of the light DOM does.
+
 ## Deviations from CSS
 
 1. `collapse` hides as `hidden` on a box or a table row: a collapsed
@@ -77,6 +93,11 @@ nested host, which never lays out, is never hidden.
    descendants' ink and fills; one on a visible descendant's blank,
    unfilled cell goes to the main grid's cell under the pointer, where
    the descendant lies only while its layer is untransformed.
+6. `contain-intrinsic-size` is not read: a box that skips its
+   contents is as big as it is empty, its own sizes aside.
+7. A `details` without a `summary` shows no legend, where the browser
+   draws its own ("Details" in English): that legend lives in the
+   browser's shadow tree, which no read reaches.
 
 ## Testing
 
@@ -92,18 +113,28 @@ nested host, which never lays out, is never hidden.
   visible ones; the copy's characters, breaks, `<br>`s, rows, and
   cells. `layer.test.ts`: a hidden layer root's visible fill takes the
   hit, its own blank box not. `sticky.test.ts`: a stuck thead's lines
-  follow the table's visibility.
+  follow the table's visibility. `tree.test.ts`: a closed `details`
+  shows its first `summary` alone, an open one its content; a
+  `content-visibility: hidden` box builds empty, a table row and an
+  inline element not.
 - Storybook (`effects.stories.ts`): the paint in the browser, the rows
   kept, and a golden (`Visibility`); a fade-out paired with `invisible`
   (`VisibilityFade`); a host hidden by an ancestor showing at once
-  (`HiddenAncestor`).
+  (`HiddenAncestor`); `hidden="until-found"` and `content-visibility:
+hidden` drawing nothing until the attribute goes
+  (`SkippedContents`). `interactive.stories.ts`: `Details` (a
+  golden) and `DetailsToggle`, each summary pressed and pressed back.
 
 ## Touch points on implementation
 
-- types.ts: `CellStyle.visible`, and each inline entry's.
-- style.ts: `readVisible`, a fade's hold (`holdVisible`); the
+- types.ts: `CellStyle.visible`, and each inline entry's;
+  `CellStyle.skipsContents`.
+- style.ts: `readVisible`, a fade's hold (`holdVisible`);
+  `skipsContents` from `content-visibility`; the
   `::backdrop` read returns none for a hidden one.
-- tree.ts: each inline element's `visible`, the anonymous runs' and
+- tree.ts: `buildNode` builds a box that skips its contents empty, and
+  `shownChildNodes` a closed `details`'s first `summary` alone; each
+  inline element's `visible`, the anonymous runs' and
   renderer leaves' from their element, and an entry for the text an
   inline element split around a block leaves in a run
   (`collectRunNodes`).

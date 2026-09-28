@@ -10,7 +10,8 @@ itself, and paints each marker's text in whole cells where CSS places
 it; the light DOM keeps its lists, their native markers invisible and
 out of the text's way. Probed 2026-09-27 in Chromium, Firefox and
 WebKit (Playwright 1.63 on macOS, Menlo at 16px; the light DOM through
-the 0.3.3 CDN bundle) — "Browser agreement".
+the 0.3.3 CDN bundle), and again 2026-09-28 for the inside marker's
+line and `details` — "Browser agreement".
 
 ## Why
 
@@ -165,7 +166,11 @@ goes wrong three ways (probed, three engines):
   host's light DOM in tree order, after the read. An element with
   `display: none` counts nothing, its subtree with it, as natively;
   one the layout tree drops (`sr-only`) counts, as do floated,
-  out-of-flow and `visibility: hidden` items (probed).
+  out-of-flow and `visibility: hidden` items (probed). The contents a
+  box skips (visibility.md "Skipped contents") count nothing past it:
+  a closed `details`'s ("`details` and `summary`"), and a
+  `content-visibility: hidden` box's, whose style containment keeps
+  its counters inside it (css-contain-2).
 - **Per element, in CSS's order**: `counter-reset` makes a counter
   scoped to the element's descendants and following siblings, then
   `counter-increment`, then `counter-set` — so `<li value=7>` is 7 and
@@ -201,6 +206,18 @@ goes wrong three ways (probed, three engines):
   - A list whose `counter-reset` names another counter, or `none`:
     Firefox continues the outer count, Chromium and WebKit restart —
     as the engine does (deviation 4).
+
+## `details` and `summary`
+
+- **A `details` without `open` shows its first `summary` alone**
+  (visibility.md "Skipped contents"), and its list items count
+  nothing, as in Chromium and Firefox (WebKit counts them; probed
+  2026-09-28).
+- **`summary`** is `display: list-item` with an inside
+  `disclosure-closed` marker, `disclosure-open` in an open `details`,
+  and `counter-increment: list-item 0` (the UA's, computed so in all
+  three); `::marker` styles it in all three engines, WebKit included,
+  and `::-webkit-details-marker` in none (probed 2026-09-28).
 
 ## Placement
 
@@ -257,6 +274,20 @@ goes wrong three ways (probed, three engines):
   holds its marker on a line of its own above it: an anonymous run of
   the marker alone (cell-model.md "Inline content"). An empty item is
   one row, the marker's.
+- **Wrapping**: `text-wrap: balance` and `pretty` count the marker's
+  cells on the first line as they count an equal `text-indent`
+  (probed, three engines).
+- **Justification**: the marker's spaces are the line's justification
+  opportunities, sharing its leftover with the text's gaps by the
+  rounded spread (cell-model.md "Text alignment"), as Chromium and
+  Firefox spread it; WebKit leaves the marker's spaces alone.
+- **Truncation** keeps the marker and cuts the text after it; a box
+  narrower than the marker cuts the marker too, its last visible cell
+  the `…` (Chromium, Firefox; WebKit keeps the marker whole).
+- **Line clamps**: a clamped item is no list item — `line-clamp-*`'s
+  `-webkit-box` computes `flow-root` (`-webkit-box` in WebKit), so it
+  draws no marker in all three. A clamp on a block inside the item
+  keeps the marker, on its own line above that block.
 
 ### Both
 
@@ -306,9 +337,10 @@ goes wrong three ways (probed, three engines):
 - **Native markers take no line space**: every light element is
   `list-style-position: outside` (gated), and the engine hands an
   inside marker's cells to the native line as text-indent — `--mw-ti`
-  holds the authored indent plus the marker's cells on the element
-  whose first line the marker opens — so the native first line starts
-  under the grid's. Probed with the rules injected into a host: the
+  holds the authored indent plus the marker's cells, and on a
+  justified line its spaces' share of the spread, on the element whose
+  first line the marker opens — so the native first line starts under the
+  grid's. Probed with the rules injected into a host: the
   lock takes every drift to 0, `summary`'s too, and the indent puts
   the native text where an authored indent of as many cells does, in
   all three.
@@ -379,7 +411,7 @@ goes wrong three ways (probed, three engines):
 
 All cell-model deviations apply: the marker's font is the root's (3),
 its cells left of the host are dropped ("Overflow"), and it lies left
-of its item whatever the `direction` (20).
+of its item whatever the `direction` (18).
 
 ## Browser agreement
 
@@ -387,7 +419,9 @@ Probed 2026-09-27 in Chromium, Firefox and WebKit, each result above
 marked where it was. The methods, for re-running:
 
 - **Advances**: an inside marker's cells are the offset of the item's
-  first glyph from its content box, per type and ordinal.
+  first glyph from its content box, per type and ordinal. WebKit's
+  range rects leave out a justified line's expansion, so justified
+  lines are read by ink.
 - **Outside geometry**: the marker's ink found by scanning a
   screenshot for its color, the text another color; a full-block
   counter style (`additive-symbols: 1 "█"`) makes the ink the box,
@@ -422,8 +456,12 @@ marked where it was. The methods, for re-running:
     item's clip and an ancestor's; a marker past the host's edge
     dropped;
   - inside placement: the first line's wrap width, the indent before
-    the marker, center and end alignment, truncation, a block-first
-    item's marker line, tracking;
+    the marker, center and end alignment, justification through the
+    marker's spaces, balance, truncation (a box narrower than the
+    marker too), a clamped item's missing marker, a block-first item's
+    marker line, tracking;
+  - `details`: a closed one's content neither drawn nor counted, an
+    open one's both;
   - paint: color, weight and style; an inside marker's decorations and
     an outside one's none; a hidden item's marker; the item's group
     opacity; the marker over a later block's fill and a float's, under
@@ -436,7 +474,7 @@ marked where it was. The methods, for re-running:
 - **Storybook** (`lists.stories.ts`, three engines): "Lists" — bullets,
   numbers, letters, romans and a string; nested lists in `circle` and
   `square`; `marker:` color and weight; `start`, `reversed` and
-  `value`; inside and outside; `summary` open and closed; a float
+  `value`; inside and outside; `summary` open and closed, toggled; a float
   beside a list; a centered and an indented item. The play asserts
   each item's native text on the grid's cells (`expectNativeOnGrid`,
   inside markers and `summary` included), the markers' cells row by

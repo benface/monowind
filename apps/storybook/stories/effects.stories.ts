@@ -190,6 +190,32 @@ export const HiddenAncestor: StoryObj = {
   },
 };
 
+/** A box that skips its contents (`hidden="until-found"`,
+ * `content-visibility: hidden`) keeps its box, as big as it is empty,
+ * and draws none of them, until the attribute goes, as find in page
+ * removes it (specs/visibility.md "Skipped contents"). */
+export const SkippedContents: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p>before</p>
+      <div data-test="found" hidden="until-found">found in page</div>
+      <div class="border" style="content-visibility: hidden">skipped</div>
+      <p>after</p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const rows = () => rowsOf(host).map((row) => row.trim());
+    expect(rows()[0]).toBe("before");
+    expect(rows()[1]).toMatch(/^┌─+┐$/);
+    expect(rows()[2]).toMatch(/^└─+┘$/);
+    expect(rows()[3]).toBe("after");
+    testHooks(canvasElement)("found").removeAttribute("hidden");
+    await waitFor(() => expect(rows()[1]).toBe("found in page"));
+  },
+};
+
 /**
  * Outlines stay native (specs/cell-model.md "Outlines"): the browser
  * draws them around the engine-sized box in px, above the grid — a

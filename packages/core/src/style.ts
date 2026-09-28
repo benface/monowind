@@ -348,6 +348,11 @@ export function readCellStyle(
     layer: effects.layer,
     stacking: effects.set || readStacking(el, cs),
     visible: readVisible(cs, el),
+    // Where layout containment applies: no table part but a cell or a
+    // caption skips its contents.
+    skipsContents:
+      cs.contentVisibility === "hidden" &&
+      (tableRole === "none" || tableRole === "cell" || tableRole === "caption"),
     pointerEvents: cs.pointerEvents !== "none",
     ...anchoring,
     anchorScope: readAnchorScope(el, cs),

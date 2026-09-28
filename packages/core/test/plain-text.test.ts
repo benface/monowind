@@ -913,6 +913,13 @@ describe("form controls (native-rendered value)", () => {
     expect(control(`<input>`).intrinsicWidth).toBe(20);
   });
 
+  it("a button-like input's intrinsic width is its label's", () => {
+    expect(control(`<input type="submit" value="Send">`).intrinsicWidth).toBe(4);
+    expect(control(`<input type="reset" value="Clear all">`).intrinsicWidth).toBe(9);
+    expect(control(`<input type="button" value="日本">`).intrinsicWidth).toBe(4);
+    expect(control(`<input type="button">`).intrinsicWidth).toBe(0);
+  });
+
   it("select intrinsic width is the longest option label", () => {
     const node = control(
       `<select><option>ab</option><option>abcdef</option><option>abc</option></select>`,

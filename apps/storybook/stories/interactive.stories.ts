@@ -471,6 +471,102 @@ export const Button: StoryObj = {
   },
 };
 
+const details = () => html`
+  <mono-wind>
+    <div class="flex max-w-60 flex-col gap-1">
+      <details data-test="closed" class="border px-1">
+        <summary class="cursor-pointer">What does it draw?</summary>
+        <p>Drawn on the grid.</p>
+      </details>
+      <details data-test="open" open class="border px-1">
+        <summary class="cursor-pointer">Open from the start</summary>
+        <p>Press to fold it.</p>
+      </details>
+    </div>
+  </mono-wind>
+`;
+
+/** A `details` shows its `summary` alone until it opens: its content
+ * joins the grid when `open` is set, by a press on the summary or a
+ * script, and leaves it when unset (specs/visibility.md "Skipped
+ * contents"). */
+export const Details: StoryObj = {
+  render: details,
+  play: async ({ canvasElement }) => {
+    const text = (await readyHost(canvasElement)).toPlainText();
+    expect(text).toContain("What does it draw?");
+    expect(text).not.toContain("Drawn on the grid.");
+    expect(text).toContain("Press to fold it.");
+  },
+};
+
+/** Each of `Details`' summaries pressed, and pressed back, the grid
+ * following. */
+export const DetailsToggle: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: details,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const hook = testHooks(canvasElement);
+    const text = () => host.toPlainText();
+    const shows = (content: string, shown: boolean) =>
+      waitFor(() => expect(text().includes(content), content).toBe(shown));
+    const toggle = (name: string) => hook(name).querySelector("summary")!.click();
+    toggle("closed");
+    await shows("Drawn on the grid.", true);
+    toggle("open");
+    await shows("Press to fold it.", false);
+    expect(text()).toContain("Open from the start");
+    toggle("closed");
+    toggle("open");
+    await shows("Drawn on the grid.", false);
+    await shows("Press to fold it.", true);
+  },
+};
+
+/** A button-like input is as wide as its label: its `value`, else the
+ * browser's own ("Submit" in Chromium and WebKit, "Submit Query" in
+ * Firefox), measured against a copy outside the host. */
+export const ButtonInputs: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p class="flex gap-1">
+        <input data-test="send" type="submit" value="Send" />
+        <input data-test="submit" type="submit" />
+        <input data-test="reset" type="reset" />
+        <input data-test="empty" type="button" />
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const hook = testHooks(canvasElement);
+    const cells = (name: string) => Number(hook(name).style.getPropertyValue("--mw-w"));
+    // The browser's own label, in the host's font, unpadded and unlocked.
+    const labelCells = (type: string) => {
+      const { fontFamily, fontSize } = getComputedStyle(host);
+      const copy = document.createElement("input");
+      copy.type = type;
+      copy.style.cssText = "padding: 0; border: 0; appearance: none";
+      const zeros = document.createElement("span");
+      zeros.textContent = "0".repeat(100);
+      for (const el of [copy, zeros]) Object.assign(el.style, { fontFamily, fontSize });
+      canvasElement.append(copy, zeros);
+      const advance = zeros.getBoundingClientRect().width / 100;
+      const label = Math.ceil(copy.getBoundingClientRect().width / advance - 0.05);
+      copy.remove();
+      zeros.remove();
+      return label;
+    };
+    expect(cells("send")).toBe(4);
+    expect(cells("submit")).toBe(labelCells("submit"));
+    expect(cells("reset")).toBe(labelCells("reset"));
+    expect(cells("submit")).toBeGreaterThan(0);
+    expect(cells("empty")).toBe(0);
+  },
+};
+
 /** `pointer-events: none` passes the pointer through, as natively: a
  * badge laid over a button's corner leaves the press, the hover and the
  * cursor there to the button, and a link it disables (`aria-disabled`,

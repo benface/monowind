@@ -96,6 +96,7 @@ interface BuildContext {
 function buildNode(root: Element, context: BuildContext): LayoutNode | null {
   const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics);
   if (style.display === "none") return null;
+  if (style.skipsContents) return buildLeaf(root, style, [], [], context, []);
 
   // Registered leaf renderers (specs/leaf-renderers.md) supply their
   // own grid content; children are skipped entirely. The light DOM
@@ -104,7 +105,8 @@ function buildNode(root: Element, context: BuildContext): LayoutNode | null {
   const leaf = leafRendererFor(root.tagName);
   if (leaf) return buildRendererLeaf(root, style, leaf);
 
-  const elementChildren = Array.from(root.children);
+  const childNodes = shownChildNodes(root);
+  const elementChildren = childNodes.filter((node): node is Element => node instanceof Element);
   const roles = elementChildren.map(childRole);
 
   // Form controls are always leaves — descending into a <select>'s
@@ -118,7 +120,16 @@ function buildNode(root: Element, context: BuildContext): LayoutNode | null {
   ) {
     return buildLeaf(root, style, elementChildren, roles, context);
   }
-  return createNode(root, style, buildChildren(root, Array.from(root.childNodes), context));
+  return createNode(root, style, buildChildren(root, childNodes, context));
+}
+
+/** An element's child nodes as the page renders them: a `details`
+ * without `open` shows its first `summary` alone (HTML's rendering
+ * rules, specs/visibility.md "Skipped contents"). */
+function shownChildNodes(el: Element): ChildNode[] {
+  if (el.tagName !== "DETAILS" || el.hasAttribute("open")) return Array.from(el.childNodes);
+  const summary = Array.from(el.children).find((child) => child.tagName === "SUMMARY");
+  return summary ? [summary] : [];
 }
 
 /** A container's children in document order (specs/cell-model.md
@@ -180,7 +191,7 @@ function buildChildren(
       // the block reaches this loop, and the inline content each side
       // of it falls into the runs around it.
       if (role === "inline" && hidesBlock(node)) {
-        queue.splice(index, 1, ...node.childNodes);
+        queue.splice(index, 1, ...shownChildNodes(node));
         index--;
         continue;
       }
@@ -331,13 +342,13 @@ function buildLeaf(
   }
   // Form controls with no explicit width would otherwise be 0 cells
   // wide (their leaf is empty; the value renders natively). Intrinsic
-  // widths mirror the native ones: input's size attribute, textarea's
+  // widths mirror the native ones: an input's (`inputWidth`), textarea's
   // cols, and a select's option labels — the longest by default, the
   // SELECTED one under `field-sizing: content`, like the browser.
   let intrinsicWidth = longestLineAdvance(text, advances, style.tracking, style.textIndent);
   if (formControl && intrinsicWidth === 0) {
-    // Number(): happy-dom (tests) returns these attributes as strings.
-    if (tag === "INPUT") intrinsicWidth = Number((root as HTMLInputElement).size) || 20;
+    // Number(): happy-dom (tests) returns `size` and `cols` as strings.
+    if (tag === "INPUT") intrinsicWidth = inputWidth(root as HTMLInputElement, style, context);
     else if (tag === "TEXTAREA") intrinsicWidth = Number((root as HTMLTextAreaElement).cols) || 20;
     else {
       const select = root as HTMLSelectElement;
@@ -822,7 +833,7 @@ function collectRun(
   // leave the leaf empty so the grid doesn't double-render, and skip
   // descending into their internals (e.g. <select>'s <option>s).
   if (isFormControlTag(el.tagName)) return;
-  collectNodes(Array.from(el.childNodes), tracking, ctx, run, opacity, parent);
+  collectNodes(shownChildNodes(el), tracking, ctx, run, opacity, parent);
 }
 
 function collectNodes(
@@ -1149,6 +1160,30 @@ function warnSkippedRunContent(el: Element): void {
     "A block-level element nested inside a text run can't be laid out and was " +
       "skipped. Give it its own place in the layout instead.",
   );
+}
+
+/** The input types a browser draws as a button, its value the label. */
+const LABELED_INPUTS = new Set(["submit", "reset", "button"]);
+
+/** An input's intrinsic width in cells: a field's `size` (20 by
+ * default), a button's label — its value, else the browser's own
+ * ("Submit" in Chromium and WebKit, "Submit Query" in Firefox), read
+ * off its native box where nothing sizes it. */
+function inputWidth(
+  input: HTMLInputElement,
+  style: CellStyle,
+  { cellMetrics: metrics }: BuildContext,
+): number {
+  if (!LABELED_INPUTS.has(input.type)) return Number(input.size) || 20;
+  if (input.value) return textCells(input.value);
+  if (!metrics || style.width !== undefined) return 0;
+  const cs = getComputedStyle(input);
+  const chrome = [cs.paddingLeft, cs.paddingRight, cs.borderLeftWidth, cs.borderRightWidth];
+  const label = chrome.reduce(
+    (width, px) => width - (parseFloat(px) || 0),
+    input.getBoundingClientRect().width,
+  );
+  return Math.max(0, Math.ceil(label / (metrics.advance ?? metrics.width) - 0.05));
 }
 
 /** True if `el` has any direct text child that isn't just whitespace. */

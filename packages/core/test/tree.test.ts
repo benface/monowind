@@ -498,6 +498,58 @@ describe("<wbr>", () => {
   });
 });
 
+describe("<details>", () => {
+  const shown = (html: string, width = 20): string => {
+    const node = buildTree(el(html), 16)!;
+    layoutRoot(node, width);
+    return renderPlainText(node);
+  };
+
+  it("shows a closed one's first summary alone", () => {
+    expect(shown("<details><summary>Sum</summary>text<p>para</p></details>")).toBe("Sum");
+    expect(shown("<details><summary>Sum</summary><b>bold</b> text</details>")).toBe("Sum");
+    expect(shown("<details>text<b>bold</b></details>")).toBe("");
+  });
+
+  it("shows an open one's content", () => {
+    expect(shown("<details open><summary>Sum</summary><p>para</p></details>")).toBe("Sum\npara");
+  });
+
+  it("shows a second summary as content", () => {
+    expect(shown("<details><summary>A</summary><summary>B</summary></details>")).toBe("A");
+  });
+
+  it("hides a closed inline one's block", () => {
+    const html =
+      '<div>a <details style="display: inline"><summary>S</summary><div>blk</div></details></div>';
+    expect(shown(html)).not.toContain("blk");
+  });
+});
+
+describe("content-visibility: hidden", () => {
+  it("builds the box with no contents", () => {
+    const node = buildTree(
+      el('<div><div style="content-visibility: hidden"><p>skipped</p>text</div><p>after</p></div>'),
+      16,
+    )!;
+    layoutRoot(node, 20);
+    expect(renderPlainText(node)).toBe("after");
+    expect(node.children[0]!.localRect.height).toBe(0);
+  });
+
+  it("leaves a table row's contents and an inline element's, as CSS has it", () => {
+    const shows = (html: string) => {
+      const node = buildTree(el(html), 16)!;
+      layoutRoot(node, 20);
+      return renderPlainText(node);
+    };
+    const hidden = 'style="content-visibility: hidden"';
+    expect(shows(`<table><tr ${hidden}><td>row</td></tr></table>`)).toContain("row");
+    expect(shows(`<table><tr><td ${hidden}>cell</td></tr></table>`)).not.toContain("cell");
+    expect(shows(`<p>a <span ${hidden}>inline</span></p>`)).toContain("inline");
+  });
+});
+
 describe("text-transform", () => {
   const text = (html: string) => buildTree(el(html), 16)!.text;
 
