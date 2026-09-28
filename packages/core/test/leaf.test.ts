@@ -34,7 +34,11 @@ describe("leaf renderers", () => {
     const rows = renderCellSegments(root);
     // Row 0: bare "A", then the red bold "BB" run.
     expect(rows[0]![0]).toMatchObject({ text: "A" });
-    expect(rows[0]![1]).toMatchObject({ text: "BB", color: "red", fontWeight: "bold" });
+    expect(rows[0]![1]).toMatchObject({
+      text: "BB",
+      color: "red",
+      glyph: { "font-weight": "bold" },
+    });
     // Row 1: the var() background passes through as a string.
     expect(rows[1]![0]).toMatchObject({ text: "A", backgroundColor: "var(--x)" });
   });
@@ -55,12 +59,12 @@ describe("leaf renderers", () => {
     const root = makeNode({ children: [node] });
     layoutRoot(root, 10);
     const [bare, run] = renderCellSegments(root)[0]!;
-    expect(bare).toMatchObject({ text: "A", color: "red", fontWeight: "700", fontStyle: "italic" });
+    const glyph = { "font-weight": "700", "font-style": "italic" };
+    expect(bare).toMatchObject({ text: "A", color: "red", glyph });
     expect(run).toMatchObject({
       text: "B",
       color: "red",
-      fontWeight: "700",
-      fontStyle: "italic",
+      glyph,
       backgroundColor: "blue",
     });
   });

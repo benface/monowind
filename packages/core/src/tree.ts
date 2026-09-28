@@ -7,11 +7,12 @@ import {
   isTransparentColor,
   lineGapRows,
   readAnchorNames,
-  readOpacity,
-  readVisible,
   readCellStyle,
+  readGlyph,
+  readOpacity,
   readOverflow,
   readTextStyle,
+  readVisible,
   trackingCells,
 } from "./style.ts";
 import { animatedProperties } from "./animation.ts";
@@ -244,8 +245,7 @@ function leafStyleOf(el: Element, { rootFontSizePx, cellMetrics }: BuildContext)
     lineGap: lineGapRows(cs.lineHeight, fontSizePx),
     tracking: trackingCells(cs.letterSpacing, fontSizePx, cellMetrics?.letterSpacing ?? 0),
     color: cs.color,
-    fontWeight: cs.fontWeight,
-    fontStyle: cs.fontStyle,
+    glyph: readGlyph(cs),
     visible: readVisible(cs, el),
     pointerEvents: cs.pointerEvents !== "none",
   };
@@ -442,8 +442,11 @@ function buildRendererLeaf(
       // What a run leaves unset is the leaf's, as a span inherits it.
       color: run.paint.color ?? style.color,
       backgroundColor: run.paint.backgroundColor,
-      fontWeight: run.paint.fontWeight ?? style.fontWeight,
-      fontStyle: run.paint.fontStyle ?? style.fontStyle,
+      glyph: {
+        ...style.glyph,
+        "font-weight": run.paint.fontWeight ?? style.glyph["font-weight"],
+        "font-style": run.paint.fontStyle ?? style.glyph["font-style"],
+      },
       textDecorationLine: run.paint.textDecorationLine ?? style.textDecorationLine,
       visible: node.style.visible,
       pointerEvents: node.style.pointerEvents,
@@ -694,8 +697,7 @@ function inlineEntry(
     anchorNames: readAnchorNames(element, cs),
     color: cs.color,
     backgroundColor: isTransparentColor(backgroundColor) ? undefined : backgroundColor,
-    fontWeight: cs.fontWeight,
-    fontStyle: cs.fontStyle,
+    glyph: readGlyph(cs),
     textDecorationLine: cs.textDecorationLine,
     visible: readVisible(cs, element),
     pointerEvents: cs.pointerEvents !== "none",

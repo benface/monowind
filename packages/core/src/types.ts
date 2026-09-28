@@ -1,6 +1,34 @@
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type { ColorSpace, HueMode, Rgba } from "./color.ts";
 
+/** The glyph properties: inherited ones that change how a glyph draws,
+ * never its advance. The grid's spans take each from their element
+ * where it differs from the host's, which the grid inherits
+ * (specs/cell-model.md "Typography"); a property joins by its name. */
+export const GLYPH_PROPERTIES = [
+  "font-weight",
+  "font-style",
+  "font-variant-numeric",
+  "-webkit-font-smoothing",
+  "text-shadow",
+  "text-underline-offset",
+] as const;
+
+export type GlyphProperty = (typeof GLYPH_PROPERTIES)[number];
+
+/** An element's glyph properties, as computed. */
+export type GlyphValues = Readonly<Record<GlyphProperty, string>>;
+
+/** The glyph properties' initial values. */
+export const INITIAL_GLYPH: GlyphValues = {
+  "font-weight": "400",
+  "font-style": "normal",
+  "font-variant-numeric": "normal",
+  "-webkit-font-smoothing": "auto",
+  "text-shadow": "none",
+  "text-underline-offset": "auto",
+};
+
 /** A rect by its edges, the far ones exclusive: as a clip, the cells
  * overflow leaves visible (specs/scrolling.md). */
 export type Clip = { x0: number; y0: number; x1: number; y1: number };
@@ -593,10 +621,9 @@ export interface CellStyle {
   backgroundImage: Gradient[];
   /** Where the background paints: a box, or the glyphs (`text`). */
   backgroundClip: BackgroundClip;
-  /** Paint-only text styling, passed through to the browser and
-   * mirrored per-segment by the plain-text mode's spans. */
-  fontWeight: string;
-  fontStyle: string;
+  /** Its glyph properties' values (`GLYPH_PROPERTIES`), which its
+   * glyphs take where they differ from the host's. */
+  glyph: GlyphValues;
   textDecorationLine: string;
   /** True when text-align is `justify` — forced back to `start` (its
    * extra per-line word spacing is fractional). See cell-model spec. */
@@ -770,8 +797,7 @@ export interface InlineElement {
    * cells — how a focus-inverted inline link shows its highlight. */
   color: string | undefined;
   backgroundColor: string | undefined;
-  fontWeight: string;
-  fontStyle: string;
+  glyph: GlyphValues;
   textDecorationLine: string;
   /** Its computed `visibility` is `visible`: a hidden one's cells stay
    * blank, their space kept. */
@@ -1129,8 +1155,7 @@ export function defaultCellStyle(): CellStyle {
     backgroundClear: false,
     backgroundImage: [],
     backgroundClip: "border-box",
-    fontWeight: "400",
-    fontStyle: "normal",
+    glyph: INITIAL_GLYPH,
     textDecorationLine: "none",
     borderColor: { top: undefined, right: undefined, bottom: undefined, left: undefined },
     textAlignBlocked: false,

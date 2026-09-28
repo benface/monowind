@@ -302,16 +302,26 @@ element's padding cells.
   and truncation use per-character advances. Negative tracking clamps to 0
   (a grid can't squeeze). Rendering: the engine rewrites `letter-spacing`
   to exactly `root letter-spacing + extra × cell width`.
-- Paint-only typography (weight, style, `text-decoration-line`, color)
-  passes through. Note: bold/italic can render wider in some monospace
-  fonts — listed under font risks, mitigated by font recommendations.
+- Paint-only typography passes through, each element's own on its
+  glyphs: the glyph properties (types.ts `GLYPH_PROPERTIES`: weight,
+  style, `font-variant-numeric`, `-webkit-font-smoothing`,
+  `text-shadow`, `text-underline-offset`) are inherited ones that
+  change how a glyph draws, never its advance, read as computed and
+  written back on the element's cells where they differ from the
+  host's, which the grid inherits — so an upright span in an `italic`
+  host stays upright. A property joins the list by that rule; one that
+  moves a glyph (`letter-spacing`, `font-stretch`, ligatures) cannot.
+  `diagonal-fractions` and `stacked-fractions` are dropped, as they
+  merge glyphs. Color and `text-decoration-line` have paths of their
+  own. Note: bold/italic can render wider in some monospace fonts —
+  listed under font risks, mitigated by font recommendations.
   A box's text shows the decoration lines its in-flow ancestors
   propagate beside its own (css-text-decor-3 §2): a paragraph in an
   `underline` block, and a span's text in an `underline` link, are
   underlined; an out-of-flow box, a float and an atomic inline box
-  start without them. **Deviation**: the grid draws a decoration line in its glyph's color,
-  solid, at the font's thickness; `text-decoration-color`, `-style` and
-  `-thickness` are never read.
+  start without them. **Deviation**: the grid draws a decoration line
+  in its glyph's color, solid, at the font's thickness;
+  `text-decoration-color`, `-style` and `-thickness` are never read.
 - Inline content must not disturb row height: `vertical-align` and any other
   baseline-shifting properties are neutralized on inline descendants.
   On ATOMIC inline boxes, authored `vertical-align: bottom` is honored —
@@ -1175,7 +1185,13 @@ Intrinsic sizes mirror the native ones:
 Relayouts are held while a focused select's picker is open (Chromium
 dismisses the picker on style churn; detected via `select:open`), and
 run synchronously when focus moves onto or off a select so the
-focus-invert never shows stale.
+focus-invert never shows stale. A press on a text field (a textarea,
+an input with a value) lays out at once, and so does the focus it
+moves, both before the browser begins the drag selecting the field's
+value; a layout scheduled after waits for the release. A layout's
+measuring pass rebuilds the field's box, which ends that drag in
+Firefox and moves its anchor in WebKit; its press and focus states
+still show at the press.
 
 Screen-reader-only elements (absolutely positioned with a zero `clip`
 rect or a clipped ≤1px box — Tailwind `sr-only`) build no layout node:

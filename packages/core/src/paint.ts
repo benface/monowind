@@ -3,6 +3,7 @@ import { DEFAULT_CELL } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
 import {
   applyCellPaint,
+  glyphKey,
   isBarePaint,
   PAINT_FIELDS,
   renderGridRows,
@@ -683,7 +684,9 @@ function sameSegment(a: CellSegment, b: CellSegment): boolean {
 /** A boxed segment's paint as a string, its prototype's key. */
 function segmentKey(segment: CellSegment): string {
   let key = `${segment.text}\x1f${segment.cells}`;
-  for (const field of PAINT_FIELDS) key += `\x1f${segment[field] ?? ""}`;
+  for (const field of PAINT_FIELDS) {
+    key += `\x1f${field === "glyph" ? glyphKey(segment.glyph) : (segment[field] ?? "")}`;
+  }
   return key;
 }
 

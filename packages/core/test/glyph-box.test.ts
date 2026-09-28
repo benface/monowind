@@ -98,7 +98,7 @@ describe("GlyphBoxes", () => {
     expect(boxes.box("✓", 1)).toEqual({ scale: 0.976, advance: 8.003 });
     // Measured once per cluster and font.
     boxes.box("中", 2);
-    boxes.box("中", 2, { fontWeight: "700" });
+    boxes.box("中", 2, { glyph: { "font-weight": "700" } });
     expect(calls).toEqual(["中", "★", "😀", "→", "✓", "中"]);
   });
 

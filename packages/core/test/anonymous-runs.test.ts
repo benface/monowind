@@ -234,8 +234,7 @@ describe("anonymous runs", () => {
     const run = root.children[0]!;
     expect(run.style).toMatchObject({
       color: "red",
-      fontWeight: "700",
-      fontStyle: "italic",
+      glyph: { "font-weight": "700", "font-style": "italic" },
       lineGap: 1,
       tracking: 1,
     });

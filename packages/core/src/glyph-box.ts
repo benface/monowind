@@ -162,8 +162,8 @@ export class GlyphBoxes {
    * given on another glyph's measurement. Nothing is cached while
    * fonts are still loading. */
   box(cluster: string, cells: number, paint?: CellPaint): GlyphBox | null {
-    const weight = paint?.fontWeight ?? this.#font.weight;
-    const style = paint?.fontStyle ?? this.#font.style;
+    const weight = paint?.glyph?.["font-weight"] ?? this.#font.weight;
+    const style = paint?.glyph?.["font-style"] ?? this.#font.style;
     const key = `${style}|${weight}|${cluster}`;
     let box = this.#boxes.get(key);
     if (box === undefined) {

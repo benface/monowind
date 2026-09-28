@@ -94,7 +94,9 @@ wrap, and gap decorations (`rule-*` separators with junction glyphs).
 glyphs), box shadows (`shadow-*` as shade glyphs), gradients
 (`bg-linear-*`, `bg-radial-*`, `bg-conic-*`, `bg-clip-text`), opacity
 and translucent colors (blended into the cells), visibility
-(`invisible`, a box keeping its space), and transforms and filters
+(`invisible`, a box keeping its space), text styling that keeps a
+glyph in its cell (`font-bold`, `italic`, `underline`,
+`text-shadow-*`, `antialiased`, …), and transforms and filters
 (`rotate-*`, `scale-*`, `translate-*`, `blur-*`, `grayscale`,
 `backdrop-blur-*`, … — the element's cells in a layer of their own,
 which the browser transforms).

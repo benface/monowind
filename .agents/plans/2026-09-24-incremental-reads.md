@@ -4,10 +4,11 @@ Status: **planned 2026-09-24** (written 2026-09-23, revised
 2026-09-24 per "Decisions"). The spec, `../specs/incremental-reads.md`,
 is proposed and is reviewed before any code. Lever 4 of
 `2026-09-23-performance-levers.md`. What it waited on has landed:
-levers 1–3, the opacity model (`2026-09-24-one-opacity-model.md`) and
-the painted-origin pass. `2026-09-24-textarea-one-layout.md` lands
-before milestone 3, so the relayout path carries no textarea
-widths.
+levers 1–3, the opacity model (`2026-09-24-one-opacity-model.md`), the
+painted-origin pass, and stacking contexts
+(`2026-09-27-stacking-contexts.md`), decided 2026-09-24 to come first.
+`2026-09-24-textarea-one-layout.md`, still planned, lands before
+milestone 3, so the relayout path carries no textarea widths.
 
 ## Decisions (2026-09-24)
 
@@ -97,7 +98,8 @@ should.
   within a paragraph and one across paragraphs apart. Several
   `--bundle`s alternate per round, and `--updates full|incremental`
   sets the host's attribute, which a build before it ignores. This
-  brings the levers plan's `hover-rr.mjs` into the repo. performance.md
+  brings into the repo the scratch harness behind the levers plan's and
+  performance.md's relayout and hover numbers (not kept). performance.md
   records the baseline.
 - The verify switch, internal: a host connecting without `updates`
   under it reads incrementally (the spec's "The invariant"). Nothing
@@ -186,12 +188,12 @@ should.
   read incrementally, using the full state and value diffs.
 - The typing bench against its target.
 - The full benchmark, recorded in performance.md: every shape
-  `pnpm bench` has (boxes, blocks, prose, faded) to interactive, and
-  the per-step costs of `--relayout` (a relayout from an attribute
-  change, a hover within and across paragraphs and between boxes,
-  typing into an `<input>` and a `<textarea>`), each under
-  `updates="full"` and `updates="incremental"`, on the new build
-  against v0.3.2, v0.3.1 and v0.3.0. Each tag is exported with
+  `pnpm bench` has (boxes, blocks, prose, faded, positioned) to
+  interactive, and the per-step costs of `--relayout` (a relayout from
+  an attribute change, a hover within and across paragraphs and
+  between boxes, typing into an `<input>` and a `<textarea>`), each
+  under `updates="full"` and `updates="incremental"`, on the new build
+  against v0.3.3, v0.3.2, v0.3.1 and v0.3.0. Each tag is exported with
   `git archive` into a scratch dir and its `cdn.js` built there, the
   tracked tree never checked out; a tag predates `updates` and ignores
   it, so its two columns both read in full and show the noise. The

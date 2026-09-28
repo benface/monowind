@@ -11,8 +11,17 @@ import { contentOrigin, edges, isInFlowBox, lineStart } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
-import { zeroInsets } from "./types.ts";
-import type { Clip, InlineElement, Insets, LayoutNode, Rect } from "./types.ts";
+import { GLYPH_PROPERTIES, zeroInsets } from "./types.ts";
+import type {
+  CellStyle,
+  Clip,
+  GlyphProperty,
+  GlyphValues,
+  InlineElement,
+  Insets,
+  LayoutNode,
+  Rect,
+} from "./types.ts";
 import { clusterWidth, isColorEmoji } from "./width.ts";
 
 /**
@@ -44,8 +53,8 @@ export interface CellPaint {
   /** A gradient run's colors, one per cell, as one span's hard stops. */
   backgrounds?: string[];
   colors?: string[];
-  fontWeight?: string;
-  fontStyle?: string;
+  /** Its glyph properties unlike the host's (`glyphStyle`). */
+  glyph?: GlyphStyle;
   textDecorationLine?: string;
   /** Inside a light-DOM selection: painted swapped (specs/wide-characters.md). */
   selected?: true;
@@ -60,8 +69,7 @@ export const PAINT_FIELDS = [
   "gradient",
   "backgrounds",
   "colors",
-  "fontWeight",
-  "fontStyle",
+  "glyph",
   "textDecorationLine",
   "selected",
 ] as const satisfies readonly (keyof CellPaint)[];
@@ -277,8 +285,7 @@ function joinGradient(
     run[other] === paint[other] &&
     run.opacity === paint.opacity &&
     run.emojiOpacity === paint.emojiOpacity &&
-    run.fontWeight === paint.fontWeight &&
-    run.fontStyle === paint.fontStyle &&
+    run.glyph === paint.glyph &&
     run.textDecorationLine === paint.textDecorationLine;
   if (!joins) return false;
   const colors = (run[list] ??= Array.from({ length: runCells }, () => run[field]!));
@@ -298,8 +305,7 @@ export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
     a.gradient === b?.gradient &&
     sameList(a.backgrounds, b?.backgrounds) &&
     sameList(a.colors, b?.colors) &&
-    a.fontWeight === b?.fontWeight &&
-    a.fontStyle === b?.fontStyle &&
+    a.glyph === b?.glyph &&
     a.textDecorationLine === b?.textDecorationLine &&
     a.selected === b?.selected
   );
@@ -333,8 +339,11 @@ export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): vo
       style.color = "transparent";
     }
   }
-  if (paint.fontWeight !== undefined) style.fontWeight = paint.fontWeight;
-  if (paint.fontStyle !== undefined) style.fontStyle = paint.fontStyle;
+  if (paint.glyph) {
+    for (const property in paint.glyph) {
+      style.setProperty(property, paint.glyph[property as GlyphProperty]!);
+    }
+  }
   if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
 }
 
@@ -886,17 +895,57 @@ function clipPut(put: PutGlyph, clip: Clip | null): PutGlyph {
 const barPaint = (color: string | undefined): CellPaint | undefined =>
   color ? { color } : undefined;
 
-/** Non-default text styling only, so unstyled runs stay bare: `color`
- * and `source`'s font fields. */
-function textPaint(
-  source: { fontWeight: string; fontStyle: string; textDecorationLine: string },
-  color: string | undefined,
-): CellPaint {
+/** The text styling a paint carries. */
+type TextFont = Pick<CellStyle, "glyph" | "textDecorationLine">;
+
+/** Glyph properties unlike the host's, one object per distinct set, so
+ * paints compare them by identity. */
+export type GlyphStyle = Readonly<Partial<Record<GlyphProperty, string>>>;
+
+/** At most 256, as an animation's values are endless. */
+const glyphStyles = new Map<string, GlyphStyle>();
+
+/** Each value set's style against the base it was last taken for. */
+const glyphStyleOf = new WeakMap<GlyphValues, { base: GlyphValues; style?: GlyphStyle }>();
+
+/** `source`'s glyph properties that differ from `base`'s, none where
+ * none does. */
+function glyphStyle(source: GlyphValues, base: GlyphValues): GlyphStyle | undefined {
+  if (source === base) return undefined;
+  const known = glyphStyleOf.get(source);
+  if (known?.base === base) return known.style;
+  const differing = GLYPH_PROPERTIES.filter((property) => source[property] !== base[property]);
+  let style: GlyphStyle | undefined;
+  if (differing.length > 0) {
+    const own = Object.fromEntries(differing.map((property) => [property, source[property]]));
+    const key = glyphKey(own);
+    style = glyphStyles.get(key);
+    if (!style) {
+      if (glyphStyles.size === 256) glyphStyles.clear();
+      glyphStyles.set(key, (style = own));
+    }
+  }
+  glyphStyleOf.set(source, style ? { base, style } : { base });
+  return style;
+}
+
+/** A glyph style as a string, in the table's order. */
+export function glyphKey(style: GlyphStyle | undefined): string {
+  let key = "";
+  for (const property of GLYPH_PROPERTIES) {
+    if (style?.[property] !== undefined) key += `${property}:${style[property]};`;
+  }
+  return key;
+}
+
+/** `color` and `source`'s text styling unlike the grid's own, which it
+ * inherits from the host (`base`, the root's), so a run like the host
+ * stays bare. */
+function textPaint(source: TextFont, color: string | undefined, base: TextFont): CellPaint {
   const paint: CellPaint = {};
   if (color) paint.color = color;
-  if (source.fontWeight !== "400" && source.fontWeight !== "normal" && source.fontWeight !== "")
-    paint.fontWeight = source.fontWeight;
-  if (source.fontStyle !== "normal" && source.fontStyle !== "") paint.fontStyle = source.fontStyle;
+  const glyph = glyphStyle(source.glyph, base.glyph);
+  if (glyph) paint.glyph = glyph;
   if (source.textDecorationLine !== "none" && source.textDecorationLine !== "")
     paint.textDecorationLine = source.textDecorationLine;
   return paint;
@@ -909,11 +958,12 @@ function inlinePaint(
   entries: InlineElement[],
   index: number,
   palette: Palette,
+  base: TextFont,
   color = entries[index]!.color,
   emoji = false,
 ): CellPaint {
   const entry = entries[index]!;
-  let paint = textPaint(entry, color);
+  let paint = textPaint(entry, color, base);
   if (entry.backgroundColor !== undefined) paint.backgroundColor = entry.backgroundColor;
   // Each paint here is this call's own. The walk stops before reading
   // `entries[-1]`, a slow lookup.
@@ -961,7 +1011,7 @@ function painter(root: Walk, tree: LayoutNode): PaintVisitor {
     }
     const later: [number, ...Parameters<PutGlyph>][] = [];
     if (node.inlineMembers) heldGlyphs.set(node, later);
-    paintText(node, walking, (turn, x, y, glyph, paint, cells) => {
+    paintText(node, walking, tree.style, (turn, x, y, glyph, paint, cells) => {
       if (turn === member) put(x, y, glyph, paint, cells);
       else later.push([turn, x, y, glyph, paint, cells]);
     });
@@ -1092,10 +1142,12 @@ function paintBox(node: LayoutNode, put: PutGlyph, walking: Walk): void {
 }
 
 /** A leaf's glyphs through `put`, each with the glyph turn that paints
- * it (stacking.ts `glyphTurns`), -1 the leaf's own. */
+ * it (stacking.ts `glyphTurns`), -1 the leaf's own; `base` is the
+ * host's text styling, which the grid inherits. */
 function paintText(
   node: LayoutNode,
   walking: Walk,
+  base: TextFont,
   put: (turn: number, ...args: Parameters<PutGlyph>) => void,
 ): void {
   const { options, palette } = walking;
@@ -1115,9 +1167,9 @@ function paintText(
           options.cell ?? DEFAULT_CELL,
         )
       : null;
-  const leaf = textPaint(style, style.color);
+  const leaf = textPaint(style, style.color, base);
   const entries = node.inlineElements ?? [];
-  const inlines = entries.map((_, index) => inlinePaint(entries, index, palette));
+  const inlines = entries.map((_, index) => inlinePaint(entries, index, palette, base));
   const selection = options.selection?.get(node);
   const owners = node.inlineOwners;
   const paintCell = (
@@ -1151,7 +1203,9 @@ function paintText(
     let paint = index >= 0 ? inlines[index]! : leaf;
     if (tinted !== color || emoji) {
       paint =
-        index >= 0 ? inlinePaint(entries, index, palette, tinted, emoji) : textPaint(style, tinted);
+        index >= 0
+          ? inlinePaint(entries, index, palette, base, tinted, emoji)
+          : textPaint(style, tinted, base);
       if (tinted !== color) paint = { ...paint, gradient: "text" };
     }
     put(turn, x, y, cluster, selected ? { ...paint, selected: true } : paint, cells);

@@ -457,3 +457,139 @@ test.describe("a press on the scrollbar track", () => {
     expect(await scrollTop(), "the drag moved nothing").toBe(paged);
   });
 });
+
+/** Where a text field's character `index` of line `line` lies, in
+ * client pixels: its content box's corner plus that many of the host's
+ * cells, the middle of the line's row. */
+async function charPoint(
+  page: Page,
+  selector: string,
+  index: number,
+  line = 0,
+): Promise<{ x: number; y: number }> {
+  return page.evaluate(
+    ([s, i, row]) => {
+      const field = document.querySelector(s)!;
+      const rect = field.getBoundingClientRect();
+      const style = getComputedStyle(field);
+      const host = getComputedStyle(field.closest("mono-wind")!);
+      const width = parseFloat(host.getPropertyValue("--mw-cw"));
+      const height = parseFloat(host.getPropertyValue("--mw-ch"));
+      const left = rect.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+      const top = rect.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+      return { x: left + i * width, y: top + (row + 0.5) * height };
+    },
+    [selector, index, line] as const,
+  );
+}
+
+/** The grid's fill under a point, null for none. */
+const fillAt = (page: Page, { x, y }: { x: number; y: number }): Promise<string | null> =>
+  page.evaluate(
+    ([px, py]) => {
+      const grid = document.querySelector("mono-wind")!.shadowRoot!;
+      for (const span of grid.querySelectorAll("span")) {
+        const r = span.getBoundingClientRect();
+        const color = getComputedStyle(span).backgroundColor;
+        const inside = px >= r.left && px < r.right && py >= r.top && py < r.bottom;
+        if (inside && color !== "rgba(0, 0, 0, 0)") return color;
+      }
+      return null;
+    },
+    [x, y] as const,
+  );
+
+/** A real drag through `points`, two frames between moves: the host
+ * lays out under a press (its states), and the drag has to outlive it. */
+async function dragThrough(page: Page, points: { x: number; y: number }[]): Promise<void> {
+  await page.mouse.move(points[0]!.x, points[0]!.y);
+  await page.mouse.down();
+  for (const { x, y } of points.slice(1)) {
+    await page.mouse.move(x, y);
+    await page.waitForTimeout(40);
+  }
+  await page.mouse.up();
+}
+
+const selectionOf = (page: Page, selector: string): Promise<[number, number]> =>
+  page.evaluate((s) => {
+    const field = document.querySelector(s) as HTMLInputElement;
+    return [field.selectionStart ?? -1, field.selectionEnd ?? -1];
+  }, selector);
+
+test.describe("a drag selecting a text field's value", () => {
+  test("selects the characters it crosses", async ({ page }) => {
+    await openStory(page, "features-interactive--input");
+    await engineQuiet(page);
+    // The field rides its container's line: an atomic inline box.
+    const across = await Promise.all(
+      [0.25, 1.5, 2.5, 3.5, 4.75].map((i) => charPoint(page, "#input", i)),
+    );
+    await dragThrough(page, across);
+    expect(await selectionOf(page, "#input")).toEqual([0, 5]);
+  });
+
+  test("selects a textarea's characters it crosses", async ({ page }) => {
+    await openStory(page, "features-interactive--textarea");
+    await engineQuiet(page);
+    // "Textarea", its first line, riding its container's line as #input does.
+    const across = await Promise.all(
+      [0.25, 2.5, 4.5, 6.5, 7.75].map((i) => charPoint(page, "#textarea", i)),
+    );
+    await dragThrough(page, across);
+    expect(await selectionOf(page, "#textarea")).toEqual([0, 8]);
+  });
+
+  test("shows the field's press at the press", async ({ page }) => {
+    await openStory(page, "features-interactive--input");
+    await page.addStyleTag({
+      content: "#input-name[data-mw-active] { background-color: rgb(255, 0, 0) !important; }",
+    });
+    await engineQuiet(page);
+    const at = await charPoint(page, "#input-name", 1.5);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.waitForTimeout(100);
+    const pressed = await fillAt(page, at);
+    await page.mouse.up();
+    await engineQuiet(page);
+    expect(pressed, "painted while the press is down").toBe("rgb(255, 0, 0)");
+    expect(await fillAt(page, at), "gone at the release").not.toBe("rgb(255, 0, 0)");
+  });
+
+  test("shows the field's focus at the press", async ({ page }) => {
+    await openStory(page, "features-interactive--input");
+    await engineQuiet(page);
+    const at = await charPoint(page, "#input-name", 1.5);
+    const fill = () => fillAt(page, at);
+    const unfocused = await fill();
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.waitForTimeout(100);
+    const pressed = await fill();
+    await page.mouse.up();
+    await engineQuiet(page);
+    const focused = await fill();
+    expect(focused, "the focus fill").not.toBe(unfocused);
+    expect(pressed, "painted while the press is down").toBe(focused);
+  });
+
+  test("keeps its anchor past the field", async ({ page }) => {
+    await openStory(page, "packages-ui--combobox");
+    // The play leaves the list open over the page, "releas" typed.
+    await page.waitForFunction(
+      (s) => (document.querySelector(s) as HTMLInputElement).value === "releas",
+      hook("input"),
+    );
+    await engineQuiet(page);
+    const input = hook("input");
+    const box = await rectOf(page, "input");
+    const points = await Promise.all([3.25, 2, 1, 0.25].map((i) => charPoint(page, input, i)));
+    // Out below the field, over the list: the selection runs from the
+    // press to the value's end, as every engine's own field makes it.
+    for (const step of [1, 2, 3])
+      points.push({ x: box.left - 8 * step, y: box.bottom + 12 * step });
+    await dragThrough(page, points);
+    expect(await selectionOf(page, input)).toEqual([3, 6]);
+  });
+});

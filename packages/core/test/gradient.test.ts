@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INITIAL_GLYPH } from "../src/types.ts";
 import {
   alignPair,
   colorAlpha,
@@ -688,8 +689,7 @@ describe("gradient paint", () => {
         anchorNames: [],
         color: transparent,
         backgroundColor: undefined,
-        fontWeight: "400",
-        fontStyle: "normal",
+        glyph: INITIAL_GLYPH,
         textDecorationLine: "none",
         visible: true,
         pointerEvents: true,

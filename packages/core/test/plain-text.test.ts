@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import { INITIAL_GLYPH } from "../src/types.ts";
 import {
   applyCellPaint,
   charIndexAtCell,
@@ -19,7 +20,7 @@ import { buildTree } from "../src/tree.ts";
 import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
 import { cells, layered, makeNode, scrollBox } from "./helpers.ts";
 import type { CellPaint, CellSegment } from "../src/plain-text.ts";
-import type { BackgroundClip, LayoutNode } from "../src/types.ts";
+import type { BackgroundClip, GlyphValues, LayoutNode } from "../src/types.ts";
 
 /**
  * Golden-output tests: lay out a tree, render it as ASCII art, compare to
@@ -43,8 +44,7 @@ describe("the paint fields", () => {
       gradient: "fill",
       backgrounds: ["rgb(0 0 0)"],
       colors: ["rgb(0 0 0)"],
-      fontWeight: "700",
-      fontStyle: "italic",
+      glyph: { "font-weight": "700" },
       textDecorationLine: "underline",
       selected: true,
     };
@@ -529,6 +529,37 @@ describe("renderCellSegments", () => {
   });
 });
 
+describe("glyph properties on the cells", () => {
+  /** The glyph styles a root in `host`'s over a leaf in `own`'s paints. */
+  const glyphs = (host: Partial<GlyphValues>, own: Partial<GlyphValues>) => {
+    const root = makeNode({
+      style: { glyph: { ...INITIAL_GLYPH, ...host } },
+      children: [makeNode({ text: "ab", style: { glyph: { ...INITIAL_GLYPH, ...own } } })],
+    });
+    layoutRoot(root, 4);
+    return renderCellSegments(root)[0]!.map((segment) => segment.glyph);
+  };
+
+  it("carries those unlike the host's, which the grid inherits", () => {
+    const bold = { "font-weight": "700", "font-style": "italic" };
+    expect(glyphs(bold, {})[0]).toEqual({ "font-weight": "400", "font-style": "normal" });
+    expect(glyphs({}, bold)[0]).toEqual(bold);
+    expect(glyphs(bold, bold)[0]).toBeUndefined();
+  });
+
+  it("shares one style between paints alike", () => {
+    const [a] = glyphs({}, { "text-shadow": "red 0px 0px 2px" });
+    const [b] = glyphs({}, { "text-shadow": "red 0px 0px 2px" });
+    expect(a).toBe(b);
+  });
+
+  it("forgets styles past a bound, an animation's values being endless", () => {
+    const [first] = glyphs({}, { "text-shadow": "red 0px 0px 2px" });
+    for (let i = 0; i < 1000; i++) glyphs({}, { "text-shadow": `blue ${i}px 0px 2px` });
+    expect(glyphs({}, { "text-shadow": "red 0px 0px 2px" })[0]).not.toBe(first);
+  });
+});
+
 describe("inline fidelity in segments", () => {
   it("keeps underline through an inline run's inner spaces", () => {
     const host = document.createElement("div");
@@ -586,7 +617,7 @@ describe("inline fidelity in segments", () => {
     // Row 0: leaf text bare, "cd" red + bold (spaces always unstyled),
     // then the bare tail; "ef" shifted down one row by `top: 4px`,
     // keeping its color.
-    expect(rows[0]!.map((s) => [s.text, s.color, s.fontWeight])).toEqual([
+    expect(rows[0]!.map((s) => [s.text, s.color, s.glyph?.["font-weight"]])).toEqual([
       ["ab ", undefined, undefined],
       ["cd", "red", "700"],
       ["     ", undefined, undefined],
@@ -1833,8 +1864,7 @@ describe("later ink owns its cell's text paint", () => {
       text: "abc",
       style: {
         color: "red",
-        fontStyle: "italic",
-        fontWeight: "700",
+        glyph: { ...INITIAL_GLYPH, "font-style": "italic", "font-weight": "700" },
         textDecorationLine: "underline",
         opacity: 0.5,
       },

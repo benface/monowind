@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { gridOffsetAt, paintGrid } from "../src/paint.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { cells, layered, makeNode } from "./helpers.ts";
-import type { LayoutNode } from "../src/types.ts";
+import { INITIAL_GLYPH } from "../src/types.ts";
+import type { GlyphValues, LayoutNode } from "../src/types.ts";
 
 /** The three paint tiers (specs/cell-model.md "Selection"): identical
  * paints skip the write, structure-matching paints patch styles on the
@@ -93,6 +94,28 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     paintGrid(root, target, { selection: new Map([[leaves[1]!, { start: 0, end: 3 }]]) });
     expect(target.childNodes[0]).toBe(first);
     expect(target.textContent).toBe("abc\ndef");
+  });
+
+  it("keeps apart the boxes of one cluster in two glyph styles", () => {
+    const target = document.createElement("pre");
+    const leaf = (glyph: Partial<GlyphValues>) => {
+      const node = makeNode({
+        text: "中",
+        intrinsicWidth: 2,
+        style: { glyph: { ...INITIAL_GLYPH, ...glyph } },
+      });
+      node.advances = [2];
+      return node;
+    };
+    const root = makeNode({
+      children: [leaf({ "font-weight": "700" }), leaf({ "font-style": "italic" })],
+    });
+    layoutRoot(root, 4);
+    const glyphs = { box: () => ({ scale: 1.18, advance: 16.048 }), shift: () => 0, generation: 0 };
+    paintGrid(root, target, { glyphs });
+    const [bold, italic] = target.querySelectorAll("span");
+    expect([bold!.style.fontWeight, bold!.style.fontStyle]).toEqual(["700", ""]);
+    expect([italic!.style.fontWeight, italic!.style.fontStyle]).toEqual(["", "italic"]);
   });
 
   it("boxes a cluster the glyph cache names, scaled to its cells", () => {

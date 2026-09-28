@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INITIAL_GLYPH } from "../src/types.ts";
 import { focusableRects } from "../src/focus.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { renderGridRows, renderPlainText } from "../src/plain-text.ts";
@@ -102,7 +103,10 @@ describe("sticky boxes in a scroller", () => {
 
   it("paints a stuck heading in its own text style over the italic it covers", () => {
     const heading = sticky("Title", { top: 0 }, { style: { backgroundClear: true } });
-    const italic = makeNode({ text: "polite", style: { fontStyle: "italic" } });
+    const italic = makeNode({
+      text: "polite",
+      style: { glyph: { ...INITIAL_GLYPH, "font-style": "italic" } },
+    });
     const box = scroller([makeNode({ children: [heading, spacer(1), italic, spacer(3)] })]);
     const root = makeNode({ children: [box] });
     layoutRoot(root, 20);

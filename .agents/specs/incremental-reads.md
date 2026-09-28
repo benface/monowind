@@ -65,9 +65,11 @@ style of its last read until the next full read.
 - **Each unit's subtree is read.** Its elements are flagged and marked
   (`data-mw-interactive`, `data-mw-composite`), its textareas' widths
   are taken before the flags go on, and the unit is built by the path
-  its parent's build takes for a child of its role (tree.ts), what that
-  path derives from the elements between them — the opacity of the
-  inline elements a block split (`inlineOpacity`) — derived again.
+  its parent's build takes for a child of its role (tree.ts), what the
+  build derives from the elements above it — the opacity of the inline
+  elements a block split (`inlineOpacity`), and the decoration lines
+  the parent and those elements propagate (`propagateDecorations`, run
+  after the build) — derived again.
   The fresh node replaces the old one at its index in the parent's
   children.
 - **Each unit's ancestors below the host are flagged and read**
@@ -81,13 +83,14 @@ style of its last read until the next full read.
 - **The ancestors unlock with their unit.** An element inherits from
   its parent, and a locked parent hands down its locks: grid mode's
   `pointer-events: none`, `white-space`, `letter-spacing`,
-  `line-height`, `text-align` and `text-indent`, all of which the
-  reader reads. With the chain from the host flagged, the computed
-  styles of a unit and of its ancestors are a full read's, because
-  every companion rule that keys on the measuring flag keys it on the
-  element it styles: an element's own flag and its ancestors' decide
-  what it reads, never a sibling's or a descendant's. A rule keyed on
-  another element's flag would break incremental reads.
+  `line-height`, `text-align`, `text-indent`, and a hidden box's
+  `visibility` (`data-mw-force-hidden`, `data-mw-hidden-runs`), all of
+  which the reader reads. With the chain from the host flagged, the
+  computed styles of a unit and of its ancestors are a full read's,
+  because every companion rule that keys on the measuring flag keys it
+  on the element it styles: an element's own flag and its ancestors'
+  decide what it reads, never a sibling's or a descendant's. A rule
+  keyed on another element's flag would break incremental reads.
 - **The anchors unlock where a unit holds an anchored box** (a
   `position-area` or an anchor function): every element marked as
   naming an anchor (`data-mw-anchor`) is flagged too, and not read, so
@@ -197,17 +200,18 @@ Under `incremental`, a relayout reads in full when:
 
 - it is the host's first, or its first since `updates` changed, or
   follows a failed one or a reconnection;
-- a trigger names no changed elements: a resize of the host or the
-  window, fonts, the leaf or glyph registries, a stylesheet the engine
-  sees change (a node added, removed or edited in the head, a head
-  `<link>`'s load, a record that adds, removes or edits a `<style>` or
-  a stylesheet `<link>` in the host), an ancestor's `class` or
-  `style`, the host's own, the color scheme, the `select` attribute, a
-  `toggle`, a transition's or an animation's event, the sampling
-  loop's ticks and the relayout that ends it, a fade hold's end, a
-  scroll that moves an anchor or the cells under a centered top-layer
-  element, the corrective relayout after an unarmed fade, the relayout
-  a held paint waits for, the recheck;
+- a trigger names no changed elements: a resize of the host, a box
+  around it or the window, fonts, the leaf or glyph registries, a
+  stylesheet the engine sees change (a node added, removed or edited
+  in the head, a head `<link>`'s load, a record that adds, removes or
+  edits a `<style>` or a stylesheet `<link>` in the host), an
+  ancestor's `class` or `style` and the end of its color or background
+  transition, the host's own, the color scheme, the `select`
+  attribute, a `toggle`, a transition's or an animation's event, the
+  sampling loop's ticks and the relayout that ends it, a fade hold's
+  end, a scroll that moves an anchor or the cells under a centered
+  top-layer element, the corrective relayout after an unarmed fade,
+  the relayout a held paint waits for, the recheck;
 - the cell metrics, the root font size or the available columns
   differ from the last layout's, measured before any read so the flags
   extend to every element;
@@ -246,12 +250,13 @@ relayout per burst in idle time.
   second layout of an unchanged tree, and one after a subtree's
   replacement, equal a fresh tree's in every field.
 - **Nothing keyed by a node outlives a relayout**: the node index, the
-  scroll containers and the sticky boxes are collected again from the
-  spliced tree. What the engine keys by element carries over as it
-  does across full relayouts: the anchored boxes' last placements, the
-  top-layer stack, the pointer chains, the animated set, the
-  synthesized fades and last-read backgrounds, the settle timers, the
-  glyph cache.
+  scroll containers and the paint index (stacking.ts `paintIndex`,
+  cached on the root node, which a splice keeps) are collected again
+  from the spliced tree. What the engine keys by element carries over
+  as it does across full relayouts: the anchored boxes' last
+  placements, the top-layer stack, the pointer chains, the animated
+  set, the synthesized fades and last-read backgrounds, the settle
+  timers, the glyph cache.
 - **Scroll positions** are captured before the unlock and restored
   after the settle, every scroll container's, as in a full relayout.
 - **Focus and selection stay the DOM's**: no element is recreated,
@@ -328,9 +333,11 @@ read:
    (`prefers-reduced-motion`, `prefers-contrast`, `forced-colors`,
    `hover`, `pointer`);
 9. a custom element's `:state()`, set by script;
-10. an animation begun or resumed by script (`animate()`, `play()`) on
-    an element no read reaches, a read being its one sure sighting
-    (animation.ts).
+10. a script's `animate()` on an element no read reaches: each
+    relayout's host-wide query (animation.ts `runningUnder`) finds CSS
+    animations and transitions alone, a CSS animation resumed by
+    `play()` among them; and a layer effect's animation resumed so,
+    which only a read makes a layer root.
 
 ## Testing
 

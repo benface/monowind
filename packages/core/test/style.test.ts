@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readCellStyle } from "../src/style.ts";
+import { readCellStyle, readGlyph } from "../src/style.ts";
 import type { CellMetrics } from "../src/types.ts";
 
 /**
@@ -240,6 +240,18 @@ describe("grid typography", () => {
     expect(read({ style: "line-height: 48px" }).lineGap).toBe(2);
     // Same line-height at a larger font: 48 ÷ 24 = 2 rows per line, 1 gap.
     expect(read({ style: "font-size: 24px; line-height: 48px" }).lineGap).toBe(1);
+  });
+
+  it("shares glyph sets read alike, forgetting them past a bound", () => {
+    const shadowed = (shadow: string) =>
+      readGlyph({
+        getPropertyValue: (property: string) => (property === "text-shadow" ? shadow : ""),
+      } as CSSStyleDeclaration);
+    const first = shadowed("red 0px 0px 2px");
+    expect(shadowed("red 0px 0px 2px")).toBe(first);
+    // An animation's values are endless.
+    for (let i = 0; i < 1000; i++) shadowed(`blue ${i}px 0px 2px`);
+    expect(shadowed("red 0px 0px 2px")).not.toBe(first);
   });
 });
 

@@ -205,6 +205,45 @@ export const NestedInlinePadding: StoryObj = {
   },
 };
 
+/** Test-only: an element's glyph properties (types.ts
+ * `GLYPH_PROPERTIES`) reach its glyphs on the grid, which inherits the
+ * host's: an upright span in a bold italic host stays upright, and a
+ * fraction form, which would merge glyphs, stays off. */
+export const GlyphProperties: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind class="font-bold italic antialiased">
+      <p>host <span class="font-normal not-italic subpixel-antialiased">upright</span></p>
+    </mono-wind>
+    <mono-wind>
+      <p>plain <span class="font-bold italic antialiased">styled</span></p>
+      <p>
+        <span class="slashed-zero underline underline-offset-4 text-shadow-md">0 zero</span>
+        <span class="diagonal-fractions">1/2</span>
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const [styledHost, plainHost] = await readyHosts(canvasElement);
+    /** The painted glyphs' weight, style and smoothing. */
+    const font = (host: HTMLElement, text: string) => {
+      const style = getComputedStyle(paintedSpan(host, text)!);
+      const smoothing = style.getPropertyValue("-webkit-font-smoothing");
+      // Firefox's alias reads its own `grayscale`.
+      return `${style.fontWeight} ${style.fontStyle} ${smoothing === "grayscale" ? "antialiased" : smoothing}`;
+    };
+    expect(font(styledHost!, "host")).toBe("700 italic antialiased");
+    expect(font(styledHost!, "upright")).toBe("400 normal auto");
+    expect(font(plainHost!, "plain")).toBe("400 normal auto");
+    expect(font(plainHost!, "styled")).toBe("700 italic antialiased");
+    const zero = getComputedStyle(paintedSpan(plainHost!, "zero")!);
+    expect(zero.fontVariantNumeric).toBe("slashed-zero");
+    expect(zero.textShadow).not.toBe("none");
+    expect(zero.textUnderlineOffset).toBe("4px");
+    expect(getComputedStyle(paintedSpan(plainHost!, "1/2")!).fontVariantNumeric).toBe("normal");
+  },
+};
+
 /** Test-only: tracked atomic inline boxes filling their line exactly,
  * which the browser keeps on one line as the grid does
  * (visual/agreement.spec.ts checks each on its cells in every engine). */

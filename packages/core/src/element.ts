@@ -529,6 +529,12 @@ export class MonoWindElement extends HTMLElementBase {
   #selectionGesture = false;
   /** A primary press held anywhere in the window. */
   #pressHeld = false;
+  /** A press on a text field, to its release. A layout's measuring pass
+   * rebuilds the field's box, which ends a drag selecting its value in
+   * Firefox and moves the drag's anchor in WebKit: the press's own
+   * states and focus lay out at once, before its drag begins, and a
+   * layout scheduled after waits for the release (`held`). */
+  #fieldPress: { held: boolean } | null = null;
   /** Each anchored box's last successful placement, from one layout to
    * the next (specs/anchor-positioning.md). */
   #placements = new Map<Element, Remembered>();
@@ -799,6 +805,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#pressTarget = null;
     this.#pressing = false;
     this.#pressHeld = false;
+    this.#fieldPress = null;
     this.#pressOnGrid = false;
     this.#gesture = null;
     this.#gridDrag = null;
@@ -2101,6 +2108,10 @@ export class MonoWindElement extends HTMLElementBase {
     this.#pressing = true;
     this.#pressOnGrid = this.#onGrid(e.composedPath());
     this.#updatePointerStates(true);
+    if (selectsFieldText(e.target)) {
+      this.#performLayoutSafely();
+      this.#fieldPress = { held: false };
+    }
   };
 
   #onAnyPointerDown = ({ isPrimary, button }: PointerEvent): void => {
@@ -2110,6 +2121,8 @@ export class MonoWindElement extends HTMLElementBase {
   #onPointerUp = (event: PointerEvent): void => {
     if (!event.isPrimary) return;
     this.#pressHeld = false;
+    if (this.#fieldPress?.held) this.#scheduleLayout();
+    this.#fieldPress = null;
     if (this.#selectionGesture) {
       this.#selectionGesture = false;
       this.toggleAttribute(SELECTION, this.#reachesLight());
@@ -2547,6 +2560,7 @@ export class MonoWindElement extends HTMLElementBase {
         if (sampled || landing) {
           // Held under a key's scroll like any relayout (#onScrollKey).
           if (this.#keyScroll) this.#keyScroll.deferred = true;
+          else if (this.#fieldPress) this.#fieldPress.held = true;
           else this.#performLayoutSafely();
         } else if (repainted.size > 0) this.#resampleAndPaint(repainted);
         else syncLayers(this.#layers);
@@ -2576,10 +2590,11 @@ export class MonoWindElement extends HTMLElementBase {
     // Focus moving onto or off a <select> lays out in the event's
     // dispatch: the click's default opens the picker next, which holds
     // relayouts (#openSelectPicker), and the focus invert would stay
-    // stale under it.
+    // stale under it. So does a field press's, its drag not yet begun
+    // (#fieldPress).
     if (
       (event.type === "focusin" || event.type === "focusout") &&
-      event.target instanceof HTMLSelectElement
+      (event.target instanceof HTMLSelectElement || this.#fieldPress)
     ) {
       this.#performLayoutSafely();
       return;
@@ -2678,6 +2693,10 @@ export class MonoWindElement extends HTMLElementBase {
       if (this.#keyScroll) {
         this.#keyScroll.deferred = true;
         this.#schedulePaint();
+        return;
+      }
+      if (this.#fieldPress) {
+        this.#fieldPress.held = true;
         return;
       }
       this.#laidOutFrame = time;
@@ -3117,6 +3136,26 @@ export function quantizeScroll(
   const cells =
     Math.abs(delta) <= 0.5 ? base : base + Math.sign(delta) * Math.round(Math.abs(delta));
   return Math.min(Math.max(0, cells), max);
+}
+
+/** Input types with no value to select. */
+const VALUELESS_INPUTS = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+/** Whether a press on `target` drags a selection of a field's value. */
+function selectsFieldText(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLInputElement && !VALUELESS_INPUTS.has(target.type);
 }
 
 /** A touch pointer that has not been lifted — the phase in which the

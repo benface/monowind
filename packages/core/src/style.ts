@@ -6,7 +6,7 @@ import type { ColorSpace, HueMode } from "./color.ts";
 import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
-import { autoTrack, SIDES, zeroInsets } from "./types.ts";
+import { autoTrack, GLYPH_PROPERTIES, INITIAL_GLYPH, SIDES, zeroInsets } from "./types.ts";
 import { leafRendererFor } from "./leaf.ts";
 import { warnOnce } from "./warn.ts";
 import type {
@@ -53,6 +53,7 @@ import type {
   AnchorSizes,
   AreaSide,
   PositionArea,
+  GlyphValues,
 } from "./types.ts";
 
 /**
@@ -314,8 +315,7 @@ export function readCellStyle(
     lineGap: lineGapRows(cs.lineHeight, fontSizePx),
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     ...readPaintStyle(cs),
-    fontWeight: cs.fontWeight,
-    fontStyle: cs.fontStyle,
+    glyph: readGlyph(cs),
     backgroundColor: readAnimatedBackground(el, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
@@ -1841,6 +1841,35 @@ function resamples(effect: (property: string) => string): boolean {
   if (!matrix) return transform.replaceAll(/translate(?:[XYZ]|3d)?\([^)]*\)/g, "").trim() !== "";
   const [a, b, c, d] = matrix[1]!.split(",").map(Number);
   return !(a === 1 && b === 0 && c === 0 && d === 1);
+}
+
+/** Each distinct set of glyph values read, shared, so the paint
+ * compares an element's with the host's by identity; at most 256, as
+ * an animation's values are endless. */
+const glyphSets = new Map<string, GlyphValues>();
+
+/** An element's glyph properties, written back as read, in the browser
+ * that read them. A fraction form merges its glyphs, so it goes. */
+export function readGlyph(cs: CSSStyleDeclaration): GlyphValues {
+  let key = "";
+  for (const property of GLYPH_PROPERTIES) {
+    let value = cs.getPropertyValue(property) || INITIAL_GLYPH[property];
+    if (value.includes("fractions")) value = withoutFractions(value);
+    key += `${value}\n`;
+  }
+  let known = glyphSets.get(key);
+  if (!known) {
+    const values = key.split("\n");
+    const entries = GLYPH_PROPERTIES.map((property, i) => [property, values[i]!]);
+    if (glyphSets.size === 256) glyphSets.clear();
+    glyphSets.set(key, (known = Object.fromEntries(entries) as GlyphValues));
+  }
+  return known;
+}
+
+function withoutFractions(numeric: string): string {
+  const kept = numeric.split(" ").filter((word) => !word.endsWith("-fractions"));
+  return kept.join(" ") || "normal";
 }
 
 /** The paint-only properties a frame of an animation resamples onto a

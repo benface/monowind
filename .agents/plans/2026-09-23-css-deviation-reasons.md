@@ -178,6 +178,12 @@ alignment and track sizing), the caption outside the table's border
 (its margins are in item 7) and the subgrid gap. Later:
 `visibility: collapse`, column flex wrapping, `scroll-smooth`.
 
+Decided 2026-09-27, with the user: `aspect-ratio` (item 9) and anchor
+positioning (anchor-positioning.md's deviations, item 7's
+containing-block check and sticky anchors among them) come first. The
+Order is planned in `2026-09-27-css-deviations.md`, where its progress
+is recorded.
+
 Decided 2026-09-23, after the follow-ups commit: opacity becomes one
 color-blending model — each translucent glyph or background color
 composited over what the cell already holds, cell `opacity` kept for
