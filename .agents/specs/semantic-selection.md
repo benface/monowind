@@ -262,8 +262,11 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   `style.display` and the source tag, none for an anonymous run or a
   hidden box, visibility.md; `\t` after each visible cell of a table
   row but the last; runs of required breaks collapse to the maximum,
-  none at the ends), set `text/plain`, `preventDefault()`. No `text/html` is
-  written: a TUI copy is plain text.
+  none at the ends), a list item's shown marker before its first text
+  where the range holds that text's first line whole (lists.md
+  "Selection, copy and accessibility"), set `text/plain`,
+  `preventDefault()`. No `text/html` is written: a TUI copy is plain
+  text.
 - **Lift, then select.** Both attributes first — the lift and the
   highlight lock (`data-mw-selection`) — one forced style resolution,
   then the range — so the range is only ever set into selectable

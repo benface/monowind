@@ -34,6 +34,12 @@ export interface GlyphTable {
   /** Scrollbar gutter ink (specs/scrolling.md); defaults `░` / `█`. */
   scrollTrack?: string;
   scrollThumb?: string;
+  /** List markers' bullets (specs/lists.md); defaults `• ◦ ▪ ▼ ▶`. */
+  disc?: string;
+  circle?: string;
+  square?: string;
+  disclosureOpen?: string;
+  disclosureClosed?: string;
   /** QR modules (specs/qr-code.md): a full cell, its upper half, its
    * lower half — `█ ▀ ▄` by default. A set naming `qrFull` without
    * both halves has no half blocks: its modules are full cells, two
@@ -490,6 +496,11 @@ registerBorderGlyphs("ascii", {
     ...asciiTable,
     scrollTrack: "|",
     scrollThumb: "#",
+    disc: "*",
+    circle: "o",
+    square: "#",
+    disclosureOpen: "v",
+    disclosureClosed: ">",
     shadow: ["#", "+", ":", "."],
     weights: rings,
   },
@@ -517,7 +528,13 @@ registerBorderGlyphs("single", {
 // missing, so a wider border is double, as DOS interfaces emphasized.
 const doubleWeights: WeightBand[] = [{ width: 2, ...doubleTable }];
 registerBorderGlyphs("cp437", {
-  solid: { rounded: [], weights: doubleWeights },
+  solid: {
+    rounded: [],
+    weights: doubleWeights,
+    circle: "○",
+    square: "■",
+    disclosureClosed: "►",
+  },
   dashed: { ...lightTable, weights: doubleWeights },
   dotted: { ...lightTable, weights: doubleWeights },
 });
@@ -537,6 +554,23 @@ export function scrollGlyphs(set: BorderGlyphSet | undefined): { track: string; 
     thumb: set?.solid?.scrollThumb ?? "\u2588",
   };
 }
+
+/** A list marker's bullet (a predefined style's name, `disc` to
+ * `disclosure-closed`) through its item's set — solid-table roles,
+ * defaults `• ◦ ▪ ▼ ▶` (specs/lists.md). */
+export function bulletGlyph(set: BorderGlyphSet | undefined, bullet: string): string {
+  const [role, glyph] = BULLET_GLYPHS[bullet as keyof typeof BULLET_GLYPHS];
+  return set?.solid?.[role] ?? glyph;
+}
+
+/** Each bullet's role and default glyph, by its counter style's name. */
+export const BULLET_GLYPHS = {
+  disc: ["disc", "\u2022"],
+  circle: ["circle", "\u25E6"],
+  square: ["square", "\u25AA"],
+  "disclosure-open": ["disclosureOpen", "\u25BC"],
+  "disclosure-closed": ["disclosureClosed", "\u25B6"],
+} as const;
 
 // BBS/ANSI-art flavor: CP437 blocks, styles mapped to shade density.
 registerBorderGlyphs("blocks", {

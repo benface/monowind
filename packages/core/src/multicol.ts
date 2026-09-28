@@ -585,6 +585,12 @@ function layoutMulticolFlow(
           : margin;
         child.localRect = { x: originX, y: originY, width: contentWidth, height: filled.maxUsed };
         child.resolvedPadding = { top: 0, right: 0, bottom: 0, left: 0 };
+        // An outside marker hangs off the child's first line, in its column.
+        const { marker } = child;
+        if (marker && !marker.style.inside && spans.length > 0) {
+          marker.x = lineX[0]! - marker.width;
+          marker.y = lineY[0]!;
+        }
       }
       if (units.length > 0) {
         ruleSegments.push({

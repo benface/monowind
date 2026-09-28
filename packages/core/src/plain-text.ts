@@ -7,7 +7,17 @@ import { compositeColors, parseColor, serializeColor } from "./color.ts";
 import type { Rgba } from "./color.ts";
 import { DEFAULT_CELL, gradientCells } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { contentOrigin, edges, gapShare, isGap, isInFlowBox, lineStart } from "./layout.ts";
+import {
+  contentOrigin,
+  edges,
+  firstLineStart,
+  gapShare,
+  isGap,
+  isInFlowBox,
+  lineStart,
+  spreadBefore,
+} from "./layout.ts";
+import type { Spread } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
 import {
   advanceOf,
@@ -1068,6 +1078,31 @@ function painter(root: Walk, tree: LayoutNode): PaintVisitor {
       }
     },
     text: glyphs,
+    marker(node) {
+      const { style, marker } = node;
+      if (!style.visible) return;
+      const { x, y } = node.paintOrigin;
+      const put = clipPut(putOf(node), clipBounds(node, x, y));
+      // An inside marker takes the lines its item propagates, an outside one none.
+      const font = {
+        glyph: marker!.style.glyph,
+        textDecoration: marker!.style.inside ? style.textDecoration : NO_DECORATION,
+      };
+      const paint = textPaint(font, marker!.style.color ?? style.color, tree.style);
+      forEachMarkerCell(
+        node,
+        x - (node.scroll?.x ?? 0),
+        y - (node.scroll?.y ?? 0),
+        (k, length, at, row, advance) => {
+          const cluster = marker!.text.slice(k, k + length);
+          const cells = clusterWidth(cluster);
+          if (cells === 0) return;
+          put(at, row, cluster, paint, cells);
+          if (paint.decoration) for (let c = cells; c < advance; c++) put(at + c, row, " ", paint);
+        },
+        (at, row) => put(at, row, "…", paint),
+      );
+    },
     bars(node) {
       paintBars(node, putOf(node));
     },
@@ -1328,7 +1363,7 @@ function forEachLeafCell(
     const full = lineStart(node, i, span, contentWidth);
     const clamp = clamped && i === spans.length - 1;
     const truncated =
-      truncates && (clamp || (!softWraps(style.whiteSpace) && clipsAxis(style.overflow.x)))
+      truncates && truncatesLine(node, clamp)
         ? truncateSpan(node.text, span, full.width - full.indent, node.advances, style, clamp)
         : { end: span.end, ellipsis: false };
     const advances = node.advances;
@@ -1347,8 +1382,8 @@ function forEachLeafCell(
           spread: undefined,
         }
       : full;
-    let x = contentX + line.x;
-    let gap = 0;
+    let x = contentX + line.x + (line.spread ? spreadBefore(line.spread, line.spread.before) : 0);
+    let gap = line.spread?.before ?? 0;
     // A soft hyphen shows as a cell's `-` where its line breaks.
     const hyphen =
       !clamp && truncated.end === span.end && showsHyphen(node.text, span.end) ? span.end - 1 : -1;
@@ -1378,6 +1413,92 @@ function forEachLeafCell(
     }
     if (truncated.ellipsis) onEllipsis?.(x, row);
   }
+}
+
+/** Whether a leaf's line truncates: a clamp's last, or any where its
+ * text never wraps and its box clips it. */
+const truncatesLine = (node: LayoutNode, clamp: boolean): boolean =>
+  clamp || (!softWraps(node.style.whiteSpace) && clipsAxis(node.style.overflow.x));
+
+/** A marker's cells (specs/lists.md), visited per cluster as a leaf's
+ * are: an outside one's where its item's layout put it; an inside one's
+ * before its leaf's first line, spread with it, and cut as its text is
+ * (its `text-overflow`) where the line truncates in less room past its
+ * `text-indent` than the marker needs. */
+export function forEachMarkerCell(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+  onCluster: (index: number, length: number, x: number, y: number, advance: number) => void,
+  onEllipsis?: (x: number, y: number) => void,
+): void {
+  const marker = node.marker;
+  if (!marker) return;
+  let x = absX + (marker.x ?? 0);
+  let y = absY + (marker.y ?? 0);
+  let spread: Spread | undefined;
+  let room = Infinity;
+  if (marker.style.inside) {
+    const line = firstLineStart(node);
+    if (!line) return;
+    const origin = contentOrigin(node);
+    x = absX + origin.x + line.x - marker.width;
+    y = absY + origin.y + line.row;
+    spread = line.spread;
+    if (truncatesLine(node, false)) room = line.width - line.indent + marker.width;
+  }
+  const cut = room < marker.width;
+  const ellipsis = cut && node.style.textOverflow === "ellipsis" && room > 0;
+  const limit = cut ? room - (ellipsis ? 1 : 0) : Infinity;
+  const { text, advances } = marker;
+  let used = 0;
+  let gap = 0;
+  for (let k = 0; k < text.length;) {
+    let length = 1;
+    while (k + length < text.length && advances[k + length] === 0) length++;
+    const advance = advances[k]!;
+    if (used + advance > limit) break;
+    const cells = advance + (spread && isGap(text[k]) ? gapShare(spread, gap++) : 0);
+    onCluster(k, length, x, y, cells);
+    x += cells;
+    used += advance;
+    k += length;
+  }
+  if (ellipsis) onEllipsis?.(x, y);
+}
+
+/** Whether a marker's cells hold one `test` takes, where its node paints. */
+function someMarkerCell(node: LayoutNode, test: (x: number, y: number) => boolean): boolean {
+  const { x, y } = node.paintOrigin;
+  let found = false;
+  forEachMarkerCell(
+    node,
+    x - (node.scroll?.x ?? 0),
+    y - (node.scroll?.y ?? 0),
+    (_index, _length, at, row, advance) => {
+      for (let c = 0; c < advance; c++) found ||= test(at + c, row);
+    },
+    (at, row) => {
+      found ||= test(at, row);
+    },
+  );
+  return found;
+}
+
+/** Whether a marker's cells cover a cell, for the hit. */
+export const markerCovers = (node: LayoutNode, col: number, row: number): boolean =>
+  someMarkerCell(node, (x, y) => x === col && y === row);
+
+/** Whether the grid shows any of a marker's cells: inside its node's
+ * clips and right of the host's edge. */
+export function markerShows(node: LayoutNode): boolean {
+  const { x, y } = node.paintOrigin;
+  const own = clipBounds(node, x, y);
+  const clip = inkClip(node);
+  return someMarkerCell(
+    node,
+    (col, row) => col >= 0 && inClip(clip, col, row) && inClip(own, col, row),
+  );
 }
 
 /** An inline element's shift in whole cells, its inline ancestors'

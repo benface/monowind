@@ -1,7 +1,16 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { cellSize, gridOf, hoverOver, pressAt, readyHost, release, testHooks } from "./helpers.ts";
+import {
+  cellSize,
+  gridOf,
+  hoverOver,
+  pressAt,
+  readyGrid,
+  readyHost,
+  release,
+  testHooks,
+} from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Interactive",
@@ -505,7 +514,8 @@ export const ButtonPressed: StoryObj = {
 /** A `details` shows its `summary` alone until it opens: its content
  * joins the grid when `open` is set, by a press on the summary or a
  * script, and leaves it when unset (specs/visibility.md "Skipped
- * contents"). */
+ * contents"). Each summary is a list item, its disclosure triangle
+ * its marker (specs/lists.md). */
 export const Details: StoryObj = {
   render: () => html`
     <mono-wind>
@@ -522,10 +532,18 @@ export const Details: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const text = (await readyHost(canvasElement)).toPlainText();
-    expect(text).toContain("What does it draw?");
+    const { host, measure } = await readyGrid(canvasElement);
+    const text = host.toPlainText();
+    expect(text).toContain("▶ What does it draw?");
     expect(text).not.toContain("Drawn on the grid.");
+    expect(text).toContain("▼ Open from the start");
     expect(text).toContain("Press to fold it.");
+    // The summaries' native text lies under the grid's, past the marker.
+    await waitFor(() => {
+      for (const summary of canvasElement.querySelectorAll("summary")) {
+        measure().expectNativeOnGrid(summary);
+      }
+    });
   },
 };
 

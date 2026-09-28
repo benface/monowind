@@ -18,7 +18,9 @@ boxes, every other at `opacity-50`, on a `bg-white/10` card under a
 translucency"), `positioned` (in a scroller, `relative` cards each
 with a `z-10` badge, every fifth `opacity-90`, every twentieth after a
 `sticky z-20` heading — the stacking, specs/positioning.md "Paint
-order").
+order"), `lists` (numbered list items, every tenth holding two
+bullets — the counter walk over every element and a `::marker` read
+per item, specs/lists.md).
 
 A plain desktop client: 1280×720 at one device pixel per CSS pixel,
 Chromium, no throttling. `--count`, `--runs` and `--rate` (CPU
@@ -1148,3 +1150,30 @@ white-space), justify's spread as arithmetic in place of a map a line,
 a hit's character carried from the entry that takes the cell, the
 table's baselines grouped in one pass, and a word's segments pushed
 straight onto its line's units.
+
+### List markers (2026-09-28)
+
+The last commit's bundle against the working tree's, one sitting a
+table, loads alternated (7–9 runs each, medians):
+
+| shape                 | last commit, ms | now, ms       |
+| --------------------- | --------------- | ------------- |
+| boxes                 | 199, 195        | 200, 196      |
+| blocks (40)           | 96, 96, 96      | 89, 93, 87    |
+| prose                 | 202, 201, 208   | 204, 205, 203 |
+| faded                 | 219, 221        | 220, 216      |
+| positioned            | 179, 185        | 182, 178      |
+| lists (300 + 60)      | 129, 125, 128   | 140, 137, 135 |
+| 1,000 `list-none` lis | 203, 202        | 204, 203      |
+
+A page without lists pays nothing: no item, no `::marker` read, no
+walk; preflight's `list-none` items still read their `::marker` (a
+`content` would draw), level. The list page's 10 ms are its markers:
+the `::marker` reads, the counter walk's three properties an element,
+the attachment and the paint, none past a millisecond in a profile.
+A bullet first cost 6.4 ms more — `Intl.Segmenter`'s first use, for
+`•` — until `graphemes` split the Latin and symbol blocks as it splits
+ASCII (width.test.ts checks every code point against the segmenter),
+which takes 3–9 ms off the blocks page too. The bundle is 590.2 KB
+(176.1 KB gzipped), 16.3 KB (6.8 KB) more: the predefined counter
+styles as data, the `@counter-style` reader and the walk.

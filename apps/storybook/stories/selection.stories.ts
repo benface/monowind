@@ -385,6 +385,41 @@ export const Copy: StoryObj = {
   },
 };
 
+/** A list item's paragraph gesture copies its marker with its text, a
+ * word gesture none (specs/lists.md "Selection, copy and
+ * accessibility"), in either mode. */
+export const ListMarkers: StoryObj = {
+  render: () => html`
+    <mono-wind select="text">
+      <ol class="list-decimal pl-3">
+        <li data-test="first">First item</li>
+        <li data-test="second">Second item</li>
+      </ol>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const grid = host.shadowRoot!.getElementById("grid")!;
+    for (const mode of ["text", "grid"]) {
+      host.setAttribute("select", mode);
+      await frames(2);
+      const press = (name: string, detail: number) => {
+        const item = by(name);
+        const { left, top } = item.getBoundingClientRect();
+        expect(pressAt(mode === "grid" ? grid : item, { x: left + 4, y: top + 4 }, detail)).toBe(
+          false,
+        );
+        release();
+        return copyText(host);
+      };
+      expect(press("second", 3), mode).toBe("2. Second item");
+      expect(press("first", 2), mode).toBe("First");
+      document.getSelection()!.removeAllRanges();
+    }
+  },
+};
+
 /** The auto-scroll fixture: a text-mode host narrower than the page,
  * a scroll container of five lines showing two, a horizontal scroller
  * of one long line, and a paragraph below the fold. */

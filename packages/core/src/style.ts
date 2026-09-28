@@ -1,4 +1,5 @@
 import { trackBackground } from "./animate.ts";
+import { LIST_ITEM, markerParts } from "./counters.ts";
 import { EFFECTS, animatedProperties, animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
 import { colorAlpha, colorSpaceNamed, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
@@ -47,6 +48,7 @@ import type {
   GridTemplate,
   JustifyContent,
   Layer,
+  MarkerStyle,
   PerSide,
   Side,
   Position,
@@ -348,11 +350,8 @@ export function readCellStyle(
     layer: effects.layer,
     stacking: effects.set || readStacking(el, cs),
     visible: readVisible(cs, el),
-    // Where layout containment applies: no table part but a cell or a
-    // caption skips its contents.
-    skipsContents:
-      cs.contentVisibility === "hidden" &&
-      (tableRole === "none" || tableRole === "cell" || tableRole === "caption"),
+    skipsContents: skipsContents(cs, rawDisplay),
+    marker: rawDisplay.includes(LIST_ITEM) ? readMarker(el, cs, rawDisplay) : null,
     pointerEvents: cs.pointerEvents !== "none",
     ...anchoring,
     anchorScope: readAnchorScope(el, cs),
@@ -1093,6 +1092,32 @@ const TABLE_DISPLAY_FALLBACK: Record<string, string> = {
   COL: "table-column",
   COLGROUP: "table-column-group",
 };
+
+/** A list item's marker (specs/lists.md "What the engine reads"), inside
+ * an inline item whatever its position, as CSS places it. */
+function readMarker(el: Element, cs: CSSStyleDeclaration, display: string): MarkerStyle | null {
+  const marker = getComputedStyle(el, "::marker");
+  const { content } = marker;
+  const parts = markerParts(content, cs.listStyleType);
+  const image = /url\(|image(?:-set)?\(|gradient\(/.test(content);
+  if (parts.length === 0 && !image) return null;
+  return {
+    parts,
+    inside: cs.listStylePosition === "inside" || display.startsWith("inline"),
+    color: marker.color && marker.color !== cs.color ? marker.color : null,
+    glyph: readGlyph(marker),
+    image,
+  };
+}
+
+/** Whether a box skips its contents (specs/visibility.md "Skipped
+ * contents"): where layout containment applies, no table part but a
+ * cell or a caption. */
+export function skipsContents(cs: CSSStyleDeclaration, display: string): boolean {
+  if (cs.contentVisibility !== "hidden") return false;
+  const role = TABLE_ROLES[display] ?? "none";
+  return role === "none" || role === "cell" || role === "caption";
+}
 
 const TABLE_ROLES: Record<string, TableRole> = {
   "table-header-group": "header-group",

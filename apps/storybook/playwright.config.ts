@@ -6,7 +6,7 @@ import { defineConfig } from "@playwright/test";
  * rendering, scroll physics, hit-testing, layout rounding, the window's
  * own metrics, and compositing differ per engine. */
 const EVERY_ENGINE =
-  /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement|blend|stacking)\.spec\.ts/;
+  /(selection|qr|keyboard|pointer(-events)?|top-layer|agreement|blend|stacking|lists)\.spec\.ts/;
 
 /**
  * Visual regression tests — ALWAYS run inside the official Playwright Docker

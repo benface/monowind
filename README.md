@@ -89,8 +89,10 @@ multi-column (`columns-*`, balancing, spanners, column rules), tables
 (collapsed borders as shared box-drawing lattices), floats
 (`float-*`/`clear-*`, with text wrapping beside them), aspect ratios
 (`aspect-square` looks square, whatever the font's cell), margins,
-text wrap, and gap decorations (`rule-*` separators with junction
-glyphs).
+text wrap, gap decorations (`rule-*` separators with junction
+glyphs), and lists (`list-disc`, `list-decimal`, `list-inside`, any
+counter style or `@counter-style` rule, `marker:` styling, `start`,
+`reversed` and `value`, and a `summary`'s triangle).
 
 **Paint** — rounded corners (`rounded-*` picks a theme's corner
 glyphs), box shadows (`shadow-*` as shade glyphs), gradients

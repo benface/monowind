@@ -168,6 +168,9 @@ export interface PaintVisitor {
    * run, with its descendants no member of their own holds, -1 the
    * leaf's own (`glyphTurns`). */
   text?(leaf: LayoutNode, member: number): void;
+  /** A list item's marker (specs/lists.md "Paint order"): its item's
+   * first inline content, before the text of the node holding it. */
+  marker?(node: LayoutNode): void;
   /** A box's scrollbars, over its content. */
   bars?(node: LayoutNode): void;
 }
@@ -180,11 +183,12 @@ export function paintOrder(root: LayoutNode, visitor: PaintVisitor): void {
   }
 }
 
-/** One paint of a box in the index: its ink, or a leaf's glyphs, an
- * inline member's where `member` names its entry (-1 for the rest). */
+/** One paint of a box in the index: its ink, its marker, or a leaf's
+ * glyphs, an inline member's where `member` names its entry (-1 for the
+ * rest). */
 export interface PaintEntry {
   node: LayoutNode;
-  text: boolean;
+  kind: "box" | "marker" | "text";
   member: number;
   /** The layer root it paints in, null on the main grid. */
   layer: LayoutNode | null;
@@ -208,8 +212,8 @@ export function paintIndex(root: LayoutNode): PaintIndex {
   const index: PaintIndex = { entries: [], spans: new Map(), parents: new Map() };
   const { entries, spans, parents } = index;
   const layers: LayoutNode[] = [];
-  const add = (node: LayoutNode, text: boolean, member: number): void => {
-    entries.push({ node, text, member, layer: layers.at(-1) ?? null });
+  const add = (node: LayoutNode, kind: PaintEntry["kind"], member = -1): void => {
+    entries.push({ node, kind, member, layer: layers.at(-1) ?? null });
   };
   paintOrder(root, {
     enter(node) {
@@ -222,8 +226,9 @@ export function paintIndex(root: LayoutNode): PaintIndex {
       layers.pop();
       spans.get(node)!.end = entries.length;
     },
-    box: (node) => add(node, false, -1),
-    text: (leaf, member) => add(leaf, true, member),
+    box: (node) => add(node, "box"),
+    text: (leaf, member) => add(leaf, "text", member),
+    marker: (node) => add(node, "marker"),
   });
   const visit = (node: LayoutNode): void => {
     for (const child of node.children) {
@@ -292,6 +297,7 @@ function floatsOf(node: LayoutNode, visitor: PaintVisitor): void {
 }
 
 function contentOf(node: LayoutNode, visitor: PaintVisitor): void {
+  if (node.marker) visitor.marker?.(node);
   if (node.text !== "") visitor.text?.(node, -1);
   for (const child of ordered(node)) {
     const phase = phaseOf(child, node);

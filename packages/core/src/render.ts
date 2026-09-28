@@ -1,4 +1,4 @@
-import { baselineRow, isFlowChild, isFormattingContextRoot } from "./layout.ts";
+import { baselineRow, isFlowChild, isFormattingContextRoot, markerSpread } from "./layout.ts";
 import { placePainted } from "./paint-origin.ts";
 import { zIndexApplies } from "./stacking.ts";
 import { clipsAxis, softWraps } from "./types.ts";
@@ -31,7 +31,7 @@ const BOX_NAMES = (
   "data-mw-top data-mw-laid-out data-mw-inline-box data-mw-multicol-flow " +
   "data-mw-multicol-flow-span data-mw-float data-mw-flow data-mw-area data-mw-vbottom " +
   "data-mw-vmiddle data-mw-nowrap data-mw-multicol data-mw-multicol-balance data-mw-pre " +
-  "data-mw-clip data-mw-scroll data-mw-table-hidden " +
+  "data-mw-clip data-mw-scroll data-mw-table-hidden data-mw-marker-image " +
   "data-mw-force-hidden data-mw-invisible data-mw-hidden-runs --mw-z --mw-sx --mw-sy --mw-mt " +
   "--mw-mr --mw-mb --mw-ml --mw-va --mw-vb --mw-lh --mw-lhs --mw-colc --mw-colg --mw-x --mw-y " +
   "--mw-w --mw-h --mw-se-x --mw-se-y --mw-gr --mw-gb --mw-spt --mw-spr --mw-spb --mw-spl " +
@@ -276,11 +276,12 @@ function areaKeywords({ x, y }: PositionArea): string {
 }
 
 /** The indent a box's own first native line takes, in cells: a leaf's,
- * or its first anonymous run's where that holds its first line. */
+ * or its first anonymous run's where that holds its first line, an
+ * inside marker's cells and their justified spread included. */
 function nativeIndent(node: LayoutNode): number {
-  if (node.indent !== undefined) return node.indent;
   const first = node.children.find(isFlowChild);
-  return (first?.anonymous ? first.indent : undefined) ?? 0;
+  const leaf = node.indent !== undefined ? node : first?.anonymous ? first : undefined;
+  return leaf ? (leaf.indent ?? 0) + markerSpread(leaf) : 0;
 }
 
 /** The row of a box's native baseline within it: its last line's, or
@@ -423,6 +424,7 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   setFlag(el, "data-mw-table-hidden", Boolean(node.tableHidden));
   setFlag(el, "data-mw-force-hidden", Boolean(node.forceHidden));
   setFlag(el, "data-mw-invisible", !node.style.visible);
+  setFlag(el, "data-mw-marker-image", node.style.marker?.image === true);
   // A hidden run has no element of its own: its container hides its
   // text and its laid-out children show through (styles.css).
   setFlag(

@@ -8,6 +8,7 @@ import {
   inkClip,
   inlineShift,
   leafLineCovers,
+  markerCovers,
 } from "./plain-text.ts";
 import { paintIndex } from "./stacking.ts";
 import type { PaintEntry, PaintIndex } from "./stacking.ts";
@@ -68,7 +69,7 @@ function hitOf(root: LayoutNode, { order, index }: Taking): Hit {
   const entry = paintIndex(root).entries[order];
   return {
     stack: stackOf(root, order),
-    glyph: entry?.text && index >= 0 ? { node: entry.node, index } : undefined,
+    glyph: entry?.kind === "text" && index >= 0 ? { node: entry.node, index } : undefined,
   };
 }
 
@@ -155,7 +156,17 @@ function stackOf(root: LayoutNode, order: number): LayoutNode[] {
 function takes(entry: PaintEntry, col: number, row: number): number | undefined {
   const node = entry.node;
   const { x, y } = node.paintOrigin;
-  if (!entry.text) {
+  if (entry.kind === "marker") {
+    // A marker's cells are its item's (specs/lists.md "Hit").
+    const taken =
+      node.style.visible &&
+      node.style.pointerEvents &&
+      inClip(inkClip(node), col, row) &&
+      inClip(clipBounds(node, x, y), col, row) &&
+      markerCovers(node, col, row);
+    return taken ? -1 : undefined;
+  }
+  if (entry.kind === "box") {
     // A paragraph-flow multicol child shares the container's box with
     // its siblings; its ink is where its line fragments are.
     if (node.multicolFlow ? !leafLineCovers(node, x, y, col, row) : !inHitRect(node, col, row)) {

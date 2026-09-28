@@ -398,6 +398,14 @@ export function layoutNode(
   }
 
   node.localRect = { x: parentX, y: parentY, width: outerWidth, height: finalHeight };
+  const { marker } = node;
+  if (marker && !marker.style.inside) {
+    // It ends where the item's first line starts beside floats
+    // (specs/lists.md "Outside").
+    const bands = node.lineBands as LineBand[] | undefined;
+    marker.x = (isLeaf ? (bands?.[0]?.x ?? 0) : 0) - marker.width;
+    marker.y = baselineRow(node) ?? contentOrigin(node).y;
+  }
 
   // Scroll geometry (specs/scrolling.md): content extent and max
   // offset, from the ENGINE's layout — never native scrollHeight.
@@ -439,6 +447,13 @@ export function layoutNode(
   }
 }
 
+/** A leaf's first-line indent: its `text-indent` against `basis`, and an
+ * inside marker's cells (specs/lists.md "Inside"). */
+export function firstLineIndent(node: LayoutNode, basis: number | undefined): number {
+  const marker = node.marker?.style.inside ? node.marker.width : 0;
+  return resolveLength(node.style.textIndent, basis) + marker;
+}
+
 /** A text leaf's lengths against its content box: its indent, and its
  * relative inline elements' insets. */
 export function resolveLeafLengths(
@@ -446,7 +461,7 @@ export function resolveLeafLengths(
   width: number,
   definiteHeight: number | undefined,
 ): void {
-  node.indent = resolveLength(node.style.textIndent, width);
+  node.indent = firstLineIndent(node, width);
   for (const entry of node.inlineElements ?? []) {
     if (entry.insetLengths) entry.insets = resolveInsets(entry.insetLengths, width, definiteHeight);
   }
@@ -476,7 +491,8 @@ function layoutTextLeaf(
   // the content box before its alignment folds into the padding.
   let alignedWidth = innerWidth;
   const contentBox = contentOrigin(node);
-  if (node.text) {
+  // An inside marker is a line of its own, text or none.
+  if (node.text || node.marker?.style.inside) {
     resolveLeafLengths(node, innerWidth, definiteInnerHeight);
     // Atomic inline boxes first: lay each out (shrink-to-fit; height =
     // its own content) and resolve its U+FFFC marker's advance to its
@@ -595,7 +611,9 @@ function columnAt(
   lineWidth?: number,
 ): number {
   const { x, spread } = lineStart(node, index, span, contentWidth, lineWidth);
-  const spreadCells = spread ? spreadBefore(spread, gapsIn(node.text, span.start, char)) : 0;
+  const spreadCells = spread
+    ? spreadBefore(spread, spread.before + gapsIn(node.text, span.start, char))
+    : 0;
   return x + advanceOf(span.start, char, node.advances) + spreadCells;
 }
 
@@ -643,7 +661,7 @@ function spotInRun(
  * anonymous item that must size the box; a grid's text builds as an
  * anonymous item of its own (tree.ts).
  */
-function laysOutAsTextLeaf(node: LayoutNode): boolean {
+export function laysOutAsTextLeaf(node: LayoutNode): boolean {
   if (node.children.some(isInFlowBox)) return false;
   return node.text !== "" || (node.style.display !== "flex" && node.style.display !== "grid");
 }
@@ -780,6 +798,7 @@ export function lineStart(
       ? Math.max(1, multicol.columnWidth - style.tracking)
       : contentWidth;
   const indent = index === 0 ? (node.indent ?? 0) : 0;
+  const markerGaps = index === 0 && node.marker?.style.inside ? node.marker.gaps : 0;
   const leftover = Math.max(0, width - indent - lineWidth);
   const offset =
     style.textAlign === "end"
@@ -792,8 +811,27 @@ export function lineStart(
     width,
     indent,
     x: (multicol?.lineX[index] ?? 0) + (band?.x ?? 0) + indent + offset,
-    spread: justified ? justifySpread(node.text, span, leftover) : undefined,
+    spread: justified ? justifySpread(node.text, span, leftover, markerGaps) : undefined,
   };
+}
+
+/** The cells a justified first line spreads its inside marker's spaces
+ * by, which the native line, justified over its text's alone, takes as
+ * indent (specs/lists.md "The light DOM"). */
+export function markerSpread(node: LayoutNode): number {
+  if (!node.marker?.style.inside || node.marker.gaps === 0) return 0;
+  const spread = firstLineStart(node)?.spread;
+  return spread ? spreadBefore(spread, spread.before) : 0;
+}
+
+/** A laid-out leaf's first line: its `lineStart` and text row; none
+ * without lines. */
+export function firstLineStart(node: LayoutNode) {
+  const lines = node.multicolGeometry ?? node.lines;
+  const span = lines?.spans[0];
+  if (!span) return undefined;
+  const contentWidth = node.localRect.width - edges(node.style.border, node.resolvedPadding, "x");
+  return { ...lineStart(node, 0, span, contentWidth), row: lines.textY[0]! };
 }
 
 /** Whether a line ends its paragraph: the text ends, or breaks hard,
@@ -807,22 +845,30 @@ function endsParagraph(text: string, end: number): boolean {
 }
 
 /** A justified line's spread over its gaps — its spaces, no-break ones
- * too — none where it has no leftover or no gap. */
-function justifySpread(text: string, span: LineSpan, leftover: number): Spread | undefined {
-  const gaps = gapsIn(text, span.start, span.end);
-  return gaps === 0 || leftover === 0 ? undefined : { leftover, gaps };
+ * too, after `before` gaps of an inside marker's — none where it has no
+ * leftover or no gap. */
+function justifySpread(
+  text: string,
+  span: LineSpan,
+  leftover: number,
+  before: number,
+): Spread | undefined {
+  const gaps = before + gapsIn(text, span.start, span.end);
+  return gaps === 0 || leftover === 0 ? undefined : { leftover, gaps, before };
 }
 
 /** A justified line's leftover cells among its gaps, each word at the
- * cell nearest where an even share puts it (`spreadBefore`). */
+ * cell nearest where an even share puts it (`spreadBefore`), the first
+ * `before` of them an inside marker's. */
 export interface Spread {
   leftover: number;
   gaps: number;
+  before: number;
 }
 
 /** The cells a spread adds before a line's gap `count`: an even share's
  * rounded to the nearest cell, a half up. */
-const spreadBefore = ({ leftover, gaps }: Spread, count: number): number =>
+export const spreadBefore = ({ leftover, gaps }: Spread, count: number): number =>
   Math.floor((2 * count * leftover + gaps) / (2 * gaps));
 
 /** A word separator, where justification spreads a line. */
@@ -899,7 +945,7 @@ export function leafLineSpans(
   contentWidth: number,
   openLine?: LineOpener,
 ): LineSpan[] {
-  if (!softWraps(node.style.whiteSpace)) {
+  if (!softWraps(node.style.whiteSpace) || !node.text) {
     const spans = hardLineSpans(node.text);
     if (openLine) {
       const closed: LineSpan[] = [];
@@ -1042,7 +1088,8 @@ export function edges(border: Insets, padding: Insets, axis: "x" | "y"): number 
  * a leaf's line, else its first (last) in-flow child's with one; none
  * for a box that draws no line (css-align's baselines). */
 export function baselineRow(node: LayoutNode, last = false): number | undefined {
-  if (node.text) {
+  // An inside marker's line of its own is a line.
+  if (node.text || node.marker?.style.inside) {
     const row = node.lines?.textY.at(last ? -1 : 0);
     return row === undefined ? undefined : contentOrigin(node).y + row;
   }
@@ -1343,6 +1390,8 @@ function placeFlowChildren(
       continue;
     }
     if (child.anonymous) {
+      // An inside marker's line of its own has no native text to hold it.
+      if (!child.text) continue;
       if (previous?.flow) previous.flow.bottom = y - cursor;
       cursor = y + height + gap;
     } else {
@@ -1630,10 +1679,7 @@ function intrinsicInnerWidth(node: LayoutNode, kind: "min" | "max", cache: Intri
     const widest =
       kind === "max" || !node.text || !softWraps(style.whiteSpace)
         ? node.intrinsicWidth
-        : longestSegmentAdvance(
-            node.text,
-            wrapOptions(node, resolveLength(style.textIndent, undefined)),
-          );
+        : longestSegmentAdvance(node.text, wrapOptions(node, firstLineIndent(node, undefined)));
     return style.display === "multicol" ? multicolIntrinsicInnerWidth(style, widest, kind) : widest;
   }
   if (style.display === "grid") return gridIntrinsicInnerWidths(node, cache)[kind];

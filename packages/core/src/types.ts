@@ -30,6 +30,48 @@ export const INITIAL_GLYPH: GlyphValues = {
   "text-underline-offset": "auto",
 };
 
+/** A marker's text, part by part: a string, a `counter()` or
+ * `counters()` (joined by its separator), or `list-style-type`'s counter
+ * style over the item's `list-item`, prefix and suffix included. */
+export type ContentPart = string | CounterPart | { listStyle: string };
+
+export interface CounterPart {
+  counter: string;
+  style: string;
+  separator?: string;
+}
+
+/** A list item's marker, its text written (specs/lists.md). */
+export interface Marker {
+  style: MarkerStyle;
+  text: string;
+  /** Per code unit, as a leaf's `advances`: each cluster's cells, the
+   * item's tracking included, and 0 for its later units. */
+  advances: number[];
+  /** Its cells: an inside marker's first-line indent, and an outside
+   * one's reach left of where it ends. */
+  width: number;
+  /** Its spaces, which a justified line spreads (specs/lists.md "Inside"). */
+  gaps: number;
+  /** An outside marker's cells' origin in its item's border box, as laid out. */
+  x?: number;
+  y?: number;
+}
+
+/** A list item's marker as read (specs/lists.md "What the engine
+ * reads"): its text's parts, where it sits, and its `::marker`'s paint. */
+export interface MarkerStyle {
+  parts: readonly ContentPart[];
+  inside: boolean;
+  /** Its own color, null where it is its item's, which a transition's
+   * frames resample onto the item. */
+  color: string | null;
+  glyph: GlyphValues;
+  /** Its `content` holds an image, which the grid draws as nothing and
+   * its native marker must not draw (specs/lists.md deviation 3). */
+  image: boolean;
+}
+
 /** A rect by its edges, the far ones exclusive: as a clip, the cells
  * overflow leaves visible (specs/scrolling.md). */
 export type Clip = { x0: number; y0: number; x1: number; y1: number };
@@ -719,6 +761,9 @@ export interface CellStyle {
    * stays, as big as it is empty, and draws none of its contents
    * (specs/visibility.md "Skipped contents"). */
   skipsContents: boolean;
+  /** A list item's marker (specs/lists.md), null for any other box and
+   * for an item that draws none. */
+  marker: MarkerStyle | null;
   /** Its computed `pointer-events` is other than `none`: the engine's
    * hit test takes it (specs/cell-model.md "Pointer states"). */
   pointerEvents: boolean;
@@ -1025,10 +1070,14 @@ export interface LayoutNode {
    * pass beside floats, and what a later re-derivation of the leaf's
    * lines (the paint's) wraps against. */
   lineBands?: LineBand[];
-  /** A leaf's `text-indent` in cells, resolved against its content width
-   * as it lays out: charged against the first line's wrap width (a
-   * negative one widening it) and offsetting that line's x. */
+  /** A leaf's first-line indent in cells, resolved against its content
+   * width as it lays out — its `text-indent` and an inside marker's
+   * cells: charged against the first line's wrap width (a negative one
+   * widening it) and offsetting that line's x. */
   indent?: number;
+  /** A list item's marker (specs/lists.md): on the item where it sits
+   * outside, on the leaf holding the item's first line where inside. */
+  marker?: Marker;
   /** Scroll geometry (specs/scrolling.md), written by layoutNode on
    * containers with a scroll axis: content extent and the derived
    * max offset, both in cells. Absent elsewhere. */
@@ -1297,6 +1346,7 @@ export function defaultCellStyle(): CellStyle {
     opacity: 1,
     visible: true,
     skipsContents: false,
+    marker: null,
     pointerEvents: true,
     layer: null,
     stacking: false,

@@ -1,7 +1,9 @@
+import { isFlowChild } from "./layout.ts";
 import { leafRendererFor } from "./leaf.ts";
+import { markerShows } from "./plain-text.ts";
 import { inlineBoxesOf } from "./types.ts";
 import type { CharSourceRun, LayoutNode } from "./types.ts";
-import { INLINE_PAD, OBJECT_REPLACEMENT, WBR_MARKER } from "./wrap.ts";
+import { hardLineSpans, INLINE_PAD, OBJECT_REPLACEMENT, WBR_MARKER } from "./wrap.ts";
 
 /**
  * Character ↔ DOM position mapping over a leaf's `charSource` runs
@@ -312,19 +314,28 @@ export function serializeSelection(root: LayoutNode, points: BoundaryPoints): st
   return assemble(items);
 }
 
-function collectItems(node: LayoutNode, range: Range, items: TextItem[]): void {
+/** Each leaf's copied markers, which go before its text. */
+type CopiedMarkers = Map<LayoutNode, string>;
+
+function collectItems(
+  node: LayoutNode,
+  range: Range,
+  items: TextItem[],
+  markers: CopiedMarkers = new Map(),
+): void {
   if (node.tableHidden || node.forceHidden || !rangeMeets(node, range)) return;
+  if (node.marker && (node.text || !node.anonymous)) copyMarker(node, node, range, markers);
   // A hidden box gives up its own breaks, its subtree's items kept, as
   // innerText does (specs/visibility.md).
   const breaks = node.style.visible ? requiredBreaks(node) : 0;
   if (breaks) items.push({ breaks });
   if (node.style.tableRole === "row") {
-    collectRow(node, range, items);
+    collectRow(node, range, items, markers);
   } else if (node.style.display === "table") {
     const rows = tableRows(node);
     for (const child of node.children) {
       if (child.style.tableRole === "row" || isRowGroup(child)) continue;
-      collectItems(child, range, items); // captions
+      collectItems(child, range, items, markers); // captions
     }
     // A visible row's newline, before the next row the range reaches,
     // like the browsers' own partial-table copies.
@@ -332,27 +343,68 @@ function collectItems(node: LayoutNode, range: Range, items: TextItem[]): void {
     for (const row of rows) {
       if (!range.intersectsNode(row.source)) continue;
       if (separated) items.push({ text: "\n" });
-      collectItems(row, range, items);
+      collectItems(row, range, items, markers);
       separated = row.style.visible;
     }
   } else {
-    if (isTextLeaf(node)) items.push({ text: leafSlice(node, range) });
+    if (isTextLeaf(node)) {
+      const marker = markers.get(node);
+      if (marker) items.push({ text: marker });
+      items.push({ text: leafSlice(node, range) });
+    }
     for (const child of node.children) {
-      if (!child.inlineBox) collectItems(child, range, items);
+      if (child.inlineBox) continue;
+      // An inside marker's line of its own, which holds no text.
+      if (child.marker && !child.text && child.anonymous) copyMarker(child, node, range, markers);
+      else collectItems(child, range, items, markers);
     }
   }
   if (breaks) items.push({ breaks });
 }
 
+/** A marker the grid shows, copied before the first text of `item`
+ * where the range holds that text's first line whole (specs/lists.md
+ * "Selection, copy and accessibility"). */
+function copyMarker(
+  holder: LayoutNode,
+  item: LayoutNode,
+  range: Range,
+  markers: CopiedMarkers,
+): void {
+  if (!holder.style.visible || !markerShows(holder)) return;
+  const leaf = firstTextLeaf(item);
+  if (!leaf || !rangeMeets(leaf, range)) return;
+  const { start, end } = coveredChars(leaf, range);
+  const lineEnd = leaf.lines?.spans[0]?.end ?? hardLineSpans(leaf.text)[0]!.end;
+  if (start > 0 || end < lineEnd) return;
+  markers.set(leaf, (markers.get(leaf) ?? "") + holder.marker!.text);
+}
+
+/** The text leaf holding a box's first line: itself, or the first its
+ * in-flow boxes hold. */
+function firstTextLeaf(node: LayoutNode): LayoutNode | undefined {
+  if (isTextLeaf(node)) return node;
+  for (const child of node.children) {
+    const leaf = isFlowChild(child) ? firstTextLeaf(child) : undefined;
+    if (leaf) return leaf;
+  }
+  return undefined;
+}
+
 /** A row's cells, a visible one's tab before the next, as innerText
  * puts it after every visible cell but the last. */
-function collectRow(row: LayoutNode, range: Range, items: TextItem[]): void {
+function collectRow(
+  row: LayoutNode,
+  range: Range,
+  items: TextItem[],
+  markers: CopiedMarkers,
+): void {
   let separated = false;
   for (const cell of row.children) {
     if (cell.style.tableRole !== "cell" || cell.tableHidden) continue;
     if (!range.intersectsNode(cell.source)) continue;
     if (separated) items.push({ text: "\t" });
-    collectItems(cell, range, items);
+    collectItems(cell, range, items, markers);
     separated = cell.style.visible;
   }
 }

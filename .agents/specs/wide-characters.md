@@ -148,7 +148,10 @@ unless named):
   no cell, and paints nothing.
 - **The grapheme cluster is the unit.** Runs are collected per cluster
   (`Intl.Segmenter`, grapheme granularity; a fast path skips
-  segmentation for ASCII-only text): a combining sequence, a ZWJ
+  segmentation for text whose every code point is a cluster of its
+  own — ASCII, Latin to the spacing modifiers, the symbol blocks from
+  general punctuation to arrows but the joiners and their combining
+  marks, each checked against the segmenter): a combining sequence, a ZWJ
   family, a flag, a keycap are one unit with one width, painted at one
   cell and never split by a wrap, a truncation, or a gesture.
 - **Per-character data is indexed by code unit, like `text`.** A

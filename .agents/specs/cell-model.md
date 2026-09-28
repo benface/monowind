@@ -453,7 +453,9 @@ style, an entry of its own in each run; what it loses is a layout box
 of its own, which it never had. An atomic inline box (`inline-block`
 and its kin) is
 its own formatting context and keeps its blocks, and an out-of-flow
-child is built whole either way.
+child is built whole either way. A list item's inside marker before a
+leading block is a run of its own, the marker alone (specs/lists.md
+"Inside").
 
 **Inline padding and backgrounds.** An inline element's horizontal
 padding is quantized to whole cells: the run reserves the cells as
@@ -1515,6 +1517,15 @@ lines); the explicit zero `clip` rect still drops them.
     `hover` ("Pointer states"). The cause: each hover chain change lays
     the page out, and a plain span would join and leave it at every
     edge the pointer crosses.
+29. Text fills its cells in the order it is stored: the engine runs no
+    Unicode bidirectional algorithm, so a right-to-left run (Hebrew,
+    Arabic) starts at its first character's cell, where CSS draws it
+    reversed. The browser then reorders each drawn row on its own: a
+    lone right-to-left word reads right while its cells, and so hits
+    and selections, keep the stored order, and runs of two boxes
+    joined by a neutral character, a border's `│` or a space, reorder
+    as one, trading the boxes' text (`│אב│גד│` draws `│דג│בא│`,
+    Chromium).
 
 ## Touch points on implementation
 

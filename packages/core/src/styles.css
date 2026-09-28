@@ -542,6 +542,27 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
      * per CSS, and passes through untouched. */
     padding-left: calc(var(--mw-ipl) * var(--mw-cw, 1px)) !important;
     padding-right: calc(var(--mw-ipr) * var(--mw-cw, 1px)) !important;
+    /* Native markers take no line space, the grid drawing its own: an
+     * inside one's cells are its line's indent (--mw-ti, specs/lists.md
+     * "The light DOM"). An image, which no font size shrinks, goes. */
+    list-style-position: outside !important;
+    list-style-image: none !important;
+  }
+
+  /* A native marker takes no ink, no hit — an outside one hangs past
+   * its item's box, which the covered rule never guards — and no line
+   * height, its zero-size box's baseline otherwise stretching the line
+   * in Firefox and WebKit (specs/lists.md "The light DOM"); its type and
+   * text stay for assistive technology. */
+  mono-wind *::marker {
+    font-size: 0 !important;
+    line-height: 0 !important;
+  }
+
+  /* A marker whose `content` holds an image draws none (render.ts),
+   * gated so the engine reads the authored value. */
+  mono-wind [data-mw-marker-image]:not([data-mw-measuring])::marker {
+    content: none !important;
   }
 
   /* A top-layer element's backdrop is a box of the grid's beneath its

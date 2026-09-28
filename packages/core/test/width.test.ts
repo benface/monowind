@@ -88,6 +88,19 @@ describe("graphemes", () => {
     expect(graphemes("ab c\n")).toEqual(["a", "b", " ", "c", "\n"]);
     expect(graphemes("")).toEqual([]);
   });
+
+  it("splits as Intl.Segmenter does through Latin and the symbol blocks, a joiner included", () => {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    const wrong: string[] = [];
+    for (let code = 0xa0; code <= 0x2bff; code++) {
+      const c = String.fromCodePoint(code);
+      for (const text of [`a${c}${c}b`, `${c}\u0301`, `${c}\u200d${c}`]) {
+        const expected = Array.from(segmenter.segment(text), ({ segment }) => segment);
+        if (graphemes(text).join("|") !== expected.join("|")) wrong.push(code.toString(16));
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
 });
 
 describe("clusterAdvances", () => {

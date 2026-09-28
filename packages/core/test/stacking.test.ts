@@ -32,8 +32,8 @@ const box = (
  * inline member's as `name:N`, its entry. */
 const order = (root: LayoutNode): string[] =>
   paintIndex(root).entries.map(
-    ({ node, text, member }) =>
-      names.get(node)! + (member >= 0 ? `:${member}` : text ? ":text" : ""),
+    ({ node, kind, member }) =>
+      names.get(node)! + (member >= 0 ? `:${member}` : kind === "text" ? ":text" : ""),
   );
 
 /** An inline element's entry under `parent`, positioned where `z` is
@@ -213,7 +213,11 @@ describe("the order fuzz", () => {
     for (let seed = 1; seed <= 500; seed++) {
       const root = randomTree(seed);
       const expected = expectedEntries(root).sort(comparator(root)).map(key);
-      expect(paintIndex(root).entries.map(key), `seed ${seed}`).toEqual(expected);
+      const entries = paintIndex(root).entries.map(({ node, kind }) => ({
+        node,
+        text: kind === "text",
+      }));
+      expect(entries.map(key), `seed ${seed}`).toEqual(expected);
     }
   });
 });

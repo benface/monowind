@@ -112,14 +112,17 @@ export function isColorEmoji(cluster: string): boolean {
   return cluster.includes(KEYCAP) || EMOJI_PRESENTATION.test(cluster);
 }
 
+/** Text whose every code point is a cluster of its own: ASCII, Latin to
+ * the spacing modifiers, and the symbol blocks from general punctuation
+ * to arrows, but the joiners and the symbols' combining marks. */
 // oxlint-disable-next-line no-control-regex -- the ASCII range itself
-const ASCII = /^[\x00-\x7f]*$/;
+const SIMPLE = /^[\x00-\x7f\u00a0-\u02ff\u2000-\u200b\u200e-\u20cf\u2100-\u2bff]*$/;
 let graphemeSegmenter: Intl.Segmenter | null | undefined;
 
-/** The grapheme clusters of `text`, in order. ASCII text needs no
- * segmentation; without `Intl.Segmenter` code points stand in. */
+/** The grapheme clusters of `text`, in order. Text of simple code points
+ * needs no segmentation; without `Intl.Segmenter` code points stand in. */
 export function graphemes(text: string): string[] {
-  if (ASCII.test(text)) return text.split("");
+  if (SIMPLE.test(text)) return text.split("");
   if (graphemeSegmenter === undefined) {
     graphemeSegmenter =
       typeof Intl.Segmenter === "function"

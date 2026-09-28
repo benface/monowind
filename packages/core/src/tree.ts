@@ -1,6 +1,9 @@
 import {
+  firstLineIndent,
   fixedMargins,
   isFlowChild,
+  isGap,
+  laysOutAsTextLeaf,
   makeIntrinsicCache,
   resolveLength,
   resolveMargin,
@@ -23,9 +26,23 @@ import {
   readOverflow,
   readTextStyle,
   readVisible,
+  skipsContents,
   trackingCells,
 } from "./style.ts";
 import { animatedProperties } from "./animation.ts";
+import {
+  countersOf,
+  LIST_ITEM,
+  pageCounterStyles,
+  parseChanges,
+  parseResets,
+  partText,
+  counterNames,
+  readsValue,
+  withBullets,
+} from "./counters.ts";
+import type { CounterNode } from "./counters.ts";
+import { bulletGlyph, glyphSetFor } from "./glyphs.ts";
 import { inlineMembersOf, inlineOwners } from "./stacking.ts";
 import { casedClusters, readTextCase } from "./text-transform.ts";
 import type { TextCase } from "./text-transform.ts";
@@ -55,6 +72,7 @@ import type {
   CellStyle,
   CharSourceRun,
   LayoutNode,
+  Marker,
   TextDecoration,
 } from "./types.ts";
 
@@ -81,19 +99,31 @@ export function buildTree(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
 ): LayoutNode | null {
-  const tree = buildNode(root, { rootFontSizePx, cellMetrics, textareaWidths });
-  if (tree) propagateDecorations(tree, NO_DECORATION);
+  const context = { rootFontSizePx, cellMetrics, textareaWidths, items: [] };
+  const tree = buildNode(root, context);
+  if (tree) {
+    propagateDecorations(tree, NO_DECORATION);
+    attachMarkers(root, context);
+  }
   return tree;
 }
 
-/** What every node of a tree is built with (buildTree). */
+/** What every node of a tree is built with (buildTree), and the list
+ * items it builds. */
 interface BuildContext {
   rootFontSizePx: number;
   cellMetrics: CellMetrics | undefined;
   textareaWidths: TextareaWidths | undefined;
+  items: LayoutNode[];
 }
 
 function buildNode(root: Element, context: BuildContext): LayoutNode | null {
+  const node = buildElement(root, context);
+  if (node?.style.marker) context.items.push(node);
+  return node;
+}
+
+function buildElement(root: Element, context: BuildContext): LayoutNode | null {
   const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics);
   if (style.display === "none") return null;
   if (style.skipsContents) return buildLeaf(root, style, [], [], context, []);
@@ -121,6 +151,125 @@ function buildNode(root: Element, context: BuildContext): LayoutNode | null {
     return buildLeaf(root, style, elementChildren, roles, context);
   }
   return createNode(root, style, buildChildren(root, childNodes, context));
+}
+
+/** Each list item's marker (specs/lists.md), its text from the counter
+ * walk, which runs only where a marker reads a value: on the item where
+ * it sits outside, on the leaf holding its first line where inside. */
+function attachMarkers(root: Element, context: BuildContext): void {
+  const { items } = context;
+  if (items.length === 0) return;
+  const parts = items.flatMap((item) => item.style.marker!.parts);
+  let values = new Map<Element, Map<string, number[]>>();
+  if (parts.some(readsValue)) {
+    const counters = counterTree(root);
+    if (counters) values = countersOf(counters, counterNames(parts));
+  }
+  const page = pageCounterStyles(root);
+  for (const item of items) {
+    const style = item.style.marker!;
+    const set = glyphSetFor(item.style.glyphSet);
+    const styles = withBullets(page, (bullet) => bulletGlyph(set, bullet));
+    const counters = values.get(item.source) ?? NO_COUNTERS;
+    const text = style.parts.map((part) => partText(part, counters, styles)).join("");
+    if (!text) continue;
+    const advances = clusterAdvances(text, item.style.tracking);
+    const marker: Marker = {
+      style,
+      text,
+      advances,
+      width: advances.reduce((sum, advance) => sum + advance, 0),
+      gaps: Array.from(text).filter(isGap).length,
+    };
+    if (style.inside) {
+      holdInsideMarker(item, marker, context);
+    } else {
+      item.marker = marker;
+      // An item with no in-flow content is its marker's line.
+      if (!item.text && laysOutAsTextLeaf(item)) {
+        item.intrinsicHeight = Math.max(1, item.intrinsicHeight);
+      }
+    }
+  }
+}
+
+const NO_COUNTERS: ReadonlyMap<string, readonly number[]> = new Map();
+
+/** An inside marker on the leaf holding its item's first line: the item
+ * itself, its first run, or a run of the marker alone before a leading
+ * block (specs/lists.md "Inside"), which it widens by its cells. */
+function holdInsideMarker(item: LayoutNode, marker: Marker, context: BuildContext): void {
+  let holder = item;
+  if (!laysOutAsTextLeaf(item)) {
+    const index = item.children.findIndex(isFlowChild);
+    const first = item.children[index];
+    if (first?.anonymous) {
+      holder = first;
+    } else {
+      // Built after the decorations propagate, it takes its item's.
+      const style = {
+        ...leafStyleOf(item.source, context),
+        textDecoration: item.style.textDecoration,
+      };
+      holder = createNode(item.source, style, [], "", 0, 0);
+      holder.anonymous = true;
+      item.children.splice(index < 0 ? item.children.length : index, 0, holder);
+    }
+  }
+  holder.marker = marker;
+  const { text, advances, style } = holder;
+  const firstLine = lineAdvance(text, 0, hardLineSpans(text)[0]!.end, advances, style.tracking);
+  holder.intrinsicWidth = Math.max(
+    holder.intrinsicWidth,
+    firstLineIndent(holder, undefined) + firstLine,
+  );
+  holder.intrinsicHeight = Math.max(1, holder.intrinsicHeight);
+}
+
+/** The host's elements as the counter walk reads them (specs/lists.md
+ * "Numbering"): all but a `display: none` one and a skipped box's
+ * contents, HTML's list hints under the author's counters. */
+export function counterTree(root: Element): CounterNode | null {
+  const cs = getComputedStyle(root);
+  const display = computedDisplay(root, cs);
+  if (display === "none") return null;
+  const resets = parseResets(cs.counterReset);
+  const sets = parseChanges(cs.counterSet, 0, false);
+  const { localName } = root;
+  if (LISTS.has(localName) && !resets.some(({ name }) => name === LIST_ITEM)) {
+    const start = localName === "ol" ? htmlInteger(root.getAttribute("start")) : undefined;
+    const reversed = localName === "ol" && root.hasAttribute("reversed");
+    const value = reversed ? (start === undefined ? undefined : start + 1) : (start ?? 1) - 1;
+    resets.push({ name: LIST_ITEM, value, reversed });
+  }
+  const value = localName === "li" ? htmlInteger(root.getAttribute("value")) : undefined;
+  if (value !== undefined && !sets.has(LIST_ITEM)) sets.set(LIST_ITEM, value);
+  const listItem = display.includes(LIST_ITEM);
+  const children: CounterNode[] = [];
+  if (!skipsContents(cs, display)) {
+    for (const child of shownChildNodes(root)) {
+      const node = child instanceof Element && counterTree(child);
+      if (node) children.push(node);
+    }
+  }
+  return {
+    element: root,
+    resets,
+    increments: parseChanges(cs.counterIncrement, 1, true),
+    sets,
+    listItem,
+    children,
+  };
+}
+
+/** The elements HTML's rendering resets `list-item` on. */
+const LISTS = new Set(["ol", "ul", "menu"]);
+
+/** HTML's rules for parsing integers: a sign and digits after white
+ * space, anything after ignored. */
+function htmlInteger(text: string | null): number | undefined {
+  const match = text?.match(/^[\t\n\f\r ]*([+-]?\d+)/);
+  return match ? Number(match[1]) : undefined;
 }
 
 /** An element's child nodes as the page renders them: a `details`
@@ -223,7 +372,7 @@ export function buildRoot(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
 ): LayoutNode {
-  const context = { rootFontSizePx, cellMetrics, textareaWidths };
+  const context = { rootFontSizePx, cellMetrics, textareaWidths, items: [] };
   const nodes = Array.from(host.childNodes).filter(
     (node) => !(node instanceof Element && node.hasAttribute("data-mw-probe")),
   );
@@ -238,6 +387,7 @@ export function buildRoot(
     ? buildLeaf(host, style, elementChildren, roles, context, nodes)
     : createNode(host, style, buildChildren(host, nodes, context, style));
   propagateDecorations(tree, NO_DECORATION);
+  attachMarkers(host, context);
   return tree;
 }
 

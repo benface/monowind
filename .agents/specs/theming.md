@@ -144,9 +144,12 @@ tr?, bl?, br? }` in cells: a corner draws the registration nearest
   break the bitmap grid).
 - Glyph tables also carry the scrollbar roles `scrollTrack` /
   `scrollThumb` (defaults `░` / `█`; `ascii` maps `|` / `#`) —
-  specs/scrolling.md — and the `shadow` ramp, shades from a box's
+  specs/scrolling.md — the `shadow` ramp, shades from a box's
   shadow core outward (default `█ ▓ ▒ ░`; `ascii` `# + : .`) —
-  specs/box-shadow.md.
+  specs/box-shadow.md — and the list bullets `disc`, `circle`,
+  `square`, `disclosureOpen` and `disclosureClosed` (defaults
+  `• ◦ ▪ ▼ ▶`; `ascii` `* o # v >`; `cp437` `• ○ ■ ▼ ►`), which a
+  list item's marker draws through its own set — specs/lists.md.
 - ANSI defaults live in core's companion alone (`mono-wind` base
   block).
 - Authoring sugar shipped: `borders-default/rounded/ascii/single/blocks/cp437`
