@@ -38,8 +38,9 @@ const apps = workspaces("apps");
 const packages = workspaces("packages");
 
 /**
- * An app script running `pnpm -C ../../packages/<x> …` needs <x> declared:
- * a filtered CI install lays out the declared workspaces alone.
+ * An app script building `packages/<x>` (`build-packages.mjs <x> …`)
+ * needs <x> declared: a filtered CI install lays out the declared
+ * workspaces alone.
  */
 for (const { folder: app, manifest } of apps) {
   const declared = new Set([
@@ -47,14 +48,15 @@ for (const { folder: app, manifest } of apps) {
     ...Object.keys(manifest.devDependencies ?? {}),
   ]);
   for (const script of Object.values(manifest.scripts ?? {})) {
-    for (const [, dir] of String(script).matchAll(/-C \.\.\/\.\.\/packages\/([\w-]+)/g)) {
-      const name = packages.find((pkg) => pkg.folder === dir)?.manifest.name;
-      if (name === undefined)
-        fail(`apps/${app}: scripts reach into packages/${dir}, not a package`);
-      else if (!declared.has(name)) {
-        fail(
-          `apps/${app}: scripts reach into packages/${dir} but "${name}" is not a declared dependency`,
-        );
+    for (const [, dirs] of String(script).matchAll(/build-packages\.mjs((?: [\w-]+)+)/g)) {
+      for (const dir of dirs.trim().split(" ")) {
+        const name = packages.find((pkg) => pkg.folder === dir)?.manifest.name;
+        if (name === undefined) fail(`apps/${app}: scripts build packages/${dir}, not a package`);
+        else if (!declared.has(name)) {
+          fail(
+            `apps/${app}: scripts build packages/${dir} but "${name}" is not a declared dependency`,
+          );
+        }
       }
     }
   }

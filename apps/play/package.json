@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "cdn": "pnpm -C ../../packages/core build && pnpm -C ../../packages/ascii build && pnpm -C ../../packages/qr-code build && pnpm -C ../../packages/ui build && node copy-cdn.mjs",
+    "cdn": "node ../../scripts/build-packages.mjs core ascii qr-code ui && node copy-cdn.mjs",
     "dev": "pnpm run cdn && vite --port 5181",
     "dev:netlify": "pnpm run cdn && npx -y netlify-cli@27 dev --offline --no-open --port 8888 --functions netlify/functions --command \"vite --port 5181\" --target-port 5181",
     "build": "pnpm run cdn && node build.mjs",

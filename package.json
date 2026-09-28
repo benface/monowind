@@ -10,7 +10,7 @@
     "check:fix": "node scripts/check-workspace.mjs && node scripts/check-canonical-classes.mjs --fix && oxlint --fix && oxfmt && pnpm -r typecheck",
     "check-updates": "ncu -iu --deep",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --workspace-concurrency=1 test",
+    "test": "node scripts/test.mjs",
     "test:visual": "node scripts/test-visual.mjs",
     "test:visual:update": "node scripts/test-visual.mjs --update-snapshots",
     "bench": "node scripts/bench.mjs",

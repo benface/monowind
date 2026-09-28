@@ -279,8 +279,8 @@ pnpm check
 # same, but auto-fixes lint, format, and non-canonical class issues
 pnpm check:fix
 
-# tests (unit + golden + story tests + example smoke tests), one package
-# at a time: the app tests that serve a package's bundle rebuild it
+# tests (unit + golden + story tests + example smoke tests): every
+# package built once, the workspaces' tests four at a time, the stories last
 pnpm test
 
 # visual regression tests (screenshots via Docker, one per story)

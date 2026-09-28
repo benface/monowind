@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "cdn": "pnpm -C ../../packages/core build && node copy-cdn.mjs",
+    "cdn": "node ../../scripts/build-packages.mjs core && node copy-cdn.mjs",
     "dev": "pnpm run cdn && vite --port 5180",
     "test": "pnpm run cdn && node smoke.test.mjs"
   },

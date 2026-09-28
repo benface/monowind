@@ -102,10 +102,14 @@ full suites once, before handing off:
 - Visual goldens only when paint or layout changes, scoped with
   `node scripts/test-visual.mjs --grep "<story-id>"`; the full run
   (a Storybook build, then Docker) once, at the end.
-- `pnpm check` and `pnpm test` (the smokes build every package they
-  serve) once, at the end — not after each edit.
-- Never run two browser suites (stories, visual, smokes) at once,
-  parallel agents included: they contend for the CPU and time out.
+- `pnpm check` (~10 s) and `pnpm test` (scripts/test.mjs: every
+  package built once, the workspaces' tests and smokes four at a time,
+  the stories last) once, at the end — not after each edit.
+- Benches only when a change touches reads, layout, paint or what
+  triggers them: the last commit's bundle against the working tree's.
+- Never run two browser suites (stories, visual, smokes, benches) at
+  once, the user's and parallel agents' included: they contend for
+  the CPU and time out. The gate's own smokes share it by design.
   Long runs go to the background with a hard timeout.
 
 ## Releasing
