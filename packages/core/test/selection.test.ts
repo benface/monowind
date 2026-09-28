@@ -101,6 +101,19 @@ describe("serializeSelection", () => {
     expect(serializeSelection(root, points(alt!, 1, alt!, 2))).toBe("/\\\n\\/");
   });
 
+  it("copies text in the case its transform shows, as innerText does", () => {
+    const { host, root } = build('<p style="text-transform: uppercase">straße here</p>');
+    expect(serializeSelection(root, selectAll(host))).toBe("STRASSE HERE");
+    const [text] = texts(host);
+    expect(serializeSelection(root, points(text!, 4, text!, 8))).toBe("SSE H");
+  });
+
+  it("copies every space of a selected tab", () => {
+    const { host, root } = build('<p style="white-space: pre">a\tb</p>');
+    const [text] = texts(host);
+    expect(serializeSelection(root, points(text!, 1, text!, 3))).toBe("       b");
+  });
+
   it("classifies where a selection lives", () => {
     const { host } = build("<p>text</p>");
     const grid = document.createElement("pre");

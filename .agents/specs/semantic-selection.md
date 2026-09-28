@@ -233,7 +233,9 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   came from, stored as runs of consecutive characters (a collapsed
   whitespace run maps to its first source character;
   a `<br>` newline to the element; an inline box's U+FFFC and inline
-  padding cells to no position). Word boundaries map forward through
+  padding cells to no position; the characters standing for one
+  cluster, a tab's spaces or a transform's `SS` for `ß`, to that
+  cluster, a point there lying before the first). Word boundaries map forward through
   it to `setBaseAndExtent` points; the copy serializer maps a Range's
   boundary points backward through it to slices of `node.text`. A
   renderer leaf's text is the art, produced by the renderer, and has

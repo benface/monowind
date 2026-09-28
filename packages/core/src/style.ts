@@ -8,6 +8,7 @@ import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import { autoTrack, GLYPH_PROPERTIES, INITIAL_GLYPH, SIDES, zeroInsets } from "./types.ts";
 import { leafRendererFor } from "./leaf.ts";
+import { readTextCase } from "./text-transform.ts";
 import { warnOnce } from "./warn.ts";
 import type {
   AlignItems,
@@ -1083,6 +1084,7 @@ export function readTextStyle(
   CellStyle,
   | "whiteSpace"
   | "tabSize"
+  | "textCase"
   | "textOverflow"
   | "textDecorationLine"
   | "textAlignBlocked"
@@ -1096,6 +1098,7 @@ export function readTextStyle(
     // companion stylesheet's white-space lock is measuring-gated.
     whiteSpace: readKeyword(WHITE_SPACES, cs.whiteSpace, "normal"),
     tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
+    textCase: readTextCase(cs.textTransform),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
     textDecorationLine: cs.textDecorationLine,
     // The forced-start rule is measuring-gated, so the computed value is

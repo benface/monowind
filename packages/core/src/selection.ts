@@ -1,6 +1,6 @@
 import { leafRendererFor } from "./leaf.ts";
 import { inlineBoxesOf } from "./types.ts";
-import type { LayoutNode } from "./types.ts";
+import type { CharSourceRun, LayoutNode } from "./types.ts";
 import { INLINE_PAD, OBJECT_REPLACEMENT } from "./wrap.ts";
 
 /**
@@ -93,12 +93,19 @@ export function charIndexAt(leaf: LayoutNode, container: Node, offset: number): 
     else high = mid;
   }
   if (low === 0) return 0;
-  const run = runs[low - 1]!;
+  // The characters standing for one cluster (a tab's spaces, `ß` as
+  // `SS`) share its offset, a run each: the point is before the first.
+  let found = low - 1;
+  while (found > 0 && holds(runs[found - 1]!, container, offset)) found--;
+  const run = runs[found]!;
   if (container === run.node && offset < run.offset + run.length) {
     return run.index + (offset - run.offset);
   }
   return run.index + run.length;
 }
+
+const holds = (run: CharSourceRun, container: Node, offset: number): boolean =>
+  run.node === container && run.offset <= offset && offset < run.offset + run.length;
 
 /** The DOM position of `leaf.text[index]` (or of the end of the run
  * ending there) — in a custom leaf's transcript when it has one; null

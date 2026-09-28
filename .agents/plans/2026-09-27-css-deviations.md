@@ -1041,7 +1041,7 @@ golden.
 - **`text-transform` (a bug)**: the grid paints the authored case
   (`uppercase` shows "Hello world", probed). The transform can change
   a text's length (`ß` to `SS`), so the character map for selection
-  and copy follows it. Small–medium; 0.3.4.
+  and copy follows it. Small–medium; 0.3.4. Landed (see Progress).
 - **`line-clamp-*`**: every line shows (3 under `line-clamp-2`,
   probed). The leaf's lines cut at the clamp, the last one ending in
   `…` as `truncate`'s does. Small–medium.
@@ -1059,7 +1059,8 @@ golden.
 
 ## Decisions for the user
 
-Each with the recommendation.
+Each with the recommendation, all ten taken as recommended
+(2026-09-27).
 
 - **D1. `aspect-ratio` in px or in cells.** Physical (recommended): an
   `aspect-square` box looks square, as the research and the precedent
@@ -1135,4 +1136,13 @@ this plan is three to four such batches.
 Each item's line goes here as it lands: the date, what changed, the
 tests seen red, and the spec's deviation removed or reworded.
 
-- None yet.
+- 2026-09-27, `text-transform`: text-transform.ts maps a text node's
+  clusters (case, content language, capitalize's word across elements),
+  and tree.ts pushes a lengthened cluster's characters at its offset.
+  `charIndexAt` puts a point at a cluster several characters stand for
+  before the first, which also fixes a copy starting at a tab (it kept
+  the tab's last space alone). Red first: tree.test.ts
+  "text-transform", selection.test.ts's transformed and tab copies,
+  and the `TextTransform` story in Chromium. cell-model.md
+  "Typography" gains the rule, and deviation 22 names `full-width`
+  and `full-size-kana`.

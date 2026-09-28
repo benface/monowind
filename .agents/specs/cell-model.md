@@ -322,6 +322,20 @@ element's padding cells.
   start without them. **Deviation**: the grid draws a decoration line
   in its glyph's color, solid, at the font's thickness;
   `text-decoration-color`, `-style` and `-thickness` are never read.
+- `text-transform`'s case shows on the grid, each text node mapped
+  whole in its content language (`lang`): `istanbul` under `lang="tr"`
+  is `İSTANBUL`, and a final `Σ` lowers to `ς`. A cluster the mapping
+  lengthens (`ß` as `SS`) takes a cell per character, each mapped to
+  the source cluster for selection, as a tab's spaces are; a copy
+  takes the case shown, as `innerText` does in every engine.
+  `capitalize` titlecases a word's first letter where it is lowercase
+  (`ß` to `Ss`, `ǆ` to `ǅ`); a word is letters, marks, digits and `_`,
+  holds `'`, `’` and `·` between its characters, and runs across inline
+  elements (`hel<b>lo</b>` is `Hello`). Where the engines differ, the
+  grid takes one: a period ends a word, as in Chromium and Firefox
+  (WebKit keeps `foo.bar` one word), and `ß` and the ligatures
+  titlecase, as in Firefox and WebKit (Chromium leaves them).
+  `full-width` and `full-size-kana` are deviation 22.
 - Inline content must not disturb row height: `vertical-align` and any other
   baseline-shifting properties are neutralized on inline descendants.
   On ATOMIC inline boxes, authored `vertical-align: bottom` is honored —
@@ -1319,6 +1333,10 @@ lines); the explicit zero `clip` rect still drops them.
     of or above the host, so content past the start edge would be
     unreachable — a reversed scroll container, a chat pane's
     `flex-col-reverse overflow-y-auto`, would lose its overflow.
+22. `text-transform: full-width` and `full-size-kana` show the authored
+    characters, where Firefox and WebKit draw the full-width and
+    full-size forms (Chromium draws neither, and Tailwind has no
+    utility for them).
 
 ## Touch points on implementation
 

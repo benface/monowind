@@ -11,6 +11,7 @@ import {
   paintedSpan,
   readyHost,
   readyHosts,
+  rowsOf,
   testHooks,
 } from "./helpers.ts";
 
@@ -241,6 +242,32 @@ export const GlyphProperties: StoryObj = {
     expect(zero.textShadow).not.toBe("none");
     expect(zero.textUnderlineOffset).toBe("4px");
     expect(getComputedStyle(paintedSpan(plainHost!, "1/2")!).fontVariantNumeric).toBe("normal");
+  },
+};
+
+/** Test-only: text in the case `text-transform` puts it in, wrapped
+ * where the browser wraps it (`ß` is two cells as `SS`). */
+export const TextTransform: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p class="uppercase">straße <span class="normal-case">keeps</span> case</p>
+      <p class="capitalize">hello-world don't <b>st</b>op</p>
+      <p lang="tr" class="uppercase">istanbul</p>
+      <p class="w-13 uppercase">straße straße straße</p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    expect(rowsOf(host).map((row) => row.trimEnd())).toEqual([
+      "STRASSE keeps CASE",
+      "Hello-World Don't Stop",
+      "İSTANBUL",
+      "STRASSE",
+      "STRASSE",
+      "STRASSE",
+    ]);
+    await expectBrowserRowsToMatchEngine(canvasElement);
   },
 };
 

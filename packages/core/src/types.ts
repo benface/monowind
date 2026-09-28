@@ -1,5 +1,6 @@
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type { ColorSpace, HueMode, Rgba } from "./color.ts";
+import type { TextCase } from "./text-transform.ts";
 
 /** The glyph properties: inherited ones that change how a glyph draws,
  * never its advance. The grid's spans take each from their element
@@ -599,6 +600,8 @@ export interface CellStyle {
   /** CSS `tab-size` in cells — tab stops for preserved (`pre`) text,
    * expanded by the tree builder from each hard line's start. */
   tabSize: number;
+  /** The case `text-transform` puts its text in. */
+  textCase: TextCase;
   /** Empty rows between wrapped lines (`leading-*` re-quantized to the
    * grid: rows per line − 1). See specs/cell-model.md. */
   lineGap: number;
@@ -883,10 +886,12 @@ export interface LayoutNode {
    * it. */
   charInline?: number[];
   /** Where each character of `text` came from, as runs of consecutive
-   * characters (specs/semantic-selection.md): `text[index + k]` is
-   * `node.data[offset + k]` for `k < length`. Characters with no source
-   * position (`<br>` newlines, inline-box and padding markers) fall
-   * between runs; renderer leaves have no map. */
+   * characters (specs/semantic-selection.md): `text[index + k]` stands
+   * for `node.data[offset + k]` for `k < length`, and the characters
+   * standing for one cluster (a tab's spaces, `ß` as `SS`) share its
+   * offset. Characters with no source position (`<br>` newlines,
+   * inline-box and padding markers) fall between runs; renderer leaves
+   * have no map. */
   charSource?: CharSourceRun[];
   /** True on an atomic inline-level box (`inline-flex`/`inline-block`/
    * `inline-grid`) riding its parent leaf's text run as a single
@@ -1147,6 +1152,7 @@ export function defaultCellStyle(): CellStyle {
     scrollbarColor: null,
     whiteSpace: "normal",
     tabSize: 8,
+    textCase: "none",
     lineGap: 0,
     tracking: 0,
     textOverflow: "clip",

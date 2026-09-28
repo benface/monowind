@@ -17,6 +17,8 @@ import {
 } from "./style.ts";
 import { animatedProperties } from "./animation.ts";
 import { inlineMembersOf, inlineOwners } from "./stacking.ts";
+import { casedClusters, readTextCase } from "./text-transform.ts";
+import type { TextCase } from "./text-transform.ts";
 import { createNode, defaultCellStyle } from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import { clusterAdvance, clusterAdvances, graphemes, textCells } from "./width.ts";
@@ -271,7 +273,12 @@ function buildLeaf(
   const run = extractLeafRun(
     root,
     style.tracking,
-    { ...context, preserve: style.whiteSpace === "pre", tabSize: style.tabSize },
+    {
+      ...context,
+      preserve: style.whiteSpace === "pre",
+      tabSize: style.tabSize,
+      textCase: style.textCase,
+    },
     nodes,
   );
   const text = run.chars.join("");
@@ -556,6 +563,8 @@ interface RunContext extends BuildContext {
    * an inline descendant is not honored (specs/cell-model.md). */
   preserve: boolean;
   tabSize: number;
+  /** The case of the element whose text is collected. */
+  textCase: TextCase;
 }
 
 /**
@@ -617,11 +626,12 @@ function collectRunNodes(
     if (!owner || owner === container) {
       collectNodes(group, tracking, ctx, run);
     } else {
-      const entry = inlineEntry(owner, getComputedStyle(owner), 0, 0, ctx, -1);
+      const cs = getComputedStyle(owner);
+      const entry = inlineEntry(owner, cs, 0, 0, ctx, -1);
       entry.opacity *= splitOpacity(owner, container);
       entry.context ||= entry.opacity < 1;
       collectOwned(run, entry, (index) =>
-        collectNodes(group, entry.tracking, ctx, run, entry.opacity, index),
+        collectNodes(group, entry.tracking, casedContext(ctx, cs), run, entry.opacity, index),
       );
     }
     i = end;
@@ -749,13 +759,19 @@ function collectNodes(
   };
   for (const node of nodes) {
     if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? "";
+      const clusters = graphemes(text);
+      const shown =
+        ctx.textCase === "none"
+          ? clusters
+          : casedClusters(text, clusters, ctx.textCase, contentLanguage(node), run.chars);
+      let offset = 0;
       if (ctx.preserve) {
         // `white-space: pre`: spaces and newlines survive as authored;
         // tabs expand to the next `tabSize` stop (spaces are pushed
         // untracked — tab stops are grid columns, not glyphs).
-        const text = node.textContent ?? "";
-        let offset = 0;
-        for (const ch of graphemes(text)) {
+        for (let i = 0; i < clusters.length; i++) {
+          const ch = clusters[i]!;
           const at = offset;
           offset += ch.length;
           if (ch === "\r\n" || ch === "\r" || ch === "\n") {
@@ -767,18 +783,18 @@ function collectNodes(
               pushChar(run, " ", 1, node as Text, at);
             }
           } else {
-            pushChar(run, ch, clusterAdvance(ch, tracking), node as Text, at);
+            pushShown(run, shown[i]!, ch, tracking, node as Text, at);
           }
         }
       } else {
         // Collapsible white space folds to one space that keeps the
         // first collapsed character's offset.
-        let offset = 0;
         let inSpace = false;
-        for (const ch of graphemes(node.textContent ?? "")) {
+        for (let i = 0; i < clusters.length; i++) {
+          const ch = clusters[i]!;
           const collapsible =
             ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === "\f" || ch === "\r\n";
-          if (!collapsible) pushChar(run, ch, clusterAdvance(ch, tracking), node as Text, offset);
+          if (!collapsible) pushShown(run, shown[i]!, ch, tracking, node as Text, offset);
           else if (!inSpace) pushChar(run, " ", 1 + tracking, node as Text, offset);
           inSpace = collapsible;
           offset += ch.length;
@@ -835,7 +851,14 @@ function collectNodes(
       // Pad cells belong to the element too (its bg must fill them).
       collectOwned(run, entry, (index) => {
         for (let i = 0; i < padLeft; i++) pushChar(run, INLINE_PAD, 1, null, -1);
-        collectRun(child, entry.tracking, ctx, run, opacity * entry.opacity, index);
+        collectRun(
+          child,
+          entry.tracking,
+          casedContext(ctx, cs),
+          run,
+          opacity * entry.opacity,
+          index,
+        );
         for (let i = 0; i < padRight; i++) pushChar(run, INLINE_PAD, 1, null, -1);
       });
     }
@@ -931,6 +954,37 @@ function pushChar(run: LeafRun, ch: string, advance: number, source: Text | null
   run.advances.push(advance);
   run.sourceNode.push(source);
   run.sourceOffset.push(offset);
+}
+
+/** `cluster` as its text transform shows it (`shown`), each cluster of
+ * a lengthened one (`ß` as `SS`) at the source's offset, as a tab's
+ * spaces are. */
+function pushShown(
+  run: LeafRun,
+  shown: string,
+  cluster: string,
+  tracking: number,
+  source: Text,
+  offset: number,
+): void {
+  if (shown.length === cluster.length) {
+    pushChar(run, shown, clusterAdvance(shown, tracking), source, offset);
+  } else {
+    for (const ch of graphemes(shown)) {
+      pushChar(run, ch, clusterAdvance(ch, tracking), source, offset);
+    }
+  }
+}
+
+/** `ctx` under an inline element's own `text-transform`. */
+function casedContext(ctx: RunContext, cs: CSSStyleDeclaration): RunContext {
+  const textCase = readTextCase(cs.textTransform);
+  return textCase === ctx.textCase ? ctx : { ...ctx, textCase };
+}
+
+/** A node's content language, its nearest `lang`. */
+function contentLanguage(node: Node): string {
+  return node.parentElement?.closest("[lang]")?.getAttribute("lang") ?? "";
 }
 
 /** The run's per-cluster advances and inline indices, expanded to one

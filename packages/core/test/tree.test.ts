@@ -363,6 +363,38 @@ describe("white-space: pre", () => {
   });
 });
 
+describe("text-transform", () => {
+  const text = (html: string) => buildTree(el(html), 16)!.text;
+
+  it("draws the text in the case it puts it in", () => {
+    expect(text('<p style="text-transform: uppercase">hello <b>world</b></p>')).toBe("HELLO WORLD");
+    expect(text('<p style="text-transform: lowercase">HeLLo</p>')).toBe("hello");
+    expect(text('<p>a <span style="text-transform: uppercase">b</span> c</p>')).toBe("a B c");
+    expect(text('<p style="text-transform: uppercase; white-space: pre">a\tb</p>')).toBe(
+      "A       B",
+    );
+  });
+
+  it("capitalizes each word's first letter, a word running across elements", () => {
+    const capitalized = (html: string) => text(`<p style="text-transform: capitalize">${html}</p>`);
+    expect(capitalized("hello-world don't (stop) foo_bar 3pm a·b e.g.")).toBe(
+      "Hello-World Don't (Stop) Foo_bar 3pm A·b E.G.",
+    );
+    expect(capitalized("hel<b>lo</b> x<i>y</i>")).toBe("Hello Xy");
+    expect(capitalized("ABC dEF ǆemal ßa")).toBe("ABC DEF ǅemal Ssa");
+    expect(text('<p>hel<span style="text-transform: capitalize">lo wo</span>rld</p>')).toBe(
+      "hello World",
+    );
+  });
+
+  it("maps each text node as a whole, in its content language", () => {
+    expect(text('<p lang="tr" style="text-transform: uppercase">istanbul</p>')).toBe("İSTANBUL");
+    expect(text('<p lang="en_US" style="text-transform: uppercase">i</p>')).toBe("I");
+    expect(text('<p style="text-transform: lowercase">ΟΔΟΣ ΣΑΣ</p>')).toBe("οδος σας");
+    expect(text('<p style="text-transform: lowercase">ΟΔΟ<span>Σ</span></p>')).toBe("οδοσ");
+  });
+});
+
 describe("atomic inline box vertical-align", () => {
   const box = (align: string) =>
     `<span style="display: inline-block; width: 4px; height: 12px; vertical-align: ${align}"></span>`;
@@ -497,6 +529,20 @@ describe("character ↔ DOM position map (specs/semantic-selection.md)", () => {
     expect(node.text).toBe("a\n b");
     expect(node.charSource).toEqual([{ index: 0, length: 4, node: text, offset: 0 }]);
     expect(positionOf(node, 1)).toEqual({ node: text, offset: 1 });
+  });
+
+  it("maps a lengthened cluster's characters to it, a point there before the first", () => {
+    const root = el('<div style="text-transform: uppercase">straße</div>');
+    const node = buildTree(root, 16)!;
+    const [text] = textNodes(root);
+    expect(node.text).toBe("STRASSE");
+    expect(node.intrinsicWidth).toBe(7);
+    expect(node.charSource).toEqual([
+      { index: 0, length: 5, node: text, offset: 0 },
+      { index: 5, length: 2, node: text, offset: 4 },
+    ]);
+    expect(charIndexAt(node, text!, 4)).toBe(4);
+    expect(charIndexAt(node, text!, 5)).toBe(6);
   });
 
   it("round-trips every mapped index", () => {
