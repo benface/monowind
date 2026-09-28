@@ -231,18 +231,51 @@ where set (`h-*`, `h-full` of a definite parent, `h-screen`, a flex or
 grid parent's stretch, `aspect-ratio` from its width) and its content's
 otherwise, floored and capped by its limits.
 
-**Approach**: the height measured natively with the engine's rule
-lifted, as the width is ("Host sizing"), where the author gives one:
-the host is a page box, so its sizes are the page's px, not cells
-(`h-1` is 4px, as `w-1` is), capped to the whole rows that fit as the
-width is to whole columns;
-the root lays out against it as a definite height, its content
-overflowing or scrolling as the host's `overflow` says. How a measure
-tells an authored height from the content's is the spec's question,
-written when the item starts.
+**Approach** (cell-model.md "Host sizing", decided with the user
+2026-09-27): CSS sizes the host. It keeps `height: auto`; an in-flow
+spacer stands for its content (the shadow viewport's `min-height`, the
+content's rows); its sizes are the page's px (`h-1` is 4px, as `w-1`
+is). Where CSS's height is not the content's, the root lays out against
+the rows that fit. No measure tells an authored height from a content
+one: the spacer's height is the content's by construction. The height
+is not capped to whole rows (reviewed 2026-09-27): a cap at the last
+layout's rows holds a `min-h-*` host at its floor as its content grows
+past it, and hides the growth from the host's resize observer, which
+otherwise sees every change to the height.
 
-**Size**: medium. **Tests**: host stories for each case beside a
-native box; element.test.ts where happy-dom can say it.
+**Steps**:
+
+1. The spacer. shadow.css: the slot positioned out of the viewport's
+   flow (top left, the viewport's width) outside `:host([measuring])`,
+   so neither content not yet laid out nor the host's own text gives
+   the host height, and in flow under it as today, for the width's
+   read. element.ts writes the viewport's `min-height`, the root's
+   natural content rows in px, on the shadow element itself (no
+   inherited variable, so nothing below restyles), where it wrote the
+   host's inline `height`, which goes.
+2. The read. element.ts: the host's content-box height
+   (`clientHeight` less its padding) read before `measuring` goes on,
+   the slot out of flow and the spacer the last layout's. Within
+   half a pixel of the spacer, the content sizes it; else it floors to
+   the rows the root lays out against. The cost is the read's forced
+   layout (measured with `pnpm bench`, alternated).
+3. The layout. layout.ts: `layoutRoot` takes the definite rows and
+   forces the root's height; the spacer is the root's
+   `naturalContentHeight`, so a height the author removes gives the
+   content back. `#laidOutSize.height` is the height read where it
+   sized the root, the rows otherwise, so the resize observer relays
+   out on any change and never on the layout's own.
+4. Tests: a story beside native boxes of the same classes, in three
+   engines: `h-40`, `h-screen`, `h-full` in a sized parent, a
+   stretching flex row and column, `aspect-video` from a width,
+   `min-h-*` under and over the content (its content growing past it),
+   `max-h-*` with the content overflowing, and a host whose `h-*` goes
+   (the content back); a `flex flex-col` child filling an `h-40` host;
+   `countLayouts` for one layout per change of the height, the first
+   included, and one more where the content crosses a floor or a cap;
+   content appended to an empty host.
+
+**Size**: medium.
 
 ## First: anchor positioning (A1–A6)
 
@@ -1232,3 +1265,9 @@ tests seen red, and the spec's deviation removed or reworded.
   `AspectRatioAgainstNative` story's text box (a block's `auto` minimum
   read `0px` in Chromium and WebKit) and narrow row (a derived width is
   a flex item's min-content width). cell-model.md deviation 9 resolved.
+- 2026-09-27, F2 the host's own height: CSS sizes the host (the slot
+  out of its flow, the viewport's `min-height` the content's rows), and
+  the root lays out against the rows its own height gives it. Red
+  first: host.stories.ts `OwnHeight` against the last commit (an
+  `h-40` host one row tall). cell-model.md "Host sizing" rewritten;
+  deviation 23 (a host's `min-h-*` floor definite to the root).

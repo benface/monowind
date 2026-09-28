@@ -445,6 +445,10 @@ export class MonoWindElement extends HTMLElementBase {
   #shadow: ShadowRoot;
   #grid: HTMLElement;
   #layers: HTMLElement;
+  #viewport: HTMLElement;
+  /** The spacer's height in px, the content's rows at the last layout
+   * (specs/cell-model.md "Host sizing"). */
+  #spacerHeight = 0;
   #probe: HTMLElement;
   /** Resolves colors where the grid's spans inherit them
    * (specs/cell-model.md "Opacity and translucency"): the ink, the
@@ -598,6 +602,7 @@ export class MonoWindElement extends HTMLElementBase {
     shadow.adoptedStyleSheets = [this.#hostSheet];
     this.#grid = shadow.querySelector<HTMLElement>("#grid")!;
     this.#layers = shadow.querySelector<HTMLElement>("#layers")!;
+    this.#viewport = shadow.querySelector<HTMLElement>("#viewport")!;
     this.#colorProbe = shadow.querySelector<HTMLElement>("#color-probe")!;
     this.#colorProbeStyle = getComputedStyle(this.#colorProbe);
     // The cell-metrics probe (measureCellMetrics), in the LIGHT DOM so it
@@ -2770,6 +2775,9 @@ export class MonoWindElement extends HTMLElementBase {
     const textareaWidths: TextareaWidths = new Map();
     const textareas = this.querySelectorAll<HTMLTextAreaElement>("textarea");
     const hostStyle = getComputedStyle(this);
+    // The height CSS gives the host, its content still the last layout's
+    // spacer (specs/cell-model.md "Host sizing").
+    const sizedHeight = this.clientHeight - pxSum(hostStyle, "padding-top", "padding-bottom");
     const cellWidth = hostStyle.getPropertyValue("--mw-cw").trim();
     const cellWidthPx = parseFloat(cellWidth);
     if (Number.isFinite(cellWidthPx) && cellWidthPx > 0) {
@@ -2896,14 +2904,21 @@ export class MonoWindElement extends HTMLElementBase {
       settling = { host: mayTransition(hostStyle), elements: new Set() };
       for (const el of gated) if (mayTransition(getComputedStyle(el))) settling.elements.add(el);
 
-      // (4) Compute integer layout, and the top-layer stack over it.
+      // (4) Compute integer layout, and the top-layer stack over it: the
+      // root against the rows the host's own height gives it, its content
+      // sizing it where that height is the spacer's.
       if (this.#visibleCells) virtualRoot.visibleCells = this.#visibleCells;
+      const sizedRows =
+        Math.abs(sizedHeight - this.#spacerHeight) <= 0.5
+          ? undefined
+          : Math.max(0, Math.floor(sizedHeight / metrics.height + 1e-6));
       const { height } = layoutRoot(
         virtualRoot,
         availableCols,
         (node) => this.#syncScrollOffsets(metrics, scrollState, collectScrollContainers(node)),
         this.#placements,
         this.#topLayer,
+        sizedRows,
       );
       this.#scrollNodes = collectScrollContainers(virtualRoot);
       // A stack element the UA centers follows the cells the reader
@@ -2931,21 +2946,13 @@ export class MonoWindElement extends HTMLElementBase {
       if (this.#grid.style.width !== gridWidth) this.#grid.style.width = gridWidth;
       if (this.#grid.style.height !== gridHeight) this.#grid.style.height = gridHeight;
 
-      // (6) Size the host to match content rows (content-driven height).
-      // Under border-box (Tailwind's preflight default) the height must
-      // also cover the host's own padding and border.
-      const chrome =
-        hostStyle.boxSizing === "border-box"
-          ? pxSum(
-              hostStyle,
-              "padding-top",
-              "padding-bottom",
-              "border-top-width",
-              "border-bottom-width",
-            )
-          : 0;
-      const hostHeight = `${height * metrics.height + chrome}px`;
-      if (this.style.height !== hostHeight) this.style.height = hostHeight;
+      // (6) The spacer, the content's rows, the host's height where it
+      // has none of its own (specs/cell-model.md "Host sizing").
+      const spacerHeight = virtualRoot.naturalContentHeight * metrics.height;
+      if (spacerHeight !== this.#spacerHeight) {
+        this.#viewport.style.minHeight = `${spacerHeight}px`;
+        this.#spacerHeight = spacerHeight;
+      }
       // Cap the width to the columns laid out (specs/cell-model.md "Host
       // sizing"); the companion applies it outside measuring.
       const chromeX =
@@ -2953,7 +2960,10 @@ export class MonoWindElement extends HTMLElementBase {
           ? padX + pxSum(hostStyle, "border-left-width", "border-right-width")
           : 0;
       setVar(this, "--mw-host-w", `${availableCols * metrics.width + chromeX}px`);
-      this.#laidOutSize = { width: availableCols * metrics.width, height: height * metrics.height };
+      this.#laidOutSize = {
+        width: availableCols * metrics.width,
+        height: sizedRows === undefined ? height * metrics.height : sizedHeight,
+      };
 
       // (7) Reveal the host now that layout is done — kills the FOUC where
       // the browser paints raw flex/block layout before the engine runs.

@@ -201,9 +201,28 @@ centering land on the grid instead of a fractional edge. A cap rather than
 a width, so a shrinking container still shrinks the host natively; growth
 is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
-the window. The height is engine-set from the content rows, as before;
-a host with nothing to lay out is zero rows — its padding and border
-only, and an empty grid. A host in no box (inside `display: none`)
+the window.
+
+The height is CSS's too. The host keeps `height: auto`; its content
+lies out of its flow (the shadow's slot is positioned, outside the
+engine's reads), and an in-flow spacer as tall as the content's rows
+stands for it, so a host without a height of its own is as tall as its
+content, and `h-*`, `h-full`, `h-screen`, a flex or grid parent's
+stretch, `aspect-*` from its width, `min-h-*` and `max-h-*` size it as
+they size any box. Its sizes are the page's px, not cells, as its
+width's are: `h-1` is 4px, and `h-80` is 16 rows of a 20px cell. The
+engine reads the height at the start of each layout, the spacer still
+the last layout's: equal to it, the content sizes the host; else the
+root lays out against the rows that fit, a definite height, and what is
+left under the last row, less than a row, is the host's own
+background. The height
+is not capped to whole rows as the width is: a
+cap would hold a `min-h-*` host at its floor as its content grew past
+it, where nothing reports the growth. Any change to the height, whatever
+changed it, is the host's own resize, which relays it out. A host with
+nothing to lay out and no height of its own is zero rows — its padding
+and border only, and an empty grid; a `min-h-*` floor above the content
+is deviation 23. A host in no box (inside `display: none`)
 measures no cell and keeps its last layout, writing nothing, until
 its resize as it shows lays it out. The host's own inline content is the root
 leaf (specs/host-leaf.md), laid out inside the same content box. A
@@ -1386,6 +1405,10 @@ lines); the explicit zero `clip` rect still drops them.
     characters, where Firefox and WebKit draw the full-width and
     full-size forms (Chromium draws neither, and Tailwind has no
     utility for them).
+23. A host's `min-h-*` floor above its content is definite to the root
+    ("Host sizing"): a child's `h-full` fills it, where CSS leaves a
+    floor indefinite. The cause: the engine reads the height CSS gives
+    the host, not which rule gave it.
 
 ## Touch points on implementation
 
@@ -1468,3 +1491,15 @@ For "Aspect ratio":
   block-axis pass deriving the width from an explicit stretch.
 - positioning.ts: `placeByInsets` deriving the axis its insets and
   sizes leave open.
+
+For "Host sizing":
+
+- shadow.css: the slot out of the host's flow but under
+  `:host([measuring])`, and the viewport, whose `min-height` is the
+  spacer.
+- element.ts: the height read before `measuring` (`sizedHeight`), the
+  rows it gives the root where it is not the spacer's (`sizedRows`),
+  the spacer written from the root's natural content rows
+  (`#spacerHeight`), and `#laidOutSize`, the height the resize
+  observer compares.
+- layout.ts: `layoutRoot`'s `rows`, the root's forced height.

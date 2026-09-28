@@ -1,6 +1,6 @@
 # monowind — core architecture
 
-Status: living document (last updated 2026-09-24)
+Status: living document (last updated 2026-09-27)
 
 ## What monowind is
 
@@ -43,7 +43,12 @@ The unit mapping: **1 cell = 0.25rem** (Tailwind's spacing unit, 4px at the defa
 root font size). So stock, zero-config Tailwind already means the right thing:
 `p-1` → 0.25rem → 1 cell, `w-20` → 5rem → 20 cells. The engine divides computed px
 by `0.25 × root font-size` (measured, not hardcoded 4px) to recover cell counts.
-Horizontal values map to columns, vertical values to rows.
+Horizontal values map to columns, vertical values to rows. Physical intent —
+viewport units, shadows, gradients, `aspect-ratio` — converts through the
+measured cell instead, so `aspect-square` looks square in any font. The
+`<mono-wind>` host's own box is a page box: its sizes are the page's px, and
+the engine lays out the whole columns and rows that fit it
+(specs/cell-model.md "Host sizing").
 
 Why this instead of parsing class names (the original plan):
 
@@ -247,6 +252,10 @@ The engine both reads authored styles and writes geometry, and both
 own overrides. The cycle, batched per animation frame (pre-paint, so no
 visible flash):
 
+0. Read the host's height. Its content lies out of its flow, stood for
+   by an in-flow spacer of the last layout's rows, so a height other than
+   the spacer's is the host's own, which the root lays out against
+   (specs/cell-model.md "Host sizing").
 1. Set a "measuring" attribute on the host and a `data-mw-measuring` flag on
    every light element; the flag disables the geometry override rules (they
    are guarded by `:not([data-mw-measuring])` on the element itself).
@@ -353,9 +362,10 @@ dominant.
 - **Heavy borders** — resolved: the border width selects a weight band
   of the glyph set (heavy from 2px in the default set), no style
   keyword needed (`../specs/cell-model.md` "Box model").
-- **Cell aspect ratio / font metrics**: measure the actual font (not `1ch`
-  assumptions), re-measure on `document.fonts.ready`; whether to recommend/bundle a
-  known-good monospace font.
+- **Cell aspect ratio / font metrics**: resolved — the cell is measured
+  off the actual font (a persistent probe, re-measured as fonts load), and
+  physical intent converts through it (D1). Open: whether to
+  recommend/bundle a known-good monospace font.
 - **Unicode display width**: done — `wcwidth`-style cluster widths,
   cell-sized glyph boxes for fallback fonts, and the grid-painted
   selection (`specs/wide-characters.md`).

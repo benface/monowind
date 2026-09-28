@@ -451,3 +451,107 @@ export const MovedHost: StoryObj = {
     expect(by("second")).toHaveAttribute("data-mw-hover");
   },
 };
+
+const lines = (count: number) =>
+  Array.from({ length: count }, (_, i) => html`<p>line ${i + 1}</p>`);
+
+/** A host's height is CSS's (specs/cell-model.md "Host sizing"): as
+ * tall as a native twin of its classes in the same setting, its root
+ * laid out against the rows that fit where the height is its own, its
+ * content's rows where it has none, one layout per change. */
+export const OwnHeight: StoryObj = {
+  render: () => html`
+    <div class="flex flex-col gap-4">
+      <div class="flex items-start gap-2">
+        <mono-wind data-test="fixed" class="h-40 w-40">
+          <div class="flex h-full flex-col">
+            <div>top</div>
+            <div data-test="fill" class="flex-1">fill</div>
+          </div>
+        </mono-wind>
+        <div data-test="fixed-twin" class="h-40 w-40"></div>
+      </div>
+      <div class="flex items-start gap-2">
+        <div class="w-40" style="height: 203px">
+          <mono-wind data-test="full" class="h-full">full</mono-wind>
+        </div>
+        <div class="w-40" style="height: 203px">
+          <div data-test="full-twin" class="h-full"></div>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <div class="flex h-50 w-40"><mono-wind data-test="row" class="flex-1">row</mono-wind></div>
+        <div class="flex h-50 w-40"><div data-test="row-twin" class="flex-1"></div></div>
+      </div>
+      <div class="flex gap-2">
+        <div class="flex h-50 w-40 flex-col">
+          <div class="h-10"></div>
+          <mono-wind data-test="column" class="flex-1">column</mono-wind>
+        </div>
+        <div class="flex h-50 w-40 flex-col">
+          <div class="h-10"></div>
+          <div data-test="column-twin" class="flex-1"></div>
+        </div>
+      </div>
+      <mono-wind data-test="ratio" class="aspect-video w-80">ratio</mono-wind>
+      <mono-wind data-test="floor" class="min-h-40 w-40">floor</mono-wind>
+      <mono-wind data-test="past-floor" class="min-h-10 w-40">${lines(6)}</mono-wind>
+      <mono-wind data-test="cap" class="max-h-10 w-40">${lines(6)}</mono-wind>
+      <mono-wind data-test="content" class="w-40">${lines(3)}</mono-wind>
+      <mono-wind data-test="empty" class="w-40"></mono-wind>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const hooks = testHooks(canvasElement);
+    const host = await readyHost(canvasElement);
+    const cell = cellSize(host);
+    await frames(2);
+    const height = (name: string) => hooks(name).getBoundingClientRect().height;
+    const cells = (el: HTMLElement, name: string) => Number(el.style.getPropertyValue(name));
+    for (const name of ["fixed", "full", "row", "column"]) {
+      expect(height(name), name).toBeCloseTo(height(`${name}-twin`), 1);
+    }
+    // The root's rows, the height's that fit: the column's second item fills them.
+    expect(cells(hooks("fill"), "--mw-h")).toBe(Math.floor(160 / cell.height) - 1);
+    const ratio = hooks("ratio").getBoundingClientRect();
+    expect(ratio.height).toBeCloseTo((ratio.width * 9) / 16, 0);
+    expect(height("floor")).toBeCloseTo(160, 1);
+    expect(height("past-floor")).toBeCloseTo(6 * cell.height, 1);
+    expect(height("cap")).toBeCloseTo(40, 1);
+    expect(height("content")).toBeCloseTo(3 * cell.height, 1);
+    expect(height("empty")).toBe(0);
+
+    // A height of its own and back, a layout each; content appended to
+    // an empty host sizes it.
+    const content = hooks("content");
+    const layouts = countLayouts(content);
+    content.classList.add("h-40");
+    await waitFor(() => expect(layouts.count).toBe(1));
+    expect(height("content")).toBeCloseTo(160, 1);
+    content.classList.remove("h-40");
+    await waitFor(() => expect(layouts.count).toBe(2));
+    expect(height("content")).toBeCloseTo(3 * cell.height, 1);
+    await frames(5);
+    expect(layouts.count).toBe(2);
+    layouts.stop();
+    const empty = hooks("empty");
+    empty.innerHTML = "<p>one</p><p>two</p>";
+    await waitFor(() => expect(height("empty")).toBeCloseTo(2 * cell.height, 1));
+
+    // Content growing past a floor, and back under it: the first layout
+    // against the floor, one more by the content, which the host's
+    // resize reports.
+    const floor = hooks("floor");
+    const floorLayouts = countLayouts(floor);
+    const past = Math.ceil(160 / cell.height) + 2;
+    floor.innerHTML = Array.from({ length: past }, (_, i) => `<p>line ${i + 1}</p>`).join("");
+    await waitFor(() => expect(height("floor")).toBeCloseTo(past * cell.height, 1));
+    await frames(5);
+    expect(floorLayouts.count).toBe(2);
+    floor.innerHTML = "floor";
+    await waitFor(() => expect(height("floor")).toBeCloseTo(160, 1));
+    await frames(5);
+    expect(floorLayouts.count).toBe(4);
+    floorLayouts.stop();
+  },
+};

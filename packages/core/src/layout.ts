@@ -61,11 +61,12 @@ import type {
 
 /**
  * Layout entry point: mutates localRect on the root and each descendant.
- * Coordinates are parent-relative (root's rect is at 0,0). `remembered`
- * carries anchored boxes' last successful placements between layouts
- * (specs/anchor-positioning.md). Last, the top-layer `stack` is assigned
- * and every box gets its `paintOrigin` under the synced scroll offsets
- * (paint-origin.ts).
+ * Coordinates are parent-relative (root's rect is at 0,0); `rows` is a
+ * height the host's own CSS gives it (specs/cell-model.md "Host
+ * sizing"). `remembered` carries anchored boxes' last successful
+ * placements between layouts (specs/anchor-positioning.md). Last, the
+ * top-layer `stack` is assigned and every box gets its `paintOrigin`
+ * under the synced scroll offsets (paint-origin.ts).
  */
 export function layoutRoot(
   root: LayoutNode,
@@ -73,9 +74,19 @@ export function layoutRoot(
   syncScroll?: (node: LayoutNode) => void,
   remembered?: Map<Element, Remembered>,
   stack?: TopLayer,
+  rows?: number,
 ): { height: number } {
   const cache = makeIntrinsicCache();
-  layoutNode(root, availableWidth, undefined, 0, 0, "fill", cache);
+  layoutNode(
+    root,
+    availableWidth,
+    rows,
+    0,
+    0,
+    "fill",
+    cache,
+    rows === undefined ? undefined : { height: rows },
+  );
   // The scroll containers' offsets, for the anchors the positioning
   // pass reads through them (specs/anchor-positioning.md).
   syncScroll?.(root);

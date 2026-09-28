@@ -11,9 +11,18 @@
 }
 /* Positioned, so the light DOM paints over the grid from its origin; a
  * block formatting context, so a flow child's top margin stays where
- * the engine put it (specs/cell-model.md "Inline content"). */
+ * the engine put it (specs/cell-model.md "Inline content"). Out of the
+ * host's flow, so the viewport's `min-height` alone gives it height
+ * ("Host sizing"), except while the engine reads a shrink-to-fit
+ * host's width off its content. */
 slot {
   display: flow-root;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+:host([measuring]) slot {
   position: relative;
 }
 /* Sized to the ink extent, the host's background carried past the host

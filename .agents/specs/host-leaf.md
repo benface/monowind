@@ -89,8 +89,9 @@ is a leaf.
   node's `user-select` from its light parent), and of the four leaf
   typography rules; in the shadow sheet,
   `#grid { -webkit-text-fill-color: currentColor }`.
-- The slot is a positioned block box (`slot { display: flow-root;
-position: relative }`). Laid-out elements are absolute and always
+- The slot is a positioned block box (`display: flow-root`, absolute
+  at the viewport's origin, in flow while the engine reads,
+  cell-model.md "Host sizing"). Laid-out elements are absolute and always
   painted above the grid, but the host's own text is in-flow, and
   in-flow content paints BELOW an absolutely positioned sibling — the
   grid's glyphs covered its selection ink (found by the visual fixture;
