@@ -3,6 +3,7 @@ import { EFFECTS, animatedProperties, animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
 import { colorAlpha, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
+import { DEFAULT_CELL } from "./gradient.ts";
 import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
@@ -211,6 +212,11 @@ export function readCellStyle(
   const justifyItems = readAlignment(el, "justify-items", ALIGN, cs.justifyItems);
   const justifySelf = readAlignment(el, "justify-self", ALIGN_SELF, cs.justifySelf);
   const effects = readLayer(el, cs);
+  // Table-internal boxes take none, as in CSS.
+  const aspectRatio =
+    tableRole === "none" || tableRole === "caption"
+      ? readAspectRatio(cs.aspectRatio, metrics)
+      : null;
   const style: CellStyle = {
     display,
     tableRole,
@@ -240,6 +246,7 @@ export function readCellStyle(
     alignContentSafe: alignContent.safe,
     alignItems: alignItems.keyword,
     alignItemsSafe: alignItems.safe,
+    alignItemsNormal: cs.alignItems === "normal" || cs.alignItems === "",
     alignSelf: alignSelf.keyword,
     alignSelfSafe: alignSelf.safe,
     justifyItems: justifyItems.keyword,
@@ -261,10 +268,12 @@ export function readCellStyle(
     gridRowEnd: parseGridLine(cs.getPropertyValue("grid-row-end")),
     width: readSize(source, "width", cs.width),
     height: readSize(source, "height", cs.height),
-    minWidth: readLimit(source, "min-width", cs.minWidth, "min-w") ?? "auto",
-    minHeight: readLimit(source, "min-height", cs.minHeight, "min-h") ?? "auto",
+    minWidth: readLimit(source, "min-width", cs.minWidth, "min-w", aspectRatio !== null) ?? "auto",
+    minHeight:
+      readLimit(source, "min-height", cs.minHeight, "min-h", aspectRatio !== null) ?? "auto",
     maxWidth: readLimit(source, "max-width", cs.maxWidth, "max-w"),
     maxHeight: readLimit(source, "max-height", cs.maxHeight, "max-h"),
+    aspectRatio,
     padding: readPadding(cs, rootFontSizePx),
     margin: readMargin(source),
     position: readKeyword(POSITIONS, position, "static"),
@@ -1699,10 +1708,15 @@ function readLimit(
   property: string,
   value: string,
   prefix: string,
+  ratio = false,
 ): SizeLimit | undefined {
   const resolved = resolvedText(source.csm, property, value);
   const authored = authoredCells(source, property, resolved, prefix);
   if (authored !== undefined) return authored;
+  // A box with an aspect ratio has an `auto` minimum where a block reads
+  // `0px`: Chromium's Typed OM keeps `auto`, WebKit's reads `0px` as the
+  // probe measured (`autoMinimum`), an authored `min-h-0` found above.
+  if (ratio && resolved === (source.metrics?.autoMinimum ?? "auto")) return undefined;
   if (!value || value === "none" || value === "auto") return undefined;
   if (value === "min-content" || value === "max-content" || value === "fit-content") return value;
   if (value.endsWith("%")) {
@@ -2006,6 +2020,16 @@ function viewportUtilityPx(classAttr: string, prefix: string): number | null {
     `(?:^|[\\s:.[!])${prefix}-\\[(-?[\\d.]+(?:[dsl]?v(?:h|w|min|max)|vi|vb))\\]`,
   ).exec(classAttr);
   return arbitrary ? viewportLengthPx(arbitrary[1]!) : null;
+}
+
+/** A computed `aspect-ratio` in columns per row, physical through the
+ * measured cell (specs/cell-model.md "Aspect ratio"); null for `auto`
+ * or a zero term. */
+export function readAspectRatio(value: string, metrics: CellMetrics | undefined): number | null {
+  const [width = 0, height = 1] = value.replace("auto", "").split("/").map(Number);
+  if (!(width > 0 && height > 0)) return null;
+  const cell = metrics ?? DEFAULT_CELL;
+  return ((width / height) * cell.height) / cell.width;
 }
 
 /** Convert PHYSICAL px to cells on the given axis using the measured

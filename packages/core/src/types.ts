@@ -510,6 +510,9 @@ export interface CellStyle {
   alignContentSafe: boolean;
   alignItems: AlignItems;
   alignItemsSafe: boolean;
+  /** `align-items` is `normal`, read as `stretch` but `start` for a
+   * grid item with an aspect ratio (specs/grid.md). */
+  alignItemsNormal: boolean;
   alignSelf: AlignSelf;
   alignSelfSafe: boolean;
   /** Grid container inline-axis item alignment (`justify-items`); the CSS
@@ -546,6 +549,9 @@ export interface CellStyle {
   minHeight: SizeLimit | "auto";
   maxWidth: SizeLimit | undefined;
   maxHeight: SizeLimit | undefined;
+  /** `aspect-ratio` in columns per row, null for none
+   * (specs/cell-model.md "Aspect ratio"). */
+  aspectRatio: number | null;
   padding: PerSide<CellLength>;
   /** `null` = `auto`. Percentages resolve against the parent's content
    * width where the margin is consumed. */
@@ -1110,6 +1116,7 @@ export function defaultCellStyle(): CellStyle {
     alignContentSafe: false,
     alignItems: "stretch",
     alignItemsSafe: false,
+    alignItemsNormal: true,
     alignSelf: "auto",
     alignSelfSafe: false,
     justifyItems: "stretch",
@@ -1132,6 +1139,7 @@ export function defaultCellStyle(): CellStyle {
     minHeight: "auto",
     maxWidth: undefined,
     maxHeight: undefined,
+    aspectRatio: null,
     padding: zeroInsets(),
     margin: { top: 0, right: 0, bottom: 0, left: 0 },
     position: "static",

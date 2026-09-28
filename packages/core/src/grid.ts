@@ -214,7 +214,12 @@ export function layoutGrid(
         width: usedWidths[i]!,
         height: availableHeight,
       });
-    } else if (align === "stretch" && !hasAutoY && child.style.height === undefined) {
+    } else if (
+      align === "stretch" &&
+      !hasAutoY &&
+      child.style.height === undefined &&
+      !(child.style.aspectRatio !== null && alignsNormal(child, node))
+    ) {
       const maxHeight = resolveLimit(child.style.maxHeight, areaHeight);
       const minHeight =
         child.style.minHeight === "auto"
@@ -229,8 +234,10 @@ export function layoutGrid(
           : (resolveLimit(child.style.minHeight, areaHeight) ?? 0);
       const stretched = clampSize(availableHeight, minHeight, maxHeight);
       if (stretched !== child.localRect.height) {
+        // A ratio item's width derives from the stretched height.
+        const width = child.style.aspectRatio === null ? { width: usedWidths[i]! } : {};
         layoutNode(child, areaWidth, areaHeight, 0, 0, "fill", cache, {
-          width: usedWidths[i]!,
+          ...width,
           height: stretched,
         });
       }
@@ -1354,6 +1361,12 @@ function contentMinimumCap(
     cap += (track.fixedMax ?? Infinity) + (i > start ? gapBefore[i]! : 0);
   }
   return !autoMin || (span > 1 && flexible) ? undefined : cap;
+}
+
+/** Whether an item's block-axis alignment is `normal`: its own
+ * `align-self` unset under a container's `normal` `align-items`. */
+function alignsNormal(child: LayoutNode, node: LayoutNode): boolean {
+  return child.style.alignSelf === "auto" && node.style.alignItemsNormal;
 }
 
 /** A stretched item's automatic minimum on one axis: its content size

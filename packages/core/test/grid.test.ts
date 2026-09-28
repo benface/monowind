@@ -1706,3 +1706,47 @@ describe("max-height on the container", () => {
     expect(footer.localRect.y).toBe(3);
   });
 });
+
+describe("aspect ratio (specs/grid.md)", () => {
+  /** The first of `items` in a grid over `columns` and `rows`, 32 wide. */
+  const grid = (
+    columns: TrackSize[],
+    rows: TrackSize[],
+    item: Partial<CellStyle>,
+    text = "",
+    ...siblings: LayoutNode[]
+  ) => {
+    const node = makeNode({ text, style: item });
+    const container = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(...columns),
+        gridTemplateRows: rows.length ? tracks(...rows) : { kind: "none" },
+      },
+      children: [node, ...siblings],
+    });
+    layoutRoot(makeNode({ children: [container] }), 32);
+    return `${node.localRect.width}x${node.localRect.height}`;
+  };
+
+  it("sizes an item with a ratio as a block where its alignment is normal", () => {
+    expect(grid([fixed(20)], [], { aspectRatio: 2 })).toBe("20x10");
+    expect(grid([fixed(20)], [fixed(20)], { aspectRatio: 2 })).toBe("20x10");
+    expect(grid([fixed(20)], [fixed(20)], { aspectRatio: 2, justifySelf: "start" }, "ab")).toBe(
+      "2x1",
+    );
+  });
+
+  it("derives the width from a height an explicit stretch gives, past the area", () => {
+    const tall = makeNode({ style: { height: { kind: "cells", value: 20 } } });
+    expect(
+      grid([fixed(10), fixed(10)], [], { aspectRatio: 2, alignSelf: "stretch" }, "", tall),
+    ).toBe("40x20");
+  });
+
+  it("contributes the width a set height derives to an auto column", () => {
+    expect(grid([auto(), fr()], [], { aspectRatio: 2, height: { kind: "cells", value: 5 } })).toBe(
+      "10x5",
+    );
+  });
+});

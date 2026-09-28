@@ -16,11 +16,12 @@ glyphs a theme can restyle without breaking the code.
 ## Probe results (2026-09-05, Storybook themes, Chromium / Firefox / WebKit)
 
 Measured cell height over width: the IBM VGA themes (`dos`,
-`dos-blue`, `green-phosphor`, `amber`, `bbs`) exactly 2.00; `c64`
-1.62–1.66 and `teletype` 1.67; the default JetBrains Mono 2.14 (2.38 in
-Firefox). Every bundled font snaps to aspect 2, so half blocks are the
-packing everywhere and modules range from 0.83 to 1.19 times as tall
-as wide; no bundled font has square cells.
+`dos-blue`, `green-phosphor`, `amber`, `bbs`) exactly 2.00; `teletype`
+1.66–1.67; the default JetBrains Mono 2.14 (2.38 in Firefox); `c64`
+exactly 1.00, Pet Me 64 being 16px wide on its 16px line (remeasured
+2026-09-27, the first probe's 1.62–1.66 having been wrong). Every other
+bundled font snaps to aspect 2, half blocks, its modules 0.83 to 1.19
+times as tall as wide; `c64` snaps to one full block per module, square.
 
 ## Locked decisions
 

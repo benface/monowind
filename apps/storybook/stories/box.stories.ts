@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { glyphSetFor, registerBorderGlyphs } from "monowind";
-import { readyGrid } from "./helpers.ts";
+import { cellSize, frames, isChromium, isFirefox, readyGrid, readyHost } from "./helpers.ts";
 
 // A set drawing 2px as two rings of the default lines (the rings a
 // theme without heavy glyphs registers, specs/theming.md).
@@ -182,4 +182,148 @@ export const Margin: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** `aspect-ratio` is physical (specs/cell-model.md "Aspect ratio"): a
+ * square looks square whatever the font's cell, its derived side
+ * rounded to whole cells. Backgrounds show the box; a border's glyphs
+ * draw mid-cell, half a row inside it. */
+export const AspectRatio: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-wrap items-start gap-2">
+        <div class="aspect-square w-12 bg-cyan-800 px-1 text-white">square</div>
+        <div class="aspect-video w-24 bg-yellow-700 px-1 text-white">video</div>
+        <div class="aspect-3/2 h-8 bg-purple-800 px-1 text-white">h-8 3/2</div>
+      </div>
+    </mono-wind>
+  `,
+};
+
+type Unit = (cells: number, axis?: "x" | "y") => string;
+
+/** The aspect-ratio probes (specs/cell-model.md, flex.md, grid.md,
+ * positioning.md), each a `data-test="box"` in its setting, lengths in
+ * `unit`; `departs` names an engine the spec says departs from CSS, and
+ * `rounds` the roundings on the way to the box, each half a cell. */
+const aspectCases = (
+  u: Unit,
+): { markup: string; departs?: "chromium" | "firefox" | "webkit"; rounds?: number }[] => {
+  const words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo";
+  return [
+    { markup: `<div data-test="box" style="width:${u(20)};aspect-ratio:1"></div>` },
+    { markup: `<div data-test="box" style="aspect-ratio:4/1"></div>` },
+    { markup: `<div data-test="box" style="height:${u(10, "y")};aspect-ratio:16/9"></div>` },
+    { markup: `<div data-test="box" style="max-height:${u(5, "y")};aspect-ratio:1"></div>` },
+    { markup: `<div data-test="box" style="min-height:${u(20, "y")};aspect-ratio:4/1"></div>` },
+    { markup: `<div data-test="box" style="width:${u(12)};aspect-ratio:4/1">${words}</div>` },
+    {
+      markup: `<div data-test="box" style="width:${u(12)};aspect-ratio:4/1;overflow:hidden">${words}</div>`,
+    },
+    {
+      markup: `<div style="width:${u(20)};aspect-ratio:2"><div data-test="box" style="height:50%"></div></div>`,
+      rounds: 2,
+    },
+    {
+      markup: `<div style="float:left"><div data-test="box" style="height:${u(5, "y")};aspect-ratio:2"></div></div>`,
+    },
+    {
+      markup: `<span data-test="box" style="display:inline-block;width:${u(10)};aspect-ratio:2"></span>`,
+    },
+    {
+      markup: `<div style="display:flex;height:${u(10, "y")}"><div data-test="box" style="aspect-ratio:1"></div></div>`,
+    },
+    {
+      markup: `<div style="display:flex;align-items:start"><div data-test="box" style="flex:1 1 0%;aspect-ratio:4/1"></div></div>`,
+    },
+    {
+      markup: `<div style="display:flex"><div data-test="box" style="width:${u(8)};aspect-ratio:1"></div><div style="width:${u(1)};height:${u(10, "y")}"></div></div>`,
+    },
+    {
+      markup: `<div style="display:flex;flex-direction:column"><div data-test="box" style="aspect-ratio:4/1"></div></div>`,
+    },
+    {
+      markup: `<div style="display:flex;flex-direction:column;align-items:start"><div data-test="box" style="aspect-ratio:4/1">ab</div></div>`,
+      departs: "webkit",
+    },
+    {
+      markup: `<div style="display:grid;grid-template-columns:${u(20)}"><div data-test="box" style="aspect-ratio:16/9"></div></div>`,
+    },
+    {
+      markup: `<div style="display:grid;grid-template-columns:${u(20)};grid-template-rows:${u(20, "y")}"><div data-test="box" style="aspect-ratio:16/9"></div></div>`,
+    },
+    {
+      markup: `<div style="display:grid;grid-template-columns:${u(20)};grid-template-rows:${u(20, "y")}"><div data-test="box" style="aspect-ratio:2;justify-self:start">ab</div></div>`,
+      departs: "chromium",
+    },
+    {
+      markup: `<div style="display:grid;grid-template-columns:${u(10)} ${u(10)}"><div data-test="box" style="aspect-ratio:2;align-self:stretch"></div><div style="height:${u(20, "y")}"></div></div>`,
+      departs: "firefox",
+    },
+    {
+      markup: `<div style="display:grid;grid-template-columns:auto 1fr"><div data-test="box" style="height:${u(5, "y")};aspect-ratio:2"></div><div>x</div></div>`,
+    },
+    {
+      markup: `<div style="position:relative;height:${u(30, "y")}"><div data-test="box" style="position:absolute;inset:0;aspect-ratio:2"></div></div>`,
+    },
+    {
+      markup: `<div style="position:relative;height:${u(30, "y")}"><div data-test="box" style="position:absolute;top:0;bottom:${u(25, "y")};left:0;aspect-ratio:2"></div></div>`,
+    },
+    {
+      markup: `<div style="position:relative;height:${u(30, "y")}"><div data-test="box" style="position:absolute;top:0;left:0;aspect-ratio:2">abcd</div></div>`,
+    },
+  ];
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): each
+ * aspect-ratio probe laid out by the engine, lengths on the spacing
+ * scale, and by the browser beside it at the measured cell; each box
+ * is within half a cell of the browser's on both axes, the engine
+ * rounding its derived side once. */
+export const AspectRatioAgainstNative: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () =>
+    html`${aspectCases((cells) => `${cells * 0.25}rem`).map(
+      ({ markup }, i) => html`
+        <div data-test="case-${i}" class="mb-2 flex gap-4">
+          <mono-wind class="w-40" .innerHTML=${markup}></mono-wind>
+          <div data-test="native" style="contain: layout"></div>
+        </div>
+      `,
+    )}`,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const cell = cellSize(host);
+    const cases = aspectCases(
+      (cells, axis = "x") => `${cells * cell[axis === "x" ? "width" : "height"]}px`,
+    );
+    const engine = isChromium ? "chromium" : isFirefox ? "firefox" : "webkit";
+    const { font, letterSpacing } = getComputedStyle(host);
+    for (const [i, { markup }] of cases.entries()) {
+      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
+        `[data-test="case-${i}"] > *`,
+      );
+      Object.assign(native!.style, {
+        width: `${grid!.getBoundingClientRect().width}px`,
+        font,
+        lineHeight: `${cell.height}px`,
+        letterSpacing,
+      });
+      native!.innerHTML = markup;
+    }
+    await frames(2);
+    for (const [i, { departs, rounds = 1 }] of cases.entries()) {
+      if (departs === engine) continue;
+      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
+        `[data-test="case-${i}"] > *`,
+      );
+      const box = grid!.querySelector<HTMLElement>('[data-test="box"]')!;
+      const cells = (name: string) => Number(box.style.getPropertyValue(name));
+      const want = native!.querySelector('[data-test="box"]')!.getBoundingClientRect();
+      const off = (engineCells: number, px: number, cellPx: number) =>
+        Math.abs(engineCells - px / cellPx) - rounds * 0.5;
+      expect(off(cells("--mw-w"), want.width, cell.width), `case ${i} width`).toBeLessThan(0.01);
+      expect(off(cells("--mw-h"), want.height, cell.height), `case ${i} height`).toBeLessThan(0.01);
+    }
+  },
 };

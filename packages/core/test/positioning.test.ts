@@ -544,3 +544,37 @@ describe("containing block and constraint edge cases", () => {
     expect([x("space-around"), x("space-evenly"), x("space-between")]).toEqual([0, 0, 0]);
   });
 });
+
+describe("aspect ratio (specs/positioning.md)", () => {
+  /** A ratio box absolute in a relative block 32 × 30. */
+  const absolute = (style: Partial<CellStyle>, text = "") => {
+    const box = makeNode({ text, style: { position: "absolute", aspectRatio: 2, ...style } });
+    const block = makeNode({
+      style: { position: "relative", height: { kind: "cells", value: 30 } },
+      children: [box],
+    });
+    layoutRoot(makeNode({ children: [block] }), 32);
+    return `${box.localRect.width}x${box.localRect.height}`;
+  };
+  const insets = (
+    top: number | null,
+    right: number | null,
+    bottom: number | null,
+    left: number | null,
+  ) => ({
+    insets: { top, right, bottom, left },
+  });
+
+  it("derives the axis the insets and sizes leave open", () => {
+    expect(absolute(insets(0, 22, null, 0))).toBe("10x5");
+    expect(absolute(insets(0, null, 25, 0))).toBe("10x5");
+    expect(absolute({ ...insets(0, null, null, 0), width: { kind: "cells", value: 10 } })).toBe(
+      "10x5",
+    );
+    expect(absolute(insets(0, null, null, 0), "abcd")).toBe("4x2");
+  });
+
+  it("takes the width from both inset pairs and the height from the ratio", () => {
+    expect(absolute(insets(0, 0, 0, 0))).toBe("32x16");
+  });
+});

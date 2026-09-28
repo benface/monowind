@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
 import type { CellStyle } from "../src/types.ts";
-import { makeNode } from "./helpers.ts";
+import { cells, makeNode } from "./helpers.ts";
 
 /**
  * Tests for the layoutRoot pipeline: pure-math, no DOM — each builds a
@@ -664,5 +664,59 @@ describe("quantized content alignment on text leaves", () => {
     // horizontal leftover, and the wrap is unchanged (3 lines).
     expect(wrapped.localRect.height).toBe(3);
     expect(wrapped.resolvedPadding.left).toBe(0);
+  });
+});
+
+describe("aspect ratio (specs/cell-model.md)", () => {
+  /** A box at `ratio` columns per row, a child of a `width`-wide root. */
+  const box = (ratio: number, style: Partial<CellStyle> = {}, text = "", width = 32) => {
+    const node = makeNode({ text, style: { aspectRatio: ratio, ...style } });
+    layoutRoot(makeNode({ children: [node] }), width);
+    return node.localRect;
+  };
+  const size = ({ width, height }: { width: number; height: number }) => `${width}x${height}`;
+
+  it("derives the axis left unset, and does nothing with both set", () => {
+    expect(size(box(2, { width: cells(20) }))).toBe("20x10");
+    expect(size(box(8))).toBe("32x4");
+    expect(size(box(2, { height: cells(10) }))).toBe("20x10");
+    expect(size(box(2, { width: cells(20), height: cells(3) }))).toBe("20x3");
+    expect(size(box(2, { width: cells(15) }))).toBe("15x8");
+  });
+
+  it("counts a percent height the containing block leaves indefinite as unset", () => {
+    expect(size(box(2, { height: { kind: "percent", value: 50 } }))).toBe("32x16");
+  });
+
+  it("clamps the derived axis to its limits, passing the height's to an unset width", () => {
+    expect(size(box(2, { maxHeight: 5 }))).toBe("10x5");
+    expect(size(box(2, { minHeight: 20 }))).toBe("40x20");
+    expect(size(box(2, { width: cells(20), minHeight: 40 }))).toBe("20x40");
+    expect(size(box(2, { height: cells(5), maxWidth: 6 }))).toBe("6x5");
+    expect(size(box(2, { maxWidth: 10 }))).toBe("10x5");
+  });
+
+  it("floors a derived axis at its content while overflow is visible and its min auto", () => {
+    const words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo";
+    expect(size(box(4, { width: cells(12) }, words))).toBe("12x4");
+    const hidden = { x: "clip", y: "clip" } as const;
+    expect(size(box(4, { width: cells(12), overflow: hidden }, words))).toBe("12x3");
+    expect(size(box(4, { width: cells(12), minHeight: 0 }, words))).toBe("12x3");
+    expect(size(box(2, { height: cells(1) }, "abcdefghij"))).toBe("10x1");
+    expect(size(box(2, { height: cells(1), overflow: hidden }, "abcdefghij"))).toBe("2x1");
+  });
+
+  it("makes a derived height definite for a child's percent height", () => {
+    const child = makeNode({ style: { height: { kind: "percent", value: 50 } } });
+    const node = makeNode({ style: { aspectRatio: 2, width: cells(20) }, children: [child] });
+    layoutRoot(makeNode({ children: [node] }), 32);
+    expect(child.localRect.height).toBe(5);
+  });
+
+  it("contributes the width a set height derives to a shrink-to-fit parent", () => {
+    const child = makeNode({ style: { aspectRatio: 2, height: cells(5) } });
+    const float = makeNode({ style: { float: "left" }, children: [child] });
+    layoutRoot(makeNode({ children: [float] }), 32);
+    expect(float.localRect.width).toBe(10);
   });
 });

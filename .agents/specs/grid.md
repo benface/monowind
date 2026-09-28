@@ -258,6 +258,19 @@ it, per axis:
   an item that overflows its area sits at its start (cell-model.md
   deviation 21 — CSS centers or ends it past the start, probed
   2026-09-24, all three engines).
+- **An item with a ratio** (cell-model.md "Aspect ratio") is sized as
+  a block on an axis whose alignment is `normal` (css-grid §6.2),
+  where an item without one stretches: stretched to its column, it
+  takes its height from its width, not the row's (an `aspect-video`
+  item in a taller row keeps its 16:9). Aligned `start`, `center` or
+  `end` in its column (`justify-self`), its width is its fit-content
+  width and its height derives from it (Firefox, WebKit; Chromium
+  stretches the height and derives the width). An explicit
+  `self-stretch` makes its height definite, and its width derives from
+  that as a block's does, past the area (Chromium, WebKit; Firefox
+  keeps the area's width). A set height contributes the width it
+  derives to an `auto` or `min-content` column's sizing (all three
+  engines, probed 2026-09-27).
 - **auto margins** win over alignment, absorbing the area's leftover
   (both → centered, one → that side), exactly like flex; an item
   wider than its area gets none, at the area's start.

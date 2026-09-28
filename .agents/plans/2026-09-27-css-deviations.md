@@ -4,7 +4,8 @@ Status: **planned 2026-09-27**. The "Order" of
 `2026-09-23-css-deviation-reasons.md` as a plan for release 0.3.4,
 with the scope decided with the user the same day: `aspect-ratio` and
 anchor positioning first, then the numbered Order (item 4, stacking,
-is done), and five extras beside it. Each item gives the deviation,
+is done), and five extras beside it; the host's own height (F2), a bug
+found with `aspect-ratio`, joins it. Each item gives the deviation,
 what CSS does, the approach, its size, its risks and its tests. Its
 code-level steps and touch points are written when the item starts; a
 medium item starts with its spec change. Progress is recorded here,
@@ -15,6 +16,7 @@ under "Progress", as each item lands.
 | Id  | Item                              | Deviation           | Size | 0.3.4 |
 | --- | --------------------------------- | ------------------- | ---- | ----- |
 | F1  | `aspect-ratio`                    | cell-model 9        | M    | in    |
+| F2  | the host's own height             | host sizing (bug)   | M    | in    |
 | A1  | the last acceptable anchor        | anchor 3            | M    | in    |
 | A2  | sticky anchors                    | anchor 6            | S–M  | in    |
 | A3  | insets inside an area             | anchor 1            | S    | in    |
@@ -108,8 +110,8 @@ Findings that changed an item:
   positioning pass (F1, A1, A2), the hit (7h) — `pnpm bench` runs
   before and after, alternated, and a measure that moves is traced
   before going on.
-- Each new `CellStyle` or inline-entry field joins the incremental
-  reads' field comparison (`2026-09-24-incremental-reads.md`).
+- Each new `CellStyle` or inline-entry field is one the incremental
+  reads (`2026-09-24-incremental-reads.md`, after this plan) compare.
 
 ## First: `aspect-ratio` (F1)
 
@@ -163,7 +165,84 @@ renders each probe case in the host and natively beside it, each box's
 cells against the native box through the measured cell, in three
 engines; its golden.
 
-**Steps**: written when the item starts.
+**More probes (2026-09-27, standards mode)**: a derived height is
+definite for a child's percent height (all three); a derived width
+floors at the min-content width unless overflow clips; `min-h-*` with
+both sizes auto widens the box past its container; `inset-0` takes the
+width from the insets and the height from the ratio; a set height
+contributes its derived width to an `auto` column and a `w-max`
+parent; tables take the ratio in Chromium and Firefox (WebKit
+otherwise), cells, rows and inline elements never. Engine splits: a
+column item with no width (Chromium and Firefox derive the width from
+the content height, WebKit keeps fit-content), a grid item aligned
+`start` in its column (Firefox and WebKit fit-content, Chromium
+stretches the height), an explicit `self-stretch` (Chromium and WebKit
+derive the width past the area, Firefox keeps it). In each, the specs
+follow the CSS rule and name the engine that departs from it.
+
+**Steps**:
+
+1. The read. types.ts: `CellStyle.aspectRatio`, columns per row, null
+   for none (`defaultCellStyle`). style.ts:
+   `readAspectRatio(cs, metrics)` in `readCellStyle`, `auto` and a zero
+   term none, through the cell (`DEFAULT_CELL` without metrics). style.test.ts.
+2. Block flow and every box (layout.ts). One helper for the derived
+   size, `ratioSize(length, ratio, axis)`, rounding once. `resolveWidth`
+   derives an auto width from a definite height before the fill or
+   shrink-to-fit, and takes the height's limits through the ratio when
+   both are auto; `layoutNode` derives an auto height from the final
+   width, counts it definite, floors a derived axis at the content
+   while overflow is visible and its min is `auto`, and clamps it to
+   its own limits. `widthContribution` counts the width a set height
+   derives. layout.test.ts: each block probe row, tables and floats.
+3. Flex (flex.ts). `flexBaseOuterWidth` derives a row base from a
+   definite cross size (a set height, or a stretch in a definite
+   single line); a row item that does not stretch lays out with its
+   height from its final width; a stretch in an indefinite line forces
+   the height as today. The column pass derives its base height from
+   the stretched or set width, and a column item with neither lays out
+   at its content height, its width derived after. flex.test.ts.
+4. Grid (grid.ts). The block-axis pass reads `normal` as `start` for a
+   ratio item and derives its height from its width; an explicit
+   `stretch` derives the width from the stretched height; an
+   inline-axis `start`, `center` or `end` item takes fit-content and
+   derives its height. Track sizing takes the width a set height
+   derives. grid.test.ts.
+5. Absolute boxes (positioning.ts). `absoluteWidth` and the height in
+   `placeByInsets` derive one axis from the other as the insets and
+   sizes leave them, the width first where both inset pairs are set.
+   positioning.test.ts.
+6. The `AspectRatio` story (box.stories.ts) beside native copies,
+   three engines, its golden; `pnpm bench` before and after (the
+   positioning pass and block flow), alternated.
+7. Docs: the specs' touch points; this plan's Progress.
+
+## Beside F1: the host's own height (F2)
+
+**Bug** (found 2026-09-27, all three engines): the host writes its
+content's rows as its inline `height`, overriding the author's: a host
+with `height: 200px` or `width: 320px; aspect-ratio: 2/1` is one row
+tall. Its width follows the author's (`w-*`, capped to whole columns),
+and a `min-height` wins over the inline height natively, though the
+root lays out without it.
+
+**CSS**: the host is a box like any other; its height is the author's
+where set (`h-*`, `h-full` of a definite parent, `h-screen`, a flex or
+grid parent's stretch, `aspect-ratio` from its width) and its content's
+otherwise, floored and capped by its limits.
+
+**Approach**: the height measured natively with the engine's rule
+lifted, as the width is ("Host sizing"), where the author gives one:
+the host is a page box, so its sizes are the page's px, not cells
+(`h-1` is 4px, as `w-1` is), capped to the whole rows that fit as the
+width is to whole columns;
+the root lays out against it as a definite height, its content
+overflowing or scrolling as the host's `overflow` says. How a measure
+tells an authored height from the content's is the spec's question,
+written when the item starts.
+
+**Size**: medium. **Tests**: host stories for each case beside a
+native box; element.test.ts where happy-dom can say it.
 
 ## First: anchor positioning (A1–A6)
 
@@ -945,8 +1024,8 @@ names the anonymous item.
 **Size**: medium.
 
 **Risks**: code keyed on the container being the leaf (the selection's
-run handling, `charSource`, the leaf extent, focus); the incremental
-reads' node shape; layout.test.ts's grid-leaf padding pin.
+run handling, `charSource`, the leaf extent, focus); layout.test.ts's
+grid-leaf padding pin.
 
 **Tests**: tree.test.ts and grid.test.ts, each probe case; a grid
 story, `TextOnlyGrid`, beside native copies; its golden.
@@ -1102,7 +1181,7 @@ Each with the recommendation, all ten taken as recommended
 
 ## Order
 
-1. F1, `aspect-ratio`.
+1. F1, `aspect-ratio`, then F2, the host's own height.
 2. A1–A6: A1 first; A3 and A4 in the same change, `placeTrying`'s;
    then A2, A5, A6.
 3. Items 1, 2 and 3.
@@ -1146,3 +1225,10 @@ tests seen red, and the spec's deviation removed or reworded.
   and the `TextTransform` story in Chromium. cell-model.md
   "Typography" gains the rule, and deviation 22 names `full-width`
   and `full-size-kana`.
+- 2026-09-27, F1 `aspect-ratio`: read physically through the cell,
+  derived in block flow, flex, grid and absolute placement as the specs
+  say. Red first: style.test.ts, layout.test.ts, flex.test.ts,
+  grid.test.ts and positioning.test.ts "aspect ratio", and the
+  `AspectRatioAgainstNative` story's text box (a block's `auto` minimum
+  read `0px` in Chromium and WebKit) and narrow row (a derived width is
+  a flex item's min-content width). cell-model.md deviation 9 resolved.

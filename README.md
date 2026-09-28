@@ -87,8 +87,10 @@ and [packages/vite/README.md](packages/vite/README.md) for the plugin
 **Layout** — block, flex, and grid (subgrid and named areas included),
 multi-column (`columns-*`, balancing, spanners, column rules), tables
 (collapsed borders as shared box-drawing lattices), floats
-(`float-*`/`clear-*`, with text wrapping beside them), margins, text
-wrap, and gap decorations (`rule-*` separators with junction glyphs).
+(`float-*`/`clear-*`, with text wrapping beside them), aspect ratios
+(`aspect-square` looks square, whatever the font's cell), margins,
+text wrap, and gap decorations (`rule-*` separators with junction
+glyphs).
 
 **Paint** — rounded corners (`rounded-*` picks a theme's corner
 glyphs), box shadows (`shadow-*` as shade glyphs), gradients

@@ -581,16 +581,25 @@ function placeByInsets(
   const x = axisInsets("x");
   const y = axisInsets("y");
 
-  // A centered box shrinks to fit the block its insets leave.
+  // A centered box shrinks to fit the block its insets leave. With an
+  // aspect ratio, a width its insets or size give derives the height,
+  // else a height they give derives the width (specs/positioning.md).
   const across = fixedMargins(margin, "x");
-  const forced: { width?: number; height?: number } = {
-    width: x.centered
+  const stretchesY =
+    y.start !== null && y.end !== null && style.height === undefined && !y.centered;
+  const widthGiven =
+    style.width !== undefined || (x.start !== null && x.end !== null && !x.centered);
+  const derivesWidth =
+    style.aspectRatio !== null && !widthGiven && (stretchesY || style.height !== undefined);
+  const forced: { width?: number; height?: number } = {};
+  if (!derivesWidth) {
+    forced.width = x.centered
       ? absoluteWidth(child, cb.width, null, null, across + x.start! + x.end!, cache)
-      : absoluteWidth(child, cb.width, x.start, x.end, across, cache),
-  };
-  if (y.start !== null && y.end !== null && style.height === undefined && !y.centered) {
+      : absoluteWidth(child, cb.width, x.start, x.end, across, cache);
+  }
+  if (stretchesY && (style.aspectRatio === null || derivesWidth)) {
     forced.height = clampSize(
-      Math.max(0, cb.height - y.start - y.end - fixedMargins(margin, "y")),
+      Math.max(0, cb.height - y.start! - y.end! - fixedMargins(margin, "y")),
       resolveLimit(style.minHeight, cb.height) ?? 0,
       resolveLimit(style.maxHeight, cb.height),
     );

@@ -1586,3 +1586,50 @@ it("an auto-width item is as wide as its fixed-width child", () => {
   layoutRoot(root, 40);
   expect(wrapper.localRect.width).toBe(24);
 });
+
+describe("aspect ratio (specs/flex.md)", () => {
+  /** A ratio item, and a sibling where given, in a flex container 32 wide. */
+  const flex = (
+    container: Partial<CellStyle>,
+    item: Partial<CellStyle>,
+    text = "",
+    sibling?: LayoutNode,
+  ) => {
+    const node = makeNode({ text, style: item });
+    const children = sibling ? [node, sibling] : [node];
+    layoutRoot(makeNode({ style: { display: "flex", ...container }, children }), 32);
+    const { width, height } = node.localRect;
+    return `${width}x${height}`;
+  };
+
+  it("derives a row item's base width from a definite height", () => {
+    expect(flex({ height: cells(10) }, { aspectRatio: 2 })).toBe("20x10");
+    expect(flex({ height: cells(5) }, { aspectRatio: 2 }, "abcdefghijklmnopqrst")).toBe("20x5");
+  });
+
+  it("keeps a row item at least the width a definite height derives", () => {
+    const narrow = makeNode({ style: { aspectRatio: 2, flexShrink: 1 } });
+    layoutRoot(makeNode({ style: { display: "flex", height: cells(10) }, children: [narrow] }), 10);
+    expect(narrow.localRect.width).toBe(20);
+  });
+
+  it("derives a row item's height from its flexed width, unless it stretches", () => {
+    const grow = { flexGrow: 1, flexBasis: { kind: "percent" as const, value: 0 } };
+    expect(flex({ alignItems: "start" }, { aspectRatio: 8, ...grow })).toBe("32x4");
+    expect(flex({ alignItems: "start" }, { aspectRatio: 2, width: cells(40), flexShrink: 1 })).toBe(
+      "32x16",
+    );
+    const tall = makeNode({ style: { width: cells(1), height: cells(10) } });
+    expect(flex({}, { aspectRatio: 2, width: cells(8) }, "", tall)).toBe("8x10");
+  });
+
+  it("derives a column item's base height from its width, and its width from its height", () => {
+    const column = { flexDirection: "column" as const };
+    expect(flex(column, { aspectRatio: 8 })).toBe("32x4");
+    expect(flex({ ...column, alignItems: "start" }, { aspectRatio: 8, width: cells(16) })).toBe(
+      "16x2",
+    );
+    expect(flex({ ...column, alignItems: "start" }, { aspectRatio: 8 }, "ab")).toBe("8x1");
+    expect(flex({ ...column, height: cells(20) }, { aspectRatio: 8, flexGrow: 1 })).toBe("32x20");
+  });
+});

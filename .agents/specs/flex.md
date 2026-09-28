@@ -239,6 +239,36 @@ a column's hypothetical sizes, a row's natural lines, a grid's
 max-content rows, a text leaf's lines — whatever height or floor the
 container itself has.
 
+## Aspect ratio
+
+An item with a ratio (cell-model.md "Aspect ratio") takes one axis
+from the other, all three engines agreeing unless named (probed
+2026-09-27):
+
+- **Row.** With a definite height, set, or stretched in the single
+  line of a container with a definite inner height, its base width
+  derives from it: `aspect-square` in an `h-25` row is 25 rows tall and
+  square. Otherwise the base is as without the ratio, and after flexing
+  an item that does not stretch takes its height from its final width
+  (`flex-1 aspect-4/1` under `items-start` fills the row and is a
+  quarter as tall as it is wide). An item that stretches in a line of
+  indefinite height takes the line's height, the ratio dropped: an
+  `aspect-square w-20` beside a taller item is 20 wide and the line's
+  height, the height it derives counting only toward the line's.
+- **Column.** With a definite width, set or stretched, its base height
+  derives from it before it grows or shrinks: an `aspect-4/1` item
+  stretched across the column is a quarter as tall as the column is
+  wide, and a grown item keeps its stretched width. An item that
+  neither has nor stretches a width lays out at its content height,
+  and its width derives from its final height, as css-flexbox §9.4
+  lays it out as a block of that height (Chromium, Firefox; WebKit
+  keeps its fit-content width).
+- The automatic minimum (step 3) still floors a derived main size: a
+  word longer than the width a row item derives widens it. A row
+  item's width derived from a definite height is its min-content width
+  too (css-sizing-4), so it never shrinks below it: an `aspect-square`
+  in a narrow `h-10` row overflows it (all three engines).
+
 ## Deviations from CSS Flexbox
 
 1. `flex-wrap: wrap` only wraps in the row direction; column containers

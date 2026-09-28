@@ -89,6 +89,13 @@ content box (its containing block in flow).
   auto width = shrink-to-fit within the containing block, per CSS.
 - **Height**: symmetric — `top` + `bottom` with auto height stretches;
   otherwise content height.
+- **Aspect ratio** (cell-model.md "Aspect ratio"): an axis the insets
+  or a set size give derives the other; with every size and inset
+  pair open, the shrink-to-fit width does. Where both inset pairs are
+  set and neither size, the width comes from `left` and `right` and the
+  height from the ratio, not the insets: `inset-0 aspect-2/1` fills its
+  block's width and is half as tall as it is wide (all three engines,
+  probed 2026-09-27).
 - **Static position** (an axis with both insets `auto`): the element sits
   where it would have been in flow, per CSS:
   - Block parent: the flow cursor position at its DOM slot (x: content

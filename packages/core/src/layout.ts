@@ -11,6 +11,7 @@ import {
 import type { LineSpan } from "./wrap.ts";
 import {
   alignCrossOffset,
+  automaticMinimum,
   effectiveJustify,
   layoutFlexColumn,
   layoutFlexRow,
@@ -242,14 +243,27 @@ export function layoutNode(
     left: resolveLength(style.padding.left, availableWidth),
   };
   node.resolvedPadding = padding;
+  const ratio = style.aspectRatio;
+  const setHeight = resolveHeight(style, availableHeight);
   // A border box is at least its edges (specs/cell-model.md "Box
   // model"): a zero-height box with a top border is its border row.
   const outerWidth = Math.max(
     forced?.width ??
-      clampSize(resolveWidth(node, availableWidth, widthMode, cache), minWidth, maxWidth),
+      (ratio !== null && style.width === undefined
+        ? ratioWidth(node, ratio, forcedHeight ?? setHeight, availableWidth, widthMode, cache, {
+            minWidth,
+            maxWidth,
+            minHeight,
+            maxHeight,
+          })
+        : clampSize(resolveWidth(node, availableWidth, widthMode, cache), minWidth, maxWidth)),
     edges(style.border, padding, "x"),
   );
-  const outerHeightExplicit = resolveHeight(style, availableHeight);
+  const derivedHeight =
+    ratio !== null && forcedHeight === undefined && setHeight === undefined
+      ? ratioSize(outerWidth, ratio, "y")
+      : undefined;
+  const outerHeightExplicit = setHeight ?? derivedHeight;
   // A forced height overrides an explicit `height` and a `min-height`
   // floor. Otherwise the content lays out against the explicit height as
   // its limits leave it, or a `min-height` floor, so items-center /
@@ -327,6 +341,9 @@ export function layoutNode(
   const finalHeight = Math.max(
     clampSize(forcedHeight ?? outerHeightExplicit ?? naturalHeight, minHeight, maxHeight),
     edges(style.border, padding, "y"),
+    derivedHeight !== undefined && style.minHeight === "auto"
+      ? automaticMinimum(style.overflow.y, () => naturalHeight, undefined, maxHeight)
+      : 0,
   );
 
   // Multicol browser agreement (leaf and paragraph-flow container,
@@ -1256,7 +1273,64 @@ function scrollableExtent(
   };
 }
 
-function resolveHeight(style: CellStyle, available: number | undefined): number | undefined {
+/** The size on `axis` an aspect ratio (columns per row) derives from
+ * the other axis's `length`, rounded once to the nearest cell
+ * (specs/cell-model.md "Aspect ratio"). */
+export function ratioSize(length: number, ratio: number, axis: "x" | "y"): number {
+  return Math.round(axis === "x" ? length * ratio : length / ratio);
+}
+
+/** An unset width with an aspect ratio (specs/cell-model.md "Aspect
+ * ratio"): derived from a given height, floored at the min-content
+ * width while overflow is visible; else as without the ratio, the
+ * height's limits passed through it. */
+function ratioWidth(
+  node: LayoutNode,
+  ratio: number,
+  height: number | undefined,
+  available: number,
+  mode: SizingMode,
+  cache: IntrinsicCache,
+  limits: {
+    minWidth: number;
+    maxWidth: number | undefined;
+    minHeight: number;
+    maxHeight: number | undefined;
+  },
+): number {
+  const { minWidth, maxWidth, minHeight, maxHeight } = limits;
+  if (height !== undefined) {
+    return clampSize(
+      Math.max(
+        ratioSize(clampSize(height, minHeight, maxHeight), ratio, "x"),
+        ratioWidthFloor(node, maxWidth, cache),
+      ),
+      minWidth,
+      maxWidth,
+    );
+  }
+  const width = clampSize(
+    resolveWidth(node, available, mode, cache),
+    ratioSize(minHeight, ratio, "x"),
+    maxHeight === undefined ? undefined : ratioSize(maxHeight, ratio, "x"),
+  );
+  return clampSize(width, minWidth, maxWidth);
+}
+
+/** A width the ratio derives, floored at the min-content width while
+ * overflow is visible and the min is `auto`. */
+function ratioWidthFloor(node: LayoutNode, max: number | undefined, cache: IntrinsicCache): number {
+  const { minWidth, overflow } = node.style;
+  if (minWidth !== "auto") return 0;
+  return automaticMinimum(
+    overflow.x,
+    () => intrinsicOuterWidth(node, "min", cache),
+    undefined,
+    max,
+  );
+}
+
+export function resolveHeight(style: CellStyle, available: number | undefined): number | undefined {
   if (style.height?.kind === "cells") return style.height.value;
   if (style.height?.kind === "percent" && available != null)
     return percentToCells(style.height.value, available);
@@ -1358,7 +1432,8 @@ function intrinsicInnerWidth(node: LayoutNode, kind: "min" | "max", cache: Intri
 
 /** A child's `kind` contribution to its parent's intrinsic width: an
  * explicit width in cells or as an intrinsic keyword (`w-min`, `w-max`),
- * else its `kind`-content outer width — which a percent width takes
+ * the width a set height derives through its aspect ratio, else its
+ * `kind`-content outer width — which a percent width takes
  * (intrinsic contribution rules) and fit-content too, its contributions
  * being auto's (css-sizing-3); clamped by its own fixed min/max, and
  * floored at its border and padding. */
@@ -1367,13 +1442,15 @@ export function widthContribution(
   kind: "min" | "max",
   cache: IntrinsicCache,
 ): number {
-  const { width, minWidth, maxWidth } = child.style;
-  const outer =
-    width === undefined || width.kind === "percent" || width.kind === "fit-content"
-      ? intrinsicOuterWidth(child, kind, cache)
-      : resolveSizeAgainst(width, 0, child, cache);
+  const { width, height, minWidth, maxWidth, aspectRatio } = child.style;
   const min = typeof minWidth === "number" ? minWidth : 0;
   const max = typeof maxWidth === "number" ? maxWidth : undefined;
+  const outer =
+    width === undefined && aspectRatio !== null && height?.kind === "cells"
+      ? Math.max(ratioSize(height.value, aspectRatio, "x"), ratioWidthFloor(child, max, cache))
+      : width === undefined || width.kind === "percent" || width.kind === "fit-content"
+        ? intrinsicOuterWidth(child, kind, cache)
+        : resolveSizeAgainst(width, 0, child, cache);
   return Math.max(boxChrome(child.style, "x"), clampSize(outer, min, max));
 }
 

@@ -11,7 +11,9 @@ import {
   isInFlowBox,
   isOutOfFlow,
   layoutNode,
+  ratioSize,
   resolveGap,
+  resolveHeight,
   resolveLimit,
   resolveMargin,
   resolveSizeAgainst,
@@ -92,10 +94,10 @@ export function layoutFlexRow(
   const gapX = resolveGap(node.style, "x", innerWidth);
   const gapY = resolveGap(node.style, "y", innerHeight);
   const items = flexOrderedChildren(node).map((child) => {
-    const base = flexBaseOuterWidth(child, innerWidth, cache);
+    const base = flexBaseOuterWidth(child, node, innerWidth, definiteInnerHeight, cache);
     const max = resolveWidthLimit(child.style.maxWidth, innerWidth, child, cache);
     const min = Math.max(
-      flexItemMinWidth(child, innerWidth, max, cache),
+      flexItemMinWidth(child, node, innerWidth, definiteInnerHeight, max, cache),
       boxChrome(child.style, "x", innerWidth),
     );
     return {
@@ -357,12 +359,17 @@ export function layoutFlexColumn(
     // content height (§7.2.3). Unclamped: the freeze loop applies min/max.
     const basis = child.style.flexBasis ?? child.style.height;
     const naturalHeight = child.naturalContentHeight;
+    // A ratio derives it from a width the item has or stretches to
+    // (specs/flex.md "Aspect ratio").
+    const { aspectRatio } = child.style;
     const base =
       basis?.kind === "cells"
         ? basis.value
         : basis?.kind === "percent" && definiteInnerHeight !== undefined
           ? percentToCells(basis.value, definiteInnerHeight)
-          : naturalHeight;
+          : aspectRatio !== null && (child.style.width !== undefined || widthMode === "fill")
+            ? ratioSize(child.localRect.width, aspectRatio, "y")
+            : naturalHeight;
     // The automatic minimum is capped by the item's first-pass height: its
     // own height as its max leaves it.
     const min = Math.max(
@@ -388,6 +395,7 @@ export function layoutFlexColumn(
       margin,
       availableWidth,
       widthMode,
+      width: child.localRect.width,
     };
   });
 
@@ -414,11 +422,17 @@ export function layoutFlexColumn(
   // If a child's main-axis size changed, re-run its layout with the new
   // height forced so any nested content that depends on the parent's height
   // (items-center/end in a nested flex, percent heights) sees the final size.
+  // A ratio item keeps a stretched width, and derives an unset one from
+  // its final height.
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!;
     const height = finalHeights[i]!;
-    if (height !== item.node.localRect.height) {
-      layoutNode(item.node, item.availableWidth, height, 0, 0, item.widthMode, cache, { height });
+    const { aspectRatio, width } = item.node.style;
+    const derivesWidth = aspectRatio !== null && width === undefined;
+    if (height !== item.node.localRect.height || (derivesWidth && item.widthMode === "shrink")) {
+      const forced =
+        derivesWidth && item.widthMode === "fill" ? { height, width: item.width } : { height };
+      layoutNode(item.node, item.availableWidth, height, 0, 0, item.widthMode, cache, forced);
     }
   }
 
@@ -734,13 +748,53 @@ export function alignCrossOffset(
  * keyword), else its max-content size. Percentages resolve against the
  * container's content box (`innerWidth`). The raw base: distribution
  * starts from it per CSS §9.7 (the freeze/violation loop clamps), which
- * keeps `flex-1` columns equal where their content minimums allow.
+ * keeps `flex-1` columns equal where their content minimums allow. An
+ * item with an aspect ratio and a definite height derives it instead
+ * of its max-content size (specs/flex.md "Aspect ratio").
  */
-function flexBaseOuterWidth(child: LayoutNode, innerWidth: number, cache: IntrinsicCache): number {
-  const basis = child.style.flexBasis ?? child.style.width;
-  return basis === undefined
+function flexBaseOuterWidth(
+  child: LayoutNode,
+  node: LayoutNode,
+  innerWidth: number,
+  definiteInnerHeight: number | undefined,
+  cache: IntrinsicCache,
+): number {
+  const { flexBasis, width, aspectRatio } = child.style;
+  const basis = flexBasis ?? width;
+  if (basis !== undefined) return resolveSizeAgainst(basis, innerWidth, child, cache);
+  const height =
+    aspectRatio === null ? undefined : definiteHeight(child, node, innerWidth, definiteInnerHeight);
+  return height === undefined
     ? intrinsicOuterWidth(child, "max", cache)
-    : resolveSizeAgainst(basis, innerWidth, child, cache);
+    : ratioSize(height, aspectRatio!, "x");
+}
+
+/** A row item's definite height within its limits: set, or stretched
+ * in the single line of a container with a definite inner height. */
+function definiteHeight(
+  child: LayoutNode,
+  node: LayoutNode,
+  innerWidth: number,
+  definiteInnerHeight: number | undefined,
+): number | undefined {
+  const { style } = child;
+  const margin = resolveMargin(style.margin, innerWidth);
+  const stretched =
+    node.style.flexWrap === "nowrap" &&
+    definiteInnerHeight !== undefined &&
+    effectiveAlign(child, node) === "stretch" &&
+    margin.top !== null &&
+    margin.bottom !== null
+      ? definiteInnerHeight - margin.top - margin.bottom
+      : undefined;
+  const height = resolveHeight(style, definiteInnerHeight) ?? stretched;
+  return height === undefined
+    ? undefined
+    : clampSize(
+        height,
+        resolveLimit(style.minHeight, definiteInnerHeight) ?? 0,
+        resolveLimit(style.maxHeight, definiteInnerHeight),
+      );
 }
 
 /**
@@ -804,22 +858,31 @@ export function automaticMinimum(
  * A flex-row item's used minimum width: an explicit `min-w-*`, else the
  * automatic minimum over its min-content width — which is why text in a
  * flex row stops shrinking at its longest segment instead of
- * disappearing. `max` is its resolved max-width.
+ * disappearing. `max` is its resolved max-width. An item with an aspect
+ * ratio and a definite height has the width it derives as its
+ * min-content width too (css-sizing-4).
  */
 function flexItemMinWidth(
   child: LayoutNode,
+  node: LayoutNode,
   innerWidth: number,
+  definiteInnerHeight: number | undefined,
   max: number | undefined,
   cache: IntrinsicCache,
 ): number {
-  const { minWidth, width, overflow } = child.style;
+  const { minWidth, width, overflow, aspectRatio } = child.style;
   if (minWidth !== "auto") return resolveWidthLimit(minWidth, innerWidth, child, cache) ?? 0;
   const specified =
     width === undefined ? undefined : resolveSizeAgainst(width, innerWidth, child, cache);
-  return automaticMinimum(
-    overflow.x,
-    () => intrinsicOuterWidth(child, "min", cache),
-    specified,
-    max,
-  );
+  const content = (): number => {
+    const minContent = intrinsicOuterWidth(child, "min", cache);
+    const height =
+      aspectRatio === null
+        ? undefined
+        : definiteHeight(child, node, innerWidth, definiteInnerHeight);
+    return height === undefined
+      ? minContent
+      : Math.max(minContent, ratioSize(height, aspectRatio!, "x"));
+  };
+  return automaticMinimum(overflow.x, content, specified, max);
 }

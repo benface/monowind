@@ -255,6 +255,36 @@ describe("grid typography", () => {
   });
 });
 
+describe("aspect ratio (specs/cell-model.md)", () => {
+  const ratio = (value: string, metrics?: CellMetrics) =>
+    read({ style: `aspect-ratio: ${value}` }, metrics).aspectRatio;
+
+  it("reads columns per row through the measured cell", () => {
+    expect(ratio("16 / 9", { width: 8, height: 16, letterSpacing: 0 })).toBeCloseTo(32 / 9);
+    expect(ratio("1 / 1", { width: 16, height: 16, letterSpacing: 0 })).toBe(1);
+    expect(ratio("auto 4 / 3", { width: 10, height: 20, letterSpacing: 0 })).toBeCloseTo(8 / 3);
+    expect(ratio("2")).toBe(4);
+  });
+
+  it("leaves a table's cells and rows without one", () => {
+    const table = document.createElement("table");
+    table.innerHTML = '<tr style="aspect-ratio: 2"><td style="aspect-ratio: 2">x</td></tr>';
+    table.style.aspectRatio = "2";
+    document.body.appendChild(table);
+    const [row, cell] = [table.querySelector("tr")!, table.querySelector("td")!];
+    expect(readCellStyle(table, 16).aspectRatio).toBe(4);
+    expect(readCellStyle(row, 16).aspectRatio).toBeNull();
+    expect(readCellStyle(cell, 16).aspectRatio).toBeNull();
+  });
+
+  it("takes the 1:2 cell without metrics, and none for auto or a zero term", () => {
+    expect(ratio("1 / 1")).toBe(2);
+    expect(ratio("auto")).toBeNull();
+    expect(ratio("0 / 1")).toBeNull();
+    expect(read({}).aspectRatio).toBeNull();
+  });
+});
+
 describe("plain computed reads (shared with the Typed OM path)", () => {
   it("maps position values, defaulting to static", () => {
     expect(read({ style: "position: sticky" }).position).toBe("sticky");

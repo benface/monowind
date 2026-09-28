@@ -8,7 +8,10 @@ levers 1–3, the opacity model (`2026-09-24-one-opacity-model.md`), the
 painted-origin pass, and stacking contexts
 (`2026-09-27-stacking-contexts.md`), decided 2026-09-24 to come first.
 `2026-09-24-textarea-one-layout.md`, still planned, lands before
-milestone 3, so the relayout path carries no textarea widths.
+milestone 3, so the relayout path carries no textarea widths. The
+CSS-deviation plan (`2026-09-27-css-deviations.md`) and lists
+(`../specs/lists.md`) come first (decided 2026-09-27), so the
+comparison covers the fields they add.
 
 ## Decisions (2026-09-24)
 

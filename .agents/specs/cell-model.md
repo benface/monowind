@@ -1134,6 +1134,57 @@ The classic centering idiom works: `w-min mx-auto` (or `w-fit mx-auto`)
 shrinks the box, then block-flow auto margins center it. Per CSS, `mx-auto`
 alone on an auto-width block does nothing — the box fills its container.
 
+## Aspect ratio
+
+`aspect-ratio` (`aspect-square`, `aspect-video`, `aspect-3/2`) is
+physical: an `aspect-square` box looks square, as viewport units,
+shadows and gradients do. The computed `w / h` (`auto w / h` alike;
+`auto`, or a zero term, is none) becomes columns per row through the
+measured cell, `(w / h) × cell height ÷ cell width` (`2 × w / h` in a
+1:2 cell, the default without metrics), and each size derived from it
+rounds once to the nearest cell. A derived size so follows the font
+and the line height, as a QR code's modules do: `aspect-square w-20`
+is 10 rows in a 1:2 cell, and `size-20` is not square. It sizes the
+border box of every box the engine lays out, containers, tables,
+floats, atomic inline boxes and absolute boxes included; an inline
+element and a table's cells, rows and groups ignore it, as in CSS, and
+the host's own box sizes as "Host sizing" says. The shapes below ("as
+tall as it is wide") are physical.
+
+- **The derived axis.** With a width and a height both set, the ratio
+  does nothing. With one set, the other derives from it:
+  `w-20 aspect-square` is as tall as it is wide, and
+  `h-10 aspect-video` takes its width from its height, not from the
+  fill. With neither, the width is found as without the ratio (the
+  fill, or shrink-to-fit for a float, an atomic inline box or an
+  absolute box) and the height derives from it. A percent height the
+  containing block leaves indefinite counts as unset.
+- **Limits.** The derived axis clamps to its own min and max. With
+  neither size set, the height's limits also pass through the ratio to
+  the width before it resolves: `aspect-square max-h-12` is as wide as
+  12 rows are tall, and a `min-h-*` past the fill widens the box past
+  its container, as in all three engines. A limit never passes onto a
+  set size: `w-20 min-h-40 aspect-video` is 20 wide and 40 tall.
+- **Automatic minimum.** While the box's overflow is visible and its
+  min on the derived axis is `auto`, that axis floors at the content,
+  capped by its max: a derived height at the content's height (text
+  taller than the ratio grows the box), a derived width at the
+  min-content width (a word longer than the width a short box
+  derives). `overflow-hidden`, `truncate` and `min-h-0` or `min-w-0`
+  keep the ratio.
+- **Definite.** A derived height is definite, as a set one is: a
+  child's `h-full` resolves against it.
+- **Intrinsic width.** A box with a set height contributes the width it
+  derives to its parent's min- and max-content widths (an `auto` grid
+  column, a `w-max` parent).
+- **Flex items, grid items, absolute boxes**: flex.md "Aspect ratio",
+  grid.md "Items in their areas", positioning.md "Absolute layout".
+
+Where the engines differ, the grid follows the CSS specs: a table
+takes the ratio, which exempts only inline and table-internal boxes,
+as in Chromium and Firefox (WebKit sizes it otherwise), and the flex
+and grid items follow the rules their specs cite.
+
 ## White-space and truncation
 
 `white-space` is read per element and mapped to two engine values:
@@ -1269,9 +1320,7 @@ lines); the explicit zero `clip` rect still drops them.
    `tracking-*` may drift from the browser's letter-spaced tabs.
    `pre-wrap | pre-line | break-spaces` still collapse — only the
    wrap/no-wrap half of their behavior is honored.
-9. `aspect-ratio` is ignored (deferred: cells aren't square, so it needs
-   the cell-metric ratio plumbed into layout plus a spec decision on
-   px-square vs cell-square semantics).
+9. ~~`aspect-ratio` is ignored~~ — resolved: "Aspect ratio".
 10. Glyph widths are the `wcwidth` table's, not the font's
     (specs/wide-characters.md): East Asian wide and emoji-presentation
     clusters take two cells, ambiguous-width symbols one; a cluster the
@@ -1401,3 +1450,21 @@ For "Engine variables":
   writes (`BOX_NAMES`) and inline insets from the elements this one
   wrote none on (`clearUnwritten`), and `positionElement` an inline
   element's padding cells from a box.
+
+For "Aspect ratio":
+
+- style.ts: `readAspectRatio`, columns per row through the measured
+  cell, none on a table-internal box; `readLimit` reads a ratio box's
+  `auto` minimum where a block's resolves to `0px` (`autoMinimum`).
+- layout.ts: `ratioSize`, every derived size rounded once;
+  `layoutNode` derives an unset height from the width, definite,
+  floored at the content; `ratioWidth` an unset width from a given
+  height, or the height's limits through the ratio; `ratioWidthFloor`;
+  `widthContribution` the width a set height derives.
+- flex.ts: `flexBaseOuterWidth` and `flexItemMinWidth` over a row
+  item's `definiteHeight`; the column pass's base from the width and
+  its re-layout deriving or keeping the width.
+- grid.ts: `alignsNormal` (`CellStyle.alignItemsNormal`), and the
+  block-axis pass deriving the width from an explicit stretch.
+- positioning.ts: `placeByInsets` deriving the axis its insets and
+  sizes leave open.
