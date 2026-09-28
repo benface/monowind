@@ -22,17 +22,19 @@ import {
 } from "./flex.ts";
 import { roundHalfAwayFromZero } from "./metrics.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
+import { scrollportOf, stickyShift } from "./sticky.ts";
 import { IMPLICIT_ANCHOR, setAnchorSize } from "./style.ts";
 import { SIDES } from "./types.ts";
 import type {
   AnchorInset,
+  AnchorScope,
   AnchorSize,
   AnchorSizeProperty,
   AreaSide,
   CellLength,
   CellStyle,
-  Clip,
   Flip,
+  InlineElement,
   LayoutNode,
   NullableInsets,
   PerSide,
@@ -63,25 +65,25 @@ interface Frame {
   absY: number;
 }
 
-/** A box that clips, with its clip in unscrolled cells. */
-interface ClipFrame {
-  node: LayoutNode;
-  bounds: Clip;
-}
-
-/** An anchor as the boxes after it see it: its border box in the
- * host's cells as laid out, and the scroll containers on its
- * containing-block chain, whose offsets move it
+/** An element naming an anchor, as the boxes that look it up see it
  * (specs/anchor-positioning.md). */
 interface Anchor {
+  /** Its border box in the host's cells as laid out, its sticky boxes stuck. */
   rect: Rect;
-  scrollers: LayoutNode[];
-  /** The boxes on its chain that clip, outermost first (for
-   * `position-visibility`). */
-  clips: ClipFrame[];
+  /** The frames on its containing-block chain, from the host, whose
+   * scroll moves it and whose clip hides it. */
+  chain: Frame[];
+  /** The sticky boxes on its chain, each with its scroll container and
+   * the shift it adds to `rect`. */
+  stuck: { box: LayoutNode; scroller: LayoutNode; x: number; y: number }[];
   /** Whether it paints nothing of its own: `visibility`, or a
    * `position-visibility` hiding it or a box above. */
   hidden: boolean;
+  /** Its tree order, a tie the later recorded's. */
+  order: number;
+  topLayer: boolean;
+  /** The element whose `anchor-scope` keeps its name, if one does. */
+  scope: object | null;
 }
 
 /** A box's last successful placement (specs/anchor-positioning.md):
@@ -95,7 +97,10 @@ export interface Remembered {
 /** What a positioning pass carries down the tree. */
 interface Pass {
   cache: IntrinsicCache;
-  anchors: Map<string, Anchor>;
+  /** Each name's anchors, the last acceptable one a box's. */
+  anchors: Map<string, Anchor[]>;
+  /** The tree order recorded: an outermost absolute box's for all it holds. */
+  order: number;
   remembered: Map<Element, Remembered>;
   /** The boxes with placements to remember, the rest forgotten. */
   placed: Set<Element>;
@@ -119,49 +124,66 @@ export function positionOutOfFlow(
   const pass: Pass = {
     cache,
     anchors: new Map(),
+    order: 0,
     remembered,
     placed: new Set(),
     syncScroll,
     crossed: new Set(),
   };
-  walkPositioned(root, 0, 0, [{ node: root, absX: 0, absY: 0 }], pass);
+  const deferred: (() => void)[] = [];
+  const host = [{ node: root, absX: 0, absY: 0 }];
+  for (const child of root.children) walk(child, host, pass, deferred);
+  for (const place of deferred) place();
   for (const element of remembered.keys()) {
     if (!pass.placed.has(element)) remembered.delete(element);
   }
   return pass.crossed;
 }
 
-function walkPositioned(
-  node: LayoutNode,
-  absX: number,
-  absY: number,
-  ancestors: Frame[],
-  pass: Pass,
-): void {
-  for (const child of node.children) {
-    const effective = effectivePosition(child.style);
-    if (effective === "relative") {
-      // Pure visual offset; percent insets resolve against the parent's
-      // content box. `top` wins over `bottom`, `left` over `right` (LTR).
-      const { border } = node.style;
-      const { insets } = child.style;
-      const contentW = node.localRect.width - edges(border, node.resolvedPadding, "x");
-      const contentH = node.localRect.height - edges(border, node.resolvedPadding, "y");
-      child.localRect.x += relativeOffset(insets.left, insets.right, contentW);
-      child.localRect.y += relativeOffset(insets.top, insets.bottom, contentH);
-    } else if (effective === "absolute") {
-      placeAbsolute(child, node, absX, absY, ancestors, pass);
-      pass.syncScroll?.(child);
-      for (let i = ancestors.length - 1; i > 0 && child.style.position === "absolute"; i--) {
-        if (containsAbsolute(ancestors[i]!.node.style)) break;
-        pass.crossed.add(ancestors[i]!.node);
-      }
+/** Offsets a box or places an absolute one, records its anchors, then
+ * walks its children, in tree order; the first walk defers each
+ * outermost absolute box, so an anchor later in flow is there for it. */
+function walk(child: LayoutNode, ancestors: Frame[], pass: Pass, deferred?: (() => void)[]): void {
+  const { node: parent, absX, absY } = ancestors.at(-1)!;
+  const absolute = effectivePosition(child.style) === "absolute";
+  if (deferred) {
+    const order = (pass.order += 1);
+    if (absolute) {
+      deferred.push(() => {
+        pass.order = order;
+        walk(child, ancestors, pass);
+      });
+      return;
     }
-    const x = absX + child.localRect.x;
-    const y = absY + child.localRect.y;
-    recordAnchors(child, x, y, ancestors, pass.anchors);
-    walkPositioned(child, x, y, [...ancestors, { node: child, absX: x, absY: y }], pass);
   }
+  if (absolute) {
+    placeAbsolute(child, parent, absX, absY, ancestors, pass);
+    pass.syncScroll?.(child);
+    for (let i = ancestors.length - 1; i > 0 && child.style.position === "absolute"; i--) {
+      if (containsAbsolute(ancestors[i]!.node.style)) break;
+      pass.crossed.add(ancestors[i]!.node);
+    }
+  } else {
+    offsetRelative(child, parent);
+  }
+  const x = absX + child.localRect.x;
+  const y = absY + child.localRect.y;
+  recordAnchors(child, x, y, ancestors, pass);
+  const frames = [...ancestors, { node: child, absX: x, absY: y }];
+  for (const grandchild of child.children) walk(grandchild, frames, pass, deferred);
+}
+
+/** A relative box's offset: a pure visual shift, percent insets against
+ * the parent's content box, `top` over `bottom` and `left` over `right`
+ * (LTR). */
+function offsetRelative(child: LayoutNode, parent: LayoutNode): void {
+  if (effectivePosition(child.style) !== "relative") return;
+  const { border } = parent.style;
+  const { insets } = child.style;
+  const contentW = parent.localRect.width - edges(border, parent.resolvedPadding, "x");
+  const contentH = parent.localRect.height - edges(border, parent.resolvedPadding, "y");
+  child.localRect.x += relativeOffset(insets.left, insets.right, contentW);
+  child.localRect.y += relativeOffset(insets.top, insets.bottom, contentH);
 }
 
 function relativeOffset(start: CellLength | null, end: CellLength | null, basis: number): number {
@@ -170,41 +192,117 @@ function relativeOffset(start: CellLength | null, end: CellLength | null, basis:
   return 0;
 }
 
-/** A placed box's names, for the boxes after it in tree order
- * (specs/anchor-positioning.md): its border box, or for a named inline
- * element in its runs the element's first fragment, with the scroll
- * containers and clips of its containing-block chain. */
+/** A box's names, or a named inline element's in its runs, its first
+ * fragment's box, each with what a lookup weighs; recorded as the box
+ * is laid out or placed, so an anchor inside an absolute box is there
+ * for the boxes after it alone. */
 function recordAnchors(
   child: LayoutNode,
   absX: number,
   absY: number,
   ancestors: Frame[],
-  anchors: Map<string, Anchor>,
+  pass: Pass,
 ): void {
-  const inline = child.inlineElements?.some((entry) => entry.anchorNames.length > 0) ?? false;
-  if (child.style.anchorNames.length === 0 && !inline) return;
-  const scrollers = scrollersOf(ancestors, child.style.position);
-  const clips = clipsOf(ancestors, child.style.position);
-  const hiddenAbove =
-    child.forceHidden === true || ancestors.some((frame) => frame.node.forceHidden === true);
-  const rect = { x: absX, y: absY, width: child.localRect.width, height: child.localRect.height };
-  const hidden = hiddenAbove || !child.style.visible;
-  for (const name of child.style.anchorNames) anchors.set(name, { rect, scrollers, clips, hidden });
-  if (!inline) return;
-  const named = new Map<Element, { names: string[]; hidden: boolean }>();
-  for (const entry of child.inlineElements!) {
-    if (entry.anchorNames.length > 0 && !named.has(entry.element)) {
-      named.set(entry.element, { names: entry.anchorNames, hidden: hiddenAbove || !entry.visible });
+  const inline = child.inlineElements?.filter((entry) => entry.anchorNames.length > 0) ?? [];
+  if (child.style.anchorNames.length === 0 && inline.length === 0) return;
+  const { position } = child.style;
+  const boxes = [...ancestors.map((frame) => frame.node), child];
+  const chain = containingChain(ancestors, position);
+  // An inline anchor's chain goes on into its box, whose scroll and clip
+  // (`truncate`) reach it.
+  const inner = [...chain, { node: child, absX, absY }];
+  const stuck = stuckOn(inner);
+  const stuckX = stuck.reduce((sum, { x }) => sum + x, 0);
+  const stuckY = stuck.reduce((sum, { y }) => sum + y, 0);
+  const { order } = pass;
+  const topLayer = boxes.some((box) => box.style.topLayer);
+  const hiddenAbove = boxes.some((box) => box.forceHidden === true);
+  const record = (names: string[], at: Rect, hidden: boolean, owner?: InlineElement): void => {
+    const rect = { ...at, x: at.x + stuckX, y: at.y + stuckY };
+    for (const name of names) {
+      const scope = scopeOf(name, boxes, owner);
+      const anchor = { rect, chain: owner ? inner : chain, stuck, hidden, order, topLayer, scope };
+      const list = pass.anchors.get(name);
+      if (list) list.push(anchor);
+      else pass.anchors.set(name, [anchor]);
     }
-  }
-  for (const { element, rect } of inlineElementRects(child, absX, absY)) {
+  };
+  const rect = { x: absX, y: absY, width: child.localRect.width, height: child.localRect.height };
+  record(child.style.anchorNames, rect, hiddenAbove || !child.style.visible);
+  if (inline.length === 0) return;
+  const named = new Map(inline.map((entry) => [entry.element, entry]));
+  // As laid out: unscrolled, and whole where a truncation cuts it.
+  const { x, y } = child.scroll ?? { x: 0, y: 0 };
+  for (const { element, rect } of inlineElementRects(child, absX + x, absY + y, false)) {
     const entry = named.get(element);
     if (entry === undefined) continue;
-    for (const name of entry.names) {
-      anchors.set(name, { rect, scrollers, clips, hidden: entry.hidden });
-    }
+    record(entry.anchorNames, rect, hiddenAbove || !entry.visible, entry);
     named.delete(element);
   }
+}
+
+/** The sticky boxes on a containing-block chain, `frames`, each with
+ * its scroll container and the shift it puts on the chain's last where
+ * the scroll shows it (specs/anchor-positioning.md). */
+function stuckOn(frames: Frame[]): Anchor["stuck"] {
+  const stuck: Anchor["stuck"] = [];
+  let scroller: LayoutNode | undefined;
+  let table: LayoutNode | null = null;
+  frames.forEach(({ node: box }, i) => {
+    const port = box.style.position === "sticky" ? scroller : undefined;
+    if (port) {
+      const { x, y } = port.scroll ?? { x: 0, y: 0 };
+      // Where each box paints: inside the scroller, moved by its scroll.
+      const at = (node: LayoutNode) => {
+        const { absX, absY } = frames.find((frame) => frame.node === node)!;
+        return node === port ? { x: absX, y: absY } : { x: absX - x, y: absY - y };
+      };
+      const view = scrollportOf(port, at);
+      const shift = view && stickyShift(box, frames[i - 1]!.node, view, table, at);
+      if (shift) stuck.push({ box, scroller: port, ...shift });
+    }
+    if (box.scrollRange) scroller = box;
+    if (box.style.display === "table") table = box;
+  });
+  return stuck;
+}
+
+/** The innermost element whose `anchor-scope` keeps a name, from an
+ * inline `owner` out through `boxes`, innermost last; none for an
+ * invoker's name, which no scope reaches. */
+function scopeOf(name: string, boxes: LayoutNode[], owner?: InlineElement): object | null {
+  if (!authored(name)) return null;
+  const keeps = (scope: AnchorScope | undefined) => scope === "all" || scope?.includes(name);
+  if (owner && keeps(owner.anchorScope)) return owner.element;
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    if (keeps(boxes[i]!.style.anchorScope)) return boxes[i]!;
+  }
+  return null;
+}
+
+/** A box's anchor for a name: the last in tree order acceptable to it
+ * (specs/anchor-positioning.md "Locked decisions") — recorded, so any
+ * absolute box it lies in is placed and before the box; inside the
+ * box's containing block, the block itself aside (anywhere, for a fixed
+ * box's); in the box's scope for the name; and in the top layer only
+ * for a box there too. */
+function anchorFor(
+  name: string,
+  child: LayoutNode,
+  ancestors: Frame[],
+  pass: Pass,
+): Anchor | undefined {
+  const boxes = [...ancestors.map((frame) => frame.node), child];
+  const block = child.style.position === "fixed" ? null : containingFrame(ancestors).node;
+  const scope = scopeOf(name, boxes);
+  const topLayer = boxes.some((box) => box.style.topLayer);
+  let found: Anchor | undefined;
+  for (const anchor of pass.anchors.get(name) ?? []) {
+    if (anchor.scope !== scope || (anchor.topLayer && !topLayer)) continue;
+    if (block !== null && !anchor.chain.some((frame) => frame.node === block)) continue;
+    if (!found || anchor.order >= found.order) found = anchor;
+  }
+  return found;
 }
 
 /** The elements of a tree naming an anchor by an authored `anchor-name`,
@@ -257,33 +355,25 @@ function containingChain(ancestors: Frame[], position: Position): Frame[] {
   return chain;
 }
 
-/** The boxes on a box's chain that clip it, with their clips. */
-function clipsOf(ancestors: Frame[], position: Position): ClipFrame[] {
-  const out: ClipFrame[] = [];
-  for (const { node, absX, absY } of containingChain(ancestors, position)) {
-    const bounds = clipBounds(node, absX, absY);
-    if (bounds) out.push({ node, bounds });
-  }
-  return out;
-}
-
 /** Whether an anchor is clipped out of view by a box that clips it and
  * not the positioned box (specs/anchor-positioning.md): the anchor as
  * that box shows it — moved by the scroll of the clipping boxes inside
  * it — meets none of its window, the clip moved by its own scroll. */
-function anchorClipped(anchor: Anchor, boxClips: LayoutNode[]): boolean {
-  const { rect, clips } = anchor;
+function anchorClipped(anchor: Anchor, boxChain: LayoutNode[]): boolean {
+  const { rect, chain } = anchor;
   // Overlap on an axis; a zero-size anchor needs its edge inside.
   const meets = (start: number, size: number, from: number, to: number): boolean =>
     size > 0 ? start + size > from && start < to : start >= from && start <= to;
   // Inside out, the scroll of the clips passed accumulating.
   let dx = 0;
   let dy = 0;
-  for (let i = clips.length - 1; i >= 0; i--) {
-    const { node, bounds } = clips[i]!;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const { node, absX, absY } = chain[i]!;
+    const bounds = clipBounds(node, absX, absY);
+    if (!bounds) continue;
     const scrollX = node.scroll?.x ?? 0;
     const scrollY = node.scroll?.y ?? 0;
-    if (!boxClips.includes(node)) {
+    if (!boxChain.includes(node)) {
       const shown =
         meets(rect.x - dx, rect.width, bounds.x0 + scrollX, bounds.x1 + scrollX) &&
         meets(rect.y - dy, rect.height, bounds.y0 + scrollY, bounds.y1 + scrollY);
@@ -295,12 +385,15 @@ function anchorClipped(anchor: Anchor, boxClips: LayoutNode[]): boolean {
   return false;
 }
 
-/** The scroll containers on a box's chain, whose offsets move it
- * (specs/scrolling.md). */
-function scrollersOf(ancestors: Frame[], position: Position): LayoutNode[] {
-  return containingChain(ancestors, position)
-    .map((frame) => frame.node)
-    .filter((box) => box.scroll);
+/** The frame of a box's containing block: its nearest positioned
+ * ancestor's, else the host's, a fixed box's always. */
+function containingFrame(ancestors: Frame[], fixed = false): Frame {
+  if (!fixed) {
+    for (let i = ancestors.length - 1; i > 0; i--) {
+      if (isPositioned(ancestors[i]!.node.style)) return ancestors[i]!;
+    }
+  }
+  return ancestors[0]!;
 }
 
 /** The containing block's padding box, in absolute cells: the nearest
@@ -310,27 +403,23 @@ function scrollersOf(ancestors: Frame[], position: Position): LayoutNode[] {
  * dialog centered in a host taller than the window would open out of
  * sight (specs/top-layer.md). */
 function containingBlock(ancestors: Frame[], fixed: boolean, topLayer = false): Rect {
-  if (!fixed) {
-    for (let i = ancestors.length - 1; i > 0; i--) {
-      const frame = ancestors[i]!;
-      if (!isPositioned(frame.node.style)) continue;
-      const b = frame.node.style.border;
-      return {
-        x: frame.absX + b.left,
-        y: frame.absY + b.top,
-        width: Math.max(0, frame.node.localRect.width - b.left - b.right),
-        height: Math.max(0, frame.node.localRect.height - b.top - b.bottom),
-      };
-    }
+  const frame = containingFrame(ancestors, fixed);
+  if (frame !== ancestors[0]) {
+    const b = frame.node.style.border;
+    return {
+      x: frame.absX + b.left,
+      y: frame.absY + b.top,
+      width: Math.max(0, frame.node.localRect.width - b.left - b.right),
+      height: Math.max(0, frame.node.localRect.height - b.top - b.bottom),
+    };
   }
-  const host = ancestors[0]!;
   const box = {
-    x: host.absX,
-    y: host.absY,
-    width: host.node.localRect.width,
-    height: host.node.localRect.height,
+    x: frame.absX,
+    y: frame.absY,
+    width: frame.node.localRect.width,
+    height: frame.node.localRect.height,
   };
-  const visible = topLayer ? host.node.visibleCells : undefined;
+  const visible = topLayer ? frame.node.visibleCells : undefined;
   if (!visible) return box;
   const x = Math.max(box.x, visible.x);
   const y = Math.max(box.y, visible.y);
@@ -364,34 +453,31 @@ function placeAbsolute(
       : containingBlock(ancestors, fixed, style.topLayer);
   // Read before the anchor sizes resolve into the styles it keys.
   const key = style.positionTryFallbacks.length > 0 ? fallbackKey(style) : "";
-  resolveAnchorSizes(style, pass.anchors);
+  const anchorOf = (name: string | null): Anchor | undefined =>
+    name === null ? undefined : anchorFor(name, child, ancestors, pass);
+  const sizes = (swap: boolean): void => resolveAnchorSizes(style, anchorOf, swap);
   const root = ancestors[0]!.node;
-  let boxScrollers: LayoutNode[] | undefined;
+  const boxChain = containingChain(ancestors, style.position).map((frame) => frame.node);
   /** An anchor's rect as this box sees it, the scrollers moving it under
    * the box noted for their scroll's relayout. */
   const seen = (name: string | null): Rect | undefined => {
-    const anchor = name === null ? undefined : pass.anchors.get(name);
+    const anchor = anchorOf(name);
     if (!anchor) return undefined;
-    boxScrollers ??= scrollersOf(ancestors, style.position);
-    const { rect, movers } = anchorRectFor(anchor, boxScrollers);
+    const { rect, movers } = anchorRectFor(anchor, boxChain);
     noteAnchorScrollers(root, movers);
     return rect;
   };
-  const fits = placeTrying(child, parent, parentAbsX, parentAbsY, cb, seen, key, pass);
+  const fits = placeTrying(child, parent, parentAbsX, parentAbsY, cb, seen, sizes, key, pass);
   // `position-visibility` (specs/anchor-positioning.md), its scroll
   // relaying out a box whose anchor scrolled out of view.
   const conditions = style.positionVisibility;
-  const name = style.positionAnchor;
-  const anchor = name === null ? undefined : pass.anchors.get(name);
+  const anchor = anchorOf(style.positionAnchor);
   let invisible = false;
   if (conditions.anchorVisible && anchor) {
-    const boxClips = clipsOf(ancestors, style.position).map((clip) => clip.node);
-    invisible = anchor.hidden || anchorClipped(anchor, boxClips);
+    invisible = anchor.hidden || anchorClipped(anchor, boxChain);
     noteAnchorScrollers(
       root,
-      anchor.clips
-        .filter((clip) => clip.node.scroll && !boxClips.includes(clip.node))
-        .map((clip) => clip.node),
+      anchor.chain.flatMap(({ node }) => (node.scroll && !boxChain.includes(node) ? [node] : [])),
     );
   }
   child.forceHidden =
@@ -430,15 +516,20 @@ function fallbackKey(style: CellStyle): string {
   ]);
 }
 
-/** A box's `anchor-size()`s in cells, from the anchors placed before it
- * — the one it names, else its own — each property's initial value
- * where none resolves (specs/anchor-positioning.md). */
-function resolveAnchorSizes(style: CellStyle, anchors: Map<string, Anchor>): void {
+/** A box's `anchor-size()`s in cells, from its anchors — the one it
+ * names, else its own — each property's initial value where none
+ * resolves (specs/anchor-positioning.md); each the other dimension
+ * where `swap`. */
+function resolveAnchorSizes(
+  style: CellStyle,
+  anchorOf: (name: string | null) => Anchor | undefined,
+  swap: boolean,
+): void {
   const sizes = Object.entries(style.anchorSizes) as [AnchorSizeProperty, AnchorSize][];
-  for (const [property, size] of sizes) {
-    const name = size.anchor ?? style.positionAnchor;
-    const rect = name === null ? undefined : anchors.get(name)?.rect;
-    setAnchorSize(style, property, rect?.[size.dimension], size.fallback);
+  for (const [property, { anchor, dimension, fallback }] of sizes) {
+    const rect = anchorOf(anchor ?? style.positionAnchor)?.rect;
+    const other = dimension === "width" ? "height" : "width";
+    setAnchorSize(style, property, rect?.[swap ? other : dimension], fallback);
   }
 }
 
@@ -639,28 +730,35 @@ function placeByInsets(
   return margin;
 }
 
-/** An anchor's rect as a box sees it: moved by the scroll of the
- * scroll containers that move the anchor and not the box, and back by
- * those that move the box alone — the movers, whose scroll takes a
- * relayout. */
+/** An anchor's rect as a box on `boxChain` sees it: moved by the scroll
+ * of the scroll containers that move the anchor and not the box, and
+ * back by those that move the box alone — the movers, whose scroll
+ * takes a relayout — and by the stick of a sticky box the two share,
+ * which moves both where they paint. */
 function anchorRectFor(
   anchor: Anchor,
-  boxScrollers: LayoutNode[],
+  boxChain: LayoutNode[],
 ): { rect: Rect; movers: LayoutNode[] } {
   let dx = 0;
   let dy = 0;
   const movers: LayoutNode[] = [];
-  for (const scroller of anchor.scrollers) {
-    if (boxScrollers.includes(scroller)) continue;
-    dx -= scroller.scroll!.x;
-    dy -= scroller.scroll!.y;
+  for (const { node: scroller } of anchor.chain) {
+    if (!scroller.scroll || boxChain.includes(scroller)) continue;
+    dx -= scroller.scroll.x;
+    dy -= scroller.scroll.y;
     movers.push(scroller);
   }
-  for (const scroller of boxScrollers) {
-    if (anchor.scrollers.includes(scroller)) continue;
-    dx += scroller.scroll!.x;
-    dy += scroller.scroll!.y;
+  for (const scroller of boxChain) {
+    if (!scroller.scroll || anchor.chain.some((frame) => frame.node === scroller)) continue;
+    dx += scroller.scroll.x;
+    dy += scroller.scroll.y;
     movers.push(scroller);
+  }
+  for (const { box, scroller, x, y } of anchor.stuck) {
+    if (boxChain.includes(box)) {
+      dx -= x;
+      dy -= y;
+    } else movers.push(scroller);
   }
   return { rect: { ...anchor.rect, x: anchor.rect.x + dx, y: anchor.rect.y + dy }, movers };
 }
@@ -711,6 +809,7 @@ function placeTrying(
   parentAbsY: number,
   cb: Rect,
   seen: (name: string | null) => Rect | undefined,
+  sizes: (swap: boolean) => void,
   key: string,
   pass: Pass,
 ): boolean {
@@ -730,22 +829,30 @@ function placeTrying(
     }
   });
   const blocks = new Map<Attempt, { block: Rect; insets: PerSide<CellLength | null> }>();
-  /** The block an attempt places the box in — its area, or what its
-   * insets leave — with those insets. */
+  /** The block an attempt places the box in — what its insets leave of
+   * its area, its containing block there, or of the box's — with those
+   * insets. */
   const blockOf = (attempt: Attempt): { block: Rect; insets: PerSide<CellLength | null> } => {
     let entry = blocks.get(attempt);
     if (!entry) {
-      if (attempt.area) {
-        entry = { block: areaBlock(attempt.area, cb, anchor!), insets: style.insets };
-      } else {
-        const insets = resolvedInsets(style, cb, seen, attempt.flips);
-        entry = { block: insetBlock(cb, insets), insets };
-      }
+      const within = attempt.area ? areaBlock(attempt.area, cb, anchor!) : cb;
+      const insets = resolvedInsets(style, within, seen, attempt.flips);
+      entry = { block: insetBlock(within, insets), insets };
       blocks.set(attempt, entry);
     }
     return entry;
   };
   const place = (attempt: Attempt): boolean => {
+    // `flip-start` swaps the sizes with the axes, `anchor-size()`'s
+    // dimension with them (css-anchor-position-1).
+    const swapped = attempt.flips.filter((flip) => flip === "start").length % 2 === 1;
+    sizes(swapped);
+    if (swapped) swapSizes(style);
+    const fits = placeIn(attempt);
+    if (swapped) swapSizes(style);
+    return fits;
+  };
+  const placeIn = (attempt: Attempt): boolean => {
     const { block, insets } = blockOf(attempt);
     const margins = flipSides(style.margin, attempt.flips);
     const margin = attempt.area
@@ -795,6 +902,13 @@ function placeTrying(
   place(standing);
   pass.remembered.set(child.source, { key, option: standing.option });
   return false;
+}
+
+/** A box's width and height traded, their limits with them. */
+function swapSizes(style: CellStyle): void {
+  [style.width, style.height] = [style.height, style.width];
+  [style.minWidth, style.minHeight] = [style.minHeight, style.minWidth];
+  [style.maxWidth, style.maxHeight] = [style.maxHeight, style.maxWidth];
 }
 
 /** An area's block: a cell of the anchor's 3×3 grid over the

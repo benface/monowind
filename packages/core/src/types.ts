@@ -481,6 +481,10 @@ export interface PerSide<T> {
   left: T;
 }
 
+/** An `anchor-scope`: the names it keeps to its element's subtree, all
+ * of them, or none (specs/anchor-positioning.md). */
+export type AnchorScope = "all" | readonly string[] | null;
+
 export interface CellStyle {
   display: Display;
   flexDirection: FlexDirection;
@@ -687,6 +691,8 @@ export interface CellStyle {
    * own id), the area it takes, the fallbacks tried on overflow, and
    * the axes `justify-self`/`align-self` center on the anchor. */
   anchorNames: string[];
+  /** `anchor-scope`, read where a box is anchored by name. */
+  anchorScope: AnchorScope;
   positionAnchor: string | null;
   positionArea: PositionArea | null;
   positionTryFallbacks: AnchorFallback[];
@@ -799,8 +805,9 @@ export interface InlineElement {
   sticky?: PerSide<number | null>;
   stickyShift?: { x: number; y: number };
   /** Its `anchor-name`s, for the boxes anchored to it
-   * (specs/anchor-positioning.md). */
+   * (specs/anchor-positioning.md), and its own `anchor-scope`. */
   anchorNames: string[];
+  anchorScope?: AnchorScope;
   /** Paint-only styling mirrored into the grid (the browser's own
    * ink is transparent-locked). `backgroundColor` fills the run's
    * cells — how a focus-inverted inline link shows its highlight. */
@@ -1190,6 +1197,7 @@ export function defaultCellStyle(): CellStyle {
     layer: null,
     stacking: false,
     anchorNames: [],
+    anchorScope: null,
     positionAnchor: null,
     positionArea: null,
     positionTryFallbacks: [],

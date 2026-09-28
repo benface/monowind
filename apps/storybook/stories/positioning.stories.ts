@@ -1072,7 +1072,8 @@ export const Anchored: StoryObj = {
         </div>
         <div
           data-test="submenu"
-          class="absolute ml-2 border bg-clear px-1 [position-anchor:--paste] [position-area:right_span-bottom]"
+          popover="manual"
+          class="ml-2 border bg-clear px-1 [position-anchor:--paste] [position-area:right_span-bottom]"
         >
           <p>Plain</p>
           <p>Formatted</p>
@@ -1110,6 +1111,9 @@ export const Anchored: StoryObj = {
     // the state the play reached, so a failed edge must not take a box
     // out of the picture.
     by("open").click();
+    // A submenu is a popover opened after its menu: only the top layer
+    // after it sees an anchor inside a popover (css-anchor-position-1).
+    by("submenu").showPopover();
     by("open-low").click();
     // The tooltip's box sits on the row above the word, centered on it.
     await waitFor(() => expect(by("tooltip").getAttribute("data-mw-area")).toBe("span-all top"));
@@ -1245,13 +1249,19 @@ export const AnchorFallbacks: StoryObj = {
 };
 
 /** A menu anchored to a button inside a scrolling list follows the
- * button through the scroll (specs/anchor-positioning.md). */
+ * button through the scroll, and one under a stuck header's button
+ * stays under it (specs/anchor-positioning.md). */
 export const AnchorInScroller: StoryObj = {
   tags: ["!dev", "!golden"],
   render: () => html`
     <mono-wind>
       <div class="p-1">
         <div data-test="list" class="h-8 overflow-y-auto border border-neutral-500">
+          <div class="sticky top-0 bg-clear">
+            <button data-test="header-open" popovertarget="header-menu" popovertargetaction="show">
+              header menu
+            </button>
+          </div>
           <p>Row 1 of the list.</p>
           <p>Row 2 of the list.</p>
           <button
@@ -1271,6 +1281,14 @@ export const AnchorInScroller: StoryObj = {
           >
             <p>Beside</p>
             <p>the button</p>
+          </div>
+          <div
+            id="header-menu"
+            data-test="header-menu"
+            popover
+            class="border bg-clear px-1 [position-area:bottom_span-right]"
+          >
+            Under the header
           </div>
         </div>
         <p>The page below the list.</p>
@@ -1296,6 +1314,14 @@ export const AnchorInScroller: StoryObj = {
       expect(Math.abs(top("open") - (buttonTop - 2 * cellHeight))).toBeLessThan(1);
       expect(Math.abs(top("menu") - (menuTop - 2 * cellHeight))).toBeLessThan(1);
     });
+    by("header-open").click();
+    await waitFor(() => expect(rowOf("Under the header")).toBeGreaterThanOrEqual(0));
+    const underRow = rowOf("Under the header");
+    const underTop = top("header-menu");
+    by("list").scrollTop = 4 * cellHeight;
+    await waitFor(() => expect(rowOf("Row 6 of the list.")).toBeGreaterThanOrEqual(0));
+    expect(rowOf("Under the header")).toBe(underRow);
+    expect(Math.abs(top("header-menu") - underTop)).toBeLessThan(1);
   },
 };
 
@@ -1477,8 +1503,11 @@ export const AnchorTryOrder: StoryObj = {
 
 /** Test-only (hidden from the sidebar): the initial `position-visibility`,
  * `anchors-visible`, hides a fixed menu whose anchor scrolled out of its
- * list — on the grid and in the light DOM — and shows it as the anchor
- * scrolls back (specs/anchor-positioning.md). */
+ * list — on the grid and in the light DOM, where its button still takes
+ * the focus, a press passes through it, and its opacity transition
+ * never runs — and shows it as the anchor
+ * scrolls back, and hides a box whose inline anchor a `truncate`
+ * paragraph cuts off (specs/anchor-positioning.md). */
 export const AnchorVisibility: StoryObj = {
   tags: ["!dev", "!golden"],
   render: () => html`
@@ -1492,9 +1521,18 @@ export const AnchorVisibility: StoryObj = {
         </div>
         <div
           data-test="menu"
-          class="fixed border bg-clear px-1 [position-anchor:--listed] [position-area:right]"
+          class="fixed border bg-clear px-1 transition-opacity [position-anchor:--listed] [position-area:right]"
         >
-          menu
+          menu <button data-test="menu-button">go</button>
+        </div>
+        <p class="w-20 truncate">
+          A line too long for its box, cut at <span class="[anchor-name:--cut]">here</span>
+        </p>
+        <div
+          data-test="cut"
+          class="fixed border bg-clear px-1 [position-anchor:--cut] [position-area:bottom]"
+        >
+          clipped
         </div>
       </div>
     </mono-wind>
@@ -1504,16 +1542,112 @@ export const AnchorVisibility: StoryObj = {
     const by = testHooks(canvasElement);
     const shows = () => rowsOf(host).some((row) => row.includes("menu"));
     await waitFor(() => expect(shows()).toBe(true));
+    const transitions: string[] = [];
+    by("menu").addEventListener("transitionrun", (event) => transitions.push(event.propertyName));
+    expect(by("cut").hasAttribute("data-mw-force-hidden")).toBe(true);
+    expect(rowsOf(host).some((row) => row.includes("clipped"))).toBe(false);
     const cell = cellSize(host).height;
     by("list").scrollTop = 6 * cell;
     await waitFor(() => {
       expect(shows()).toBe(false);
-      expect(getComputedStyle(by("menu")).visibility).toBe("hidden");
+      expect(getComputedStyle(by("menu")).clipPath).not.toBe("none");
     });
+    by("menu-button").focus();
+    expect(document.activeElement).toBe(by("menu-button"));
+    const { left, top, width, height } = by("menu").getBoundingClientRect();
+    expect(by("menu").contains(document.elementFromPoint(left + width / 2, top + height / 2))).toBe(
+      false,
+    );
     by("list").scrollTop = 0;
     await waitFor(() => {
       expect(shows()).toBe(true);
-      expect(getComputedStyle(by("menu")).visibility).toBe("visible");
+      expect(getComputedStyle(by("menu")).clipPath).toBe("none");
     });
+    // Hiding starts no fade of its own for the grid to sample.
+    expect(transitions).toEqual([]);
+  },
+};
+
+/** The anchor-choice probes (specs/anchor-positioning.md "Locked
+ * decisions"), each in a relative block 20 rows tall, its `box`
+ * anchored below `--a`, lengths in `unit`. */
+const acceptableCases = (u: Unit): string[] => {
+  const anchor = (left: number) =>
+    `<div style="anchor-name:--a;width:${u(4, "x")};margin-left:${u(left, "x")}">ANCH</div>`;
+  const box = (hook = true) =>
+    `<div${hook ? ' data-test="box"' : ""} style="position:absolute;position-anchor:--a;position-area:bottom;width:${u(2, "x")};height:${u(1, "y")}"></div>`;
+  const block = (inner: string) =>
+    `<div style="position:relative;height:${u(20, "y")}">${inner}</div>`;
+  const item = (left: number, hook: boolean, scope = "") =>
+    `<div style="${scope}">${anchor(left)}${box(hook)}</div>`;
+  return [
+    block(`${anchor(0)}${box()}<div style="height:${u(2, "y")}"></div>${anchor(6)}`),
+    block(
+      `${anchor(0)}${box()}<div style="anchor-name:--a;position:absolute;top:${u(5, "y")};left:${u(6, "x")};width:${u(4, "x")}">B</div>`,
+    ),
+    block(`${anchor(0)}${box()}<div style="position:relative">${anchor(6)}</div>`),
+    block(
+      `${anchor(0)}<div style="anchor-name:--a;position:relative;height:${u(5, "y")}">${box()}</div>`,
+    ),
+    block(`${item(0, true)}${item(6, false)}`),
+    block(`${item(0, true, "anchor-scope:--a")}${item(6, false, "anchor-scope:--a")}`),
+  ];
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): which
+ * element anchors a box, laid out by the engine, lengths on the spacing
+ * scale, and by the browser beside it at the measured cell — the last
+ * acceptable one in tree order, an `anchor-scope` keeping each list
+ * item's box to its own. Each box sits on the browser's cells. */
+export const AnchorAcceptable: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () =>
+    html`${acceptableCases((cells) => `${cells * 0.25}rem`).map(
+      (markup, i) => html`
+        <div data-test="case-${i}" class="mb-2 flex gap-4">
+          <mono-wind class="w-40" .innerHTML=${markup}></mono-wind>
+          <div data-test="native"></div>
+        </div>
+      `,
+    )}`,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const cell = cellSize(host);
+    const cases = acceptableCases(
+      (cells, axis) => `${cells * cell[axis === "x" ? "width" : "height"]}px`,
+    );
+    const { font, letterSpacing } = getComputedStyle(host);
+    for (const [i, markup] of cases.entries()) {
+      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
+        `[data-test="case-${i}"] > *`,
+      );
+      Object.assign(native!.style, {
+        width: `${grid!.getBoundingClientRect().width}px`,
+        font,
+        lineHeight: `${cell.height}px`,
+        letterSpacing,
+      });
+      native!.innerHTML = markup;
+    }
+    await frames(2);
+    for (const i of cases.keys()) {
+      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
+        `[data-test="case-${i}"] > *`,
+      );
+      const at = (root: HTMLElement) => {
+        const origin = root.getBoundingClientRect();
+        const box = root.querySelector('[data-test="box"]')!.getBoundingClientRect();
+        return {
+          x: (box.left - origin.left) / cell.width,
+          y: (box.top - origin.top) / cell.height,
+        };
+      };
+      const want = at(native!);
+      await waitFor(() => {
+        const got = at(grid!);
+        expect(Math.abs(got.x - want.x), `case ${i} x`).toBeLessThan(0.5);
+        expect(Math.abs(got.y - want.y), `case ${i} y`).toBeLessThan(0.5);
+      });
+    }
   },
 };

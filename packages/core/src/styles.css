@@ -951,30 +951,21 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     display: none !important;
   }
 
-  /* An anchored box `position-visibility` hides (specs/anchor-positioning.md):
-   * its subtree with it, whatever their own `visibility`, as the
-   * browsers' force-hidden — a top-layer element inside it aside, whose
-   * box is the viewport's: shown as authored, over the hidden it would
-   * inherit (`data-mw-top-shown`), its subtree its own. */
-  mono-wind [data-mw-force-hidden]:not([data-mw-measuring]),
-  mono-wind
-    [data-mw-force-hidden]
-    *:not(
-      [data-mw-measuring],
-      [data-mw-force-hidden] [data-mw-top],
-      [data-mw-force-hidden] [data-mw-top] *
-    ) {
-    visibility: hidden !important;
-  }
-  mono-wind [data-mw-top-shown]:not([data-mw-measuring]) {
-    visibility: visible !important;
+  /* An anchored box `position-visibility` hides (specs/anchor-positioning.md),
+   * as the browsers hide it at paint: clipped whole, its subtree with it,
+   * so it paints and takes no hit yet keeps the focus and the
+   * accessibility tree; a top-layer element inside it stays out of the
+   * clip, as in CSS. The clip snaps under the read flags' transition
+   * mask (above). */
+  mono-wind [data-mw-force-hidden]:not([data-mw-measuring]) {
+    clip-path: inset(50%) !important;
   }
 
   /* A container whose anonymous runs are misparented table content
    * (stray text in a div-table, specs/table.md): the runs have no element
    * to hide, so the container hides its text, and its laid-out children
    * — the rows or cells — show through where they read visible
-   * (specs/visibility.md), under force-hidden's specificity. */
+   * (specs/visibility.md). */
   mono-wind [data-mw-hidden-runs]:not([data-mw-measuring]) {
     visibility: hidden !important;
   }

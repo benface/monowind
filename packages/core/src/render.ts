@@ -27,7 +27,7 @@ const BOX_MARKS =
 /** Every flag and variable a box's writes leave on its element — the
  * tracking and the pointer flag aside, an inline element's writes too. */
 const BOX_NAMES = (
-  "data-mw-top data-mw-top-shown data-mw-laid-out data-mw-inline-box data-mw-multicol-flow " +
+  "data-mw-top data-mw-laid-out data-mw-inline-box data-mw-multicol-flow " +
   "data-mw-multicol-flow-span data-mw-float data-mw-flow data-mw-area data-mw-vbottom " +
   "data-mw-vmiddle data-mw-nowrap data-mw-multicol data-mw-multicol-balance data-mw-pre " +
   "data-mw-clip data-mw-scroll data-mw-text-align-blocked data-mw-table-hidden " +
@@ -91,7 +91,6 @@ function walk(
   boxes: Set<Element>,
   insets: Set<Element>,
   ground?: string,
-  forced = false,
 ): void {
   if (node.inlineElements) {
     for (const entry of node.inlineElements) {
@@ -116,12 +115,7 @@ function walk(
   else if (!node.anonymous) {
     boxes.add(node.source);
     positionElement(node, parent);
-    // A top-layer element's box is the viewport's, so a box
-    // position-visibility hides around it leaves it shown (styles.css).
-    const escapes = forced && node.topLayerRank !== undefined && node.style.visible;
-    setFlag(node.source, "data-mw-top-shown", escapes);
   }
-  const forcedBelow = node.forceHidden === true || (forced && node.topLayerRank === undefined);
   // The ground the grid paints under this box: its own fill, else the
   // nearest above, `bg-clear` cutting through to the theme's.
   // A hidden box paints no fill: the ground stays the one above it.
@@ -142,7 +136,7 @@ function walk(
       const applies = zIndexApplies(child, node) && !child.inlineBox;
       setVar(child.source as HTMLElement, "--mw-z", applies ? child.style.zIndex : null);
     }
-    walk(child, node, boxes, insets, own, forcedBelow);
+    walk(child, node, boxes, insets, own);
   }
 }
 

@@ -236,10 +236,11 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   the top-layer stack, absolute boxes that escape a scroller, and the
   leaves holding sticky inline elements — with their parents.
 - sticky.ts: `stickyShiftAxis(box, block, view, start, end)`, the
-  per-axis rule above, pure rect math; `stick`, a sticky box's shift
-  onto its `paintOrigin` (`node.stickyShift`, absent when zero), from
-  its scroll container's scrollport and its containing block where
-  they paint; `stickInline`, each sticky inline element's
+  per-axis rule above, pure rect math; `stickyShift`, a sticky box's
+  shift from its scroll container's scrollport and its containing
+  block where they paint, their `paintOrigin` or where a caller puts
+  them; `stick`, that shift onto its `paintOrigin` (`node.stickyShift`,
+  absent when zero); `stickInline`, each sticky inline element's
   `stickyShift`, from its fragments' bounds taken once per leaf; and
   `partLines`, the lattice line cells a table part's box takes in.
 - layout.ts: `layoutRoot` runs `placePainted` last.
@@ -250,7 +251,8 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   constraints (`inlineElements[i].sticky`) where a relative one's are
   offsets (`insets`).
 - positioning.ts: a sticky box keeps its static position in the
-  positioning pass.
+  positioning pass; `stuckOn`, the shifts `stickyShift` puts on an
+  anchor for the current scroll (anchor-positioning.md).
 - plain-text.ts: the paint's visitor (`painter`) paints each box at
   its `paintOrigin`, a table part's lattice cells in the part's turn,
   the table's own over its parts' fills, and the transcript takes the

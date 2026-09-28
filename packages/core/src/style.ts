@@ -49,6 +49,7 @@ import type {
   AnchorFallback,
   Flip,
   AnchorInset,
+  AnchorScope,
   AnchorInsets,
   AnchorSize,
   AnchorSizeProperty,
@@ -335,6 +336,7 @@ export function readCellStyle(
     visible: readVisible(cs, el),
     pointerEvents: cs.pointerEvents !== "none",
     ...anchoring,
+    anchorScope: readAnchorScope(el, cs),
     anchorSizes,
     anchorInsets,
     topLayer,
@@ -720,6 +722,22 @@ function readPositionAnchor(el: Element, cs: CSSStyleDeclaration, hasArea: boole
   }
   const implicit = anchor === "auto" || ((anchor === "normal" || anchor === "") && hasArea);
   return implicit && el.hasAttribute("popover") && el.id !== "" ? IMPLICIT_ANCHOR + el.id : null;
+}
+
+const ANCHOR_SCOPE_UTILITY = /(?:^|\s)\[anchor-scope:([^\]]+)\]/;
+
+/** An element's `anchor-scope` (specs/anchor-positioning.md "Reading"):
+ * computed, or on an element the engine scopes while it reads
+ * (`data-mw-anchor`), from its inline style or `[anchor-scope:…]`
+ * utility. */
+export function readAnchorScope(el: Element, cs: CSSStyleDeclaration): AnchorScope {
+  const value = el.hasAttribute("data-mw-anchor")
+    ? (el as HTMLElement).style?.getPropertyValue("anchor-scope") ||
+      (el.getAttribute("class")?.match(ANCHOR_SCOPE_UTILITY)?.[1] ?? "")
+    : cs.getPropertyValue("anchor-scope");
+  const scope = value.trim();
+  if (scope === "" || scope === "none") return null;
+  return scope === "all" ? "all" : scope.split(",").map((name) => name.trim());
 }
 
 /** An element's `anchor-name`s; an invoker of a popover

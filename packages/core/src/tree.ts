@@ -7,6 +7,7 @@ import {
   isTransparentColor,
   lineGapRows,
   readAnchorNames,
+  readAnchorScope,
   readCellStyle,
   readGlyph,
   readOpacity,
@@ -683,6 +684,7 @@ function inlineEntry(
   parent: number,
 ): LeafRun["inlineElements"][number] {
   const { position, backgroundColor } = cs;
+  const anchorNames = readAnchorNames(element, cs);
   const positioned = position === "relative" || position === "sticky";
   const zIndex =
     positioned && cs.zIndex !== "auto" && cs.zIndex !== "" ? Number(cs.zIndex) || 0 : null;
@@ -704,7 +706,8 @@ function inlineEntry(
     padRight,
     insets: position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
     ...(position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
-    anchorNames: readAnchorNames(element, cs),
+    anchorNames,
+    ...(anchorNames.length > 0 && { anchorScope: readAnchorScope(element, cs) }),
     color: cs.color,
     backgroundColor: isTransparentColor(backgroundColor) ? undefined : backgroundColor,
     glyph: readGlyph(cs),

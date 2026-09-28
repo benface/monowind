@@ -4,12 +4,15 @@ import { renderPlainText } from "../src/plain-text.ts";
 import { hitChain } from "../src/pointer.ts";
 import { render } from "../src/render.ts";
 import {
+  IMPLICIT_ANCHOR,
   parsePositionArea,
   parsePositionTryFallbacks,
   parsePositionVisibility,
+  readAnchorScope,
   readCellStyle,
 } from "../src/style.ts";
 import type { Remembered } from "../src/positioning.ts";
+import { buildTree } from "../src/tree.ts";
 import type { AnchorFallback, CellStyle, Flip, LayoutNode, PositionArea } from "../src/types.ts";
 import { makeNode } from "./helpers.ts";
 
@@ -541,6 +544,49 @@ describe("the fallbacks", () => {
     expect(wide.anchorArea).toEqual({ x: "start", y: "center" });
   });
 
+  it("applies its insets inside the area, its containing block, mirrored with it", () => {
+    const insets = (sides: Partial<CellStyle["insets"]>) => ({
+      style: { insets: { top: null, right: null, bottom: null, left: null, ...sides } },
+    });
+    const below = anchored("x", { x: "span-all", y: "end" }, insets({ top: 2 }));
+    expect(place(below).rect).toMatchObject({ y: 6 });
+    const inward = anchored("x", { x: "span-end", y: "end" }, insets({ left: 4 }));
+    expect(place(inward).rect).toMatchObject({ x: 10, y: 4 });
+    // Two rows under a low anchor leave none: flipped above, two rows up.
+    const flipped = anchored("x", { x: "span-all", y: "end" }, insets({ top: 2 }), [
+      { flips: ["block"] },
+    ]);
+    expect(place(flipped, 6, 1, 5).rect).toMatchObject({ y: 2 });
+  });
+
+  it("swaps the box's sizes with the axes under flip-start", () => {
+    const sized = {
+      width: { kind: "cells", value: 12 },
+      height: { kind: "cells", value: 3 },
+    } as const;
+    const box = anchored("x", { x: "end", y: "span-all" }, { style: sized }, [
+      { flips: ["start"] },
+    ]);
+    layoutRoot(makeNode({ style: { minHeight: 20 }, children: [spacer(1), anchorAt(6), box] }), 20);
+    expect(box.anchorArea).toEqual({ x: "span-all", y: "end" });
+    expect(box.localRect).toMatchObject({ width: 3, height: 12 });
+  });
+
+  it("swaps anchor-size()'s dimension with the sizes under flip-start", () => {
+    // Twelve wide beside a twelve-wide anchor overflows; flipped below,
+    // its height is the anchor's, one row, as `anchor-size(height)`.
+    const box = anchored(
+      "x",
+      { x: "end", y: "span-all" },
+      { style: { anchorSizes: { width: { anchor: null, dimension: "width" } } } },
+      [{ flips: ["start"] }],
+    );
+    const anchor = anchorAt(6, 3, { text: "ANCHORED-BOX" });
+    layoutRoot(makeNode({ style: { minHeight: 20 }, children: [spacer(1), anchor, box] }), 20);
+    expect(box.anchorArea).toEqual({ x: "span-all", y: "end" });
+    expect(box.localRect).toMatchObject({ y: 4, height: 1 });
+  });
+
   it("swaps the axes for flip-start, and takes an area of its own", () => {
     // The right column is 10 wide: a 12-wide box swaps to the rows below.
     const start = anchored("abcdefghijkl", { x: "end", y: "span-all" }, {}, [{ flips: ["start"] }]);
@@ -701,6 +747,72 @@ describe("an anchor in a scroller", () => {
   });
 });
 
+describe("an anchor on a sticky box", () => {
+  /** A fixed menu under a button in a list's sticky header, the list
+   * scrolled `by` rows; its header in a section `rows` tall; the menu
+   * absolute inside the header where `inside`. */
+  const stuck = (by: number, rows = 12, style: Partial<CellStyle> = {}, inside = false) => {
+    const button = makeNode({
+      text: "ANCH",
+      source: document.createElement("div"),
+      style: { anchorNames: ["--a"], width: { kind: "cells", value: 4 }, ...style },
+    });
+    const menu = anchored(
+      "x",
+      { x: "span-all", y: "end" },
+      inside ? {} : { style: { position: "fixed" } },
+    );
+    const header = makeNode({
+      source: document.createElement("div"),
+      style: { position: "sticky", insets: { top: 0, right: null, bottom: null, left: null } },
+      children: inside ? [button, menu] : [button],
+    });
+    const section = makeNode({
+      source: document.createElement("div"),
+      style: { height: { kind: "cells", value: rows } },
+      children: [header],
+    });
+    const list = makeNode({
+      source: document.createElement("div"),
+      style: { overflow: { x: "visible", y: "auto" }, height: { kind: "cells", value: 4 } },
+      children: [spacer(1), section, spacer(12)],
+    });
+    const root = makeNode({
+      style: { minHeight: 8 },
+      source: document.createElement("div"),
+      children: inside ? [list] : [list, menu],
+    });
+    layoutRoot(root, 20, () => {
+      if (list.scrollRange) list.scroll = { x: 0, y: by };
+    });
+    return { root, list, y: menu.paintOrigin.y, below: button.paintOrigin.y + 1 };
+  };
+
+  it("anchors to the button where its stuck header shows it", () => {
+    expect(stuck(0).y).toBe(2);
+    const { root, list, y } = stuck(3);
+    expect(y).toBe(1);
+    expect(root.anchorScrollers).toEqual(new Set([list.source]));
+    // Held at its two-row section's end, a row above the view.
+    expect(stuck(3, 2).y).toBe(0);
+  });
+
+  it("leaves a fixed button where the host paints it", () => {
+    const { root, y } = stuck(3, 12, {
+      position: "fixed",
+      insets: { top: 5, right: null, bottom: null, left: 0 },
+    });
+    expect(y).toBe(6);
+    expect(root.anchorScrollers).toBeUndefined();
+  });
+
+  it("moves a box in the same header with it once", () => {
+    const { root, y, below } = stuck(3, 12, {}, true);
+    expect(y).toBe(below);
+    expect(root.anchorScrollers).toBeUndefined();
+  });
+});
+
 describe("the light element", () => {
   it("carries the area taken as physical keywords", () => {
     const box = anchored("x", { x: "span-end", y: "end" });
@@ -710,28 +822,6 @@ describe("the light element", () => {
     const plain = makeNode({ text: "p", source: document.createElement("div") });
     render(makeNode({ source: document.createElement("div"), children: [plain] }));
     expect(plain.source.hasAttribute("data-mw-area")).toBe(false);
-  });
-});
-
-describe("a top-layer element inside a box position-visibility hides", () => {
-  it("is flagged to show as authored, an invisible one not", () => {
-    const top = (visible: boolean) => {
-      const node = makeNode({
-        text: "p",
-        source: document.createElement("div"),
-        style: { visible },
-      });
-      node.topLayerRank = 0;
-      return node;
-    };
-    const shown = top(true);
-    const hidden = top(false);
-    const menu = makeNode({ source: document.createElement("div"), children: [shown, hidden] });
-    menu.forceHidden = true;
-    render(makeNode({ source: document.createElement("div"), children: [menu] }));
-    expect(menu.source.hasAttribute("data-mw-force-hidden")).toBe(true);
-    expect(shown.source.hasAttribute("data-mw-top-shown")).toBe(true);
-    expect(hidden.source.hasAttribute("data-mw-top-shown")).toBe(false);
   });
 });
 
@@ -895,7 +985,7 @@ describe("the fallbacks of a box placed by its insets", () => {
   it("moves anchor-center to the other axis under flip-start", () => {
     // top: anchor(bottom), centered across: 3 rows under the anchor's
     // row 5 overflow the 8, so flip-start places it at left:
-    // anchor(right), centered on the anchor's row.
+    // anchor(right), centered on the anchor's row, its height its width.
     const centered = inset(
       { top: { anchor: null, fraction: 1 } },
       {
@@ -904,14 +994,14 @@ describe("the fallbacks of a box placed by its insets", () => {
         positionTryFallbacks: [{ flips: ["start"] }],
       },
     );
-    expect(place(centered, 6, 1, 5).rect).toMatchObject({ x: 10, y: 4 });
+    expect(place(centered, 6, 1, 5).rect).toMatchObject({ x: 10, y: 5, width: 3, height: 1 });
   });
 
-  it("takes an area of its own against its default anchor", () => {
+  it("keeps its insets in an area of its own, the base standing where they carry it out", () => {
+    // `top: anchor(bottom)` inside the area to the anchor's right: under
+    // the anchor, past the area, as in all three engines.
     const own = under({ positionTryFallbacks: [{ x: "end", y: "center" }] });
-    const { rect } = place(own, 6, 4);
-    expect(rect).toMatchObject({ x: 10, y: 3 });
-    expect(own.anchorArea).toEqual({ x: "end", y: "center" });
+    expect(place(own, 6, 4).rect).toMatchObject({ x: 6, y: 7 });
   });
 
   it("hides under no-overflow when its margin box leaves the block its insets leave", () => {
@@ -1196,6 +1286,48 @@ describe("position-visibility", () => {
     expect(box(3)).toBe(true);
   });
 
+  it("hides a box whose inline anchor its paragraph's own clip cuts off", () => {
+    const hidden = (overflow: string) => {
+      const host = document.createElement("div");
+      host.innerHTML =
+        `<div><p style="overflow: ${overflow}; white-space: nowrap; width: 40px">` +
+        `aaaa bbbb cccc <span style="anchor-name: --cut">dd</span></p></div>`;
+      document.body.appendChild(host);
+      const root = buildTree(host.firstElementChild!, 16)!;
+      const box = anchored(
+        "x",
+        { x: "span-all", y: "end" },
+        { style: { positionAnchor: "--cut", ...visibility({ anchorVisible: true }) } },
+      );
+      root.children.push(box);
+      layoutRoot(root, 20);
+      return box.forceHidden;
+    };
+    expect(hidden("visible")).toBe(false);
+    expect(hidden("hidden")).toBe(true);
+  });
+
+  it("follows an inline anchor through its paragraph's own scroll", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      `<div><p style="overflow-y: auto; height: 16px; width: 40px">` +
+      `aaaa bbbb cccc dddd <span style="anchor-name: --a">ee</span></p></div>`;
+    document.body.appendChild(host);
+    const placed = (rows: number) => {
+      const root = buildTree(host.firstElementChild!, 16)!;
+      const paragraph = root.children[0]!;
+      paragraph.scroll = { x: 0, y: rows };
+      const box = anchored("x", { x: "end", y: "center" });
+      root.children.push(box);
+      layoutRoot(root, 20);
+      return { root, paragraph, rect: box.localRect };
+    };
+    expect(placed(0).rect).toMatchObject({ x: 2, y: 2 });
+    const { root, paragraph, rect } = placed(1);
+    expect(rect).toMatchObject({ x: 2, y: 1 });
+    expect(root.anchorScrollers).toEqual(new Set([paragraph.source]));
+  });
+
   it("hides the whole subtree, a visible descendant too, from the paint and the hit", () => {
     const child = makeNode({ text: "inner", source: document.createElement("span") });
     const box = anchored(
@@ -1273,3 +1405,109 @@ function scrolledAnchor(
   );
   return { root, list, rect: box.localRect };
 }
+
+describe("anchor-scope's read", () => {
+  it("reads the computed value, a flagged element's from its inline style or utility", () => {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    el.style.setProperty("anchor-scope", "--c");
+    expect(readAnchorScope(el, getComputedStyle(el))).toEqual(["--c"]);
+    // The engine's lock, under the flag, hides the computed value.
+    el.setAttribute("data-mw-anchor", "");
+    const locked = { getPropertyValue: () => "all" } as unknown as CSSStyleDeclaration;
+    expect(readAnchorScope(el, locked)).toEqual(["--c"]);
+    el.style.removeProperty("anchor-scope");
+    el.className = "p-1 [anchor-scope:--a,--b]";
+    expect(readAnchorScope(el, locked)).toEqual(["--a", "--b"]);
+    el.className = "[anchor-scope:all]";
+    expect(readAnchorScope(el, locked)).toBe("all");
+    el.className = "";
+    expect(readAnchorScope(el, locked)).toBeNull();
+  });
+});
+
+describe("the last acceptable anchor (css-anchor-position-1)", () => {
+  const below: PositionArea = { x: "span-all", y: "end" };
+  /** An in-flow anchor, a row of text named `name`. */
+  const named = (name = "--a") =>
+    makeNode({
+      text: "ANCH",
+      source: document.createElement("div"),
+      style: { anchorNames: [name] },
+    });
+  const box = (style: Partial<CellStyle> = {}) => anchored("m", below, { style });
+  const container = (children: LayoutNode[], style: Partial<CellStyle> = {}) =>
+    makeNode({ source: document.createElement("div"), style, children });
+  /** The row under the anchor a box took, in its parent's cells, or null
+   * where it took none. */
+  const takes = (target: LayoutNode, children: LayoutNode[]) => {
+    layoutRoot(container(children, { minHeight: 12 }), 20);
+    return target.anchorArea ? target.localRect.y : null;
+  };
+
+  it("takes the last in tree order, a later in-flow one included", () => {
+    const menu = box();
+    expect(takes(menu, [named(), menu, spacer(2), named()])).toBe(4);
+    const inRelative = box();
+    const later = container([named()], { position: "relative" });
+    expect(takes(inRelative, [named(), inRelative, later])).toBe(2);
+  });
+
+  it("refuses a later absolute one, and one inside a later absolute box", () => {
+    const menu = box();
+    expect(takes(menu, [named(), menu, anchorAt(6, 5)])).toBe(1);
+    const earlier = box();
+    expect(takes(earlier, [named(), anchorAt(6, 5), earlier])).toBe(6);
+    const nested = box();
+    const later = container([anchorAt(6, 5)], { position: "relative" });
+    expect(takes(nested, [named(), nested, later])).toBe(1);
+  });
+
+  it("refuses its containing block and what lies outside it", () => {
+    const menu = box();
+    const block = container([spacer(3), menu], { position: "relative", anchorNames: ["--a"] });
+    expect(takes(menu, [named(), block])).toBeNull();
+    const inner = box();
+    const ancestor = container([spacer(2), inner], { anchorNames: ["--a"] });
+    expect(takes(inner, [container([ancestor], { position: "relative" })])).toBe(2);
+  });
+
+  it("takes any anchor in the host for a fixed box", () => {
+    const menu = box({ position: "fixed" });
+    const block = container([menu], { position: "relative" });
+    expect(takes(menu, [block, spacer(2), named()])).toBe(3);
+  });
+
+  it("keeps a scoped name, and the lookups for it, inside the scope", () => {
+    const item = (menu: LayoutNode, style: Partial<CellStyle> = {}) =>
+      container([named(), menu], style);
+    const [first, second] = [box(), box()];
+    expect(takes(first, [item(first), item(second)])).toBe(2);
+    const [own, next] = [box(), box()];
+    const scoped = { anchorScope: ["--a"] } as const;
+    expect(takes(own, [item(own, scoped), item(next, scoped)])).toBe(1);
+    const [first2, second2] = [box(), box()];
+    const relative = { position: "relative" } as const;
+    expect(takes(first2, [item(first2, relative), item(second2, relative)])).toBe(1);
+    const inside = box();
+    expect(takes(inside, [named(), container([inside], scoped)])).toBeNull();
+  });
+
+  it("keeps an anchor in the top layer to the boxes there", () => {
+    const popover = { position: "fixed", topLayer: true } as const;
+    const inside = box();
+    expect(takes(inside, [container([spacer(1), named(), inside], popover)])).toBe(2);
+    const later = box(popover);
+    expect(takes(later, [container([spacer(1), named()], popover), later])).toBe(2);
+    const page = box();
+    expect(takes(page, [container([spacer(1), named()], popover), page])).toBeNull();
+    const fixed = box({ position: "fixed" });
+    expect(takes(fixed, [container([spacer(1), named()], popover), fixed])).toBeNull();
+  });
+
+  it("leaves a popover's implicit anchor out of every scope's reach", () => {
+    const name = `${IMPLICIT_ANCHOR}menu`;
+    const menu = box({ positionAnchor: name });
+    expect(takes(menu, [container([menu], { anchorScope: "all" }), named(name)])).toBe(1);
+  });
+});

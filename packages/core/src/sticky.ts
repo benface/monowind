@@ -10,6 +10,11 @@ import { edges, resolveLength } from "./layout.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
 import type { CellLength, LayoutNode, PerSide, TableLattice } from "./types.ts";
 
+/** Where a box paints, in the host's cells: its `paintOrigin` once placed. */
+type Origin = (box: LayoutNode) => { x: number; y: number };
+
+const painted: Origin = (box) => box.paintOrigin;
+
 /** A span on one axis, in painted cells: `end` exclusive. */
 interface Span {
   start: number;
@@ -51,9 +56,10 @@ export interface Scrollport {
   view: Box;
 }
 
-/** A scroll container's scrollport, once its `paintOrigin` is placed. */
-export function scrollportOf(node: LayoutNode): Scrollport | null {
-  const clip = clipBounds(node, node.paintOrigin.x, node.paintOrigin.y);
+/** A scroll container's scrollport where it paints. */
+export function scrollportOf(node: LayoutNode, at = painted): Scrollport | null {
+  const { x, y } = at(node);
+  const clip = clipBounds(node, x, y);
   if (!clip) return null;
   return {
     node,
@@ -82,14 +88,29 @@ export function stick(
 ): void {
   delete node.stickyShift;
   if (!port) return;
+  const shift = stickyShift(node, parent, port, table);
+  if (!shift) return;
+  node.stickyShift = shift;
+  node.paintOrigin.x += shift.x;
+  node.paintOrigin.y += shift.y;
+}
+
+/** A sticky box's shift where `at` puts each box's paint: kept inside
+ * its parent — the scroll container's content extended to what it
+ * scrolls — or a table part inside its table, its box taking in the
+ * lattice lines on its edges, which its rect leaves out and which move
+ * with it. */
+export function stickyShift(
+  node: LayoutNode,
+  parent: LayoutNode,
+  port: Scrollport,
+  table: LayoutNode | null,
+  at = painted,
+): { x: number; y: number } | undefined {
   const { view } = port;
-  // A table part is kept inside its table; anything else inside its
-  // parent — the scroll container's content extended to what it
-  // scrolls. A table part's box takes in the lattice lines on its
-  // edges, which its rect leaves out and which move with it.
   const part = node.style.tableRole !== "none" ? table : null;
   const lines = part?.lattice ? partLines(part.lattice, node) : NO_LINES;
-  const origin = node.paintOrigin;
+  const origin = at(node);
   const { width, height } = node.localRect;
   const box = {
     x: { start: origin.x - lines.left, end: origin.x + width + lines.right },
@@ -98,16 +119,12 @@ export function stick(
   const across = view.x.end - view.x.start;
   const down = view.y.end - view.y.start;
   const { insets } = node.style;
-  const shift = shiftWithin(box, contentBox(part ?? parent, port.node), view, {
+  return shiftWithin(box, contentBox(part ?? parent, port.node, at), view, {
     top: inset(insets.top, down),
     right: inset(insets.right, across),
     bottom: inset(insets.bottom, down),
     left: inset(insets.left, across),
   });
-  if (!shift) return;
-  node.stickyShift = shift;
-  origin.x += shift.x;
-  origin.y += shift.y;
 }
 
 /** A leaf's sticky inline elements, each shifted within the leaf's
@@ -166,11 +183,12 @@ function inset(length: CellLength | null, viewSize: number): number | null {
 
 /** A node's content box in painted cells, where its children paint, its
  * scroll applied; a scroll container's extends to what it scrolls. */
-function contentBox(node: LayoutNode, scroller: LayoutNode): Box {
+function contentBox(node: LayoutNode, scroller: LayoutNode, at = painted): Box {
   const { border } = node.style;
   const padding = node.resolvedPadding;
-  const x0 = node.paintOrigin.x - (node.scroll?.x ?? 0) + border.left + padding.left;
-  const y0 = node.paintOrigin.y - (node.scroll?.y ?? 0) + border.top + padding.top;
+  const origin = at(node);
+  const x0 = origin.x - (node.scroll?.x ?? 0) + border.left + padding.left;
+  const y0 = origin.y - (node.scroll?.y ?? 0) + border.top + padding.top;
   let width = node.localRect.width - edges(border, padding, "x");
   let height = node.localRect.height - edges(border, padding, "y");
   if (node === scroller && node.scrollRange) {

@@ -83,8 +83,8 @@ style of its last read until the next full read.
 - **The ancestors unlock with their unit.** An element inherits from
   its parent, and a locked parent hands down its locks: grid mode's
   `pointer-events: none`, `white-space`, `letter-spacing`,
-  `line-height`, `text-align`, `text-indent`, and a hidden box's
-  `visibility` (`data-mw-force-hidden`, `data-mw-hidden-runs`), all of
+  `line-height`, `text-align`, `text-indent`, and a misparented
+  container's `visibility` (`data-mw-hidden-runs`), all of
   which the reader reads. With the chain from the host flagged, the
   computed styles of a unit and of its ancestors are a full read's,
   because every companion rule that keys on the measuring flag keys it

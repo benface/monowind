@@ -1271,13 +1271,15 @@ const NO_LINES = { spans: [], textY: [] };
  * markers are skipped (their boxes paint themselves). Visits are per
  * CLUSTER: `index` is its first code unit, `length` its code units
  * (the following 0-advance units ride along, a 0-width cluster with
- * the cluster before it), `advance` its cells with tracking. */
+ * the cluster before it), `advance` its cells with tracking; the text
+ * a truncation cuts is visited too where `truncates` is false. */
 function forEachLeafCell(
   node: LayoutNode,
   absX: number,
   absY: number,
   onChar: (index: number, length: number, x: number, y: number, advance: number) => void,
   onEllipsis?: (x: number, y: number) => void,
+  truncates = true,
 ): void {
   const style = node.style;
   const origin = contentOrigin(node);
@@ -1294,7 +1296,7 @@ function forEachLeafCell(
     // The truncation acts within the line's width past its indent.
     const line = lineStart(node, i, span, contentWidth);
     const truncated =
-      style.whiteSpace !== "normal" && style.overflow.x === "clip"
+      truncates && style.whiteSpace !== "normal" && style.overflow.x === "clip"
         ? truncateSpan(node.text, span, line.width - line.indent, node.advances, style)
         : { end: span.end, ellipsis: false };
     let x = contentX + line.x;
@@ -1419,11 +1421,12 @@ export function charIndexAtCell(
  * row — the span of its characters and pad cells there, an outer
  * element's including its inline descendants' — in run order then row
  * order, elements without a cell left out (specs/focus-navigation.md).
- * `absX/absY` as for charIndexAtCell. */
+ * `absX/absY` as for charIndexAtCell; `truncates` as for forEachLeafCell. */
 export function inlineElementRects(
   node: LayoutNode,
   absX: number,
   absY: number,
+  truncates = true,
 ): { element: Element; rect: Rect }[] {
   const entries = node.inlineElements;
   if (!entries || !node.charInline) return [];
@@ -1449,6 +1452,8 @@ export function inlineElementRects(
         }
       }
     },
+    undefined,
+    truncates,
   );
   return entries.flatMap((entry, i) =>
     [...rows[i]!]

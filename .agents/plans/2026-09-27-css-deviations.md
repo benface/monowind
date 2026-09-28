@@ -310,15 +310,41 @@ acceptable one. Repeated names under one containing block all anchor
 to the last; `relative` list items, or `anchor-scope` on them, keep
 each box to its own.
 
-**Approach**: the pass keeps a list per name, in tree order, of the
-boxes and inline elements naming it, each with its containing-block
-chain, and a box takes the last acceptable entry. A later in-flow
-anchor's rect is its flow rect moved by the relative offsets on its
-chain, which the pass applies before the placements that could need
-them; an anchor inside a later absolute box is refused, so no box
-waits on another's placement. An authored `anchor-scope` limits a name
-to its element's subtree. The spec's locked "the nearest element
-before it in tree order" changes (decision D2).
+**Approach**: the pass keeps a list per name of the boxes and inline
+elements naming it, each with its tree order, its containing-block
+chain, whether it lies in the top layer, and its innermost scope, and a
+box takes the last acceptable entry. A first walk applies the relative
+offsets, records the anchors in flow outside every absolute box, so a
+later in-flow anchor is ready, and collects the outermost absolute
+boxes; each is then placed in tree order and its subtree walked,
+recording its anchors. An anchor is recorded only once any absolute box
+it lies in is placed, which is to say before the box looking it up: CSS's
+order condition then needs no check of its own (deviation 10 the gap).
+An anchor in the top layer anchors only a box there too (probed
+2026-09-27: a submenu popover shown after its menu, not a box of the
+page). `anchor-scope` is read only in a host where a box is anchored by
+name; on a named element, from its inline style or utility; it scopes
+authored names alone, a popover's implicit anchor out of its reach. The
+spec's locked "the nearest element before it in tree order" changes
+(decision D2).
+
+**Steps**:
+
+1. The read. types.ts: `CellStyle.anchorScope` and an inline entry's.
+   tree.ts: `readAnchorScopes(root)`; style.ts: `readAnchorScope`,
+   computed, or from the inline style or `[anchor-scope:…]` utility on
+   a named element; element.ts runs it where `namedAnchors` finds a box
+   anchored by name. anchor.test.ts.
+2. The lookup. positioning.ts: `walk`, the relative offsets and the
+   in-flow anchors, the outermost absolute boxes deferred, then each
+   placed and its subtree walked; `recordAnchors` with each anchor's
+   order, chain, top layer and scope; `anchorFor(name, box)`, the last
+   acceptable one. anchor.test.ts, each probe case.
+3. The `AnchorAcceptable` story beside native copies, three engines;
+   `Anchored`'s submenu a popover shown after its menu; the anchor
+   stories and goldens rechecked; `pnpm bench` (a positioned page)
+   before and after.
+4. Docs: the spec's touch points; this plan's Progress.
 
 **Size**: medium.
 
@@ -330,7 +356,8 @@ before it in tree order" changes (decision D2).
   names each trigger uniquely, and its positioners are popovers, so it
   is untouched.
 - The engine's own `anchor-scope: all` lock, under the measuring flag,
-  hides an authored `anchor-scope` on a named element itself; on a
+  hides an authored `anchor-scope` on a named element itself, read
+  there from its inline style or utility instead (deviation 3); on a
   list item, the usual place, it reads.
 - The lists' cost, paid only where a name is authored (`namedAnchors`
   already tells).
@@ -419,9 +446,8 @@ tree and loses the focus.
 button inside takes the focus, in all three.
 
 **Approach**: the companion hides a `data-mw-force-hidden` box with
-`opacity: 0` and `pointer-events: none` in place of `visibility:
-hidden`; a `data-mw-top-shown` element takes the pointer back, the top
-layer being out of its ancestors' opacity (decision D4).
+`clip-path: inset(50%)` in place of `visibility: hidden`, the top
+layer being out of its ancestors' clip (decision D4, as changed).
 
 **Size**: small.
 
@@ -1191,7 +1217,8 @@ Each with the recommendation, all ten taken as recommended
   per box until a placement is chosen again.
 - **D4. A hidden anchored box, natively.** `opacity: 0` and no pointer
   events (recommended): the focus and the accessibility tree stay, as
-  in the browsers.
+  in the browsers. Changed 2026-09-28 to `clip-path: inset(50%)` (A6's
+  Progress entry).
 - **D5. Display on the host.** Lock and warn (recommended), since CSS
   lays the slotted children out as a block too. The alternative lays
   the root out with the host's display, flex, grid or columns: medium.
@@ -1271,3 +1298,51 @@ tests seen red, and the spec's deviation removed or reworded.
   first: host.stories.ts `OwnHeight` against the last commit (an
   `h-40` host one row tall). cell-model.md "Host sizing" rewritten;
   deviation 23 (a host's `min-h-*` floor definite to the root).
+- 2026-09-27, A1 the last acceptable anchor: `anchorFor` takes a box's
+  last acceptable anchor in tree order, `anchor-scope` read where a box
+  is anchored by name, an anchor in the top layer a top-layer box's
+  alone. Red first: anchor.test.ts "the last acceptable anchor" (five
+  of six) and `AnchorAcceptable` against the last commit. The
+  `Anchored` story's submenu is a popover shown after its menu, as
+  browsers refuse a page box an anchor in a popover. anchor-positioning
+  deviation 3 reworded (`anchor-scope`'s read), deviation 10 added
+  (placement in tree order).
+- 2026-09-27, A3 and A4: the insets apply inside an area, which
+  `placeTrying`'s block now takes like any containing block (Firefox
+  ignores them, named in the spec), and `flip-start` swaps the box's
+  sizes and their limits (`swapSizes`). Red first: anchor.test.ts
+  "applies its insets inside the area…" and "swaps the box's sizes…";
+  two tests of the old behavior now CSS's (an `anchor()`-inset box's
+  area fallback keeps its insets, as in all three engines). Deviation
+  1's two sentences removed.
+- 2026-09-27, A2 sticky anchors: an anchor's rect takes the shift each
+  sticky box on its chain sticks by for the current scroll (`stuckOn`,
+  sticky.ts's `stickyShift` with the origins the pass has), a box
+  sharing that sticky box taking its shift back (it moves with it at
+  paint), one not sharing it noting its scroller for a relayout. Red
+  first: anchor.test.ts "an anchor on a sticky box" (the shared header
+  and a fixed button found in review) and `AnchorInScroller`'s
+  stuck-header menu against the last commit. Deviation 6 narrowed to a
+  sticky inline element, whose shift the paint alone computes.
+- 2026-09-27, A5 an inline anchor's own clip: the anchor's chain goes
+  on into its box, so the box's clip and scroll reach it, and its
+  fragments are taken as laid out, a truncation cutting none (the
+  clip alone would miss a `truncate` paragraph, whose cut text had no
+  fragment). Red first: anchor.test.ts "…its paragraph's own clip cuts
+  off" and "…its paragraph's own scroll" (the scroll now relays out),
+  and `AnchorVisibility`'s `truncate` case against the last commit.
+  Deviation 2's second sentence removed.
+- 2026-09-27, A6 a hidden box stays focusable: `clip-path: inset(50%)`
+  on the box, in place of D4's `opacity: 0` and no pointer events
+  (changed with the user, 2026-09-28): the read flags keep opacity
+  transitions alive, so the toggle started the author's fades, three
+  per hide and show, for the grid to sample; the clip snaps, clips the
+  subtree's paint and hits, and leaves a top-layer element alone, so
+  the `data-mw-top-shown` flag goes. Red first: `AnchorVisibility`'s
+  `focus()` against the last commit, and its no-transition check
+  against the opacity version. Deviation 9 resolved.
+- 2026-09-28, the review: `anchor-scope` read in `readCellStyle` from
+  the style already computed, the lock's own flag picking the authored
+  path, which drops the tree pass; `flip-start` swaps `anchor-size()`'s
+  dimension with the sizes, each attempt resolving them (red first:
+  anchor.test.ts "swaps anchor-size()'s dimension…").
