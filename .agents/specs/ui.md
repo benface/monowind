@@ -532,7 +532,8 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   consumer's Svelte plugin.
 - apps/storybook/stories/ui.stories.ts: `Packages / ui`, beside the
   other packages' elements, a story per component on its element, the
-  menu's on the vanilla mount (`menu(root, props)`).
+  menu's on the vanilla mount (`menu(root, props)`), each with a
+  test-only twin that drives it (`MenuOpened`).
 - apps/example-react/src/App.tsx: a menu and a dialog through
   `@monowind/ui-react`.
 - apps/example-vue/src/App.vue: the same through `@monowind/ui-vue`.

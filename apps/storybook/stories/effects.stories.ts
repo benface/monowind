@@ -250,9 +250,22 @@ export const Outline: StoryObj = {
     expect(getComputedStyle(by("solid")).outlineWidth).toBe("2px");
     expect(getComputedStyle(by("offset")).outlineOffset).toBe("4px");
     expect(getComputedStyle(by("dashed")).outlineStyle).toBe("dashed");
-    // Unfocused, the button has no outline; focused, the utility's ring
-    // outranks the engine's `outline: none` and joins the invert.
+    // Unfocused, the button has no outline.
     expect(getComputedStyle(by("button")).outlineStyle).toBe("none");
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `Outline` starts): the button focused, its utility's ring
+ * outranking the engine's `outline: none`, then blurred. */
+export const OutlineFocused: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: Outline.render!,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    // Focused, the utility's ring outranks the engine's `outline: none`
+    // and joins the invert.
     by("button").focus();
     await waitFor(() => expect(by("button").matches(":focus-visible")).toBe(true));
     expect(getComputedStyle(by("button")).outlineStyle).toBe("solid");
@@ -646,6 +659,17 @@ export const Layers: StoryObj = {
         document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2),
       ).toBe(ok);
     });
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Layers`' scroll container
+ * scrolled, the layer inside it following the scroll and clipped to its
+ * padding box. */
+export const LayersScrolled: StoryObj = {
+  tags: ["!dev"],
+  render: Layers.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
     // A layer inside a scroll container follows the scroll: its box
     // moves up by the rows scrolled, its cells with it.
     const scroller = canvasElement.querySelector<HTMLElement>('[data-test="scroller"]')!;
@@ -656,6 +680,7 @@ export const Layers: StoryObj = {
         host.shadowRoot!.getElementById("layers")!.querySelectorAll<HTMLElement>(".layer"),
       ).find((box) => getComputedStyle(box).rotate === own.rotate)!;
     };
+    await waitFor(() => expect(boxOf(scrolled), "the scrolled layer's box").toBeDefined());
     const before = boxOf(scrolled).getBoundingClientRect().top;
     const cellHeight = cellSize(host).height;
     scroller.scrollTop = cellHeight;

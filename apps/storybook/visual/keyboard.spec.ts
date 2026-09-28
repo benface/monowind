@@ -217,7 +217,6 @@ test("a key on a box at its end scrolls the box around it, the relayout waiting"
  * three engines.
  */
 test("a focus-visible outline utility draws around the focused control", async ({ page }) => {
-  // The story's own play focuses and blurs the button.
   await openStory(page, "features-effects--outline");
   await engineQuiet(page);
   const button = page.locator('[data-test="button"]');

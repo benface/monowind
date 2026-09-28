@@ -42,7 +42,7 @@ export const DropCap: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { host, by, cells, width, height, measure } = await readyGrid(canvasElement);
+    const { by, cells, width, height, measure } = await readyGrid(canvasElement);
     const [cap, first] = [by("cap"), by("first")];
     expect(cap).toHaveAttribute("data-mw-float", "left");
     expect(first).toHaveAttribute("data-mw-flow", "text");
@@ -64,6 +64,27 @@ export const DropCap: StoryObj = {
       for (const { row, col } of lines) {
         expect(col).toBe(row < capRow + capRows ? textCol : origin.col);
       }
+    });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `DropCap` starts): a text-mode drag from the paragraph's
+ * first line beside `DropCap`'s cap, whose highlight starts past the
+ * cap on the rows it spans. */
+export const DropCapSelected: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: DropCap.render!,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, width, measure } = await readyGrid(canvasElement);
+    const [cap, first] = [by("cap"), by("first")];
+    let capRow = 0;
+    let textCol = 0;
+    await waitFor(() => {
+      const origin = measure().boxOf(first);
+      capRow = origin.row;
+      textCol = origin.col + width(cap) + cells(cap, "--mw-mr");
+      expect(measure().rows[capRow]!.indexOf("raccoon")).toBe(textCol);
     });
     const { cellOf, cellAt } = measure();
     host.setAttribute("select", "text");

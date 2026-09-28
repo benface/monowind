@@ -179,9 +179,9 @@ test.describe("a tap on covered cells", () => {
 test("a press on a scroll container's border misses the item clipped under it", async ({
   page,
 }) => {
-  // The story's play clicks items and ends by selecting one; the press
-  // below must come after it.
-  await openStory(page, "packages-ui--listbox");
+  // `ListboxSelected`' play ends with an item selected and the list
+  // scrolled; the press below must come after it.
+  await openStory(page, "packages-ui--listbox-selected");
   await engineQuiet(page);
   const selected = (): Promise<string> =>
     page.evaluate(() =>
@@ -575,8 +575,9 @@ test.describe("a drag selecting a text field's value", () => {
   });
 
   test("keeps its anchor past the field", async ({ page }) => {
-    await openStory(page, "packages-ui--combobox");
-    // The play leaves the list open over the page, "releas" typed.
+    await openStory(page, "packages-ui--combobox-filtered");
+    // `ComboboxFiltered`' play leaves the list open over the page,
+    // "releas" typed.
     await page.waitForFunction(
       (s) => (document.querySelector(s) as HTMLInputElement).value === "releas",
       hook("input"),

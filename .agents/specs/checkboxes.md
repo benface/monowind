@@ -178,11 +178,12 @@ deviation 3.
 - **Storybook**, `interactive.stories.ts` "Checkboxes" (visible, a
   golden): checkboxes and a radio group, checked, indeterminate,
   disabled, `accent-*`, a custom `appearance-none` one with
-  `transition-colors`, and a `peer-checked:` label. The play toggles
-  by click, label, Space and arrow keys, by script (`checked`,
-  `indeterminate`), and resets the form, asserting the glyph cells
-  after each; the native box under the glyph cells in three engines;
-  the custom control's fill transitioning.
+  `transition-colors`, and a `peer-checked:` label. Its play reads the
+  glyph cells and the native box under them, in three engines. A
+  test-only twin (`CheckboxesToggled`, a golden) toggles by click,
+  label, Space and arrow keys, by script (`checked`, `indeterminate`),
+  and resets the form, asserting the glyph cells after each and the
+  custom control's fill transitioning.
 - **Visual**: the golden, and a press on the glyph cells toggling the
   control (`visual/pointer.spec.ts`, a trusted click).
 

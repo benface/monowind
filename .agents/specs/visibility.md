@@ -123,7 +123,7 @@ nested host, which never lays out, is never hidden.
   (`HiddenAncestor`); `hidden="until-found"` and `content-visibility:
 hidden` drawing nothing until the attribute goes
   (`SkippedContents`). `interactive.stories.ts`: `Details` (a
-  golden) and `DetailsToggle`, each summary pressed and pressed back.
+  golden) and `DetailsToggled`, each summary pressed and pressed back.
 
 ## Touch points on implementation
 

@@ -64,6 +64,21 @@ export const HostWidth: StoryObj = {
   play: async ({ canvasElement }) => {
     // The fonts first: the cell width they set is the unit measured.
     const host = await readyHost(canvasElement);
+    const cellWidth = () => cellSize(host).width;
+    const cells = () => host.getBoundingClientRect().width / cellWidth();
+    const wholeCells = (n: number) => Math.abs(n - Math.round(n)) < 0.01;
+    await waitFor(() => expect(wholeCells(cells())).toBe(true));
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `HostWidth` starts): the sidebar beside the host narrowed,
+ * which grows the host's slot, and restored. */
+export const HostWidthNarrowed: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: HostWidth.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
     const sidebar = canvasElement.querySelector<HTMLElement>('[data-test="sidebar"]')!;
     const cellWidth = () => cellSize(host).width;
     const cells = () => host.getBoundingClientRect().width / cellWidth();

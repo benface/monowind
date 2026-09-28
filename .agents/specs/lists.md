@@ -474,14 +474,14 @@ marked where it was. The methods, for re-running:
 - **Storybook** (`lists.stories.ts`, three engines): "Lists" — bullets,
   numbers, letters, romans and a string; nested lists in `circle` and
   `square`; `marker:` color and weight; `start`, `reversed` and
-  `value`; inside and outside; `summary` open and closed, toggled; a float
-  beside a list; a centered and an indented item. The play asserts
-  each item's native text on the grid's cells (`expectNativeOnGrid`,
-  inside markers and `summary` included), the markers' cells row by
-  row, a press on the link of an inside marker's line landing on the
-  link, and one on the cells left of a `summary`, where its native
-  marker hangs, reaching what the grid shows there; its golden in the
-  sweep.
+  `value`; inside and outside; `summary` open and closed; a float
+  beside a list; a centered and an indented item. Its play reads each
+  item's native text on the grid's cells (`expectNativeOnGrid`, inside
+  markers and `summary` included) and the markers' cells row by row;
+  its golden in the sweep. A test-only twin (`ListsPressed`) presses
+  the link of an inside marker's line, landing on the link, and the
+  cells left of a `summary`, where its native marker hangs, reaching
+  what the grid shows there, and toggles the `summary`.
 - **"Lists Against Native"** (test-only, `!dev` and `!golden`, as
   `StackingAgainstNative`): seeded lists — types, `start`, `reversed`,
   `value`, nesting, `counter-*` utilities, inside and outside, padding

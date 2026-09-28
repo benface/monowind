@@ -120,6 +120,14 @@ export const Overscroll: StoryObj = {
     </mono-wind>
     <div class="h-screen"></div>
   `,
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `Overscroll` starts): wheel ticks routed to the boxes in
+ * grid mode, chained or consumed as each one's overscroll says. */
+export const OverscrollWheeled: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: Overscroll.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     // Routed wheels are a grid-mode feature (text mode scrolls natively
@@ -286,6 +294,27 @@ export const Styled: StoryObj = {
       expect(down).toBe(up + 3);
       expect(rows[up + 1]![rows[up]!.indexOf("↑")]).toBe("█");
     });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `Styled` starts): the overlay-style bar hovered in grid
+ * mode, its thumb inked. */
+export const StyledOverlayHovered: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: Styled.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const grid = gridOf(host);
+    const box = (name: string) =>
+      canvasElement.querySelector<HTMLElement>(`[data-test="${name}"]`)!;
+    // The resolved `scrollbar-color` thumb (first of the two colors).
+    const thumbColor = (el: HTMLElement) =>
+      getComputedStyle(el).scrollbarColor.split(") ")[0] + ")";
+    const painted = (glyph: string, color: string) =>
+      Array.from(grid.querySelectorAll("span")).some(
+        (span) => span.textContent!.includes(glyph) && span.style.color === color,
+      );
     // An overlay-style bar: transparent ink until hovered. Hover is the
     // engine's synthesized state in grid mode (the visual sweep pins
     // text mode, where native :hover would need a real pointer).
@@ -349,6 +378,20 @@ export const BothAxes: StoryObj = {
       // beside a one-cell-tall bottom bar.
       expect(rows.some((row) => /██│/.test(row))).toBe(true);
     });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `BothAxes` starts): the auto box scrolled to its far corner
+ * and back, both offsets mirrored. */
+export const BothAxesScrolled: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: BothAxes.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const grid = gridOf(host);
+    const auto = canvasElement.querySelector<HTMLElement>('[data-test="auto"]')!;
+    const overflowsX = () => auto.scrollWidth - auto.clientWidth > 1;
     // Both offsets mirror: scrolled to the far corner, the auto box
     // shows its last line (and, when it overflows sideways, the tail).
     auto.scrollTo(1000, 1000);
@@ -382,6 +425,20 @@ export const Nested: StoryObj = {
       // The outer box clips: late outer lines stay outside the grid.
       expect(grid.textContent).not.toContain("outer line 12");
     });
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `Nested` starts): the inner box scrolled and back, the
+ * outer content staying put. */
+export const NestedScrolled: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: Nested.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const grid = gridOf(host);
+    const inner = canvasElement.querySelector<HTMLElement>('[data-test="inner"]')!;
+    await waitFor(() => expect(grid.textContent).toContain("inner line 01"));
     // Scrolling the inner box leaves the outer content in place.
     inner.scrollTop = 1000;
     await waitFor(() => {

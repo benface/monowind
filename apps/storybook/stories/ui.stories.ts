@@ -150,14 +150,26 @@ export const Menu: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
+    await readyHost(canvasElement);
     const by = testHooks(canvasElement);
-    const state = (name: string) => by(name).getAttribute("data-state");
-    const box = (name: string) => by(name).getBoundingClientRect();
     // Roles from the machine, on the light DOM.
     expect(by("trigger").getAttribute("aria-haspopup")).toBe("menu");
     expect(by("content").getAttribute("role")).toBe("menu");
     expect(by("new").getAttribute("role")).toBe("menuitem");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Menu` opened by the keyboard
+ * and by its button — the highlight on the grid, a drag across its
+ * cells, typeahead, Escape — then its submenu, left open. */
+export const MenuOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Menu.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const state = (name: string) => by(name).getAttribute("data-state");
+    const box = (name: string) => by(name).getBoundingClientRect();
     // Opened by the keyboard: Down highlights the first item, the
     // arrows move the highlight — an attribute Tailwind styles, the
     // grid repainting on it alone.
@@ -324,6 +336,19 @@ export const Listbox: StoryObj = {
     // beside the item's text.
     expect(by("main").getAttribute("aria-selected")).toBe("true");
     await expectRow(host, "✓ main");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Listbox` tabbed to, pressed
+ * and walked by the keyboard, its focus starting at the selection, its
+ * last item selected and scrolled to. */
+export const ListboxSelected: StoryObj = {
+  tags: ["!dev"],
+  render: Listbox.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const content = by("content");
     // Tabbed to: a composite's own cells stay plain, so the selection
     // takes the highlight and the grid shows where the focus is
     // (specs/cell-model.md).
@@ -419,6 +444,17 @@ export const ListboxMultiple: StoryObj = {
     const by = testHooks(canvasElement);
     expect(by("content").getAttribute("aria-multiselectable")).toBe("true");
     await expectRow(host, "✓ read");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `ListboxMultiple`'s items
+ * pressed into the selection and out of it, two left chosen. */
+export const ListboxMultipleSelected: StoryObj = {
+  tags: ["!dev"],
+  render: ListboxMultiple.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
     // A press adds to the selection rather than replacing it, and each
     // item keeps its own check on the grid.
     await userEvent.click(by("admin"));
@@ -484,10 +520,8 @@ export const Select: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
+    await readyHost(canvasElement);
     const by = testHooks(canvasElement);
-    const state = (name: string) => by(name).getAttribute("data-state");
-    const box = (name: string) => by(name).getBoundingClientRect();
     // Roles from the machine, on the light DOM; the hidden select is
     // the form's, and the layout leaves it out.
     expect(by("trigger").getAttribute("aria-haspopup")).toBe("listbox");
@@ -496,6 +530,20 @@ export const Select: StoryObj = {
     expect(by("stale").getAttribute("aria-disabled")).toBe("true");
     expect(by("hidden")).not.toHaveAttribute("data-mw-laid-out");
     expect(by("value").textContent, "the markup's text is the placeholder").toBe("Choose…");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Select` opened, picked from
+ * by a press and by the keyboard, and left open, scrolled to its last
+ * item. */
+export const SelectPicked: StoryObj = {
+  tags: ["!dev"],
+  render: Select.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const state = (name: string) => by(name).getAttribute("data-state");
+    const box = (name: string) => by(name).getBoundingClientRect();
     // Opened by the trigger: an anchored popover under it, its margin
     // pulling its border row onto the trigger's, on its own cells.
     await userEvent.click(by("trigger"));
@@ -583,6 +631,13 @@ export const SelectMultiple: StoryObj = {
       </form>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `SelectMultiple` opened and
+ * its items pressed in and out, the trigger naming them, left open. */
+export const SelectMultiplePicked: StoryObj = {
+  tags: ["!dev"],
+  render: SelectMultiple.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
@@ -700,11 +755,23 @@ export const Combobox: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
+    await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const input = by("input") as HTMLInputElement;
     expect(input.getAttribute("role")).toBe("combobox");
     expect(input.getAttribute("aria-labelledby"), "named by the label").toBe(by("label").id);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Combobox` opened under its
+ * control, filtered to nothing and back, a branch picked, left open. */
+export const ComboboxFiltered: StoryObj = {
+  tags: ["!dev"],
+  render: Combobox.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const input = by("input") as HTMLInputElement;
     // The list is anchored to the control, so it lines up under the
     // whole input rather than under the button over its end.
     await userEvent.click(by("trigger"));
@@ -781,11 +848,22 @@ export const Dialog: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    expect(by("content").getAttribute("role")).toBe("dialog");
+    expect(by("content").getAttribute("aria-modal")).toBe("true");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Dialog` opened over its
+ * backdrop, its focus trapped, closed on Escape and opened again. */
+export const DialogOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Dialog.render!,
+  play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const state = (name: string) => by(name).getAttribute("data-state");
-    expect(by("content").getAttribute("role")).toBe("dialog");
-    expect(by("content").getAttribute("aria-modal")).toBe("true");
     // Opened: in the top layer, centered in the host, its backdrop drawn
     // beneath it, the focus inside and trapped.
     await userEvent.click(by("trigger"));
@@ -848,11 +926,22 @@ export const Popover: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    expect(testHooks(canvasElement)("content").getAttribute("role")).toBe("dialog");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Popover` opened under its
+ * button, its text selected by a drag, closed by Escape and by its
+ * button through its fade, and opened again. */
+export const PopoverOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Popover.render!,
+  play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const state = (name: string) => by(name).getAttribute("data-state");
     const box = (name: string) => by(name).getBoundingClientRect();
-    expect(by("content").getAttribute("role")).toBe("dialog");
     // Opened: under its button, on its cells, the focus inside.
     await userEvent.click(by("trigger"));
     await waitFor(() =>
@@ -921,11 +1010,21 @@ export const Tooltip: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    expect(testHooks(canvasElement)("content").getAttribute("role")).toBe("tooltip");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Tooltip` opened by hover,
+ * and after Escape by focus. */
+export const TooltipOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Tooltip.render!,
+  play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const state = (name: string) => by(name).getAttribute("data-state");
     const box = (name: string) => by(name).getBoundingClientRect();
-    expect(by("content").getAttribute("role")).toBe("tooltip");
     // Hovered: the tooltip above the button, centered on it, on its cells.
     hoverOver(by("trigger"));
     await waitFor(() => expect(state("content")).toBe("open"));
@@ -1037,6 +1136,24 @@ export const Elements: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    // Roles from the machines, on markup no script mounted.
+    expect(by("trigger").getAttribute("aria-haspopup")).toBe("menu");
+    expect(by("content").getAttribute("role")).toBe("menu");
+    expect(by("undo").getAttribute("role")).toBe("menuitem");
+    expect(by("dialog-content").getAttribute("role")).toBe("dialog");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Elements`' menu and submenu
+ * opened, a selection opening the dialog through its attribute and the
+ * dialog closing it back, the select picked from, the tooltip left
+ * open. */
+export const ElementsWired: StoryObj = {
+  tags: ["!dev"],
+  render: Elements.render!,
+  play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const state = (name: string) => by(name).getAttribute("data-state");
@@ -1049,11 +1166,6 @@ export const Elements: StoryObj = {
       selections.push(value);
       if (value === "delete") dialogElement.setAttribute("open", "");
     });
-    // Roles from the machines, on markup no script mounted.
-    expect(by("trigger").getAttribute("aria-haspopup")).toBe("menu");
-    expect(by("content").getAttribute("role")).toBe("menu");
-    expect(by("undo").getAttribute("role")).toBe("menuitem");
-    expect(by("dialog-content").getAttribute("role")).toBe("dialog");
     // The attributes are the props: the menu opens where its placement
     // says, right under its trigger.
     await userEvent.click(by("trigger"));

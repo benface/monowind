@@ -261,6 +261,20 @@ export const Select: StoryObj = {
     expect(dropdown.matches(":invalid")).toBe(false);
     const placeholderColor = getComputedStyle(day).color;
     expect(placeholderColor).not.toBe(getComputedStyle(dropdown).color);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Select`'s placeholder select
+ * picked, and presses that take the focus off a focus-visible select —
+ * onto another, onto the grid, onto its own row. */
+export const SelectPressed: StoryObj = {
+  tags: ["!dev"],
+  render: Select.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const dropdown = host.querySelector<HTMLSelectElement>("#select")!;
+    const fruit = host.querySelector<HTMLSelectElement>("#select-fruit")!;
+    const day = host.querySelector<HTMLSelectElement>("#select-dob-day")!;
     // Picking a real value drops :invalid and the dim color.
     day.value = "01";
     day.dispatchEvent(new Event("change", { bubbles: true }));
@@ -349,6 +363,13 @@ export const Link: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `Link`'s custom link focused,
+ * its focus styles painted on the grid. */
+export const LinkFocused: StoryObj = {
+  tags: ["!dev"],
+  render: Link.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const link = host.querySelector<HTMLAnchorElement>("#custom-link")!;
@@ -430,15 +451,6 @@ export const Button: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const btn = host.querySelector<HTMLButtonElement>("#btn")!;
-    btn.focus();
-    expect(document.activeElement).toBe(btn);
-    // Click triggers the handler; the text change fires the host's
-    // MutationObserver → relayout → grid repaints with the new label.
-    btn.click();
-    await waitFor(() => expect(host.toPlainText()).toContain("clicked (1)"));
-    btn.click();
-    await waitFor(() => expect(host.toPlainText()).toContain("clicked (2)"));
     // Full-width + text-center: the label sits centered on the grid.
     const full = host.querySelector<HTMLButtonElement>("#btn-full")!;
     const label = full.textContent!.trim();
@@ -471,27 +483,44 @@ export const Button: StoryObj = {
   },
 };
 
-const details = () => html`
-  <mono-wind>
-    <div class="flex max-w-60 flex-col gap-1">
-      <details data-test="closed" class="border px-1">
-        <summary class="cursor-pointer">What does it draw?</summary>
-        <p>Drawn on the grid.</p>
-      </details>
-      <details data-test="open" open class="border px-1">
-        <summary class="cursor-pointer">Open from the start</summary>
-        <p>Press to fold it.</p>
-      </details>
-    </div>
-  </mono-wind>
-`;
+/** Test-only (hidden from the sidebar): `Button`'s first button focused
+ * and clicked twice, its new label on the grid. */
+export const ButtonPressed: StoryObj = {
+  tags: ["!dev"],
+  render: Button.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const btn = host.querySelector<HTMLButtonElement>("#btn")!;
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    // Click triggers the handler; the text change fires the host's
+    // MutationObserver → relayout → grid repaints with the new label.
+    btn.click();
+    await waitFor(() => expect(host.toPlainText()).toContain("clicked (1)"));
+    btn.click();
+    await waitFor(() => expect(host.toPlainText()).toContain("clicked (2)"));
+  },
+};
 
 /** A `details` shows its `summary` alone until it opens: its content
  * joins the grid when `open` is set, by a press on the summary or a
  * script, and leaves it when unset (specs/visibility.md "Skipped
  * contents"). */
 export const Details: StoryObj = {
-  render: details,
+  render: () => html`
+    <mono-wind>
+      <div class="flex max-w-60 flex-col gap-1">
+        <details data-test="closed" class="border px-1">
+          <summary class="cursor-pointer">What does it draw?</summary>
+          <p>Drawn on the grid.</p>
+        </details>
+        <details data-test="open" open class="border px-1">
+          <summary class="cursor-pointer">Open from the start</summary>
+          <p>Press to fold it.</p>
+        </details>
+      </div>
+    </mono-wind>
+  `,
   play: async ({ canvasElement }) => {
     const text = (await readyHost(canvasElement)).toPlainText();
     expect(text).toContain("What does it draw?");
@@ -502,9 +531,9 @@ export const Details: StoryObj = {
 
 /** Each of `Details`' summaries pressed, and pressed back, the grid
  * following. */
-export const DetailsToggle: StoryObj = {
+export const DetailsToggled: StoryObj = {
   tags: ["!dev", "!golden"],
-  render: details,
+  render: Details.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const hook = testHooks(canvasElement);
@@ -611,6 +640,21 @@ export const ClickThrough: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    // The disabled link keeps its own value in grid mode, where links
+    // otherwise take the pointer back; what a real press does is
+    // visual/pointer.spec.ts's.
+    expect(getComputedStyle(testHooks(canvasElement)("disabled")).pointerEvents).toBe("none");
+  },
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep, its play
+ * ending as `ClickThrough` starts): the button under the badge hovered
+ * through it, and kept the grid's under a page's pointer lock. */
+export const ClickThroughHovered: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: ClickThrough.render!,
+  play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     hoverOver(by("badge"));
@@ -618,10 +662,6 @@ export const ClickThrough: StoryObj = {
     await waitFor(() => expect(by("button")).toHaveAttribute("data-mw-hover"));
     expect(by("button")).not.toHaveAttribute("data-mw-covered");
     expect(by("badge")).not.toHaveAttribute("data-mw-hover");
-    // The disabled link keeps its own value in grid mode, where links
-    // otherwise take the pointer back; what a real press does is
-    // visual/pointer.spec.ts's.
-    expect(getComputedStyle(by("disabled")).pointerEvents).toBe("none");
     // A lock the page sets above the host — a modal's, on the body — is
     // the page's own: the button laid out under it stays the grid's.
     document.body.style.pointerEvents = "none";

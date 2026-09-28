@@ -449,6 +449,7 @@ export const GapDecorations: StoryObj = {
     reference.style.color = getComputedStyle(rules).getPropertyValue("--mw-rule-x-color").trim();
     canvasElement.appendChild(reference);
     const expected = getComputedStyle(reference).color;
+    reference.remove();
     const colored = Array.from(spans).some((span) => getComputedStyle(span).color === expected);
     expect(colored).toBe(true);
     // Segment features (specs/gap-decorations.md "Segments"), probed

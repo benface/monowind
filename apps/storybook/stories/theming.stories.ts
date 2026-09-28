@@ -139,6 +139,29 @@ export const Tokens: StoryObj = {
     // The styled host: its own color and background.
     expect(token(styled, "--mw-fg")).toBe(getComputedStyle(styled).color);
     expect(token(styled, "--mw-bg")).toBe(getComputedStyle(styled).backgroundColor);
+    // The transparent host: the page's background behind it, its inherited text.
+    const page = getComputedStyle(by("page"));
+    expect(token(clear, "--mw-bg")).toBe(page.backgroundColor);
+    expect(token(clear, "--mw-fg")).toBe(page.color);
+    await waitFor(() =>
+      expect(paintedBackground(clear, "the page's colors")).toBe(page.backgroundColor),
+    );
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Tokens`' focus invert painted
+ * with each host's tokens, a subtree's own and an explicit one winning,
+ * and the page recolored above the transparent host. */
+export const TokensFocused: StoryObj = {
+  tags: ["!dev"],
+  render: Tokens.render!,
+  play: async ({ canvasElement }) => {
+    const by = testHooks(canvasElement);
+    await readyHosts(canvasElement);
+    const styled = by("styled");
+    const clear = by("clear");
+    const token = (host: HTMLElement, name: string) =>
+      getComputedStyle(host).getPropertyValue(name).trim();
     // The focus invert paints with them; a subtree's own token wins there.
     await userEvent.tab();
     expect(document.activeElement).toBe(by("button"));
@@ -156,13 +179,7 @@ export const Tokens: StoryObj = {
     await waitFor(() =>
       expect(paintedBackground(explicit, "explicit token")).toBe("rgb(0, 255, 0)"),
     );
-    // The transparent host: the page's background behind it, its inherited text.
     const page = getComputedStyle(by("page"));
-    expect(token(clear, "--mw-bg")).toBe(page.backgroundColor);
-    expect(token(clear, "--mw-fg")).toBe(page.color);
-    await waitFor(() =>
-      expect(paintedBackground(clear, "the page's colors")).toBe(page.backgroundColor),
-    );
     // The page recolored above the host: the cascade reaches the tokens.
     by("page").classList.replace("bg-[#0c4a6e]", "bg-[#7f1d1d]");
     await waitFor(() => expect(token(clear, "--mw-bg")).toBe(page.backgroundColor));

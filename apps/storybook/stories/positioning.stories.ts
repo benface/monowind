@@ -222,6 +222,15 @@ export const Stacking: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `Stacking`'s scroller scrolled
+ * under its sticky header, and the stacking read there — the
+ * overflowing text, the badges over or under the next card, the menu's
+ * item taking the hover. */
+export const StackingScrolled: StoryObj = {
+  tags: ["!dev"],
+  render: Stacking.render!,
   play: async ({ canvasElement }) => {
     const { host, by, cells, width, measure } = await readyGrid(canvasElement);
     const scroller = by("scroller");
@@ -287,7 +296,7 @@ export const ContainingBlockClip: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { host, by, cells, height, measure } = await readyGrid(canvasElement);
+    const { by, height, measure } = await readyGrid(canvasElement);
     const { rows, boxOf } = measure();
     // The card's menu past its bottom edge, its text and border whole.
     const menu = boxOf(by("card-menu"));
@@ -295,6 +304,17 @@ export const ContainingBlockClip: StoryObj = {
     expect(bottom).toBeGreaterThan(boxOf(by("card")).row + height(by("card")) - 1);
     expect(rows[bottom - 1]).toContain("shows whole");
     expect(rows[bottom]!.slice(menu.col, menu.col + 2)).toBe("└─");
+  },
+};
+
+/** Test-only (hidden from the sidebar): `ContainingBlockClip`'s list
+ * scrolled, its menu held still on the grid and natively. */
+export const ContainingBlockClipScrolled: StoryObj = {
+  tags: ["!dev"],
+  render: ContainingBlockClip.render!,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, measure } = await readyGrid(canvasElement);
+    const { boxOf } = measure();
     const held = boxOf(by("list-menu"));
     by("list").scrollTo({ top: 3 * cellSize(host).height, behavior: "instant" });
     await waitFor(() => expect(cells(by("list-menu"), "--mw-sy")).toBe(3));
@@ -658,6 +678,37 @@ export const StickyHeadings: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    const { by, cells, height, measure } = await readyGrid(canvasElement);
+    const scroller = by("scroller");
+    const headings = SECTIONS.map((_, i) => by(`heading-${i}`));
+    const footers = SECTIONS.map((_, i) => by(`footer-${i}`));
+    const { boxOf } = measure();
+    // The scrollport's first and last rows — the padding box's, per CSS
+    // — the content's first row and column inside the padding.
+    const top = boxOf(scroller).row + cells(scroller, "--mw-bt");
+    const bottom = boxOf(scroller).row + height(scroller) - cells(scroller, "--mw-bb") - 1;
+    const padding = cells(scroller, "--mw-pt");
+    const col = boxOf(scroller).col + cells(scroller, "--mw-bl") + cells(scroller, "--mw-pl");
+    const atBottom = (footer: HTMLElement) => {
+      expect(measure().rows[bottom]!.indexOf("— end")).toBe(col);
+      expect(boxOf(footer).row).toBe(bottom);
+    };
+    // At rest: the first heading on the content's first row, its
+    // section's footer already pulled up to the bottom row ahead of its
+    // place.
+    expect(boxOf(headings[0]!).row).toBe(top + padding);
+    atBottom(footers[0]!);
+    expect(cells(footers[0]!, "--mw-sy")).toBeLessThan(0);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `StickyHeadings`' scroller
+ * scrolled into each section and to the end, each heading and footer
+ * handed over at the scrollport's edges. */
+export const StickyHeadingsScrolled: StoryObj = {
+  tags: ["!dev"],
+  render: StickyHeadings.render!,
+  play: async ({ canvasElement }) => {
     const { host, by, cells, height, measure } = await readyGrid(canvasElement);
     const scroller = by("scroller");
     const headings = SECTIONS.map((_, i) => by(`heading-${i}`));
@@ -682,12 +733,6 @@ export const StickyHeadings: StoryObj = {
       expect(measure().rows[bottom]!.indexOf("— end")).toBe(col);
       expect(boxOf(footer).row).toBe(bottom);
     };
-    // At rest: the first heading on the content's first row, its
-    // section's footer already pulled up to the bottom row ahead of its
-    // place.
-    expect(boxOf(headings[0]!).row).toBe(top + padding);
-    atBottom(footers[0]!);
-    expect(cells(footers[0]!, "--mw-sy")).toBeLessThan(0);
     // Into the first section: its heading held on the scrollport's first
     // row, natively too; its footer back on its own row, and the second
     // section's on the bottom row (a row clear of that section's
@@ -771,10 +816,9 @@ export const StickyFooter: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const { host, by, cells, height, measure } = await readyGrid(canvasElement);
+    const { by, cells, height, measure } = await readyGrid(canvasElement);
     const scroller = by("scroller");
     const footer = by("footer");
-    const cellHeight = cellSize(host).height;
     const { boxOf } = measure();
     const edge = (side: string) =>
       cells(scroller, `--mw-b${side}`) + cells(scroller, `--mw-p${side}`);
@@ -788,6 +832,29 @@ export const StickyFooter: StoryObj = {
     const slot = boxOf(footer).row - top;
     expect(top + slot).toBeGreaterThan(bottom);
     expect(footerRow()).toBe(-1);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `StickyFooter`'s scroller
+ * scrolled to where the footer's slot would sit, then to the end. */
+export const StickyFooterScrolled: StoryObj = {
+  tags: ["!dev"],
+  render: StickyFooter.render!,
+  play: async ({ canvasElement }) => {
+    const { host, by, cells, height, measure } = await readyGrid(canvasElement);
+    const scroller = by("scroller");
+    const footer = by("footer");
+    const cellHeight = cellSize(host).height;
+    const { boxOf } = measure();
+    const edge = (side: string) =>
+      cells(scroller, `--mw-b${side}`) + cells(scroller, `--mw-p${side}`);
+    const top = boxOf(scroller).row + edge("t");
+    const col = boxOf(scroller).col + edge("l");
+    // The scrollport's last row: the padding box's, per CSS.
+    const bottom = boxOf(scroller).row + height(scroller) - cells(scroller, "--mw-bb") - 1;
+    const text = "Please consider";
+    const footerRow = () => measure().rows.findIndex((row) => row.indexOf(text) === col);
+    const slot = boxOf(footer).row - top;
     // Scrolled to where its slot would sit on the second content row:
     // held on the bottom row instead, natively too.
     scroller.scrollTo({ top: (slot - 1) * cellHeight, behavior: "instant" });
@@ -855,6 +922,31 @@ export const StickyTable: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
+    const { by, cells, width, measure } = await readyGrid(canvasElement);
+    const scroller = by("scroller");
+    const row0 = by("row-0");
+    const { boxOf } = measure();
+    // The scrollport's first row and column: past the scroller's border
+    // and padding cells.
+    const top = boxOf(scroller).row + cells(scroller, "--mw-bt") + cells(scroller, "--mw-pt");
+    const left = boxOf(scroller).col + cells(scroller, "--mw-bl") + cells(scroller, "--mw-pl");
+    // The first column's cells, lines beside them: its width sets where
+    // the first inner line falls.
+    const w = width(row0);
+    const line = (a: string, b: string, c: string) => a + b.repeat(w) + c;
+    const slice = (row: number) => measure().rows[row]!.slice(left, left + w + 2);
+    // At rest: the table's top edge on the scrollport's first row.
+    expect(slice(top)).toBe(line("┌", "─", "┬"));
+  },
+};
+
+/** Test-only (hidden from the sidebar): `StickyTable`'s scroller
+ * scrolled down, then right as well, its header and first column held
+ * with their lines. */
+export const StickyTableScrolled: StoryObj = {
+  tags: ["!dev"],
+  render: StickyTable.render!,
+  play: async ({ canvasElement }) => {
     const { host, by, cells, width, measure } = await readyGrid(canvasElement);
     const scroller = by("scroller");
     const [thead, corner, row0, row2] = [by("thead"), by("corner"), by("row-0"), by("row-2")];
@@ -870,8 +962,6 @@ export const StickyTable: StoryObj = {
     const w = width(row0);
     const line = (a: string, b: string, c: string) => a + b.repeat(w) + c;
     const slice = (row: number) => measure().rows[row]!.slice(left, left + w + 2);
-    // At rest: the table's top edge on the scrollport's first row.
-    expect(slice(top)).toBe(line("┌", "─", "┬"));
     // Scrolled down four rows: the header stays with its lines, its
     // bottom line joined to the column lines below, the third body row
     // under it; natively the same cells.
@@ -946,6 +1036,13 @@ export const StickyHeaderCells: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `StickyHeaderCells`' scrollers
+ * scrolled, each header row held with its own text. */
+export const StickyHeaderCellsScrolled: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: StickyHeaderCells.render!,
   play: async ({ canvasElement }) => {
     const { host, cells, width, measure } = await readyGrid(canvasElement);
     const scrollers = [...canvasElement.querySelectorAll<HTMLElement>('[data-test="scroller"]')];
@@ -1124,6 +1221,13 @@ export const Anchored: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `Anchored`'s menus, submenu and
+ * tooltip opened, each on its anchor, the low menu flipped above it. */
+export const AnchoredOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Anchored.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
@@ -1227,7 +1331,7 @@ export const AnchorFallbacks: StoryObj = {
     </mono-wind>
   `,
   play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
+    await readyHost(canvasElement);
     const by = testHooks(canvasElement);
     const box = (name: string) => by(name).getBoundingClientRect();
     // The note sits beside the word on whichever side has the room.
@@ -1244,6 +1348,19 @@ export const AnchorFallbacks: StoryObj = {
         () => box("word").left,
       );
     }
+  },
+};
+
+/** Test-only (hidden from the sidebar): `AnchorFallbacks`' low menu
+ * opened, flipped above its button, and kept there through the list's
+ * scroll as CSS keeps the placement that last fit. */
+export const AnchorFallbacksOpened: StoryObj = {
+  tags: ["!dev"],
+  render: AnchorFallbacks.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const box = (name: string) => by(name).getBoundingClientRect();
     // The button low in the list: the menu flips above it; scrolled up
     // the list, with room below again, it keeps to the placement that
     // last fit while that still fits, as CSS does.

@@ -62,6 +62,13 @@ export const Popover: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `Popover` opened, whole over
+ * the list's edge and on its cells, closed, and opened again. */
+export const PopoverOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Popover.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
@@ -121,8 +128,18 @@ export const DialogInATallPage: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    const by = testHooks(canvasElement);
     expect(rowsOf(host).length).toBeGreaterThan(40);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `DialogInATallPage`'s dialog
+ * opened, in view. */
+export const DialogInATallPageOpened: StoryObj = {
+  tags: ["!dev"],
+  render: DialogInATallPage.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
     (by("dialog") as HTMLDialogElement).showModal();
     await waitFor(() => expect(host.shadowRoot!.textContent).toContain("In view"));
   },
@@ -162,6 +179,14 @@ export const Dialog: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Test-only (hidden from the sidebar): `Dialog` opened, centered over
+ * its backdrop, its focus and text its own, closed by its form and
+ * opened again. */
+export const DialogOpened: StoryObj = {
+  tags: ["!dev"],
+  render: Dialog.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
