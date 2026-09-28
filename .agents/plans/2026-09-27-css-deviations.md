@@ -1,14 +1,17 @@
 # CSS deviations for 0.3.4
 
-Status: **planned 2026-09-27**. The "Order" of
+Status: **implemented** (2026-09-28, uncommitted for review; see
+Progress). The "Order" of
 `2026-09-23-css-deviation-reasons.md` as a plan for release 0.3.4,
-with the scope decided with the user the same day: `aspect-ratio` and
+with the scope decided with the user on 2026-09-27: `aspect-ratio` and
 anchor positioning first, then the numbered Order (item 4, stacking,
-is done), and five extras beside it; the host's own height (F2), a bug
-found with `aspect-ratio`, joins it. Each item gives the deviation,
+is done), and four extras beside it; the host's own height and width
+(F2, F3), bugs found along the way, join it. Each item gives the deviation,
 what CSS does, the approach, its size, its risks and its tests. Its
 code-level steps and touch points are written when the item starts; a
-medium item starts with its spec change. Progress is recorded here,
+medium item starts with its spec change. Deviation numbers are the
+lists' as of 2026-09-27, before the review round renumbered them
+(Progress). Progress is recorded here,
 under "Progress", as each item lands.
 
 ## Scope
@@ -17,6 +20,7 @@ under "Progress", as each item lands.
 | --- | --------------------------------- | ------------------- | ---- | ----- |
 | F1  | `aspect-ratio`                    | cell-model 9        | M    | in    |
 | F2  | the host's own height             | host sizing (bug)   | M    | in    |
+| F3  | a shrink-to-fit host's width      | host sizing (bug)   | S    | in    |
 | A1  | the last acceptable anchor        | anchor 3            | M    | in    |
 | A2  | sticky anchors                    | anchor 6            | S–M  | in    |
 | A3  | insets inside an area             | anchor 1            | S    | in    |
@@ -277,6 +281,53 @@ otherwise sees every change to the height.
 
 **Size**: medium.
 
+## Beside F2: a shrink-to-fit host's width (F3)
+
+**Bug** (found 2026-09-28, all three engines, v0.3.3 too): a host whose
+width is its content's (`w-fit`, `inline-block`, `float-left`,
+`absolute`, a flex item in a row) is 0px wide once laid out. The
+reading pass puts the slot back in the host's flow, so the host's
+width is measured from its content and the right columns laid out; out
+of it again, the slot takes the content away, and the host's box
+collapses: its background and border shrink to nothing, and a flex
+sibling paints over the grid (probed: `<p>` after a host in a flex row
+at the grid's own left and top).
+
+**CSS** (cell-model.md "Host sizing" already says it): a host sizes
+like any box, its width its content's where nothing else sets it.
+
+**Approach**: the viewport's `min-width` stands for the content's width
+as its `min-height` stands for its height: the columns laid out, set
+beside the height's spacer. Unlike the height, the width is read under
+`measuring`, from the slot back in flow, so the spacer is lifted there
+(`:host([measuring]) #viewport`); else a shrink-to-fit host could only
+grow. A block host is unaffected: its spacer is never wider than the
+width it was measured from, and a narrowing container shrinks it
+natively, as the width cap already allows.
+
+**Size**: small.
+
+**Risks**: a flex item's automatic minimum is now its columns, so a
+narrowing row holds it until the parent's resize relays it out (the
+parent is observed already); goldens of shrink-to-fit hosts change,
+their boxes now drawn.
+
+**Tests**: a host story beside native boxes, in three engines: `w-fit`,
+`inline-block`, `float-left` and a flex row, each host as wide as its
+columns plus its chrome, a flex sibling past its right edge; the row
+narrowed, the host relaid out narrower. Red first against the last
+commit.
+
+**Steps**:
+
+1. shadow.css: `:host([measuring]) #viewport { min-width: 0 !important }`
+   beside the slot's rule. element.ts step (6): the viewport's
+   `min-width`, the columns laid out times the cell width, written
+   where it changes, as `min-height` is.
+2. The story (`host.stories.ts`, test-only) and its red run.
+3. Docs: cell-model.md "Host sizing" (the spacer's width), shadow.css's
+   viewport comment; this plan's Progress.
+
 ## First: anchor positioning (A1–A6)
 
 anchor-positioning.md lists nine deviations; each was probed. Six
@@ -485,9 +536,7 @@ paints, a press passes through; cascade.test.ts if a variable moves.
 - **8, the placement recorded at each layout**: the engine's layout is
   its only update; there is no `ResizeObserver` delivery to mirror.
 
-**Steps** (A1–A6): written when the anchor batch starts.
-
-## 1. Lock `columns` on the host
+## 1. The host's display and columns
 
 **Deviation**: host-leaf.md, "Column utilities on the host itself are
 not modeled", with a false reason that the research corrected.
@@ -502,10 +551,11 @@ leaves it whole (probed 2026-09-27: a paragraph under
 and the grid's line count in all three engines), as `flex` does.
 Nothing locks `columns` (styles.css).
 
-**Approach**: the companion locks `columns: auto` on the host, its
-display staying the author's (a `hidden` host must hide). The engine
-warns once where the host has columns or a flex or grid display: they
-lay out nothing there and belong on a wrapper (decision D5).
+**Approach** (superseded by the Steps below): the companion locks
+`columns: auto` on the host, its display staying the author's (a
+`hidden` host must hide). The engine warns once where the host has
+columns or a flex or grid display: they lay out nothing there and
+belong on a wrapper (decision D5).
 
 **Size**: small.
 
@@ -517,7 +567,37 @@ the warning names them too.
 element on its cells; host-leaf.test.ts, the warning. host-leaf.md's
 deviation becomes the block rule and the lock.
 
-**Steps**: written when the item starts.
+**Probed 2026-09-28** (the current build, three engines, a host over
+two paragraphs, a bordered box and two more): `block`, `flow-root`,
+`flex gap-2`, `grid grid-cols-2`, `grid grid-cols-[100px_1fr]` and
+padding with a border keep every light element on its cells, the host's
+display laying out the viewport alone, its one child; `columns-2`
+moves the last two paragraphs into a second column natively (the grid
+906px wide in a 599px host); `inline` and `contents` hosts never lay
+out (no content width to measure, so never ready: nothing shows);
+`#viewport { column-span: all }` keeps a `columns-2` or `columns-3
+gap-8` host's content whole and on its cells, the host's computed
+`columns` still the author's.
+
+**Steps** (decided with the user 2026-09-28: the spanner in place of
+D5's lock; a warning only where nothing shows):
+
+1. shadow.css: `#viewport { column-span: all }`, so the host's columns
+   never fragment its one child, the author's `columns` left as read.
+2. element.ts: where the host measures no columns, a display of
+   `inline` or `contents` warns once that it lays nothing out.
+3. Tests: element.test.ts, the warning, `none` silent; host.stories.ts
+   `HostDisplay`, the agreement check under `columns-2`,
+   `grid grid-cols-2` and `flex gap-2`, red first against the last
+   commit.
+4. Docs: host-leaf.md's deviation reworded to the rule, shadow.css's
+   comment; this plan's Progress.
+
+Left out: measuring the viewport, the grid's own box, in place of the
+host (probed: 600px for an `inline` or `contents` host, a block on a
+line of its own, where the host's `clientWidth` is 0) would lay those
+hosts out as CSS places them; the height's read (F2) needs the same
+switch, and the host rect's other readers an audit. Medium.
 
 ## 2. Margins on inline-blocks
 
@@ -553,7 +633,30 @@ widths with margins. A leaf story, `InlineBoxMargins`: buttons with
 `mx-1`, `-ml-1` and `mt-1` in a paragraph, the agreement check on
 them; its golden.
 
-**Steps**: written when the item starts.
+**Probed 2026-09-28** (native, three engines, a 3-row box): top: the
+box at its top margin's row, the line its margin box's rows; bottom:
+the line's text on the margin box's last row (`mb-5` 3 rows down, not
+2); middle: the margin box centered, off the grid (1.48 rows), which
+the whole-row baseline length rounds as it does unmargined.
+
+**Steps**:
+
+1. `inlineBox` carries the box's used margins (types.ts), as `flow`
+   carries a flow child's: layout.ts resolves them against the leaf's
+   width, lays the box out in the width they leave, and makes the
+   marker's advance the margin box; the box sits past its left margin
+   and down its top one; `inlineBoxRows`, the margin box's rows, sizes
+   the line (`leafLineMetrics`, `lineOpener`). tree.ts's intrinsic
+   advance adds the fixed margins.
+2. render.ts writes the margins (`--mw-mt`…, beside a flow child's) and
+   takes the top margin into the middle alignment's baseline length,
+   the bottom one into the bottom-edge fallback; styles.css's inline-box
+   rule applies them, the right one less the give-back.
+3. Tests: layout.test.ts, each probe row; tree.test.ts, the intrinsic
+   width; typography.stories.ts `InlineBoxMargins`, each box's cells
+   and the word after it against the browser's, red first against the
+   last commit.
+4. Docs: cell-model.md "Atomic inline boxes" and deviation 5.
 
 ## 3. Percent sizes beside margins
 
@@ -585,7 +688,20 @@ area.
 multicol.test.ts: `w-full mx-4`, `w-1/2 ml-2`, percent padding and
 `max-w-full` beside margins; a box story's rows against a native copy.
 
-**Steps**: written when the item starts.
+**Steps**:
+
+1. layout.ts: `layoutNode`'s `forced.fill`, the width an auto width
+   fills or shrinks within, `availableWidth` staying the percentages'
+   basis; `resolveWidth` and `ratioWidth` take both. Each caller that
+   took its margins off the width passes the containing block's width
+   and the reduced one as `fill`: block flow, a float, a box beside
+   floats, an inline box, a flex column's item (its percent padding
+   against the parent's width too), a non-stretched grid item, a
+   multicol column's box and spanner.
+2. Tests: layout.test.ts "percentages beside margins", each context;
+   box.stories.ts `PercentBesideMargins` against native copies, three
+   engines, red first against the last commit.
+3. Docs: cell-model.md "Units and value mapping"; this plan's Progress.
 
 ## 5. Gradients: the remainder
 
@@ -608,6 +724,10 @@ the direction" still holds.
 **Size**: small. **Tests**: gradient.test.ts, both functions first,
 red before.
 
+**Steps**: style.ts's `startsWithColor` takes `lab(` and `lch(`
+(`(?:ok)?lab`, `(?:ok)?lch`); gradient.test.ts's read of each first
+stop, red first.
+
 ### 5b. The other interpolation spaces
 
 **Deviation**: gradients.md 4, a space other than oklab, oklch, srgb,
@@ -629,6 +749,25 @@ engines' `color-mix()` in that space, which interpolates alike and
 reads back from computed style (probed when the item starts); the
 gradients story gains `in lab` and `in display-p3` cards, its golden
 moving.
+
+**Probed 2026-09-28**: `color-mix(in <space>, rgb(255 100 50),
+rgb(20 120 220))`, read back through a canvas, agrees within a unit in
+all three engines for every space, `longer hue` in lch and hwb too.
+
+**Steps**:
+
+1. color.ts: one table, `SPACES`, a space's way from sRGB and back and
+   its hue's index — the RGB spaces through XYZ (`rgbSpace`, the
+   inverse matrices by `invert`), lab from XYZ D50, lch and oklch as
+   `polar` forms, hsl and hwb — replacing `hueIndex`, the `color()`
+   map and the per-space branches of `prepareColor` and `mixColors`;
+   `colorSpaceNamed` reads the keyword, `xyz` as `xyz-d65`.
+2. style.ts's `gradientSpace` takes any space `colorSpaceNamed` knows.
+3. Tests: gradient.test.ts, each space's midpoint against the probe,
+   the read of `in lab`, `in display-p3`, `in hwb longer hue` and
+   `in xyz`; the gradients story's two cards, their centers apart, red
+   first against the last commit.
+4. Docs: gradients.md, the rule and deviation 4.
 
 ### 5c. The fade drift: fixed, dropped
 
@@ -682,7 +821,30 @@ case; positioning.test.ts's in-flow baseline pin under `wrap-reverse`
 revisited. A story, `Baseline`: a flex row, a div-table and a grid,
 each beside a native copy, their text rows compared; its golden.
 
-**Steps**: written when the item starts.
+**Steps**:
+
+1. layout.ts: `baselineRow(node, last)`, rows from a box's border-box
+   top to its first (last) text row: a leaf's line, else its first
+   (last) in-flow child's with one; none without a line. It replaces
+   `LayoutNode.baselineRow`, which a relayout left stale, render.ts's
+   middle alignment reading it.
+2. flex.ts, a row's lines: the items aligned by `baseline` (or `last
+baseline`) whose cross margins are not auto form a group; each sits
+   where its baseline row meets the group's lowest (a box without a
+   line its last row), the line's height growing to hold them; the
+   group rides the line's cross-start (a `last baseline` group its
+   end), the bottom under `wrap-reverse`.
+3. table.ts: `verticalAlign` gains `baseline` (style.ts; an inline box
+   takes it as top, as before); a row's baseline cells with a line
+   shift their content to the row's lowest first row, the row growing
+   to hold it.
+4. grid.ts: a row track's baseline items (their first row) add their
+   shift to their row contribution before the rows size, and sit by
+   it.
+5. Tests: flex.test.ts, table.test.ts, grid.test.ts, each probe case,
+   red first; the `Baseline` story beside native copies, three engines,
+   its golden. Docs: flex.md 2, grid.md 3 and table.md 4 become the
+   rule.
 
 ## 7. The smalls
 
@@ -722,6 +884,16 @@ at 0; each takes the negative start.
 **Tests**: wrap.test.ts, layout.test.ts and tree.test.ts, each probe
 row; a typography story's indents against native rows.
 
+**Steps**: style.ts reads a signed length or a percentage
+(`CellStyle.textIndent: CellLength`); a leaf resolves it once as it
+lays out (`LayoutNode.indent`), which the wrap (unclamped), `lineStart`
+and the native `--mw-ti` (render.ts `nativeIndent`, a container's by
+its first run) share; tree.ts's max-content and wrap.ts's min-content
+add a length on the first line and segment; tree.ts gives a container's
+runs after its first no indent. Tests: layout.test.ts and tree.test.ts
+each probe row, typography.stories.ts `TextIndent` beside native
+copies word by word (`expectWordsAsNative`), red first.
+
 ### 7b. Additive `scroll-padding`
 
 **Deviation**: scrolling.md, Deviations: an authored `scroll-padding`
@@ -740,6 +912,13 @@ lock's `calc()` adds.
 variables; a scrolling story: a focus reveal stops clear by the
 authored padding.
 
+**Steps**: style.ts `readScrollPadding`, a scroll container's four
+sides in cells (`CellStyle.scrollPadding`); render.ts writes them as
+`--mw-sp*` beside the bars' cells; the lock adds them. Tests:
+style.test.ts, cascade.test.ts's variables, overflow.stories.ts
+`ScrollPadding` (a `scrollIntoView` stopping three rows up: `focus()`
+centers, so it can't show the padding), red first.
+
 ### 7c, 7d. `fit-content()` and `calc()` tracks
 
 **Deviation**: grid.md 5, both parse as `auto`.
@@ -757,6 +936,14 @@ growth limit clamps at its argument in track sizing.
 **Tests**: grid.test.ts's pinned parses flip; a track at
 min(max-content, L), floored at min-content;
 `grid-cols-[calc(100%-2rem)_1fr]`.
+
+**Steps**: style.ts's `parseTrackSize` reads `fit-content(L)` as
+minmax(auto, a `fit-content` breadth over L), `parseTrackBreadth` a
+`calc()` as a `math` sum of its percentage and cells (types.ts);
+grid.ts's `fixedBreadth` sums, and a track's `cap` holds its limit's
+growth at L and keeps it out of the auto stretch. Tests: grid.test.ts
+(the parses, the three widths, the calc), grid.stories.ts
+`TrackFunctions` beside native copies, red first.
 
 ### 7e. Multicol min-content
 
@@ -782,6 +969,13 @@ parse keeps the subgrid's list.
 
 **Size**: small. **Tests**: grid.test.ts. E3 rides with it.
 
+**Steps**: style.ts keeps `subgrid [a] [b c]`'s list (types.ts's
+subgrid template gains `lineNames`); grid.ts's `subgridOf` hands a
+subgrid child its spans and the parent's names on the lines they
+cover, and `placeholderTemplate` names the stand-in tracks' lines with
+those, then the subgrid's own. Tests: grid.test.ts's parse and a
+subgrid placing items by the parent's names and its own, red first.
+
 ### 7g. Caption margins
 
 **Deviation**: table.md "Caption", margins on the caption are ignored.
@@ -798,6 +992,16 @@ and place it; its min-content floors the table's.
 
 **Size**: small. **Tests**: table.test.ts, the probe cases. E2 rides
 with it.
+
+**Steps** (with E2): table.ts lays the caption out at the table's
+border-box width, its margins resolved against it and placed as block
+flow places them (`blockCrossOffset`), outside the border and padding,
+and floors both intrinsic widths at its min-content less the table's
+chrome; the table's node keeps the whole box and `tableBox` (types.ts)
+names the rows its border, fill and shadows take (plain-text.ts
+`paintBox`). Tests: table.test.ts (above and below, margins, auto and
+negative ones, the floor, a collapsed table's fill), table.stories.ts
+`CaptionBox` beside native copies, red first.
 
 ### 7h. Hover on inline elements
 
@@ -823,6 +1027,13 @@ prose hover step, benched.
 
 **Tests**: pointer.test.ts, chains through a span and a nested pair;
 the `SynthesizedPointerStates` story's span, pinned unhovered, flips.
+
+**Steps**: pointer.ts's hit becomes a `Hit`, its stack and the inline
+elements over the hit character (`hitOf`, from the character's inline
+entry up its parents); `chainOf` appends them, and element.ts reads
+the chain through `chainAt`. Tests: pointer.test.ts (a nested pair, a
+relative span's glyph, a link that takes the pointer again), the
+story's span hovering on its own characters, red first.
 
 ### 7i. The decoration properties
 
@@ -851,6 +1062,17 @@ decoration transparent (decision D8).
 color; style and tree tests; a typography story with wavy, colored and
 offset underlines; its golden.
 
+**Steps**: types.ts's `TextDecoration` (line, style, color, thickness;
+the offset, inherited, stays a glyph property), one object per value
+(`decorationOf`), replaces `textDecorationLine` on styles and inline
+entries, and `decoration` the paint's field; style.ts's
+`readDecoration` resolves `currentcolor` on the box; tree.ts's
+`withPropagated` joins the lines in the innermost's drawing;
+plain-text.ts's `applyDecoration` writes it on the span (and the
+emoji's, paint.ts), whose prototype key reads it. Tests:
+plain-text.test.ts, paint.test.ts (boxed clusters apart), the
+`Decorations` story and its golden, red first.
+
 ### 7j. `overflow: clip`
 
 **Deviation**: the research's "`overflow: clip` read as `hidden`",
@@ -875,7 +1097,18 @@ hidden. float.md's root list changes.
 **Tests**: style.test.ts, flex.test.ts, grid.test.ts, float.test.ts,
 each probe case.
 
-**Steps** (7a–7j): written as each starts.
+**Steps**: types.ts's `OverflowAxis` gains `hidden` beside `clip`,
+`isScrollContainer` (hidden, auto, scroll) and `clipsAxis` (hidden,
+clip); style.ts's read keeps them apart and coerces as CSS does beside a
+scroll container; `automaticMinimum` (flex.ts), the grid's contribution
+(`scrolls`) and `isFormattingContextRoot` (layout.ts) ask
+`isScrollContainer`; truncation, the native lock's flag and a leaf's
+clip ask `clipsAxis`. The native lock (styles.css), which read back as
+`clip` from the second layout on, is gated on the read flag and set
+only on a box clipping both axes (a lone clipping axis is an authored
+`clip` already). Tests: the four probes, red first; the 38
+test sites that built `clip` to mean hidden take `hidden`; the
+`ClipAndHidden` story across a relayout.
 
 ## 8. White space
 
@@ -896,6 +1129,14 @@ engines agree).
 
 **Tests**: tree.test.ts ("keeps collapsing without the pre flag"
 flips), wrap.test.ts; a typography story against native rows.
+
+**Steps**: types.ts's `WhiteSpace` gains `pre-line` and `softWraps`,
+which the nowrap checks ask (layout.ts, plain-text.ts, render.ts);
+tree.ts's extraction pushes a hard break per source newline under it
+(`breaks`); render.ts restores it natively (`--mw-ws` beside
+`data-mw-pre`, styles.css, as 8b left it). Tests: tree.test.ts's
+flipped case, the `WhiteSpace` story's pre-line cases beside native
+copies and the host's own light rows.
 
 ### 8b. `pre-wrap`, `break-spaces`
 
@@ -923,7 +1164,15 @@ could use the mode for cell-model.md 19, not in this item.
 **Tests**: wrap.test.ts, tree.test.ts; a typography story against
 native rows in three engines.
 
-**Steps** (8a, 8b): written as each starts.
+**Steps**: types.ts's `WhiteSpace` gains both, `preservedSpaces`
+naming wrap.ts's `preserve` mode; wrap.ts's `wrapHardLine` wraps
+`lineUnits` (a word's segments, and `break-spaces`' every space), what
+joins a unit being one space per collapsed run or the preserved ones,
+a preserved line opening at its hard line's start; the extraction
+keeps their spaces as `pre`'s (tree.ts), and `--mw-ws` restores the
+value natively beside `data-mw-pre` (render.ts, styles.css). Tests:
+wrap.test.ts, tree.test.ts, the `WhiteSpace` story (8a's `PreLine`
+folded in) beside native copies and the host's light rows.
 
 ## 9. Justify, line breaks, a run's absolute boxes, inline percentages
 
@@ -950,6 +1199,15 @@ find-in-page's highlight up to a cell off.
 **Tests**: layout.test.ts and plain-text.test.ts; the `TextAlign`
 story's justify case, pinned at start, flips to justified rows,
 compared by word.
+
+**Steps**: `textAlign` gains `justify` (types.ts, style.ts), and
+`textAlignBlocked`, its flag and its lock go (render.ts, styles.css);
+layout.ts's `lineStart` returns a justified line's `spread` (its gaps'
+cells, `justifySpread`, the paragraph's last line and one before a hard
+break left, `endsParagraph`), which the paint's walk
+(`forEachLeafCell`) and the atomic box placement add. Tests:
+plain-text.test.ts, the `Justify` story within a cell of the native
+copy's fractional columns, `TextAlign`'s case.
 
 ### 9b. A UAX #14 subset
 
@@ -986,6 +1244,16 @@ beside the cell-boundary fallback; the kana case (decision D7).
 soft hyphen. A typography story, `LineBreaks`, against native rows in
 three engines, the kana case left out where the engines differ.
 
+**Steps**: wrap.ts's `breakableSegmentRanges` asks `breaksBetween` at
+each non-ASCII pair (the classes by `breakClass`), `SOFT_HYPHEN`'s cell
+counting in the fit and a line's width (`showsHyphen`, `lineCells`);
+tree.ts pushes `WBR_MARKER` for a `<wbr>`, which the copy drops
+(selection.ts); plain-text.ts's walk paints a broken soft hyphen as `-`
+(`showsHyphen`). Tests: wrap.test.ts, tree.test.ts,
+plain-text.test.ts, selection.test.ts, the `LineBreaks` story row by
+row (`expectLinesAsNative`), the CJK copies spaced to two cells a
+character.
+
 ### 9c. An absolute box's spot in a run
 
 **Deviation**: positioning.md 3, an out-of-flow element of a text run
@@ -1021,6 +1289,15 @@ the run's start or end.
 content origin" flips); a story: a badge span in a paragraph without
 insets, beside a native copy.
 
+**Steps**: tree.ts's `runSpotOf` gives each out-of-flow child of a leaf
+its `runSpot` (types.ts): the character `charIndexAt` maps its DOM spot
+to, and whether it was inline-level, read under `data-mw-static-read`
+(styles.css) only where an axis lacks insets; layout.ts's `spotInRun`
+turns it into the static slot, `lineStart` and a justified line's
+spread included. A leaf without the spot (a hand-built node) keeps the
+content origin, so "uses the leaf's content origin" stands. Tests:
+positioning.test.ts's three, the `RunSpot` story beside native copies.
+
 ### 9d. Percent insets on inline elements
 
 **Deviation**: positioning.md 2, a percentage inset on an inline
@@ -1047,7 +1324,13 @@ scrollport (sticky.md); the native variables take the resolved cells.
 plain-text.test.ts, the shifts; the `InlineRelative` story gains
 `left-1/2`, against a native copy.
 
-**Steps** (9a–9d): written as each starts.
+**Steps**: types.ts's `InlineElement` keeps `insetLengths` (and
+`sticky` as lengths); tree.ts reads them through style.ts's
+`readElementInsets` (Typed OM or the class scan); layout.ts's
+`resolveInsets` turns them into `insets` per layout in the leaf, and
+sticky.ts's `shiftWithin` against the scrollport. Tests:
+tree.test.ts's flipped case, and a test-only `InlinePercentInsets`
+story beside native copies (the golden `InlineRelative` left as is).
 
 ## Extras
 
@@ -1088,6 +1371,20 @@ grid-leaf padding pin.
 
 **Tests**: tree.test.ts and grid.test.ts, each probe case; a grid
 story, `TextOnlyGrid`, beside native copies; its golden.
+
+**Steps**:
+
+1. tree.ts: a grid (not a form control) builds as a container over its
+   runs, text alone making one anonymous item.
+2. grid.ts: a lone anonymous item's offsets fold into the grid's
+   padding, the item's rows returned as the content's; layout.ts's
+   `alignLeafText` and leaf-dispatch docs lose the grid case.
+3. styles.css: the laid-out reset takes `grid-auto-columns` and
+   `grid-auto-rows` too (`gap` stays: a lone item crosses none).
+4. Tests: tree.test.ts, grid.test.ts, layout.test.ts's place-items pin
+   now through the item; grid.stories.ts `TextOnlyGrid` beside native
+   copies, word by word, red first against the last commit.
+5. Docs: grid.md's "Items in their areas" and deviation 6.
 
 ### E2. The caption outside the table's border
 
@@ -1139,6 +1436,15 @@ own today).
 **Tests**: grid.test.ts, the probe cases in cells; a subgrid story
 against a native copy.
 
+**Steps**: `gap: normal` reads as `null` (style.ts, types.ts), 0 to
+`resolveGap`; grid.ts's `inheritTracks` moves each inner gutter to the
+subgrid's gap (`subgridGap`: its own, or the parent's under `normal`)
+about its middle (`gutterShift`), and `subgridContributions` counts the
+cells as margin on the items beside an inner gutter, nested subgrids
+taking the subgrid's gap as their parent's. Tests: grid.test.ts (the
+probe's three gaps, the sizing in both axes), style.test.ts's `normal`,
+grid.stories.ts `SubgridGap` beside native copies, red first.
+
 ### E4. Mixed-weight and mixed-style corners
 
 **Deviation**: cell-model.md "Borders: glyph mapping": a corner or
@@ -1172,7 +1478,17 @@ sides becomes `┍━━━━┑`); table.test.ts's lattice (`┏━━┳─�
 gap-decorations.test.ts; glyphs.test.ts; the themes story's cp437
 golden.
 
-**Steps** (E1–E4): written as each starts.
+**Steps**: glyphs.ts's `mixedJunction` reads each arm's line off the
+glyph its band draws (`ARM_LINES`) and looks the arms up in Unicode's
+junctions (`JUNCTIONS`), none where they draw alike, heavy meets
+double, a line is no box drawing, or the font's missing list names the
+glyph (`missingOf`, recorded by `glyphSetNameFor`); borders.ts's
+`mixedArms` serves the box corners (`paintRing`), the gap rules'
+crossings and border tees, and the lattice, whose cells keep the
+heaviest segment per arm (lattice.ts). No set API: a set's own lines
+decide. Tests: the pinned corners, lattice and rule junctions flip;
+glyphs.test.ts "mixed junctions"; plain-text.test.ts's cp437 corner;
+goldens where borders meet unlike.
 
 ## Added 2026-09-27
 
@@ -1182,13 +1498,25 @@ golden.
   and copy follows it. Small–medium; 0.3.4. Landed (see Progress).
 - **`line-clamp-*`**: every line shows (3 under `line-clamp-2`,
   probed). The leaf's lines cut at the clamp, the last one ending in
-  `…` as `truncate`'s does. Small–medium.
+  `…` as `truncate`'s does. Small–medium. **Steps**: style.ts's
+  `readLineClamp` (types.ts `lineClamp`), layout.ts's
+  `leafLineGeometry` keeping the clamp's lines (`clamped`), and
+  plain-text.ts's `truncateSpan` ending the last in `…`. Tests:
+  plain-text.test.ts, the `LineClamp` story beside native copies.
 - **`text-balance`, `text-pretty`**: lines wrap greedily. Balance
   takes the narrowest width keeping the line count; pretty keeps a
-  last line from holding one word. Small–medium, small.
+  last line from holding one word. Small–medium, small. **Steps**:
+  types.ts `textWrapStyle`, style.ts's `readTextWrapStyle`; layout.ts's
+  `leafLineSpans` passes its wrap to `balanced` (a binary search on the
+  width, six lines at most) or `pretty`. Tests: plain-text.test.ts, the
+  `WrapStyle` story (pretty in Chromium alone).
 - **`break-all`, `break-keep`**: a word past its line overflows it
   (20 letters in 14 cells, probed); `break-all` breaks it anywhere,
-  `break-keep` keeps CJK runs whole. Small.
+  `break-keep` keeps CJK runs whole. Small. **Steps**: types.ts
+  `wordBreak`, read in style.ts; wrap.ts's `wordBreak` option turns
+  `breaksBetween`'s letters into ideographs (`break-all`) or its
+  ideographs into letters (`keep-all`), a break never inside a cluster.
+  Tests: wrap.test.ts, the `LineBreaks` story's two cases.
 - The glyph properties (types.ts `GLYPH_PROPERTIES`) landed beside the
   combobox fix: smoothing, `font-variant-numeric`, `text-shadow`,
   `text-underline-offset`. Decoration color, style and thickness stay
@@ -1197,8 +1525,9 @@ golden.
 
 ## Decisions for the user
 
-Each with the recommendation, all ten taken as recommended
-(2026-09-27).
+Each with the recommendation, D1–D10 taken as recommended
+(2026-09-27); D4 and D5 changed 2026-09-28; D11 taken as recommended
+2026-09-28, replacing D6.
 
 - **D1. `aspect-ratio` in px or in cells.** Physical (recommended): an
   `aspect-square` box looks square, as the research and the precedent
@@ -1222,9 +1551,10 @@ Each with the recommendation, all ten taken as recommended
 - **D5. Display on the host.** Lock and warn (recommended), since CSS
   lays the slotted children out as a block too. The alternative lays
   the root out with the host's display, flex, grid or columns: medium.
+  Changed 2026-09-28 to the spanner (item 1's Steps).
 - **D6. Justify's odd cells.** The shared integer distribution, the
   remainder to the first gaps (recommended), as flex and grid share
-  cells; or spread across the line.
+  cells; or spread across the line. Replaced by D11.
 - **D7. Kana in the UAX #14 subset.** No break before `ー` and small
   kana (recommended), as Firefox and WebKit, and `line-break: strict`,
   have it. Chromium breaks there, as `line-break: normal` allows.
@@ -1239,19 +1569,34 @@ Each with the recommendation, all ten taken as recommended
   guesses from the tag and the class list. At a line's end, the engine
   follows Chromium and WebKit.
 
+- **D11. Justify's odd cells, revisited (for the user, 2026-09-28).**
+  D6's first-gaps rule drifts a native word or atomic box up to about a
+  cell from the grid's (`Justify` at width 24: `but` 1.00 cells off in
+  Chromium, 1.06 in Firefox), past the agreement sweep's half cell for
+  boxes (visual/agreement.spec.ts). Recommended: the rounded spread
+  (each gap's edge at `round(k × leftover ÷ gaps)`), within half a cell
+  where the browser shares evenly (Chromium, WebKit). Neither fixes
+  Firefox's line ending at an atomic box (it expands that line less,
+  probed). Taken 2026-09-28: the rounded spread, each word at the cell
+  nearest its even share.
+
 ## Order
 
 1. F1, `aspect-ratio`, then F2, the host's own height.
 2. A1–A6: A1 first; A3 and A4 in the same change, `placeTrying`'s;
    then A2, A5, A6.
-3. Items 1, 2 and 3.
+3. F3 (a shrink-to-fit host's width, a bug), then
+   items 1, 2 and 3.
 4. 5a, then 5b.
 5. Item 6: flex rows, then tables, then grid.
 6. E1, after 6: both are item alignment in grid.ts.
 7. 7a–7j, E3 right after 7f and E2 right after 7g, each sharing its
-   code.
+   code; `line-clamp-*` right after 7j, cutting lines as `truncate`
+   does.
 8. 8a, then 8b.
-9. 9a, 9b, 9c, 9d.
+9. 9a, then `text-balance` and `text-pretty` (all three choose where
+   lines break), 9b, then `break-all` and `break-keep` (the same line
+   breaking), 9c, 9d.
 10. E4.
 
 ## Estimate
@@ -1270,6 +1615,10 @@ this plan is three to four such batches.
   ship sooner, these three go first to 0.3.5, and the plan says so
   here.
 
+Outcome: every item landed by 2026-09-28, uncommitted for review (see
+Progress); E4 needed no set API, a set's own line glyphs deciding its
+junctions.
+
 ## Progress
 
 Each item's line goes here as it lands: the date, what changed, the
@@ -1283,7 +1632,7 @@ tests seen red, and the spec's deviation removed or reworded.
   the tab's last space alone). Red first: tree.test.ts
   "text-transform", selection.test.ts's transformed and tab copies,
   and the `TextTransform` story in Chromium. cell-model.md
-  "Typography" gains the rule, and deviation 22 names `full-width`
+  "Typography" gains the rule, and deviation 20 names `full-width`
   and `full-size-kana`.
 - 2026-09-27, F1 `aspect-ratio`: read physically through the cell,
   derived in block flow, flex, grid and absolute placement as the specs
@@ -1297,7 +1646,7 @@ tests seen red, and the spec's deviation removed or reworded.
   the root lays out against the rows its own height gives it. Red
   first: host.stories.ts `OwnHeight` against the last commit (an
   `h-40` host one row tall). cell-model.md "Host sizing" rewritten;
-  deviation 23 (a host's `min-h-*` floor definite to the root).
+  deviation 21 (a host's `min-h-*` floor definite to the root).
 - 2026-09-27, A1 the last acceptable anchor: `anchorFor` takes a box's
   last acceptable anchor in tree order, `anchor-scope` read where a box
   is anchored by name, an anchor in the top layer a top-layer box's
@@ -1346,3 +1695,314 @@ tests seen red, and the spec's deviation removed or reworded.
   path, which drops the tree pass; `flip-start` swaps `anchor-size()`'s
   dimension with the sizes, each attempt resolving them (red first:
   anchor.test.ts "swaps anchor-size()'s dimension…").
+- 2026-09-28, F3 a shrink-to-fit host's width: the viewport's
+  `min-width`, the columns laid out, lifted under `measuring`
+  (shadow.css). Red first: host.stories.ts `OwnWidth` (a `w-fit` host
+  10px wide, its chrome alone, against a 52px cap). cell-model.md "Host
+  sizing" names the spacer's width.
+- 2026-09-28, item 1, the host's display and columns: the viewport
+  spans the host's columns (`column-span: all`, shadow.css), in place of
+  D5's lock, the author's value kept; an `inline` or `contents` host
+  warns once, a `columns-*`, `flex` or `grid` host not (the user,
+  2026-09-28). Red first: host.stories.ts `HostDisplay` (a 965px grid
+  in a 639px `columns-2` host) against the last commit, and
+  element.test.ts's warning. host-leaf.md's deviation reworded to the
+  rule.
+- 2026-09-28, item 2, margins on inline-blocks: an atomic inline box's
+  margins join its advance, its line's rows and its native box
+  (`inlineBox` now its used margins). Red first: layout.test.ts "an
+  atomic inline box's margins", tree.test.ts's intrinsic width, and
+  `InlineBoxMargins` (the `mx-2` box at cell 4, not 6) against the last
+  commit. cell-model.md deviation 5's sentence and "Atomic inline
+  boxes"' deviation removed.
+- 2026-09-28, item 3, percent sizes beside margins: `layoutNode`'s
+  `fill` apart from the percentages' basis, every margined caller
+  passing both. Red first: layout.test.ts "percentages beside margins"
+  and `PercentBesideMargins` (`w-full mx-4` 8 cells short) against the
+  last commit. cell-model.md's "one small approximation" removed.
+- 2026-09-28, 5a and 5b: a first stop in `lab()` or `lch()` reads as a
+  stop; gradients interpolate in every space CSS names, through one
+  table of spaces in color.ts (its per-space branches gone). Red first:
+  gradient.test.ts's first-stop, space-read and per-space midpoint
+  tests (each within a unit of the three engines' `color-mix()`), and
+  the gradients story's lab and display-p3 centers, against the last
+  commit. gradients.md deviation 4 resolved.
+- 2026-09-28, item 6, baseline alignment: `baselineRow` (layout.ts)
+  replaces the stale `LayoutNode.baselineRow`; a flex row's baseline
+  groups (`baselineGroup`, flex.ts), shared by the grid's rows (their
+  shifts in the rows' sizing), and a table row's baseline cells
+  (`verticalAlign` gains `baseline`). Red first: flex.test.ts,
+  grid.test.ts and table.test.ts "baseline", and box.stories.ts
+  `Baseline` beside native copies (a flex row, an empty box, a
+  div-table and a grid) against the last commit; the stories' native
+  copies share `nativeCopies` (helpers.ts). flex.md 2, grid.md 3 and
+  table.md 4 resolved.
+- 2026-09-28, E1, a grid holding only text: one anonymous item, placed,
+  sized and aligned by the grid, its offsets folded into the grid's
+  padding for its native text. Red first: tree.test.ts, grid.test.ts "a
+  grid holding only text" and `TextOnlyGrid` (a native copy per case,
+  word by word) against the last commit. The story's `nativeCopies`
+  now copies the grid's font longhands (the shorthand read empty, so
+  the copies were in the page's font). grid.md deviation 6 resolved.
+- 2026-09-28, 7a, text indent: signed and percentage indents, counted
+  in intrinsic widths, a container's first run alone. Red first:
+  layout.test.ts "text-indent", tree.test.ts's first-run and intrinsic
+  tests, and `TextIndent` (the hanging line at cell 12, not 6) against
+  the last commit. cell-model.md "Text indent"'s deviations removed.
+- 2026-09-28, 7b, additive `scroll-padding`: a scroll container's
+  authored `scroll-padding`, in cells, joins the lock's border and bar
+  cells. Red first: style.test.ts's read and `ScrollPadding` (one row
+  clear, not three) against the last commit. scrolling.md's deviation
+  narrowed to a percentage.
+- 2026-09-28, 7c and 7d, `fit-content()` and `calc()` tracks: a capped
+  growth limit, and a symbolic sum. Red first: grid.test.ts's parses,
+  "fit-content() and calc() tracks", and `TrackFunctions` against the
+  last commit. grid.md deviation 5 resolved.
+- 2026-09-28, 7e, multicol min-content: `multicolIntrinsicInnerWidth`
+  takes the kind, min-content by css-multicol §3.4, for a leaf and a
+  container alike. Red first: multicol.test.ts "a multicol box's
+  min-content" against the last commit. multicol.md deviation 5
+  resolved.
+- 2026-09-28, 7f, subgrid line names: a subgridded axis's lines carry
+  the parent's names over its span, then its own `subgrid [a] …` list
+  (`subgridOf`, `placeholderTemplate`, grid.ts). Red first:
+  grid.test.ts's `subgrid [a] [b c]` parse and "places its items by the
+  parent's line names over its span, and its own" against the last
+  commit. grid.md deviation 1's line-name clause removed.
+- 2026-09-28, E3, the subgrid gap: a subgrid's own gap replaces the
+  parent's inner gutters about their middles, the odd cell to the track
+  after, and the parent's sizing counts the difference as its items'
+  margin (`inheritTracks`, `subgridGap`, `gutterShift`,
+  `subgridContributions`, grid.ts); `gap: normal` reads as `null`. Red
+  first: grid.test.ts "moves each inner gutter to its own gap…" and
+  "counts the gap difference in the parent's track sizing…",
+  style.test.ts's `normal`, and `SubgridGap` (`bbbb` at cell 10, not 9)
+  against the last commit. grid.md deviation 1's gap clause removed.
+  The stories beside native copies share `besideNative` (helpers.ts):
+  `TextOnlyGrid`, `TrackFunctions`, `SubgridGap`, `TextIndent`,
+  `PercentBesideMargins`, `Baseline` (now every word's column too),
+  `AspectRatioAgainstNative` and `AnchorAcceptable` (its copy now under
+  `contain: layout` like the rest).
+- 2026-09-28, 7g and E2, captions: the caption sits outside the table
+  box's border and padding, as wide as its border box, its margins
+  applied (auto ones centering, negative ones reaching past), and its
+  min-content, not its max-content, floors the table's width; the
+  table's border, fill and shadows take the table box alone
+  (`tableBox`). Red first: table.test.ts "sets its caption outside the
+  table's border and padding…", "fills a collapsed table's rows
+  alone…" and "floors the table's width at its caption's
+  min-content…", and `CaptionBox` (`alpha` a row lower, past the
+  caption's margins) against the last commit. table.md "Caption"
+  rewritten, the ignored margins gone; no golden changes (no captioned
+  story draws a border or fill).
+- 2026-09-28, 7h, hover on inline elements: the hit chain gains the
+  inline elements over the cell's character, outermost first
+  (pointer.ts `Hit`, `hitOf`, `chainAt`), so `hover:` and `active:` on
+  a span apply and the cursor follows it. Red first: pointer.test.ts
+  "takes in the inline elements over the character…" and the three
+  chains through an inline member or link, which named the paragraph
+  alone, and `SynthesizedPointerStates` (the span hovered on its own
+  characters) against the last commit. cell-model.md's deviation
+  removed.
+- 2026-09-28, 7i, the decoration properties: a decoration draws in its
+  box's `text-decoration-style`, `-color` (`currentcolor` resolved on
+  the box, so a propagated line keeps it) and `-thickness`
+  (`TextDecoration`, `decorationOf`, types.ts; `readDecoration`,
+  style.ts; `applyDecoration`, plain-text.ts). Red first:
+  plain-text.test.ts "draws a decoration in its style, color and
+  thickness…", paint.test.ts "boxes clusters with unlike decorations
+  apart" (against the fix without its prototype key), and the new
+  `Decorations` story (`solid`, not `wavy`) against the last commit.
+  cell-model.md "Typography"'s deviation narrowed to stacked
+  decorations drawn unlike, the transition deviation folded into the
+  non-sampled one; animations.md's keyframe sentence updated. New
+  golden: features-typography--decorations.
+- 2026-09-28, 7j, `overflow: clip`: read apart from `hidden`, which
+  alone is a scroll container to CSS (types.ts `isScrollContainer`,
+  `clipsAxis`; style.ts `readOverflow`'s coercion): a clip flex or grid
+  item keeps its content-based minimum, `overflow-x: clip` leaves y
+  visible, and a clip box beside a float shortens its lines. Red first:
+  style.test.ts "keeps clip apart from hidden…", flex.test.ts and
+  grid.test.ts "a clip item's automatic minimum", float.test.ts
+  "shortens a clip box's lines beside a float…", all in the working
+  tree before the change; the 38 test sites that built `clip` for
+  hidden take `hidden`. The native lock is gated on the read flag and
+  set per axis (styles.css, render.ts), as the ungated one read back as
+  `clip`: `ClipAndHidden` (overflow.stories.ts) failed its hidden case
+  with the lock ungated and its clip case against the last commit.
+  cell-model.md "Overflow" states the difference; float.md,
+  scrolling.md and sticky.md reworded.
+- 2026-09-28, `line-clamp-*`: a text leaf's lines past
+  `-webkit-line-clamp` are cut, the last kept ending in `…`
+  (`readLineClamp`, style.ts, reading the `flow-root` Chromium and
+  Firefox compute a clamping `-webkit-box` to; `leafLineGeometry`'s
+  `clamped`, layout.ts; `truncateSpan`'s `clamp`, plain-text.ts). Red
+  first: plain-text.test.ts "cuts a clamped leaf's lines at the clamp…"
+  and `LineClamp` (the next paragraph a row lower) against the last
+  commit. The `…` on a full line was probed the same day: each engine
+  cuts where the grid does, given the host's sub-pixel headroom.
+  cell-model.md "Line clamps" added,
+  a container's block children its deviation.
+- 2026-09-28, 8a, `pre-line`: its source newlines break as `<br>`s,
+  its spaces collapsing and its lines wrapping (types.ts `softWraps`;
+  tree.ts `breaks`), restored natively by `data-mw-pre="line"`
+  (render.ts, styles.css). Red first: tree.test.ts "breaks at newlines
+  under pre-line…" (which pinned the collapse), and `PreLine` against
+  the last commit; its light-row check fails without the native rule.
+  cell-model.md "White-space and truncation" gains the value, deviation
+  8 narrowed to `pre-wrap` and `break-spaces`.
+- 2026-09-28, 8b, `pre-wrap` and `break-spaces`: spaces and newlines
+  kept, lines wrapping, `pre-wrap`'s spaces at a soft break hanging,
+  `break-spaces`' taking their cells with a break after each (wrap.ts
+  `preserve`, `lineUnits`; types.ts `preservedSpaces`); the native
+  value restored through `--mw-ws`, which also replaces 8a's
+  `data-mw-pre="line"`. Red first: wrap.test.ts "preserved white
+  space…", tree.test.ts "keeps spaces and newlines under pre-wrap…",
+  and `WhiteSpace` (`two` at cell 2) against the last commit. The
+  light-rows helper measures a right-aligned text's end word by word,
+  as a line's fragment spans the spaces `pre-wrap` hangs. cell-model.md
+  "White-space and truncation" states the four values; deviation 8's
+  last sentence resolved.
+- 2026-09-28, 9a, `text-align: justify`: each line but a paragraph's
+  last shares its leftover cells among its gaps, the odd ones first
+  (D6; layout.ts `lineStart`'s `spread`); the native copy justifies
+  itself, its lock gone with `textAlignBlocked`. Red first:
+  plain-text.test.ts "justifies each line but a paragraph's last…" and
+  `Justify` against the last commit. cell-model.md "Text alignment"
+  states the rule, `text-align-last` its deviation; deviation 6's
+  justify clause removed; host-leaf.md's host flags updated.
+- 2026-09-28, `text-balance` and `text-pretty`: a leaf of up to six
+  lines takes the narrowest width keeping its line count; a pretty
+  one's last line holds more than one word where the word before fits
+  (layout.ts `balanced`, `pretty`; style.ts `readTextWrapStyle`). Red
+  first: plain-text.test.ts "balances a short paragraph's lines…" and
+  `WrapStyle` (balance in three engines, pretty in Chromium) against
+  the last commit. cell-model.md "White-space and truncation" states
+  both, the engines' differences named.
+- 2026-09-28, 9b, a UAX #14 subset: breaks at a zero-width space,
+  `<wbr>`, a soft hyphen (shown as `-` where its line breaks), dashes,
+  and between CJK characters but around their punctuation, `ー` and
+  small kana as D7 has it (wrap.ts `breaksBetween`, `breakClass`,
+  `lineCells`; tree.ts `WBR_MARKER`; plain-text.ts's hyphen). Red
+  first: wrap.test.ts "the line-breaking subset…" (three), tree.test.ts
+  "keeps a <wbr>…", plain-text.test.ts "shows a soft hyphen…", and
+  `LineBreaks` against the last commit; selection.test.ts "copies
+  nothing for a <wbr>" guards the marker. The CJK cases compare with
+  their copies spaced to two cells a character (the fallback fonts draw
+  them narrower), a cell of slack per row. cell-model.md "Line
+  breaking" states the subset, the rest of UAX #14 its deviation.
+- 2026-09-28, `break-all` and `break-keep`: `word-break` read and
+  handed to the wrap, `break-all`'s letters breaking as ideographs,
+  `keep-all`'s ideographs joining as letters (wrap.ts `breaksBetween`'s
+  `wordBreak`). Red first: wrap.test.ts "word-break" (two) in the
+  working tree before the change; `LineBreaks` gains both cases, its
+  CJK copies' spaces kept a cell by `word-spacing`. cell-model.md "Line
+  breaking" states them.
+- 2026-09-28, 9c, an absolute box's spot in a run: an inline-level
+  one sits at its character's cell on its line (a soft break's at the
+  end of the text before it, as Chromium and WebKit have it), a
+  block-level one at the next line's start (tree.ts `runSpotOf`,
+  layout.ts `spotInRun`, D10's read under `data-mw-static-read`). Red
+  first: positioning.test.ts "an out-of-flow element's spot in its
+  run" (three) in the working tree before the change, and `RunSpot`
+  (`*` at cell 0, not 7) against the last commit; Firefox's soft-break
+  case skipped. positioning.md "Static position" states the rule,
+  deviation 3 resolved.
+- 2026-09-28, 9d, percent insets on inline elements: resolved against
+  the block container's content box (down against a definite height
+  only), a sticky one's against its scrollport (types.ts
+  `insetLengths`; style.ts `readElementInsets`; layout.ts
+  `resolveInsets`; sticky.ts). Red first: tree.test.ts "resolves an
+  inline element's percent insets…" (the pinned "percent insets too"
+  flipped), sticky.test.ts "resolves a sticky span's percent inset…",
+  and `InlinePercentInsets` (`xy` at cell 2, not 14) against the last
+  commit. positioning.md "Inline elements" states the rule,
+  deviation 2 resolved.
+- 2026-09-28, E4, mixed corners and junctions: a corner or junction
+  of unlike lines draws Unicode's mixed glyph (`┍ ╂ ╒ ╫ …`), the arms
+  read off the glyphs their bands draw, so cp437 draws `╒═╕`; heavy ×
+  double, alike arms, non-box sets and a font's missing glyphs keep
+  today's glyph (glyphs.ts `mixedJunction`; borders.ts `mixedArms`;
+  lattice.ts's per-arm segments). Red first: plain-text.test.ts's
+  three pinned corners, table.test.ts's two lattices, and
+  gap-decorations.test.ts's four junctions, which pinned the heavier
+  weight's glyph, flipped in the working tree before the change;
+  glyphs.test.ts "mixed junctions" and plain-text.test.ts's cp437
+  corner added. cell-model.md "Borders: glyph mapping" states the rule
+  (its deferred mixed-style note and later-refinement aside gone);
+  table.md, gap-decorations.md and theming.md follow.
+- 2026-09-28, the review round. Fixes, each red first (unit tests
+  against the working tree, the wrap ones also in a scratch copy):
+  a grid holding only text as tall as its rows, its offsets folded
+  once where a `max-height` lays it out again (grid.test.ts); a
+  paragraph-flow multicol child's indent and relative insets
+  (multicol.test.ts, green at the last commit: a regression of 7a/9d);
+  a run's out-of-flow spot recorded where the run meets it, past a
+  `<br>`, an atomic box or padding, and a flex text leaf's own as its
+  sole flex item (positioning.test.ts, `RunSpot`); no break before an
+  after-class character or a hyphen, none beside a no-break space or
+  inline padding, no soft hyphen at a hard line's end, and `<wbr>`
+  collapsing and trimming like padding (wrap.test.ts, tree.test.ts);
+  a stylesheet's relative inset without Typed OM, a textarea's rows
+  as `pre-wrap`, the indent past a leading float, an empty decoration
+  line as none (tree.test.ts, paint.test.ts); a `fit-content()` cap
+  passing the rest on and a nested subgrid's items past both gaps
+  (grid.test.ts; the cap probed in all three engines); natively, a
+  nowrap `overflow-x: clip` box's y left visible, a scroller's
+  `hidden` axis left as authored (`ClipAndHidden`), and a nowrap box
+  inside a `pre-wrap` one keeping its own (`WhiteSpace`, each box's
+  `--mw-ws`); a sticky box inside a `hidden` box bound to it, which
+  never scrolls, not to the scroller past it (sticky.test.ts;
+  sticky.md's deviation 2 removed). Hot paths: justify's spread as arithmetic, a hit's
+  character carried from `takes`, the table's baselines grouped in one
+  pass, mixed junctions skipped where arms are alike. The
+  `InlineBoxMargins` story's boxes are spans (a button takes the press
+  from a selection). Deviation lists drop resolved entries and
+  renumber (decided with the user): cell-model.md's 6 and 9 removed,
+  3 and 5 split (25–27), 22–24 added; the other specs' resolved
+  entries removed and their bundles split (grid 1, anchor 3); every
+  reference updated. Earlier Progress entries keep the numbers they
+  had.
+- 2026-09-28, the hover chain and D11. An inline element joins the
+  hover chain only where its hover can restyle something (it or an
+  ancestor names a hover variant, or it is a `group` or `peer`;
+  pointer.ts `REACTS_TO_HOVER`, `hoverChainAt`), the press chain and
+  the cursor keeping
+  every one: 7h had made each span edge a relayout (a prose page's
+  hover step 60 ms against 33). Red first: the
+  `SynthesizedPointerStates` story's plain `<b>`, hovered and laid out
+  for; pointer.test.ts "the hover chain". cell-model.md deviation 28.
+  Justify takes the rounded spread (D11): each word at the cell
+  nearest its even share (layout.ts `spreadBefore`). Red first:
+  plain-text.test.ts's justify case, which pinned D6's; the `Justify`
+  story holds each word within half a cell, a width-24 line of halves
+  added.
+- 2026-09-28, the second review round. Fixes, each red first: a
+  subgrid's parent line names past leading implicit tracks; a
+  `fit-content()` track already past its cap passing nothing on; a
+  rounded corner keeping its arc over a mixed glyph; a baseline from an
+  item's first in-flow line, past a float; an auto table's percent
+  padding against its container beside its margins; a table cell with
+  no line baselined at its content's bottom, its shift moving its
+  content (probed); a clamped line placed as the text it keeps and its
+  `…`; split inlines' decorations drawn as the innermost's; a `<wbr>`
+  drawing nothing; a justified gap's gained cells, and a tracked
+  glyph's, filled with its element's background; a soft hyphen charged
+  past its character's tracking gap (wrap.ts `lineCells`); `balance`
+  no narrower than the longest word (probed); a sticky anchor inside a
+  `hidden` box (types.ts `hasScrollport`); a host its text sizes
+  holding every column of it, counted at the text's own advance from
+  its fractional width. The hover gate became one selector
+  (pointer.ts `REACTS_TO_HOVER`), an ancestor's `has-hover:` or
+  `*:hover:` reaching its inline elements. Run spots map in one pass.
+  A `min-width` spacer holding a `flex-1` column open was examined and
+  kept: the column's sub-pixel resize re-lays the host out.
+- 2026-09-28, the performance round. The native clip lock is a flag
+  again, written only on a box clipping both axes: a lone clipping
+  axis is an authored `clip`, so the per-axis rules were no-ops. Its
+  gate costs a clipped relayout 0.25 ms per 300 `overflow-hidden`
+  boxes (each read makes each one a scroll container and back) and is
+  kept: 2110a55's ungated lock stayed on a box that dropped its overflow.
+  Red first: the `ClipAndHidden` story's case with the overflow
+  removed. A memo of parsed alignment values was tried and dropped
+  (no measurable gain).

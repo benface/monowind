@@ -17,10 +17,11 @@ import { parseColor } from "../src/color.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { placePainted } from "../src/paint-origin.ts";
 import { buildTree } from "../src/tree.ts";
+import { clusterAdvances } from "../src/width.ts";
 import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
-import { cells, layered, makeNode, scrollBox } from "./helpers.ts";
+import { cells, layered, makeNode, scrollBox, UNDERLINE } from "./helpers.ts";
 import type { CellPaint, CellSegment } from "../src/plain-text.ts";
-import type { BackgroundClip, GlyphValues, LayoutNode } from "../src/types.ts";
+import type { BackgroundClip, CellStyle, GlyphValues, LayoutNode } from "../src/types.ts";
 
 /**
  * Golden-output tests: lay out a tree, render it as ASCII art, compare to
@@ -45,7 +46,7 @@ describe("the paint fields", () => {
       backgrounds: ["rgb(0 0 0)"],
       colors: ["rgb(0 0 0)"],
       glyph: { "font-weight": "700" },
-      textDecorationLine: "underline",
+      decoration: UNDERLINE,
       selected: true,
     };
     const read = PAINT_FIELDS.filter((field) => {
@@ -101,7 +102,7 @@ describe("renderPlainText golden outputs", () => {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
         padding: { top: 0, right: 1, bottom: 0, left: 1 },
         whiteSpace: "nowrap",
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
         textOverflow: "ellipsis",
       },
       text: "hello wonderful world",
@@ -112,12 +113,104 @@ describe("renderPlainText golden outputs", () => {
     expect(plainText(root, 12)).toBe(["┌──────────┐", "│ hello w… │", "└──────────┘"].join("\n"));
   });
 
+  it("shows a soft hyphen where its line breaks, and nothing where it does not", () => {
+    const text = (width: number) => {
+      const leaf = makeNode({ text: "hyphen\u00adation" });
+      leaf.advances = clusterAdvances(leaf.text);
+      return plainText(makeNode({ children: [leaf] }), width);
+    };
+    expect(text(7)).toBe(["hyphen-", "ation"].join("\n"));
+    // Unbroken, it stays in the text unseen, as in the DOM.
+    expect(text(20)).toBe("hyphen\u00ADation");
+  });
+
+  it("balances a short paragraph's lines, and keeps a pretty one's last from one word", () => {
+    const wrapped = (textWrapStyle: CellStyle["textWrapStyle"]) =>
+      plainText(
+        makeNode({
+          children: [makeNode({ style: { textWrapStyle }, text: "aaa bbb ccc ddd eee" })],
+        }),
+        16,
+      );
+    expect(wrapped("auto")).toBe(["aaa bbb ccc ddd", "eee"].join("\n"));
+    // The narrowest width keeping two lines: 11 cells.
+    expect(wrapped("balance")).toBe(["aaa bbb ccc", "ddd eee"].join("\n"));
+    expect(wrapped("pretty")).toBe(["aaa bbb ccc", "ddd eee"].join("\n"));
+    // No narrower than its longest word, which stays whole.
+    const balanced = plainText(
+      makeNode({
+        children: [
+          makeNode({ style: { textWrapStyle: "balance" }, text: "internationalization is hard" }),
+        ],
+      }),
+      24,
+    );
+    expect(balanced).toBe(["internationalization", "is hard"].join("\n"));
+  });
+
+  it("justifies each line but a paragraph's last, each word at the nearest cell", () => {
+    const justified = (text: string) =>
+      plainText(makeNode({ children: [makeNode({ style: { textAlign: "justify" }, text })] }), 12);
+    // A cell over three gaps: the words a third, two thirds and a whole
+    // cell on, rounded; two cells: two thirds, four thirds and two.
+    expect(justified("aa bb cc dd ee f gg hh ii")).toBe(
+      ["aa bb  cc dd", "ee  f gg  hh", "ii"].join("\n"),
+    );
+    // A half rounds up: the first of two gaps takes the one cell.
+    expect(justified("aaaa bb ccc dd")).toBe(["aaaa  bb ccc", "dd"].join("\n"));
+    // A line before a hard break ends its paragraph.
+    expect(justified("aa bb cc dd ee\nff gg")).toBe(["aa bb  cc dd", "ee", "ff gg"].join("\n"));
+  });
+
+  it("cuts a clamped leaf's lines at the clamp, the last ending in an ellipsis", () => {
+    const clamped = (text: string) => {
+      const box = makeNode({
+        style: { lineClamp: 2, overflow: { x: "hidden", y: "hidden" } },
+        text,
+      });
+      const root = makeNode({ children: [box, makeNode({ text: "after" })] });
+      return plainText(root, 8);
+    };
+    // Three lines under the clamp of two: the second's end gives way to `…`.
+    expect(clamped("aaaa bbbbbbb cc")).toBe(["aaaa", "bbbbbbb…", "after"].join("\n"));
+    expect(clamped("aaaa bb cc dd ee ff")).toBe(["aaaa bb", "cc dd e…", "after"].join("\n"));
+    // Two lines fit: nothing cut, no ellipsis.
+    expect(clamped("aaaa bb")).toBe(["aaaa bb", "after"].join("\n"));
+  });
+
+  it("fills the cells a justified gap gains with its element's background", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div><p style="width: 48px; text-align: justify"><span style="background: red">aa bb cc dd</span> ee</p></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 20);
+    const row = renderCellSegments(node)[0]!;
+    const red = row.filter((segment) => segment.backgroundColor !== undefined);
+    // One run of red from `aa` to `dd`, its gaps' extra cells included.
+    expect(red.map((segment) => segment.text)).toEqual(["aa bb  cc dd"]);
+  });
+
+  it("places a clamped line as the text it keeps and its ellipsis", () => {
+    const clamped = (text: string, style: Partial<CellStyle> = {}) => {
+      const box = makeNode({
+        style: { lineClamp: 1, overflow: { x: "hidden", y: "hidden" }, ...style },
+        text,
+      });
+      return plainText(makeNode({ children: [box] }), 8);
+    };
+    expect(clamped("abc defghijkl", { textAlign: "end" })).toBe("    abc…");
+    // Unspread, where its paragraph goes on.
+    expect(clamped("aa bb cc dd ee", { textAlign: "justify" })).toBe("aa bb c…");
+    // A soft hyphen it breaks at gives way to the ellipsis.
+    expect(clamped("hyphena\u00adtion more")).toBe("hyphena…");
+  });
+
   it("renders clipped nowrap text without an ellipsis when text-overflow is clip", () => {
     const box = makeNode({
       style: {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
         whiteSpace: "nowrap",
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
       },
       text: "hello world",
     });
@@ -156,7 +249,7 @@ describe("renderPlainText golden outputs", () => {
     );
   });
 
-  it("renders a 2px edge heavy, and a corner between weights heavy", () => {
+  it("renders a 2px edge heavy, a corner between weights mixed", () => {
     const box = makeNode({
       style: {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
@@ -166,10 +259,24 @@ describe("renderPlainText golden outputs", () => {
     });
     const root = makeNode({ children: [box] });
 
-    expect(plainText(root, 6)).toBe(["┏━━━━┓", "│hi  │", "└────┘"].join("\n"));
+    expect(plainText(root, 6)).toBe(["┍━━━━┑", "│hi  │", "└────┘"].join("\n"));
   });
 
-  it("keeps a corner light beside a 2px double edge, which has no heavier weight", () => {
+  it("draws cp437's heavy band double, its corners mixed", () => {
+    const box = makeNode({
+      style: {
+        glyphSet: "cp437",
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderWeight: { top: 2, right: 1, bottom: 1, left: 1 },
+      },
+      text: "hi",
+    });
+    const root = makeNode({ children: [box] });
+
+    expect(plainText(root, 6)).toBe(["╒════╕", "│hi  │", "└────┘"].join("\n"));
+  });
+
+  it("joins a double edge to single sides with Unicode's mixed corners", () => {
     const box = makeNode({
       style: {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
@@ -180,10 +287,24 @@ describe("renderPlainText golden outputs", () => {
     });
     const root = makeNode({ children: [box] });
 
-    expect(plainText(root, 6)).toBe(["┌════┐", "│hi  │", "└────┘"].join("\n"));
+    expect(plainText(root, 6)).toBe(["╒════╕", "│hi  │", "└────┘"].join("\n"));
   });
 
-  it("renders per-side border styles with light corners at style boundaries", () => {
+  it("keeps a rounded corner's arc where its arms draw unlike lines", () => {
+    const box = makeNode({
+      style: {
+        border: { top: 1, right: 1, bottom: 1, left: 1 },
+        borderStyle: { top: "double", right: "solid", bottom: "solid", left: "solid" },
+        borderRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
+      },
+      text: "hi",
+    });
+    const root = makeNode({ children: [box] });
+
+    expect(plainText(root, 6)).toBe(["╭════╮", "│hi  │", "╰────╯"].join("\n"));
+  });
+
+  it("renders per-side border styles, their corners by each side's line", () => {
     const box = makeNode({
       style: {
         border: { top: 1, right: 1, bottom: 1, left: 1 },
@@ -193,9 +314,9 @@ describe("renderPlainText golden outputs", () => {
     });
     const root = makeNode({ children: [box] });
 
-    // Top edge double, bottom dashed, sides solid; mixed-style corners fall
-    // back to the light set (no mixed junction glyphs in Unicode).
-    expect(plainText(root, 6)).toBe(["┌════┐", "│hi  │", "└╌╌╌╌┘"].join("\n"));
+    // Top edge double, bottom dashed, sides solid: a double side meets a
+    // single one at a mixed corner, dashed and solid at a light one.
+    expect(plainText(root, 6)).toBe(["╒════╕", "│hi  │", "└╌╌╌╌┘"].join("\n"));
   });
 
   it("emits per-side border colors on the runs", () => {
@@ -487,7 +608,7 @@ describe("grid paint order and dedup", () => {
       intrinsicHeight: 2,
     });
     inline.localRect = { x: 2, y: 0, width: 4, height: 2 };
-    inline.inlineBox = true;
+    inline.inlineBox = { top: 0, right: 0, bottom: 0, left: 0 };
     const root = makeNode({ children: [block, inline] });
     root.localRect = { x: 0, y: 0, width: 6, height: 2 };
     placePainted(root);
@@ -569,7 +690,7 @@ describe("inline fidelity in segments", () => {
     layoutRoot(node, 15);
     const rows = renderCellSegments(node);
     expect(rows[0]).toEqual([
-      { text: "click me", textDecorationLine: "underline" },
+      { text: "click me", decoration: expect.objectContaining({ line: "underline" }) },
       { text: "       " },
     ]);
   });
@@ -598,13 +719,52 @@ describe("inline fidelity in segments", () => {
     const lines = (text: string) =>
       renderCellSegments(node)
         .flat()
-        .find((segment) => segment.text.trim() === text)?.textDecorationLine;
+        .find((segment) => segment.text.trim() === text)?.decoration?.line;
     expect(lines("hi")).toBe("underline");
     expect(lines("there")).toBe("underline line-through");
     expect(lines("you")).toBe("underline line-through");
     expect(lines("split")).toBe("underline overline");
     expect(lines("block")).toBe("underline overline");
     expect(lines("out")).toBeUndefined();
+  });
+
+  it("draws a decoration in its style, color and thickness, a propagated one in its box's", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      `<div style="width: 200px"><p style="color: red; text-decoration-line: underline; text-decoration-style: wavy; text-decoration-thickness: 2px">` +
+      `a <span style="color: blue">b</span> <em style="text-decoration-line: overline; text-decoration-color: green">c</em></p></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 50);
+    const decoration = (text: string) =>
+      renderCellSegments(node)
+        .flat()
+        .find((segment) => segment.text.trim() === text)?.decoration;
+    const red = getComputedStyle(host.querySelector("p")!).color;
+    const wavy = { line: "underline", style: "wavy", color: red, thickness: "2px" };
+    expect(decoration("a")).toEqual(wavy);
+    expect(decoration("b")).toEqual(wavy);
+    // Stacked, the lines draw as the innermost box draws its own.
+    expect(decoration("c")).toEqual({
+      line: "underline overline",
+      style: "solid",
+      color: "green",
+      thickness: "auto",
+    });
+  });
+
+  it("draws the lines of inline elements a block splits as the innermost draws its own", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      `<div style="width: 200px"><span style="text-decoration-line: underline; text-decoration-color: red">` +
+      `<a style="text-decoration-line: line-through; text-decoration-color: blue"><p>x</p></a></span></div>`;
+    document.body.appendChild(host);
+    const node = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(node, 50);
+    const x = renderCellSegments(node)
+      .flat()
+      .find((segment) => segment.text.trim() === "x")?.decoration;
+    expect(x).toMatchObject({ line: "underline line-through", color: "blue" });
   });
 
   it("maps inline descendants' color/weight and relative insets per character", () => {
@@ -924,11 +1084,14 @@ describe('clips along the containing-block chain (specs/positioning.md "Paint or
   const lime = () => over(0, 4, 3, 2, { backgroundColor: "lime" });
 
   it("paints an absolute box past a static clipping box between it and its containing block", () => {
-    const root = escaping({ overflow: { x: "clip", y: "clip" } }, lime());
+    const root = escaping({ overflow: { x: "hidden", y: "hidden" } }, lime());
     layoutRoot(root, 12);
     expect(backgroundsOf(root, 4).slice(0, 3)).toEqual(["lime", "lime", "lime"]);
     // A positioned clipping box is its containing block, and clips it.
-    const clipped = escaping({ position: "relative", overflow: { x: "clip", y: "clip" } }, lime());
+    const clipped = escaping(
+      { position: "relative", overflow: { x: "hidden", y: "hidden" } },
+      lime(),
+    );
     layoutRoot(clipped, 12);
     expect(backgroundsOf(clipped, 4)[0]).toBeUndefined();
   });
@@ -947,7 +1110,7 @@ describe('clips along the containing-block chain (specs/positioning.md "Paint or
     // neither, and `a` clips nothing.
     const b = over(0, 3, 2, 1, { backgroundColor: "lime" });
     const inner = makeNode({
-      style: { width: cells(3), height: cells(2), overflow: { x: "clip", y: "clip" } },
+      style: { width: cells(3), height: cells(2), overflow: { x: "hidden", y: "hidden" } },
       children: [b],
     });
     const a = makeNode({
@@ -959,7 +1122,7 @@ describe('clips along the containing-block chain (specs/positioning.md "Paint or
       },
       children: [inner],
     });
-    const root = escaping({ overflow: { x: "clip", y: "clip" } }, a);
+    const root = escaping({ overflow: { x: "hidden", y: "hidden" } }, a);
     layoutRoot(root, 12);
     expect(backgroundsOf(root, 7).slice(0, 2)).toEqual(["lime", "lime"]);
   });
@@ -977,7 +1140,7 @@ describe('clips along the containing-block chain (specs/positioning.md "Paint or
         text: "a b c d",
       });
     const clipper = makeNode({
-      style: { height: cells(2), overflow: { x: "clip", y: "clip" } },
+      style: { height: cells(2), overflow: { x: "hidden", y: "hidden" } },
       children: [column("absolute")],
     });
     const root = makeNode({
@@ -988,7 +1151,7 @@ describe('clips along the containing-block chain (specs/positioning.md "Paint or
     // A fixed box's containing block is the host, and the layer's root
     // clips it as a transformed box clips its fixed descendants.
     const clipping = makeNode({
-      style: { layer: layered(), height: cells(2), overflow: { x: "clip", y: "clip" } },
+      style: { layer: layered(), height: cells(2), overflow: { x: "hidden", y: "hidden" } },
       children: [column("fixed")],
     });
     const host = makeNode({ style: { height: cells(6) }, children: [clipping] });
@@ -1435,7 +1598,7 @@ describe("opacity (specs/cell-model.md)", () => {
         opacity: 0.4,
         width: cells(2),
         height: cells(1),
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
       },
       children: [fixed],
     });
@@ -1626,7 +1789,7 @@ describe("opacity (specs/cell-model.md)", () => {
 
   it("leaves a faded color emoji's cell a later glyph blanks at its group's color", () => {
     const leaf = makeNode({
-      style: { opacity: 0.4, color: "rgb(0 0 0)", textDecorationLine: "underline" },
+      style: { opacity: 0.4, color: "rgb(0 0 0)", textDecoration: UNDERLINE },
       text: "\u{1F600}",
       intrinsicWidth: 2,
     });
@@ -1639,14 +1802,14 @@ describe("opacity (specs/cell-model.md)", () => {
     expect(renderCellSegments(root)[0]![0]).toEqual({
       text: " ",
       color: "rgb(0 0 0)",
-      textDecorationLine: "underline",
+      decoration: UNDERLINE,
       opacity: 0.4,
     });
   });
 
   it("blends the cell a later glyph blanks of a faded color emoji over a blended cell", () => {
     const leaf = makeNode({
-      style: { opacity: 0.4, color: "rgb(0 0 0)", textDecorationLine: "underline" },
+      style: { opacity: 0.4, color: "rgb(0 0 0)", textDecoration: UNDERLINE },
       text: "\u{1F600}",
       intrinsicWidth: 2,
     });
@@ -1660,7 +1823,7 @@ describe("opacity (specs/cell-model.md)", () => {
       text: " ",
       color: "rgb(153 153 153)",
       backgroundColor: "rgb(255 255 255)",
-      textDecorationLine: "underline",
+      decoration: UNDERLINE,
     });
   });
 
@@ -1814,7 +1977,7 @@ describe("charIndexAtCell (specs/semantic-selection.md)", () => {
       style: {
         width: { kind: "cells", value: 4 },
         whiteSpace: "nowrap",
-        overflow: { x: "clip", y: "visible" },
+        overflow: { x: "hidden", y: "visible" },
         textOverflow: "ellipsis",
       },
       text: "abcdefgh",
@@ -1865,7 +2028,7 @@ describe("later ink owns its cell's text paint", () => {
       style: {
         color: "red",
         glyph: { ...INITIAL_GLYPH, "font-style": "italic", "font-weight": "700" },
-        textDecorationLine: "underline",
+        textDecoration: UNDERLINE,
         opacity: 0.5,
       },
     });

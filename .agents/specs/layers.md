@@ -184,7 +184,7 @@ flat, the pointer mapping taking the rotate about z (Deviations).
    the transform: a partial cover cuts on cell boundaries and turns
    with the layer. That it covers them whole — a translucent overlay
    hiding them, a later text run's blank spaces covering too — is the
-   grid's one glyph per cell (cell-model.md deviation 13).
+   grid's one glyph per cell (cell-model.md deviation 11).
 8. A `mix-blend-mode`, `clip-path` or `mask-image` draws nothing: the
    element forms a stacking context (positioning.md "Paint order") and
    its cells paint as without it. The cause: only a transform or a

@@ -335,6 +335,30 @@ describe("the shadow's sheet", () => {
   });
 });
 
+describe("a host with no width to lay out in", () => {
+  it("warns once where its display gives it none, not where it is hidden", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warned: string[] = [];
+    for (const display of ["inline", "contents", "none"]) {
+      connect("text");
+      host.style.display = display;
+      const probe = host.querySelector<HTMLElement>("[data-mw-probe]")!;
+      probe.getBoundingClientRect = () => new DOMRect(0, 0, 800, 16);
+      Object.defineProperty(host, "clientWidth", { value: 0, configurable: true });
+      await Promise.resolve();
+      (host as MonoWindElement).toPlainText();
+      (host as MonoWindElement).toPlainText();
+      warned.push(...warn.mock.calls.map(([message]) => message as string));
+      warn.mockClear();
+      host.remove();
+    }
+    expect(warned).toEqual([
+      "[monowind] A <mono-wind> with display: inline lays nothing out; give it a box, such as block or inline-block.",
+      "[monowind] A <mono-wind> with display: contents lays nothing out; give it a box, such as block or inline-block.",
+    ]);
+  });
+});
+
 describe("the host's keyword attributes", () => {
   it("reflect their defaults, and fall back to them from an unrecognized value", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

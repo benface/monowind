@@ -55,6 +55,11 @@ describe("serializeSelection", () => {
     expect(serializeSelection(root, points(a!, 2, a!, 7))).toBe("pha b");
   });
 
+  it("copies nothing for a <wbr>", () => {
+    const { host, root } = build("<p>super<wbr>long</p>");
+    expect(serializeSelection(root, selectAll(host))).toBe("superlong");
+  });
+
   it("keeps <br> newlines inside a slice and drops a trailing one", () => {
     const { host, root } = build("<div>one<br>two<br></div><div>three</div>");
     expect(serializeSelection(root, selectAll(host))).toBe("one\ntwo\nthree");

@@ -12,7 +12,7 @@ describe("a flex item is at least its edges", () => {
         text: "abcdefgh",
         style: {
           flexShrink: 1,
-          overflow: { x: "clip", y: "visible" },
+          overflow: { x: "hidden", y: "visible" },
           border: { top: 1, right: 1, bottom: 1, left: 1 },
           padding: { top: 0, right: 1, bottom: 0, left: 1 },
         },
@@ -33,7 +33,7 @@ describe("a flex item is at least its edges", () => {
         style: {
           flexShrink: 1,
           minWidth: 0,
-          overflow: { x: "clip", y: "scroll" },
+          overflow: { x: "hidden", y: "scroll" },
           border: { top: 1, right: 1, bottom: 1, left: 1 },
           padding: { top: 0, right: 1, bottom: 0, left: 1 },
         },
@@ -51,7 +51,7 @@ describe("a flex item is at least its edges", () => {
         text: "a b c",
         style: {
           flexShrink: 1,
-          overflow: { x: "visible", y: "clip" },
+          overflow: { x: "visible", y: "hidden" },
           border: { top: 1, right: 0, bottom: 1, left: 0 },
         },
       });
@@ -63,6 +63,18 @@ describe("a flex item is at least its edges", () => {
     layoutRoot(root, 5);
     expect(first.localRect.height).toBe(2);
     expect(second.localRect).toMatchObject({ y: 2, height: 2 });
+  });
+});
+
+describe("a clip item's automatic minimum", () => {
+  it("keeps its content, where a hidden one's is 0", () => {
+    const width = (overflow: CellStyle["overflow"]) => {
+      const item = makeNode({ text: "abcdefghijkl", style: { flexShrink: 1, overflow } });
+      layoutRoot(makeNode({ style: { display: "flex" }, children: [item] }), 8);
+      return item.localRect.width;
+    };
+    expect(width({ x: "clip", y: "visible" })).toBe(12);
+    expect(width({ x: "hidden", y: "hidden" })).toBe(8);
   });
 });
 
@@ -1070,6 +1082,74 @@ describe("align-content (multi-line cross distribution)", () => {
   });
 });
 
+describe("baseline alignment (css-flexbox §9.4 step 8, probed 2026-09-27)", () => {
+  const pad = (top: number, bottom = 0) => ({ padding: { top, right: 0, bottom, left: 0 } });
+  const row = (children: LayoutNode[], style: Partial<CellStyle> = {}) => {
+    const container = makeNode({
+      style: { display: "flex", flexDirection: "row", alignItems: "baseline", ...style },
+      children,
+    });
+    layoutRoot(makeNode({ children: [container] }), 40);
+    return container;
+  };
+
+  it("lines the items' first text rows up, the line growing to hold them", () => {
+    const plain = makeNode({ text: "a" });
+    const padded = makeNode({ text: "b", style: pad(1) });
+    const nested = makeNode({ children: [makeNode({ text: "c", style: pad(2) })] });
+    const container = row([plain, padded, nested]);
+    expect([plain, padded, nested].map((item) => item.localRect.y)).toEqual([2, 1, 0]);
+    expect(container.localRect.height).toBe(3);
+  });
+
+  it("takes a box's last row where it draws no line, and counts margins", () => {
+    const empty = makeNode({ style: { width: cells(2), height: cells(3) } });
+    const plain = makeNode({ text: "a" });
+    row([empty, plain]);
+    expect(plain.localRect.y).toBe(2);
+    const margined = makeNode({
+      text: "a",
+      style: { margin: { top: 1, right: 0, bottom: 0, left: 0 } },
+    });
+    const other = makeNode({ text: "b" });
+    row([margined, other]);
+    expect([margined.localRect.y, other.localRect.y]).toEqual([1, 1]);
+    // An auto cross margin keeps an item out of the group.
+    const free = makeNode({
+      text: "a",
+      style: { margin: { top: null, right: 0, bottom: 0, left: 0 } },
+    });
+    const grouped = makeNode({ text: "b", style: pad(1) });
+    row([free, grouped], { height: cells(4) });
+    expect(grouped.localRect.y).toBe(0);
+  });
+
+  it("lines last text rows up at the line's end", () => {
+    const tall = makeNode({ text: "a", style: pad(0, 2) });
+    const plain = makeNode({ text: "b" });
+    row([tall, plain], { alignItems: "last baseline" });
+    expect([tall.localRect.y, plain.localRect.y]).toEqual([0, 0]);
+  });
+
+  it("rides the line's bottom under wrap-reverse, its text rows still met", () => {
+    const tall = makeNode({ text: "t", style: pad(0, 3) });
+    const plain = makeNode({ text: "p" });
+    const high = makeNode({ text: "h", style: { ...pad(0, 4), alignSelf: "start" } });
+    row([tall, plain, high], { flexWrap: "wrap", wrapReverse: true });
+    expect([tall.localRect.y, plain.localRect.y]).toEqual([1, 1]);
+  });
+  it("takes an item's first in-flow line, past a float", () => {
+    const float = makeNode({
+      text: "F",
+      style: { float: "left", margin: { top: 2, right: 0, bottom: 0, left: 0 } },
+    });
+    const floated = makeNode({ children: [float, makeNode({ text: "abc" })] });
+    const plain = makeNode({ text: "x" });
+    row([floated, plain]);
+    expect(plain.localRect.y).toBe(0);
+  });
+});
+
 describe("wrap-reverse runs the cross axis backwards (probed: every engine)", () => {
   const box = (width: number, height: number) =>
     makeNode({ text: "a", style: { width: cells(width), height: cells(height), flexShrink: 0 } });
@@ -1141,7 +1221,7 @@ describe("wrap-reverse runs the cross axis backwards (probed: every engine)", ()
 
   it("stacks overflowing lines from the top, overflow alignment being safe", () => {
     // CSS runs them past the top, stretch's flex-start fallback
-    // (specs/cell-model.md deviation 21).
+    // (specs/cell-model.md deviation 19).
     const [first, second] = [box(4, 2), box(4, 2)];
     lay({ flexDirection: "row", width: cells(4), height: cells(2) }, [first, second]);
     expect([first.localRect.y, second.localRect.y]).toEqual([2, 0]);
@@ -1439,7 +1519,7 @@ describe("flex item min/max and sizing through layoutRoot", () => {
       style: {
         flexShrink: 1,
         whiteSpace: "nowrap",
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
         textOverflow: "ellipsis",
       },
     });
@@ -1531,7 +1611,7 @@ describe("justify-content offsets through layoutRoot", () => {
   });
 });
 
-describe("overflowing alignment at the start edge (specs/cell-model.md deviation 21)", () => {
+describe("overflowing alignment at the start edge (specs/cell-model.md deviation 19)", () => {
   const wide = (width: number, height = 1) =>
     makeNode({
       text: "a",

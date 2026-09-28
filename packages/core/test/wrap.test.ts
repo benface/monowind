@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { INLINE_PAD, longestSegmentAdvance, wrapLineCount, wrapLines } from "../src/wrap.ts";
+import { clusterAdvances } from "../src/width.ts";
+import {
+  INLINE_PAD,
+  longestSegmentAdvance,
+  showsHyphen,
+  WBR_MARKER,
+  wrapLineCount,
+  wrapLines,
+} from "../src/wrap.ts";
+
+const wide = (text: string) => ({ advances: clusterAdvances(text) });
 
 describe("wrapLineCount / wrapLines", () => {
   it("returns 0 for empty text", () => {
@@ -140,5 +150,105 @@ describe("inline padding markers", () => {
     expect(wrapLines(`aa ${INLINE_PAD}bb`, 4)).toEqual(["aa", `${INLINE_PAD}bb`]);
     // No break between the marker and the following character.
     expect(wrapLines(`${INLINE_PAD}bbb`, 2)).toEqual([`${INLINE_PAD}b`, "bb"]);
+  });
+});
+
+describe("preserved white space (pre-wrap, break-spaces)", () => {
+  it("hangs pre-wrap's spaces at a soft break, keeping the others", () => {
+    expect(wrapLines("  ab   cd  ef", 6, { preserve: "hang" })).toEqual(["  ab", "cd  ef"]);
+    // Leading spaces take their cells, a break after them before a word
+    // too long for the rest of the line.
+    expect(wrapLines("   abcdef", 5, { preserve: "hang" })).toEqual(["", "abcde", "f"]);
+    expect(wrapLines("   ", 5, { preserve: "hang" })).toEqual([""]);
+    expect(longestSegmentAdvance("  ab   cd", { preserve: "hang" })).toBe(2);
+  });
+
+  it("wraps break-spaces' spaces as cells, a break after each", () => {
+    expect(wrapLines("ab   cd", 4, { preserve: "break" })).toEqual(["ab  ", " cd"]);
+    expect(wrapLines("ab      ", 4, { preserve: "break" })).toEqual(["ab  ", "    "]);
+    expect(longestSegmentAdvance("a b", { preserve: "break" })).toBe(1);
+  });
+});
+
+describe("the line-breaking subset (UAX #14)", () => {
+  const lines = (text: string, width: number) => wrapLines(text, width, wide(text));
+
+  it("breaks after a zero-width space, a <wbr> and a soft hyphen", () => {
+    expect(lines("abc\u200bdefg", 4)).toEqual(["abc\u200b", "defg"]);
+    expect(lines(`abc${WBR_MARKER}defg`, 4)).toEqual([`abc${WBR_MARKER}`, "defg"]);
+    // The soft hyphen's line holds the hyphen it shows.
+    expect(lines("hyphen\u00adation", 7)).toEqual(["hyphen\u00ad", "ation"]);
+    expect(lines("hyphen\u00adation", 6)).toEqual(["hyphen", "\u00adation"]);
+    expect(longestSegmentAdvance("ab\u00adc", wide("ab\u00adc"))).toBe(3);
+  });
+
+  it("draws a soft hyphen past its character's tracking gap", () => {
+    const text = "aaa bbb\u00adccc";
+    const advances = [...text].map((ch) => (ch === "\u00ad" ? 0 : 2));
+    // `aaa bbb-` would take 15 cells, the gap before its `-` kept.
+    expect(wrapLines(text, 14, { advances, tracking: 1 })).toEqual(["aaa", "bbb\u00adccc"]);
+  });
+
+  it("shows no soft hyphen where the line ends hard", () => {
+    const text = "abc\u00ad\nde";
+    expect(longestSegmentAdvance(text, wide(text))).toBe(3);
+    expect(showsHyphen(text, 4)).toBe(false);
+    expect(lines("abc\u00ad", 3)).toEqual(["abc\u00ad"]);
+  });
+
+  it("never breaks before an en dash, a hyphen or an ideographic space", () => {
+    expect(lines("中中–文", 4)).toEqual(["中", "中–", "文"]);
+    expect(lines("中中-文", 4)).toEqual(["中", "中-", "文"]);
+    expect(lines("中中\u3000文", 4)).toEqual(["中", "中\u3000", "文"]);
+  });
+
+  it("never breaks beside a no-break space or inline padding", () => {
+    expect(lines("漢字\u00a0漢字", 5)).toEqual(["漢", "字\u00a0漢", "字"]);
+    expect(wrapLines(`xy ${INLINE_PAD}ab`, 4, { wordBreak: "break-all" })).toEqual([
+      "xy",
+      `${INLINE_PAD}ab`,
+    ]);
+  });
+
+  it("breaks around an em dash and after an en dash", () => {
+    expect(wrapLines("aaa—bbb", 4)).toEqual(["aaa—", "bbb"]);
+    expect(wrapLines("aaa—bbb", 5)).toEqual(["aaa—", "bbb"]);
+    expect(wrapLines("aa——bb", 3)).toEqual(["aa", "——", "bb"]);
+    expect(wrapLines("aaa–bbb", 4)).toEqual(["aaa–", "bbb"]);
+  });
+
+  it("breaks between CJK characters, never before closing punctuation or after opening", () => {
+    expect(lines("漢字漢字", 5)).toEqual(["漢字", "漢字"]);
+    expect(lines("漢字。漢字", 5)).toEqual(["漢", "字。", "漢字"]);
+    expect(lines("漢「字」漢", 6)).toEqual(["漢", "「字」", "漢"]);
+    // Nor before the prolonged sound mark or a small kana.
+    expect(lines("カーテン", 4)).toEqual(["カー", "テン"]);
+    expect(lines("チャチャ", 4)).toEqual(["チャ", "チャ"]);
+    expect(lines("한국어", 4)).toEqual(["한국", "어"]);
+  });
+});
+
+describe("word-break", () => {
+  it("breaks anywhere under break-all, the next word filling the line", () => {
+    expect(wrapLines("abc defghij", 6)).toEqual(["abc", "defghi", "j"]);
+    expect(wrapLines("abc defghij", 6, { wordBreak: "break-all" })).toEqual(["abc de", "fghij"]);
+    // Closing punctuation still keeps to its letter; a cluster stays whole.
+    expect(wrapLines("abcde,fg", 5, { wordBreak: "break-all" })).toEqual(["abcd", "e,fg"]);
+    // Nor before a hyphen.
+    expect(wrapLines("abc-de", 3, { wordBreak: "break-all" })).toEqual(["ab", "c-d", "e"]);
+    const family = "ab\u{1F468}\u200d\u{1F469}cd";
+    expect(wrapLines(family, 4, { ...wide(family), wordBreak: "break-all" })).toEqual([
+      "ab\u{1F468}\u200d\u{1F469}",
+      "cd",
+    ]);
+  });
+
+  it("keeps CJK runs whole under keep-all", () => {
+    const text = "漢字 漢字漢字";
+    expect(wrapLines(text, 9, wide(text))).toEqual(["漢字 漢字", "漢字"]);
+    expect(wrapLines(text, 9, { ...wide(text), wordBreak: "keep-all" })).toEqual([
+      "漢字",
+      "漢字漢字",
+    ]);
   });
 });

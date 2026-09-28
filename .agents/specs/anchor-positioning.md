@@ -258,23 +258,21 @@ bottom` with `top: 2` two rows under the anchor, as in Chromium and
    calc() of both reading `auto`.
 2. `anchors-visible` tests the anchor's border box, not its ink
    overflow.
-3. `anchor-scope` is read on boxes and on inline elements naming an
-   anchor, not on other inline elements; on an element naming one,
-   from its inline style or an arbitrary-property utility alone, the
-   engine's own scope hiding a stylesheet's (Reading).
-4. Logical keywords map as for a horizontal, left-to-right host.
-5. `@position-try` rules are not read; only the flip keywords and
+3. `anchor-scope` is not read on an inline element that names no
+   anchor, so such an element scopes no names.
+4. On an element the engine scopes, `anchor-scope` is read from its
+   inline style or an arbitrary-property utility alone, the engine's
+   own scope hiding a stylesheet's (Reading).
+5. Logical keywords map as for a horizontal, left-to-right host.
+6. `@position-try` rules are not read; only the flip keywords and
    `position-area` values apply.
-6. A sticky inline element naming an anchor is anchored where it is
-   laid out; a sticky box, or an anchor inside one, is where it sticks
-   ("The placement is live").
-7. Every anchor follows its scroll containers at every layout; CSS
+7. A sticky inline element naming an anchor is anchored where it is
+   laid out, not where it sticks.
+8. Every anchor follows its scroll containers at every layout; CSS
    remembers the scroll offsets of anchors other than the default one
    and updates them only when the placement is chosen again.
-8. The last successful placement is recorded at each layout, not at
+9. The last successful placement is recorded at each layout, not at
    the time `ResizeObserver` events are delivered.
-9. ~~A box `position-visibility` hides takes no focus~~ — resolved:
-   "`position-visibility` hides the box and its subtree".
 10. The engine places absolute boxes in tree order, where browsers place
     them by containing block and the top layer in the order it opened:
     an anchor inside an absolute box after the anchored box is refused,

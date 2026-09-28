@@ -12,6 +12,7 @@ import {
   leafLineMetrics,
   leafLineSpans,
   resolveGap,
+  resolveLeafLengths,
   resolveMargin,
 } from "./layout.ts";
 import type { IntrinsicCache } from "./layout.ts";
@@ -48,17 +49,23 @@ function resolveColumnTracks(style: CellStyle, available: number, gap: number): 
   return Array.from({ length: count }, (_, i) => width + (i < leftover ? 1 : 0));
 }
 
-/** Max-content inner width: `count × content + (count − 1) × gap` when
- * `column-count` drives the count (probed: all three engines agree);
- * with only `column-width`, the content's own max-content floored at
- * one `W`-wide column (Chromium/WebKit; Firefox clamps to `W` — a
- * documented divergence, specs/multicol.md). */
-export function multicolIntrinsicInnerWidth(style: CellStyle, contentMax: number): number {
+/** An intrinsic inner width from the content's (css-multicol §3.4).
+ * Max-content: `count × content + (count − 1) × gap` when `column-count`
+ * drives the count (probed: all three engines agree); with only
+ * `column-width`, the content's own max-content floored at one `W`-wide
+ * column (Chromium/WebKit; Firefox clamps to `W` — a documented
+ * divergence, specs/multicol.md). Min-content: a column width caps the
+ * widest word, else the count (1 for auto) repeats it with its gaps. */
+export function multicolIntrinsicInnerWidth(
+  style: CellStyle,
+  content: number,
+  kind: "min" | "max" = "max",
+): number {
   const gap = resolveGap(style, "x", undefined);
-  if (style.columnCount !== null) {
-    return style.columnCount * contentMax + (style.columnCount - 1) * gap;
-  }
-  return Math.max(style.columnWidth ?? 1, contentMax);
+  if (kind === "min" && style.columnWidth !== null) return Math.min(style.columnWidth, content);
+  const count = style.columnCount ?? (kind === "min" ? 1 : null);
+  if (count !== null) return count * content + (count - 1) * gap;
+  return Math.max(style.columnWidth ?? 1, content);
 }
 
 /** The column-height restriction (css-multicol §7): the smaller of the
@@ -477,13 +484,16 @@ function layoutMulticolFlow(
     // margins never collapse with column content).
     let trailingBottom = 0;
     if (paragraphs.length > 0) {
-      const children = paragraphs.map((child) => ({
-        node: child,
-        spans: leafLineSpans(child, Math.max(1, columns.width - child.style.tracking)),
-        margin: resolveMargin(child.style.margin, columns.width),
-        pre: 0,
-        post: 0,
-      }));
+      const children = paragraphs.map((child) => {
+        resolveLeafLengths(child, columns.width, undefined);
+        return {
+          node: child,
+          spans: leafLineSpans(child, Math.max(1, columns.width - child.style.tracking)),
+          margin: resolveMargin(child.style.margin, columns.width),
+          pre: 0,
+          post: 0,
+        };
+      });
       const units: FillUnit[] = [];
       let prevBottom: number | null = null;
       let prevChild: (typeof children)[number] | null = null;
@@ -595,8 +605,8 @@ function layoutMulticolFlow(
       // margins never collapsing with column content, the native
       // balancer handling the segments around it.
       const margin = resolveMargin(spanner.style.margin, contentWidth);
-      const availableWidth = Math.max(0, contentWidth - fixedMargins(margin, "x"));
-      layoutNode(spanner, availableWidth, undefined, 0, 0, "fill", cache);
+      const fill = Math.max(0, contentWidth - fixedMargins(margin, "x"));
+      layoutNode(spanner, contentWidth, undefined, 0, 0, "fill", cache, { fill });
       const cross = blockCrossOffset(margin, contentWidth, spanner.localRect.width);
       const marginTop = (margin.top ?? 0) + trailingBottom;
       segmentTop += marginTop;
@@ -765,8 +775,8 @@ export function layoutMulticol(
         const child = unit.node;
         const width = columnWidthAt(c);
         if (width !== measureWidth) {
-          const availableWidth = Math.max(0, width - fixedMargins(unit.margin, "x"));
-          layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "fill", cache);
+          const fill = Math.max(0, width - fixedMargins(unit.margin, "x"));
+          layoutNode(child, width, definiteInnerHeight, 0, 0, "fill", cache, { fill });
         }
         child.localRect = {
           ...child.localRect,
@@ -847,8 +857,8 @@ export function layoutMulticol(
       flushSegment();
       pendingBreak = false;
       const margin = resolveMargin(child.style.margin, innerWidth);
-      const availableWidth = Math.max(0, innerWidth - fixedMargins(margin, "x"));
-      layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "fill", cache);
+      const fill = Math.max(0, innerWidth - fixedMargins(margin, "x"));
+      layoutNode(child, innerWidth, definiteInnerHeight, 0, 0, "fill", cache, { fill });
       y += margin.top ?? 0;
       child.localRect = {
         ...child.localRect,
@@ -859,8 +869,8 @@ export function layoutMulticol(
       continue;
     }
     const columnMargin = resolveMargin(child.style.margin, measureWidth);
-    const availableWidth = Math.max(0, measureWidth - fixedMargins(columnMargin, "x"));
-    layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, "fill", cache);
+    const fill = Math.max(0, measureWidth - fixedMargins(columnMargin, "x"));
+    layoutNode(child, measureWidth, definiteInnerHeight, 0, 0, "fill", cache, { fill });
     segment.push({
       node: child,
       margin: columnMargin,

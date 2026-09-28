@@ -424,7 +424,7 @@ opacity`, added to its `placed` key.
   each color to sRGB per channel before it blends; an opaque color, or
   one over transparent, is no blend and passes unclipped, so a
   gradient's stops still mix and paint as `color(srgb …)`.
-  cell-model.md deviation 17 and gradients.md deviation 6 say so. Red
+  cell-model.md deviation 14 and gradients.md deviation 5 say so. Red
   first: `bg-yellow-400/50` over the ground, and an `oklch()` fill and
   glyph far past sRGB in an `opacity-50` group, added to the blend
   fixture — off in all three engines before (blue 91 against the
@@ -813,11 +813,11 @@ opacity`, added to its `placed` key.
   and `.grid` inherit it (element.ts's shadow template). The derived
   ground composites it once. Either composite it as the shadow paints
   it, or stop the repaint first. Themes paint opaque grounds, so this
-  is rare. **Open**, documented as cell-model.md deviation 18.
+  is rare. **Open**, documented as cell-model.md deviation 15.
 - **Wide gamut.** Settled by open question 3: blends clip to sRGB as
   every engine does on an sRGB screen, so on a wide-gamut one a
   translucent color outside sRGB blends duller than the browser's own
-  (cell-model.md deviation 17).
+  (cell-model.md deviation 14).
 - **Covering inside groups.** A group's ops must cover at record time
   and not again on replay (see "Groups" above).
 - **Stacking.** An opacity root is a stacking context. Order item 4
@@ -832,7 +832,7 @@ opacity`, added to its `placed` key.
   selection swaps authored colors, not blended ones. Its native ink
   fades natively over the blended cells, as today. Left as is: an
   accepted gap in the editables' own swap, which no spec lists (its
-  gradient case is gradients.md deviation 5).
+  gradient case is gradients.md deviation 4).
 - **Rounding.** Engines composite in 8 bits, and the engine blends in
   floats then rounds, hence the 2/255 tolerance.
 

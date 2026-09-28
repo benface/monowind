@@ -192,6 +192,19 @@ describe("sticky boxes in a scroller", () => {
     expect(loose.stickyShift).toBeUndefined();
   });
 
+  it("sticks to a hidden box, which never scrolls, not to the scroller past it", () => {
+    const heading = sticky("H", { top: 0 });
+    const hidden = makeNode({
+      style: { overflow: { x: "hidden", y: "hidden" } },
+      children: [heading, spacer(10)],
+    });
+    const box = scroller([hidden]);
+    const root = makeNode({ children: [box] });
+    layoutRoot(root, 20);
+    rowsAt(root, box, 5);
+    expect(heading.stickyShift).toBeUndefined();
+  });
+
   it("sticks in a fixed box to a scroller inside it alone, the one it escapes left out", () => {
     const fixedAt = (x: number, extra: Parameters<typeof makeNode>[0]) =>
       makeNode({
@@ -257,6 +270,23 @@ describe("sticky inline elements", () => {
     expect(entry.stickyShift).toEqual({ x: 0, y: 1 });
     expect(rows[0]!.slice(0, 11)).toBe("gg hhbbi jj");
     expect(leaf.text[charIndexAtCell(leaf, 0, -1, 5, 0)!]).toBe("b");
+  });
+
+  it("resolves a sticky span's percent inset against the scrollport", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      `<div><p style="overflow-y: auto; width: 80px; height: 8px">` +
+      `aaaa <span style="position: sticky; top: 50%">bb</span> cc dd ee ff gg hh ii jj kk ll mm nn oo pp</p></div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 20);
+    const leaf = root.children[0]!;
+    const entry = leaf.inlineElements!.find((e) => e.sticky !== undefined)!;
+    expect(entry.sticky).toEqual({ top: { percent: 50 }, right: null, bottom: null, left: null });
+    // Half the two-row scrollport: it holds a row below the top, inside
+    // its three lines.
+    rowsAt(root, leaf, 1);
+    expect(entry.stickyShift).toEqual({ x: 0, y: 2 });
   });
 
   it("sticks a span to the leaf that scrolls it", () => {

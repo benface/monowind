@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INITIAL_GLYPH } from "../src/types.ts";
+import { INITIAL_GLYPH, NO_DECORATION } from "../src/types.ts";
 import {
   alignPair,
   colorAlpha,
@@ -93,7 +93,14 @@ describe("background-image read", () => {
       hue: "decreasing",
     });
     expect(read(`linear-gradient(in srgb-linear, ${CYAN}, ${BLUE})`)[0]!.space).toBe("srgb-linear");
-    expect(read(`linear-gradient(in lab, ${CYAN}, ${BLUE})`)[0]!.space).toBe("oklab");
+    expect(read(`linear-gradient(in lab, ${CYAN}, ${BLUE})`)[0]!.space).toBe("lab");
+    expect(read(`linear-gradient(in display-p3, ${CYAN}, ${BLUE})`)[0]!.space).toBe("display-p3");
+    expect(read(`linear-gradient(in hwb longer hue, ${CYAN}, ${BLUE})`)[0]).toMatchObject({
+      space: "hwb",
+      hue: "longer",
+    });
+    // `xyz` is xyz-d65's other name.
+    expect(read(`linear-gradient(in xyz, ${CYAN}, ${BLUE})`)[0]!.space).toBe("xyz-d65");
     // A hint is no color: legacy stops around one keep srgb.
     expect(read(`linear-gradient(rgb(255, 0, 0), 30%, rgb(0, 0, 255))`)[0]!.space).toBe("srgb");
   });
@@ -186,6 +193,18 @@ describe("background-image read", () => {
     expect(read(`repeating-linear-gradient(45deg, ${CYAN} 0%, ${BLUE} 25%)`)[0]!.repeating).toBe(
       true,
     );
+  });
+
+  it("reads a first stop in any color function the color parser reads", () => {
+    for (const first of [
+      "lab(50 20 30)",
+      "lch(50 30 40)",
+      "oklab(0.5 0.1 0.1)",
+      "color(srgb 1 0 0)",
+    ]) {
+      const [gradient] = read(`linear-gradient(${first}, ${BLUE})`);
+      expect(gradient?.stops.length, first).toBe(2);
+    }
   });
 
   it("reads hints, double positions, and px positions on the spacing scale", () => {
@@ -300,6 +319,35 @@ describe("colors", () => {
     const red = parseColor("rgba(255, 0, 0, 0.5)")!;
     expect(serializeColor(compositeColors(red, white))).toBe("rgb(255 128 128)");
     expect(serializeColor(compositeColors(clear, white))).toBe("rgb(255 255 255)");
+  });
+
+  it("mixes in every space CSS names, as the browsers' color-mix() does", () => {
+    // Midpoints of rgb(255 100 50) and rgb(20 120 220), all three engines
+    // within a unit (probed 2026-09-28).
+    const [from, to] = [parseColor("rgb(255 100 50)")!, parseColor("rgb(20 120 220)")!];
+    const cases: [ColorSpace, HueMode, number[]][] = [
+      ["lab", "shorter", [183, 114, 137]],
+      ["lch", "shorter", [223, 74, 182]],
+      ["lch", "longer", [0, 161, 85]],
+      ["hwb", "shorter", [212, 35, 238]],
+      ["hwb", "longer", [61, 238, 35]],
+      ["xyz-d65", "shorter", [188, 111, 165]],
+      ["xyz-d50", "shorter", [188, 111, 165]],
+      ["display-p3", "shorter", [152, 113, 141]],
+      ["a98-rgb", "shorter", [161, 110, 138]],
+      ["prophoto-rgb", "shorter", [182, 113, 148]],
+      ["rec2020", "shorter", [168, 114, 143]],
+    ];
+    for (const [space, mode, want] of cases) {
+      const a = prepareColor(from, space);
+      const b = prepareColor(to, space);
+      alignPair(a, b, space, mode);
+      const { r, g, b: blue } = mixColors(a, b, 0.5, space);
+      const got = [r, g, blue].map((c) => Math.round(Math.min(1, Math.max(0, c)) * 255));
+      got.forEach((c, i) =>
+        expect(Math.abs(c - want[i]!), `${space} ${mode}`).toBeLessThanOrEqual(1),
+      );
+    }
   });
 
   it("carries a color outside sRGB through the mix, written as color(srgb) past it", () => {
@@ -690,7 +738,7 @@ describe("gradient paint", () => {
         color: transparent,
         backgroundColor: undefined,
         glyph: INITIAL_GLYPH,
-        textDecorationLine: "none",
+        textDecoration: NO_DECORATION,
         visible: true,
         pointerEvents: true,
         opacity: 0.4,

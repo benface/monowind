@@ -517,7 +517,7 @@ differs from the design above:
   a `z-index`, an opacity below 1 or running. The step-1 read of the
   seven effect properties cost 1.3 ms of a prose relayout's script
   (2.8%); the grid draws none of those effects on an inline element,
-  so they are positioning.md deviation 8. `InlineElement.context`
+  so they are positioning.md deviation 6. `InlineElement.context`
   names the flag, `CellStyle.stacking` being the other properties
   alone.
 - **A fixed box keeps its origin at the host's**, its clip its
@@ -591,7 +591,7 @@ Kept, each with its cause: the light DOM stacking as absolute boxes,
 an inline element's context holding its glyphs alone (now also the
 order of an inline member before its leaf's out-of-flow boxes), only
 `position` making a containing block. New: an inline element's own
-effects forming no context (deviation 8), for the read's cost.
+effects forming no context (deviation 6), for the read's cost.
 
 **Goldens**: the full visual run moved none of the existing goldens
 (867 passed), StickyTable's included with its `<thead>`'s `z-10`, as

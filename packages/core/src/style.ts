@@ -1,13 +1,23 @@
 import { trackBackground } from "./animate.ts";
 import { EFFECTS, animatedProperties, animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
-import { colorAlpha, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
+import { colorAlpha, colorSpaceNamed, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
 import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
-import { autoTrack, GLYPH_PROPERTIES, INITIAL_GLYPH, SIDES, zeroInsets } from "./types.ts";
+import {
+  autoTrack,
+  decorationOf,
+  GLYPH_PROPERTIES,
+  INITIAL_GLYPH,
+  isScrollContainer,
+  NO_DECORATION,
+  scrollsAxis,
+  SIDES,
+  zeroInsets,
+} from "./types.ts";
 import { leafRendererFor } from "./leaf.ts";
 import { readTextCase } from "./text-transform.ts";
 import { warnOnce } from "./warn.ts";
@@ -51,12 +61,14 @@ import type {
   AnchorInset,
   AnchorScope,
   AnchorInsets,
+  Insets,
   AnchorSize,
   AnchorSizeProperty,
   AnchorSizes,
   AreaSide,
   PositionArea,
   GlyphValues,
+  TextDecoration,
 } from "./types.ts";
 
 /**
@@ -93,8 +105,8 @@ export function readCellStyle(
   const source: ReadSource = { cs, csm, classAttr, inlineStyle, metrics, rootFontSizePx };
 
   // Atomic inline-level boxes lay their CONTENT out like their block-level
-  // counterparts (the tree builder blockifies the box itself onto its own
-  // row — cell-model deviation).
+  // counterparts; the box itself rides its run (specs/cell-model.md
+  // "Atomic inline boxes").
   const rawDisplay = computedDisplay(el, cs);
   const tableRole: TableRole = TABLE_ROLES[rawDisplay] ?? "none";
   // A computed property's read is a call into the engine each time: one
@@ -199,6 +211,7 @@ export function readCellStyle(
   const anchorSizes = anchorSource ? readAnchorSizes(anchorSource) : {};
   const anchorInsets = anchorSource ? readAnchorInsets(anchorSource) : {};
   const { flexDirection, flexWrap, flexShrink, columnGap, rowGap, zIndex, breakInside } = cs;
+  const alignItemsValue = cs.alignItems;
   const ruleInset = cs.getPropertyValue("--mw-rule-inset").trim();
   // A flex column's main axis is block-wise, where `left` and `right` fall back to `start`.
   const justifyContent = readAlignment(
@@ -208,11 +221,12 @@ export function readCellStyle(
     cs.justifyContent,
   );
   const alignContent = readAlignment(el, "align-content", JUSTIFY, cs.alignContent);
-  const alignItems = readAlignment(el, "align-items", ALIGN, cs.alignItems);
+  const alignItems = readAlignment(el, "align-items", ALIGN, alignItemsValue);
   const alignSelf = readAlignment(el, "align-self", ALIGN_SELF, cs.alignSelf);
   const justifyItems = readAlignment(el, "justify-items", ALIGN, cs.justifyItems);
   const justifySelf = readAlignment(el, "justify-self", ALIGN_SELF, cs.justifySelf);
   const effects = readLayer(el, cs);
+  const overflow = readOverflow(cs);
   // Table-internal boxes take none, as in CSS.
   const aspectRatio =
     tableRole === "none" || tableRole === "caption"
@@ -220,6 +234,7 @@ export function readCellStyle(
       : null;
   const style: CellStyle = {
     display,
+    lineClamp: readLineClamp(rawDisplay, cs),
     tableRole,
     tableLayout,
     borderCollapse,
@@ -247,7 +262,7 @@ export function readCellStyle(
     alignContentSafe: alignContent.safe,
     alignItems: alignItems.keyword,
     alignItemsSafe: alignItems.safe,
-    alignItemsNormal: cs.alignItems === "normal" || cs.alignItems === "",
+    alignItemsNormal: alignItemsValue === "normal" || alignItemsValue === "",
     alignSelf: alignSelf.keyword,
     alignSelfSafe: alignSelf.safe,
     justifyItems: justifyItems.keyword,
@@ -286,18 +301,16 @@ export function readCellStyle(
         : readKeyword(FLOAT_SIDES, cs.float, "none"),
     clear: readKeyword(CLEAR_SIDES, cs.clear, "none"),
     insets: readInsets(source),
-    // `column-gap: normal` is 0 in flex/grid but 1em in multicol, per
-    // CSS (specs/multicol.md "Reading"). Headless DOMs report unset as
-    // an empty string — same initial value.
-    gapX: readSpacing(
+    // `column-gap: normal` is 1em in multicol, per CSS (specs/multicol.md
+    // "Reading"). Headless DOMs report unset as an empty string — same
+    // initial value.
+    gapX:
       columnGap === "normal" || columnGap === ""
         ? display === "multicol"
-          ? `${fontSizePx}px`
-          : "0px"
-        : columnGap,
-      rootFontSizePx,
-    ),
-    gapY: readSpacing(rowGap === "normal" ? "0px" : rowGap, rootFontSizePx),
+          ? readSpacing(`${fontSizePx}px`, rootFontSizePx)
+          : null
+        : readSpacing(columnGap, rootFontSizePx),
+    gapY: rowGap === "normal" || rowGap === "" ? null : readSpacing(rowGap, rootFontSizePx),
     ...readBorder(cs, set),
     borderRadius: {
       tl: readRadius(cs.borderTopLeftRadius, rootFontSizePx),
@@ -305,8 +318,9 @@ export function readCellStyle(
       bl: readRadius(cs.borderBottomLeftRadius, rootFontSizePx),
       br: readRadius(cs.borderBottomRightRadius, rootFontSizePx),
     },
-    overflow: readOverflow(cs),
+    overflow,
     scrollbarWidth: readScrollbarWidth(el, cs),
+    scrollPadding: readScrollPadding(cs, overflow, rootFontSizePx),
     scrollbarColor: readScrollbarColor(cs.scrollbarColor),
     overscroll: {
       x: (cs.overscrollBehaviorX || "auto") === "auto",
@@ -1014,21 +1028,23 @@ function readCells(value: string, min = 1): number {
 }
 
 function overflowAxis(value: string): OverflowAxis {
-  if (isClipping(value)) return "clip";
-  if (value === "auto" || value === "scroll") return value;
-  return "visible";
+  return value === "clip" || value === "hidden" || value === "auto" || value === "scroll"
+    ? value
+    : "visible";
 }
+
+/** An axis beside a scroll container's, as CSS computes it. */
+const COERCED: Partial<Record<OverflowAxis, OverflowAxis>> = { visible: "auto", clip: "hidden" };
 
 /** Per-axis overflow (specs/scrolling.md). Longhands read first (the
  * shorthand sets both in real browsers; happy-dom may leave them "",
- * hence the fallback), then the CSS coercion: one non-visible axis
- * forces the other's `visible` to compute `auto`. */
+ * hence the fallback), then the CSS coercion: beside a scroll
+ * container, `visible` computes to `auto` and `clip` to `hidden`. */
 export function readOverflow(cs: CSSStyleDeclaration): Overflow {
-  let x = overflowAxis(cs.overflowX || cs.overflow);
-  let y = overflowAxis(cs.overflowY || cs.overflow);
-  if (x !== "visible" && y === "visible") y = "auto";
-  if (y !== "visible" && x === "visible") x = "auto";
-  return { x, y };
+  const x = overflowAxis(cs.overflowX || cs.overflow);
+  const y = overflowAxis(cs.overflowY || cs.overflow);
+  if (!isScrollContainer(x) && !isScrollContainer(y)) return { x, y };
+  return { x: COERCED[x] ?? x, y: COERCED[y] ?? y };
 }
 
 /** The screen-reader-only pattern (Tailwind `sr-only` and friends): an
@@ -1090,15 +1106,15 @@ const VERTICAL_ALIGN = { top: "start", middle: "center", bottom: "end" } as cons
  * companion's baseline lock is measuring-gated, so the read sees the
  * authored/UA value from any authoring (classes, plain CSS, hints).
  * Only top/middle/bottom apply to cells (CSS 2.1); everything else
- * behaves as baseline, which behaves as `start`. Fallbacks are for
- * environments without presentational hints or UA table styles
- * (happy-dom): the `valign` attribute, then the tag's UA `middle`. */
-function readVerticalAlign(el: Element, cs: CSSStyleDeclaration): "start" | "center" | "end" {
+ * behaves as baseline. Fallbacks are for environments without
+ * presentational hints or UA table styles (happy-dom): the `valign`
+ * attribute, then the tag's UA `middle`. */
+function readVerticalAlign(el: Element, cs: CSSStyleDeclaration): CellStyle["verticalAlign"] {
   const value =
     cs.verticalAlign ||
     el.getAttribute("valign")?.toLowerCase() ||
     (el.tagName === "TD" || el.tagName === "TH" ? "middle" : "baseline");
-  return readKeyword(VERTICAL_ALIGN, value, "start");
+  return readKeyword(VERTICAL_ALIGN, value, "baseline");
 }
 
 /** The text properties a leaf takes from its own element — the host's
@@ -1113,9 +1129,10 @@ export function readTextStyle(
   | "tabSize"
   | "textCase"
   | "textOverflow"
-  | "textDecorationLine"
-  | "textAlignBlocked"
+  | "textDecoration"
   | "textAlign"
+  | "textWrapStyle"
+  | "wordBreak"
   | "textIndent"
 > {
   return {
@@ -1127,15 +1144,37 @@ export function readTextStyle(
     tabSize: Math.max(1, Math.floor(parseFloat(cs.tabSize)) || 8),
     textCase: readTextCase(cs.textTransform),
     textOverflow: cs.textOverflow === "ellipsis" ? "ellipsis" : "clip",
-    textDecorationLine: cs.textDecorationLine,
-    // The forced-start rule is measuring-gated, so the computed value is
-    // the authored one (no echo); the legacy `align` attribute surfaces
-    // as `-webkit-center`/`-moz-center`. Inherited centering blocks each
-    // descendant individually — same net effect as CSS inheritance.
-    textAlignBlocked: authoredTextAlignBlocked(el, cs),
+    textDecoration: readDecoration(cs),
+    // The legacy `align` attribute surfaces as `-webkit-center`/`-moz-center`.
     textAlign: readTextAlign(el, cs),
+    textWrapStyle: readTextWrapStyle(cs),
+    wordBreak: readKeyword(WORD_BREAKS, cs.wordBreak, "normal"),
     textIndent: readTextIndent(cs, rootFontSizePx),
   };
+}
+
+/** `-webkit-line-clamp`, which takes on a vertical `-webkit-box` alone —
+ * computed as `flow-root` in Chromium and Firefox (css-overflow-4's
+ * legacy rule), as `-webkit-box` in WebKit. */
+function readLineClamp(display: string, cs: CSSStyleDeclaration): number | null {
+  if (!/^(?:inline-flow-root|flow-root|-webkit-box|-webkit-inline-box)$/.test(display)) return null;
+  if (cs.getPropertyValue("-webkit-box-orient") !== "vertical") return null;
+  const clamp = parseInt(cs.getPropertyValue("-webkit-line-clamp"), 10);
+  return clamp > 0 ? clamp : null;
+}
+
+/** A box's own text decoration, its color `currentcolor` resolved on
+ * it (a headless DOM reports it unresolved or not at all). */
+export function readDecoration(cs: CSSStyleDeclaration): TextDecoration {
+  const line = cs.textDecorationLine;
+  if (!line || line === "none") return NO_DECORATION;
+  const color = cs.textDecorationColor;
+  return decorationOf({
+    line,
+    style: cs.textDecorationStyle || "solid",
+    color: !color || color.toLowerCase() === "currentcolor" ? cs.color : color,
+    thickness: cs.textDecorationThickness || "auto",
+  });
 }
 
 /** Font sizes are locked to the root (cell-model deviation 3); the lock is
@@ -1189,19 +1228,19 @@ function readGapRule(
   };
 }
 
-/** Only `justify` is blocked (its per-line extra word spacing is
- * fractional and off-grid). `center` is engine-quantized: the grid
- * paints each line at floor((W − line) / 2); the browser's own
- * (fractional) centering only touches the invisible light-DOM copy. */
-function authoredTextAlignBlocked(el: Element, cs: CSSStyleDeclaration): boolean {
-  if (cs.textAlign === "justify") return true;
-  // Hint fallback for environments that don't map `align` (happy-dom).
-  return el.getAttribute("align")?.toLowerCase() === "justify";
+/** `text-wrap-style`, from the shorthand where a browser keeps none. */
+function readTextWrapStyle(cs: CSSStyleDeclaration): CellStyle["textWrapStyle"] {
+  const value = cs.textWrapStyle || cs.textWrap || "";
+  return value.includes("balance") ? "balance" : value.includes("pretty") ? "pretty" : "auto";
 }
 
-function readTextAlign(el: Element, cs: CSSStyleDeclaration): "start" | "center" | "end" {
+function readTextAlign(
+  el: Element,
+  cs: CSSStyleDeclaration,
+): "start" | "center" | "end" | "justify" {
   const value = cs.textAlign || el.getAttribute("align")?.toLowerCase() || "";
   if (value === "right" || value === "end") return "end";
+  if (value === "justify") return "justify";
   // -webkit-center / -moz-center: the legacy `align` attribute's
   // computed form in real browsers.
   if (value === "center" || value.endsWith("-center")) return "center";
@@ -1303,7 +1342,10 @@ const ALIGN_SELF: Record<string, AlignItems | "auto"> = {
 };
 
 const POSITIONS = keywords<Position>("relative", "absolute", "fixed", "sticky");
-const WHITE_SPACES = keywords("pre", "nowrap");
+const WHITE_SPACES = keywords("pre", "nowrap", "pre-line", "pre-wrap", "break-spaces");
+const WORD_BREAKS = keywords("break-all", "keep-all");
+/** A box that scrolls no axis's, shared: nothing writes it. */
+const NO_SCROLL_PADDING = zeroInsets();
 
 /** `inline-start`/`inline-end` are the logical spellings a browser may
  * report for `float-start`/`float-end`; LTR maps them to the sides. */
@@ -1327,7 +1369,7 @@ const BORDER_STYLES = keywords<BorderStyle>("double", "dashed", "dotted");
  *
  * On engines without Typed OM (Firefox pre-157), fall back to scanning the
  * class attribute for Tailwind auto-margin utilities, left to right
- * (specs/cell-model.md deviation 20).
+ * (specs/cell-model.md "Box model").
  */
 function readMargin(source: ReadSource): PerSide<CellLength | null> {
   const { cs, csm, classAttr, inlineStyle, rootFontSizePx } = source;
@@ -1409,6 +1451,35 @@ const SIDE_STEMS = {
   bottom: `bottom|${EVERY_SIDE}|inset-y|inset-be`,
   left: `left|start|${EVERY_SIDE}|inset-x|inset-s`,
 } as const;
+
+/** A relative or sticky element's `top`/`right`/`bottom`/`left`,
+ * percentages kept (the class scan standing in for Typed OM), `auto`
+ * null. Without Typed OM, a side the scan misses is its resolved value:
+ * a relative element's used offset, a sticky one's `auto` kept (probed
+ * 2026-09-28, Chromium and Firefox). */
+export function readElementInsets(
+  el: Element,
+  cs: CSSStyleDeclaration,
+  rootFontSizePx: number,
+): PerSide<CellLength | null> {
+  const csm = supportsTypedOM(el) ? el.computedStyleMap() : null;
+  const insets = readInsets({
+    cs,
+    csm,
+    classAttr: el.getAttribute("class") ?? "",
+    inlineStyle: (el as HTMLElement).style,
+    metrics: undefined,
+    rootFontSizePx,
+  });
+  if (csm) return insets;
+  for (const side of SIDES) {
+    const value = cs.getPropertyValue(side);
+    if (insets[side] === null && value && value !== "auto") {
+      insets[side] = readSpacing(value, rootFontSizePx);
+    }
+  }
+  return insets;
+}
 
 /**
  * Read insets, preserving `auto` as `null`.
@@ -1557,24 +1628,22 @@ function readBackgroundImage(value: string, color: string, rootFontSizePx: numbe
   return gradients;
 }
 
-/** Whether a gradient argument opens with a color: a stop, then. */
+/** Whether a gradient argument opens with a color: a function the
+ * color parser reads (color.ts `parseColor`), or `transparent`. */
 const startsWithColor = (arg: string): boolean =>
-  /^(?:rgba?|hsla?|oklab|oklch|color)\(|^transparent\b/i.test(arg);
+  /^(?:rgba?|hsla?|(?:ok)?lab|(?:ok)?lch|color)\(|^transparent\b/i.test(arg);
 
-const SPACES: ColorSpace[] = ["oklab", "oklch", "srgb", "srgb-linear", "hsl"];
 const HUE_MODES: HueMode[] = ["shorter", "longer", "increasing", "decreasing"];
 
 /** The interpolation space and hue mode: named with `in <space>
  * [<mode> hue]`, else oklab, or srgb when every stop is a legacy
- * color (CSS's default for those); a space outside the engine's
- * reads as oklab. */
+ * color (CSS's default for those). */
 function gradientSpace(head: string[], stopArgs: string[]): { space: ColorSpace; hue: HueMode } {
   const at = head.indexOf("in");
   if (at >= 0) {
-    const named = head[at + 1] as ColorSpace;
     const mode = head[at + 2] as HueMode;
     return {
-      space: SPACES.includes(named) ? named : "oklab",
+      space: colorSpaceNamed(head[at + 1] ?? "") ?? "oklab",
       hue: HUE_MODES.includes(mode) ? mode : "shorter",
     };
   }
@@ -1743,6 +1812,22 @@ function readLimit(
   }
   const px = parseFloat(value);
   return Number.isFinite(px) ? pxToCells(px, source.rootFontSizePx) : undefined;
+}
+
+/** A scroll container's `scroll-padding` in cells on the spacing scale,
+ * none for a box that doesn't scroll; a percentage reads 0. */
+function readScrollPadding(
+  cs: CSSStyleDeclaration,
+  overflow: Overflow,
+  rootFontSizePx: number,
+): Insets {
+  if (!scrollsAxis(overflow.x) && !scrollsAxis(overflow.y)) return NO_SCROLL_PADDING;
+  const padding = zeroInsets();
+  for (const side of SIDES) {
+    const cells = readSpacing(cs.getPropertyValue(`scroll-padding-${side}`), rootFontSizePx);
+    if (typeof cells === "number") padding[side] = cells;
+  }
+  return padding;
 }
 
 /**
@@ -1925,13 +2010,13 @@ export function readPaintStyle(
   };
 }
 
-/** `text-indent` in cells; a percentage or a negative indent reads 0
- * (specs/cell-model.md "Text indent"). */
-function readTextIndent(cs: CSSStyleDeclaration, rootFontSizePx: number): number {
-  const value = cs.textIndent;
-  if (!value || value.endsWith("%")) return 0;
-  const px = parseFloat(value);
-  return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
+/** `text-indent` in cells, signed, or a percentage (specs/cell-model.md
+ * "Text indent"). */
+function readTextIndent(cs: CSSStyleDeclaration, rootFontSizePx: number): CellLength {
+  const { textIndent } = cs;
+  const value = parseFloat(textIndent);
+  if (!Number.isFinite(value)) return 0;
+  return textIndent.endsWith("%") ? { percent: value } : pxToCells(value, rootFontSizePx);
 }
 
 function readSize(source: ReadSource, key: "width" | "height", computed: string): Size | undefined {
@@ -2284,7 +2369,12 @@ function intrinsicSizeKeyword(value: string): Size | undefined {
 export function parseTrackTemplate(value: string, rootFontSizePx: number): GridTemplate {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "none") return { kind: "none" };
-  if (trimmed === "subgrid" || trimmed.startsWith("subgrid ")) return { kind: "subgrid" };
+  if (trimmed === "subgrid" || trimmed.startsWith("subgrid ")) {
+    const lineNames = splitTopLevel(trimmed.slice("subgrid".length).trim(), " ")
+      .map(parseLineNames)
+      .filter((names): names is string[] => names !== null);
+    return lineNames.length > 0 ? { kind: "subgrid", lineNames } : { kind: "subgrid" };
+  }
   const tracks: TrackSize[] = [];
   const lineNames: string[][] = [];
   // Names collected for the line BEFORE the next track (or the trailing
@@ -2422,9 +2512,14 @@ function parseAutoTracks(value: string, rootFontSizePx: number): TrackSize[] {
 }
 
 /** Normalize one track size to a minmax pair: `<n>fr` → minmax(auto, fr)
- * per CSS; a fixed/intrinsic breadth b → minmax(b, b). `fit-content()` is
- * deferred (specs/grid.md deviations) and reads as `auto`. */
+ * per CSS; a fixed/intrinsic breadth b → minmax(b, b); `fit-content(L)`
+ * → minmax(auto, max-content capped at L). */
 function parseTrackSize(token: string, rootFontSizePx: number): TrackSize {
+  const fit = token.match(/^fit-content\((.*)\)$/s);
+  if (fit) {
+    const limit = parseTrackBreadth(fit[1]!.trim(), rootFontSizePx);
+    return { min: { kind: "auto" }, max: { kind: "fit-content", limit } };
+  }
   const minmax = token.match(/^minmax\((.*)\)$/s);
   if (minmax) {
     // Depth-aware argument split — a nested function (`minmax(min(8rem,
@@ -2445,12 +2540,19 @@ function parseTrackSize(token: string, rootFontSizePx: number): TrackSize {
 
 function parseTrackBreadth(token: string, rootFontSizePx: number): TrackBreadth {
   if (token === "auto" || token.startsWith("fit-content")) return { kind: "auto" };
+  // A calc() of lengths and a percentage: their sum.
+  if (token.startsWith("calc(")) {
+    const calc = evaluateCalc(token, "width", undefined, rootFontSizePx);
+    if (!calc || calc.unitless) return { kind: "auto" };
+    const cells: TrackBreadth = { kind: "cells", value: roundHalfAwayFromZero(calc.cells) };
+    if (calc.percent === 0) return cells;
+    return { kind: "math", fn: "sum", args: [{ kind: "percent", value: calc.percent }, cells] };
+  }
   if (token === "min-content") return { kind: "min-content" };
   if (token === "max-content") return { kind: "max-content" };
   // min()/max() over fixed breadths stay symbolic (percent arguments
-  // resolve against the axis at layout time). Anything unresolvable —
-  // calc() arithmetic included — degrades to `auto` (specs/grid.md
-  // deviations).
+  // resolve against the axis at layout time). Anything unresolvable
+  // degrades to `auto`.
   const math = token.match(/^(min|max)\((.*)\)$/s);
   if (math) {
     const args = splitTopLevel(math[2]!, ",").map((arg) =>

@@ -210,7 +210,7 @@ describe("gap rules", () => {
     expect(art).toBe(["one", " ───", "two"].join("\n"));
   });
 
-  it("draws a 2px rule heavy in one cell, and its junctions heavy", () => {
+  it("draws a 2px rule heavy in one cell, and its junctions mixed", () => {
     expect(
       plainText(
         `<div style="display: flex; column-gap: 4px; --mw-rule-x-width: 2px"><div>aa</div><div>bb</div></div>`,
@@ -223,31 +223,31 @@ describe("gap rules", () => {
           <div>a</div><div>b</div><div>c</div><div>d</div>
         </div>`,
       ),
-    ).toBe(["a ┃b", "──╋──", "c ┃d"].join("\n"));
-    // A tee into a border of another weight draws the heavier, both ways.
+    ).toBe(["a ┃b", "──╂──", "c ┃d"].join("\n"));
+    // A tee into a border of another weight draws each arm's, both ways.
     expect(
       plainText(
         `<div style="display: flex; width: 28px; border: 1px solid; --mw-rule-x-width: 2px"><div>aa</div><div>bb</div></div>`,
       ),
-    ).toBe(["┌──┳──┐", "│aa┃bb│", "└──┻──┘"].join("\n"));
+    ).toBe(["┌──┰──┐", "│aa┃bb│", "└──┸──┘"].join("\n"));
     expect(
       plainText(
         `<div style="display: flex; width: 28px; border: 2px solid; --mw-rule-x-width: 1px"><div>aa</div><div>bb</div></div>`,
       ),
-    ).toBe(["┏━━┳━━┓", "┃aa│bb┃", "┗━━┻━━┛"].join("\n"));
-    // Double has no heavier weight to carry into a crossing or a tee.
+    ).toBe(["┏━━┯━━┓", "┃aa│bb┃", "┗━━┷━━┛"].join("\n"));
+    // A double rule crosses a single one with Unicode's mixed glyph.
     expect(
       plainText(
         `<div style="display: grid; grid-template-columns: 8px 8px; column-gap: 4px; row-gap: 4px; --mw-rule-x-width: 2px; --mw-rule-x-style: double; --mw-rule-y-width: 1px">
           <div>a</div><div>b</div><div>c</div><div>d</div>
         </div>`,
       ),
-    ).toBe(["a ║b", "──┼──", "c ║d"].join("\n"));
+    ).toBe(["a ║b", "──╫──", "c ║d"].join("\n"));
     expect(
       plainText(
         `<div style="display: flex; width: 28px; border: 2px double; --mw-rule-x-width: 1px"><div>aa</div><div>bb</div></div>`,
       ),
-    ).toBe(["╔══┬══╗", "║aa│bb║", "╚══┴══╝"].join("\n"));
+    ).toBe(["╔══╤══╗", "║aa│bb║", "╚══╧══╝"].join("\n"));
   });
 
   it("tees a rule into the innermost ring of a rings-band border", () => {

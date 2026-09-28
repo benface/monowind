@@ -140,6 +140,13 @@ describe("paragraph flow", () => {
     expect(art).toBe(["aaa  ccc", "bbb  ddd"].join("\n"));
   });
 
+  it("indents a child's first line and shifts its relative inline elements", () => {
+    const art = plainText(
+      `<div style="column-count: 2; column-gap: 4px; width: 36px"><div style="text-indent: 4px">aaa bbb ccc</div><div>d <span style="position: relative; left: 4px">e</span></div></div>`,
+    );
+    expect(art).toBe([" aaa ccc", "bbb  d  e"].join("\n"));
+  });
+
   it("collapses margins between children and truncates them at breaks", () => {
     const art = plainText(
       `<div style="column-count: 2; column-gap: 4px; width: 36px"><div style="margin-bottom: 8px">aa</div><div style="margin-top: 4px">bb</div><div>cc</div></div>`,
@@ -384,5 +391,28 @@ describe("column rules", () => {
       `<div style="column-count: 2; column-gap: 4px; --mw-rule-x-width: 1px; border: 1px solid; width: 44px">aaa bbb</div>`,
     );
     expect(art).toBe(["┌────┬────┐", "│aaa │bbb │", "└────┴────┘"].join("\n"));
+  });
+});
+
+describe("a multicol box's min-content (css-multicol §3.4)", () => {
+  /** The width of a `width: min-content` multicol box over `content`. */
+  const minContent = (columns: string, content: string) => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div><div style="width: min-content; ${columns}">${content}</div></div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, 60);
+    return root.children[0]!.localRect.width;
+  };
+
+  it("is its count times the widest word, and the gaps", () => {
+    // Two columns of "abcd" (4) and a 1-cell gap.
+    expect(minContent("column-count: 2; column-gap: 4px", "ab abcd a")).toBe(9);
+    expect(minContent("column-count: 2; column-gap: 4px", "<p>ab</p><p>abcd a</p>")).toBe(9);
+  });
+
+  it("is its column width where that is narrower than the widest word", () => {
+    expect(minContent("column-width: 8px; column-gap: 0", "ab abcd")).toBe(2);
+    expect(minContent("column-width: 40px; column-gap: 0", "ab abcd")).toBe(4);
   });
 });

@@ -40,9 +40,10 @@ per css-align.
   (`grid-flow-*` incl. the dense variants).
 - `grid-auto-rows` / `grid-auto-columns` for implicit tracks.
 - Alignment: `justify-items` / `align-items` / `justify-self` /
-  `align-self` (start / center / end / stretch) and `justify-content` /
-  `align-content` (start / center / end / space-between / space-around /
-  space-evenly) — reusing the flex offset machinery.
+  `align-self` (start / center / end / stretch / baseline) and
+  `justify-content` / `align-content` (start / center / end /
+  space-between / space-around / space-evenly) — reusing the flex offset
+  machinery.
 - CSS `order` participates in auto-placement order, per CSS.
 - Named lines (`[name] 1fr [name-b name-c]`, inside `repeat()` too) and
   `grid-template-areas` with `grid-area: <name>` placement (see Named
@@ -65,9 +66,13 @@ A track size is one of:
   engines (probed 2026-09-23).
 - **`min()` / `max()`** over cells/percent arguments — the canonical
   responsive auto-fill pattern
-  `minmax(min(8rem, 100%), 1fr)`. Resolved at layout time; a percent
-  argument on an indefinite axis makes the whole function behave as
-  `auto`, mirroring the percent rule.
+  `minmax(min(8rem, 100%), 1fr)` — and a **`calc()`** of lengths and a
+  percentage, their sum (`grid-cols-[calc(100%-2rem)_1fr]`). Resolved at
+  layout time; a percent argument on an indefinite axis makes the whole
+  function behave as `auto`, mirroring the percent rule.
+- **`fit-content(L)`** — `minmax(auto, max-content)` with the growth
+  limit capped at L (css-grid §7.2.4): as wide as its content up to L,
+  never below its min-content, and never stretched as `auto` is.
 - **`<n>fr`** — flexible; shorthand for `minmax(auto, <n>fr)`, per CSS.
 - **`auto`** — sized to its items (min = largest min-content contribution,
   max = largest max-content contribution).
@@ -125,12 +130,15 @@ final column widths).
    shared integer distribution, equal weights (**simplification** of the
    spec's growth-limit ordering — deterministic and close in practice; a
    spanning item never grows tracks that have no intrinsic component).
-   An item spanning an fr track grows only the bases of the fr tracks
-   with an intrinsic min, weighted by flex factor (CSS §11.5.1) — this
-   seeds the automatic minimum that makes bare `1fr 1fr` columns unequal
-   under long content, and an item spanning several tracks with a
-   flexible one among them (automatic minimum 0) grows nothing; its max
-   contribution is step 4's job.
+   A `fit-content()` track's growth limit freezes at its cap, the rest
+   of a spanning item's space going to the other spanned intrinsic
+   tracks (css-grid §11.5.1; Chromium, Firefox and WebKit, probed
+   2026-09-28). An item spanning an fr track grows only the bases of
+   the fr tracks with an intrinsic min, weighted by flex factor (CSS
+   §11.5.1) — this seeds the automatic minimum that makes bare `1fr
+1fr` columns unequal under long content, and an item spanning
+   several tracks with a flexible one among them (automatic minimum 0)
+   grows nothing; its max contribution is step 4's job.
 3. **Clamp** each track: what content alone grew an `auto`-min track's
    base by stays within a fixed limit — a spanning item's content-based
    minimum, shared evenly (deviation 4), would pass it where the spec's
@@ -226,11 +234,20 @@ final column widths).
   assumed to carry the name, so the placement walks into the implicit
   grid. A named span counts named lines from the opposite, definite
   edge in the same way. A named span whose opposite edge is `auto` is
-  treated as a plain span of its count (**simplification**).
+  treated as a plain span of its count (deviation 2).
 - Absolutely positioned children resolve names identically (a named
   overlay `grid-area: main` covers that area).
 
 ## Items in their areas
+
+Each block-level child is an item, and so is each run of text between
+them, an anonymous item (cell-model.md "Inline content") — a grid of
+text alone is one. A lone anonymous item's offsets in the content box
+fold into the grid's engine-owned padding, so its text, natively the
+grid's own, wraps and lands on its cells (the companion resets the
+templates, `grid-auto-*` and `place-*` for it, styles.css); the grid
+reports the item's rows as its content height, the fold holding the
+rest.
 
 An item's **grid area** is the track span plus the gaps it crosses. Within
 it, per axis:
@@ -239,10 +256,10 @@ it, per axis:
   the area (minus fixed margins), same authority rules as a flex-assigned
   size; the item's own min/max still clamp, and a clamped or explicitly
   sized item falls back to start alignment, per CSS. Its automatic
-  minimum (`min-width/height: auto` while overflow is visible: the
-  min-content width, the laid-out content height) floors the stretch,
-  capped by its max-width or max-height — a `max-w-3` item holding a
-  longer word is 3 wide in a wider track. Per css-grid §6.6 the
+  minimum (`min-width/height: auto` unless the item is a scroll
+  container: the min-content width, the laid-out content height) floors
+  the stretch, capped by its max-width or max-height — a `max-w-3` item
+  holding a longer word is 3 wide in a wider track. Per css-grid §6.6 the
   automatic minimum is content-based only for an item spanning a track
   whose min is `auto` (a percent or `min()`/`max()` the axis can't
   resolve counts), and never for one spanning several tracks with a
@@ -256,8 +273,15 @@ it, per axis:
 - **start / center / end**: the item takes its intrinsic (or explicit) size
   and the area's leftover becomes the alignment offset (center floors);
   an item that overflows its area sits at its start (cell-model.md
-  deviation 21 — CSS centers or ends it past the start, probed
+  deviation 19 — CSS centers or ends it past the start, probed
   2026-09-24, all three engines).
+- **baseline / last baseline** (`align-self`): the items aligned by
+  their first baselines, block margins not auto, group by the row they
+  start in, those aligned by their last by the row they end in (a row
+  subgrid takes no part); a group lines up its members' first (last)
+  text rows as a flex line's does (flex.md step 8), at its areas'
+  start (end), and each member's shift within the group counts toward
+  the rows it spans, as a margin does (css-grid §11.8).
 - **An item with a ratio** (cell-model.md "Aspect ratio") is sized as
   a block on an axis whose alignment is `normal` (css-grid §6.2),
   where an item without one stretches: stretched to its column, it
@@ -277,7 +301,7 @@ it, per axis:
 - Content-distribution (`justify-content` / `align-content`) offsets the
   whole track grid inside the content box, using the shared offset math
   (space-* variants included): tracks overflowing it start at its start
-  edge, as an overflowing flex line does (cell-model.md deviation 21).
+  edge, as an overflowing flex line does (cell-model.md deviation 19).
 
 ## Subgrid
 
@@ -288,24 +312,31 @@ CSS Grid 2:
 - A subgridded axis adopts the PARENT's track sizes for the tracks the
   subgrid spans; the subgrid defines no tracks of its own there. The other
   axis (if not subgridded) sizes independently as a normal grid axis.
-- The parent's gap is inherited in the subgridded axis. (**Deviation**: an
-  explicit gap on the subgrid does not override it — CSS lets it, moving
-  the gutter's extra/missing cells into the adjacent tracks; the engine
-  keeps the parent's gutters.)
+- Gaps: a subgridded axis's gap is the parent's under `normal`, else
+  its own, each inner gutter narrowing or widening to it about the
+  parent's gutter's middle: the tracks beside it gain or lose half the
+  difference, the odd cell going to the track after it (as a centered
+  box's odd cell falls to its end). The parent's track sizing counts
+  those cells as margin on the items beside an inner gutter, per CSS
+  Grid 2.
 - Subgrid items participate in the PARENT's intrinsic track sizing: during
   the parent's step 2 they contribute through the mapped tracks, with the
   subgrid's own border and padding added to the contributions of the edge
   tracks it spans (the spec's margin/border/padding accounting; margins
   likewise).
-- Nested subgrids compose by mapping through each level.
+- Nested subgrids compose by mapping through each level, a nested
+  subgrid's items contributing past every level's gutter shift.
 - A subgridded axis has no implicit tracks (CSS Grid 2): a placement
   outside the inherited tracks is clamped onto the nearest edge track.
 - A subgrid is always exactly its grid area in a subgridded axis
   (self-alignment doesn't apply there), per CSS.
-- Line NAMES are not inherited (**deviation**).
+- Line names: a subgridded axis's lines carry the parent's names on the
+  lines it spans (area-implied ones included) and then its own
+  `subgrid [a] [b c]` list, in order from its first line; names past its
+  last line are dropped, per CSS Grid 2.
 - A subgrid's own items size the parent's tracks with the parent's
   sizing functions, but their stretch in a subgridded axis reads the
-  inherited tracks as `auto` ones (**deviation**): the automatic
+  inherited tracks as `auto` ones (deviation 1): the automatic
   minimum floors it as in an `auto` track, uncapped.
 - A `subgrid` axis on something that is not a grid item behaves as `none`,
   per CSS.
@@ -356,23 +387,11 @@ and the same static-position rule still applies.
 
 ## Deviations from CSS Grid
 
-1. Subgrids don't inherit line names, an explicit `gap` on a
-   subgridded axis doesn't override the parent's gutters, and a
-   subgrid's items stretch in a subgridded axis as if its tracks were
-   `auto` (see Subgrid). A named span against an `auto` opposite edge is
-   treated as a plain span of its count.
-2. Masonry: never planned.
-3. No baseline alignment (as in flex).
+1. A subgrid's items stretch in a subgridded axis as if its tracks
+   were `auto` (see Subgrid).
+2. A named span against an `auto` opposite edge is treated as a plain
+   span of its count (see Named lines and areas).
+3. Masonry: never planned.
 4. Spanning-item space distribution uses equal weights across spanned
    intrinsic tracks instead of the spec's growth-limit ordering.
-5. `fit-content()` track sizes are deferred (they read as `auto`), and so
-   is `calc()` arithmetic inside track lists (reachable via arbitrary
-   values like `grid-cols-[calc(100%-2rem)_1fr]`) — it parses as `auto`.
-   `min()` / `max()` over plain lengths/percentages ARE supported (see
-   Track sizes).
-6. A grid container whose content is ONLY inline (text, no block-level
-   children) lays out as a text leaf: the anonymous grid item CSS would
-   create is not placed into the track grid — the text sizes the box
-   directly, wrapping at the content width. Wrap the text in an element
-   to make it a real grid item.
-7. All cell-model deviations (integer rounding, etc.) apply.
+5. All cell-model deviations (integer rounding, etc.) apply.

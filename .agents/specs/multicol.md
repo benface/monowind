@@ -68,8 +68,10 @@ With `available` = the container's content-box width in cells and
 the count — probed, all three engines agree. With only `column-width`,
 Chromium/WebKit use the content's own max-content (floored at one
 `W`-wide column) while Firefox clamps to `W`; the engine follows
-Chromium/WebKit (documented divergence). Min-content stays the block
-default (widest child / longest unbreakable unit) — deviation 5.
+Chromium/WebKit (documented divergence). Min-content is column-aware
+too: a `column-width` caps the content's min-content (widest child /
+longest unbreakable unit), else it repeats `count` times with the
+gaps between, `count` 1 under `column-count: auto`.
 
 For ELEMENT-CHILDREN containers, leftover cells after `count × width +
 (count − 1) × gap` distribute one per column left to right
@@ -325,15 +327,9 @@ avoid`): a child with a border, padding, background, explicit
    every line is a valid break point. Since their CSS initial value is
    2, the companion stylesheet actively resets both to 1 on multicol
    leaves (see Browser agreement).
-3. ~~A column's last line keeps its trailing leading rows~~ — resolved:
-   columns are TIGHT like single-column leaves; the companion re-extends
-   the native box by the trailing leading (see Direct text).
-4. `break-before`/`break-after` values other than `column` (`page`,
+3. `break-before`/`break-after` values other than `column` (`page`,
    `avoid`, …) are ignored.
-5. Min-content width uses the block default (widest child) rather than
-   a column-aware contribution; max-content is column-aware (see
-   "Used column count and width").
-6. A float whose parent is the multicol container itself is laid out
+4. A float whose parent is the multicol container itself is laid out
    as a plain column item and warned once (specs/float.md); floats
    inside the container's children work as anywhere.
 

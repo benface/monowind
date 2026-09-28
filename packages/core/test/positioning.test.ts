@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
 import { buildTree } from "../src/tree.ts";
 import { makeNode } from "./helpers.ts";
@@ -316,6 +316,59 @@ describe("out-of-flow children of text leaves", () => {
   });
 });
 
+describe("an out-of-flow element's spot in its run", () => {
+  // The companion's read rule, ungated: no read flags here.
+  const read = document.createElement("style");
+  read.textContent = "[data-mw-static-read] { position: static !important; }";
+  beforeAll(() => document.head.append(read));
+  afterAll(() => read.remove());
+  /** The badge's cell in a relative block of `style` holding `content`. */
+  const badgeAt = (content: string, { style = "", width = 20 } = {}) => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div style="position: relative; ${style}">${content}</div>`;
+    document.body.appendChild(host);
+    const root = buildTree(host.firstElementChild!, 16)!;
+    layoutRoot(root, width);
+    const badge = root.children.find((child) => child.source.hasAttribute("data-test"))!;
+    const { x, y } = badge.localRect;
+    return { x, y };
+  };
+  const span = (style = "") =>
+    `<span data-test="badge" style="position: absolute; ${style}">*</span>`;
+
+  it("sits an inline one where it would have been in its line", () => {
+    expect(badgeAt(`abc ${span()}def`)).toEqual({ x: 4, y: 0 });
+    expect(badgeAt(`abc ${span()}def`, { style: "text-align: center" })).toEqual({ x: 10, y: 0 });
+    // An inset replaces its axis alone.
+    expect(badgeAt(`abc ${span("top: 8px")}def`)).toEqual({ x: 4, y: 2 });
+  });
+
+  it("sits one at a soft break at the end of the text before it", () => {
+    expect(badgeAt(`aaaa ${span()}bbbb`, { width: 5 })).toEqual({ x: 4, y: 0 });
+  });
+
+  it("sits one past what has no text of its own: a break, a box, padding", () => {
+    expect(badgeAt(`a<br>${span()}b`)).toEqual({ x: 0, y: 1 });
+    expect(badgeAt(`a\n${span()}b`, { style: "white-space: pre-line" })).toEqual({ x: 0, y: 1 });
+    const box = '<span style="display: inline-block; width: 16px">x</span>';
+    expect(badgeAt(`a${box}${span()}b`)).toEqual({ x: 5, y: 0 });
+    expect(badgeAt(`<span style="padding: 0 4px">a</span>${span()}b`)).toEqual({ x: 3, y: 0 });
+    // Past characters of two code units each.
+    expect(badgeAt(`\u{1F600}\u{1F600} ${span()}b`)).toEqual({ x: 5, y: 0 });
+  });
+
+  it("starts a block-level one on the next line, at the content edge", () => {
+    const block = '<div data-test="badge" style="position: absolute">*</div>';
+    expect(badgeAt(`abc ${block}def`)).toEqual({ x: 0, y: 1 });
+  });
+
+  it("places a flex container's own as its sole flex item", () => {
+    const badge = '<span data-test="badge" style="position: absolute; top: 0">**</span>';
+    const style = "display: flex; justify-content: center";
+    expect(badgeAt(`Hello${badge}`, { style })).toEqual({ x: 9, y: 0 });
+  });
+});
+
 describe("flex sole-item static position includes fixed margins", () => {
   it("offsets the hypothetical box by its margins under start alignment", () => {
     const abs = makeNode({
@@ -512,7 +565,7 @@ describe("containing block and constraint edge cases", () => {
 
   it("starts an overflowing flex static position, both axes", () => {
     // As an overflowing line does, a 20 × 4 box in a 10 × 2 row
-    // (specs/cell-model.md deviation 21); CSS centers or ends it past the
+    // (specs/cell-model.md deviation 19); CSS centers or ends it past the
     // start edge, space-around and space-evenly centering it (probed:
     // every engine).
     const place = (style: Partial<CellStyle>) => {

@@ -2,17 +2,27 @@ import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
+  besideNative,
+  cellOffset,
   cellSize,
+  channels,
   expectBrowserLineBreaksToMatchEngine,
   expectBrowserRowsToMatchEngine,
   expectGridOnItsCells,
+  expectLinesAsNative,
+  expectWordsAsNative,
+  frames,
   gridOf,
   isFirefox,
   paintedSpan,
+  readyGrid,
   readyHost,
   readyHosts,
   rowsOf,
   testHooks,
+  type Engine,
+  type NativeCase,
+  type Unit,
 } from "./helpers.ts";
 
 const meta: Meta = {
@@ -71,11 +81,25 @@ export const HyphenBreaks: StoryObj = {
 export const Truncating: StoryObj = {
   render: () => html`
     <mono-wind>
-      <div class="max-w-40 truncate border border-neutral-500 px-1">
-        This text gets truncated when it is wider than the available width.
+      <div class="flex max-w-40 flex-col gap-1">
+        <div class="truncate border border-neutral-500 px-1">
+          This text gets truncated when it is wider than the available width.
+        </div>
+        <div data-test="clamp" class="line-clamp-2 border border-neutral-500 px-1">
+          This one wraps, and its lines past the clamp are cut, the last one kept ending in an
+          ellipsis.
+        </div>
       </div>
     </mono-wind>
   `,
+  play: async ({ canvasElement }) => {
+    const { by, cells, measure } = await readyGrid(canvasElement);
+    const clamp = by("clamp");
+    // Two rows between its borders, the second ending in the ellipsis.
+    expect(cells(clamp, "--mw-h") - cells(clamp, "--mw-bt") - cells(clamp, "--mw-bb")).toBe(2);
+    const { rows, boxOf } = measure();
+    expect(rows[boxOf(clamp).row + 2]!.trimEnd()).toMatch(/… │$/);
+  },
 };
 
 export const HardBreaks: StoryObj = {
@@ -179,8 +203,8 @@ export const InlineBorder: StoryObj = {
   },
 };
 
-/** Test-only: an inline element's padding is its own (specs/cell-model.md,
- * deviation 5): a span inside a padded one takes none, so its light box,
+/** Test-only: an inline element's padding is its own (specs/cell-model.md
+ * "Inline content"): a span inside a padded one takes none, so its light box,
  * and the text after it, sit on the cells the grid draws them on. */
 export const NestedInlinePadding: StoryObj = {
   tags: ["!dev", "!golden"],
@@ -242,6 +266,46 @@ export const GlyphProperties: StoryObj = {
     expect(zero.textShadow).not.toBe("none");
     expect(zero.textUnderlineOffset).toBe("4px");
     expect(getComputedStyle(paintedSpan(plainHost!, "1/2")!).fontVariantNumeric).toBe("normal");
+  },
+};
+
+/** Text decorations (specs/cell-model.md "Typography") drawn as their
+ * boxes draw them: their style, color and thickness, and a propagated
+ * line in its decorating box's color. */
+export const Decorations: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex flex-col gap-1">
+        <p class="underline decoration-rose-400 decoration-wavy">
+          a wavy <span data-test="rose" class="text-rose-400">rose</span> line
+        </p>
+        <p class="underline decoration-2 underline-offset-4">a thick one, offset</p>
+        <p data-test="amber" class="text-amber-300 underline decoration-dotted">
+          dotted, <span data-test="cyan" class="text-cyan-300">amber under cyan</span>
+        </p>
+        <p class="line-through decoration-cyan-300 decoration-double">a double strike</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const drawn = (text: string) => getComputedStyle(paintedSpan(host, text)!);
+    expect(drawn("wavy").textDecorationStyle).toBe("wavy");
+    expect(channels(drawn("wavy").textDecorationColor)).toEqual(
+      channels(getComputedStyle(by("rose")).color),
+    );
+    expect(drawn("thick").textDecorationThickness).toBe("2px");
+    expect(drawn("thick").textUnderlineOffset).toBe("4px");
+    expect(drawn("under cyan").textDecorationStyle).toBe("dotted");
+    expect(channels(drawn("under cyan").textDecorationColor)).toEqual(
+      channels(getComputedStyle(by("amber")).color),
+    );
+    expect(drawn("strike").textDecorationLine).toBe("line-through");
+    expect(drawn("strike").textDecorationStyle).toBe("double");
+    expect(channels(drawn("strike").textDecorationColor)).toEqual(
+      channels(getComputedStyle(by("cyan")).color),
+    );
   },
 };
 
@@ -343,6 +407,219 @@ export const InlineDisplay: StoryObj = {
   },
 };
 
+/** An atomic inline box's margins join its line (specs/cell-model.md
+ * "Atomic inline boxes"): the horizontal ones its advance, a negative
+ * one overlapping the text before, the vertical ones its line's rows,
+ * a bottom-aligned box's text on its margin box's last row. Each box,
+ * and the word after it, where the browser puts them. */
+export const InlineBoxMargins: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex max-w-80 flex-col gap-1">
+        <p>one <span data-test="box" class="mx-2 inline-block border px-1">mx-2</span> alpha</p>
+        <p>two <span data-test="box" class="-ml-1 inline-block border px-1">-ml-1</span> bravo</p>
+        <p>three <span data-test="box" class="mt-1 inline-block border px-1">mt-1</span> charlie</p>
+        <p>
+          four <span data-test="box" class="mb-1 inline-block border px-1 align-bottom">mb-1</span>
+          delta
+        </p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const cell = cellSize(host);
+    const grid = gridOf(host).getBoundingClientRect();
+    // Each box's cells in its paragraph: past the words and its left
+    // margin, down its top margin.
+    const cells = [
+      [6, 0],
+      [3, 0],
+      [6, 1],
+      [5, 0],
+    ];
+    for (const [i, box] of host.querySelectorAll<HTMLElement>('[data-test="box"]').entries()) {
+      const leaf = box.parentElement!.getBoundingClientRect();
+      const rect = box.getBoundingClientRect();
+      const at = (name: string) => Number(box.style.getPropertyValue(name));
+      expect([at("--mw-x"), at("--mw-y")], box.textContent!).toEqual(cells[i]);
+      expect(rect.left - leaf.left, box.textContent!).toBeCloseTo(at("--mw-x") * cell.width, 0);
+      expect(rect.top - leaf.top, box.textContent!).toBeCloseTo(at("--mw-y") * cell.height, 0);
+    }
+    const rows = rowsOf(host);
+    for (const word of ["alpha", "bravo", "charlie", "delta"]) {
+      const row = rows.findIndex((line) => line.includes(word));
+      const text = [...host.querySelectorAll("p")].find((p) => p.textContent!.includes(word))!;
+      const node = text.lastChild!;
+      const range = document.createRange();
+      range.setStart(node, node.textContent!.indexOf(word));
+      range.setEnd(node, node.textContent!.indexOf(word) + word.length);
+      const native = range.getClientRects()[0]!;
+      expect(Math.round((native.left - grid.left) / cell.width), word).toBe(
+        rows[row]!.indexOf(word),
+      );
+      expect(Math.floor((native.top + native.height / 2 - grid.top) / cell.height), word).toBe(row);
+    }
+    // The bottom-aligned box's line text on its margin's row, two below
+    // its label's.
+    const delta = rows.findIndex((line) => line.includes("delta"));
+    expect(delta - rows.findIndex((line) => line.includes("mb-1"))).toBe(2);
+  },
+};
+
+/** Text indent (specs/cell-model.md "Text indent"), lengths in `u`: a
+ * hanging one, a percentage, one an inline block's width counts, and a
+ * mixed container's, its run after a block unindented. */
+const indentCases = (u: Unit): string[] => [
+  `<p style="text-indent:${u(-6)};padding-left:${u(12)};width:${u(26)}">a hanging indent over lines of words that wrap</p>`,
+  `<p style="text-indent:10%;width:${u(30)}">a tenth of its width indents the first line only</p>`,
+  `<div style="display:inline-block;text-indent:${u(12)}">abc</div> after`,
+  `<div style="text-indent:${u(4)}">first<p>block</p>second</div>`,
+];
+
+export const TextIndent: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(indentCases),
+};
+
+/** The wrapping `white-space` values (specs/cell-model.md "White-space
+ * and truncation"), lengths in `u`: `pre-line`'s newlines break, the
+ * spaces around them going, an inline element's newline too;
+ * `pre-wrap` keeps its spaces, hanging those at a soft break, out of
+ * the alignment too; `break-spaces` wraps its spaces as cells; a
+ * nowrap box inside keeps its own. */
+const whiteSpaceCases = (u: Unit): string[] => [
+  `<p style="white-space:pre-line;width:${u(20)}">first line\n   second   line of words that wrap here\nthird</p>`,
+  `<p style="white-space:pre-line;width:${u(20)}">one <b>two\nthree</b> four</p>`,
+  `<p style="white-space:pre-wrap;width:${u(12)}">  two  spaces lead   and   these   wrap here</p>`,
+  `<p style="white-space:pre-wrap;width:${u(12)};text-align:right">right  aligned text   </p>`,
+  `<p style="white-space:break-spaces;width:${u(12)}">ab   cd      ef gh    ij</p>`,
+  `<div style="display:flex"><p style="white-space:pre-wrap">trail   </p><p>next</p></div>`,
+  `<div style="display:flex"><p style="white-space:break-spaces">tail   </p><p>after</p></div>`,
+  `<div style="white-space:pre-wrap;width:${u(12)}">kept  spaces<div style="white-space:nowrap">a nowrap box inside</div></div>`,
+];
+
+/** A case's words where the browser puts them, the host's own light
+ * text on the grid's rows. */
+const wordsAndLightRows = async (host: HTMLElement, native: HTMLElement): Promise<void> => {
+  expectWordsAsNative(host, native);
+  await expectBrowserRowsToMatchEngine(host.parentElement!);
+};
+
+export const WhiteSpace: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(whiteSpaceCases, wordsAndLightRows),
+};
+
+/** `text-wrap: balance` and `pretty` (specs/cell-model.md "White-space
+ * and truncation"), lengths in `u`: a balanced heading, a balanced
+ * paragraph of three lines, and a pretty paragraph whose last line
+ * would hold one word. */
+const wrapStyleCases = (u: Unit): NativeCase[] => [
+  `<h2 style="text-wrap:balance;width:${u(30)}">a heading long enough to wrap onto two lines</h2>`,
+  `<p style="text-wrap:balance;width:${u(24)}">balanced lines even out their lengths so that no line runs far past the others here</p>`,
+  {
+    markup: `<p style="text-wrap:pretty;width:${u(24)}">a pretty paragraph keeps its final line from one word</p>`,
+    // Firefox wraps it greedily; WebKit re-breaks the whole paragraph.
+    departs: ["firefox", "webkit"],
+  },
+];
+
+export const WrapStyle: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(wrapStyleCases, wordsAndLightRows),
+};
+
+/** Line breaking (specs/cell-model.md "Line breaking"), lengths in `u`:
+ * `<wbr>`, a zero-width space, soft hyphens, dashes, Japanese with its
+ * punctuation, kana beside `ー` and small kana, Korean, and `word-break`.
+ * `cjk` marks the copies re-spaced to the grid's two cells a character,
+ * which their fonts draw narrower. Chromium breaks before `ー` and small
+ * kana. */
+const lineBreaks: {
+  width: number;
+  text: string;
+  style?: string;
+  cjk?: true;
+  departs?: Engine[];
+}[] = [
+  { width: 16, text: "super<wbr>califragilistic<wbr>expialidocious" },
+  { width: 12, text: "longword&#8203;continues&#8203;here" },
+  { width: 10, text: "hy&shy;phen&shy;a&shy;tion is hy&shy;phen&shy;at&shy;ed" },
+  { width: 10, text: "one—two—three–four five" },
+  {
+    width: 16,
+    text: "日本語の文章は、単語の間に空白がありません。",
+    cjk: true,
+  },
+  { width: 7, text: "チャホーチャホー", cjk: true, departs: ["chromium"] },
+  {
+    width: 11,
+    text: "한국어문장도음절사이에서",
+    cjk: true,
+  },
+  { width: 12, text: "abc defghijklmnopq rst", style: "word-break:break-all" },
+  {
+    width: 12,
+    text: "한국어 문장도 음절",
+    style: "word-break:keep-all",
+    cjk: true,
+  },
+];
+const lineBreakCases = (u: Unit): NativeCase[] =>
+  lineBreaks.map(({ width, text, style = "", departs }) => ({
+    markup: `<p style="width:${u(width)};${style}">${text}</p>`,
+    departs,
+  }));
+
+/** Each case's rows as the browser breaks them, a CJK copy spaced to
+ * the grid's two cells a character by its first (its fallback font
+ * draws them narrower), its spaces kept a cell. */
+export const LineBreaks: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(lineBreakCases, async (host, native, i) => {
+    if (lineBreaks[i]!.cjk) {
+      const probe = native.appendChild(document.createElement("span"));
+      probe.textContent = native.textContent!.charAt(0);
+      const advance = probe.getBoundingClientRect().width;
+      probe.remove();
+      const spacing = 2 * cellSize(host).width - advance;
+      Object.assign(native.style, { letterSpacing: `${spacing}px`, wordSpacing: `${-spacing}px` });
+      await frames(1);
+    }
+    expectLinesAsNative(host, native);
+  }),
+};
+
+/** Line clamps (specs/cell-model.md "White-space and truncation"),
+ * lengths in `u`, each clamp's paragraph before an `after` one: two
+ * lines of three, three of four, and two of a text that fits them. */
+const clamps = [2, 3, 2];
+const clampCases = (u: Unit): string[] =>
+  [
+    "a paragraph long enough to wrap onto several lines under the clamp",
+    "a paragraph long enough to wrap onto several lines under the clamp, and more",
+    "short text",
+  ].map(
+    (text, i) =>
+      `<p style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:${clamps[i]};overflow:hidden;width:${u(24)}">${text}</p><p data-test="after">after</p>`,
+  );
+
+/** Each clamp's next paragraph where the browser puts it, and its last
+ * kept line ending in `…` where the clamp cut it. */
+export const LineClamp: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(clampCases, (host, native, i) => {
+    const row = Math.round(cellOffset(native, "after", cellSize(host)).y);
+    const rows = rowsOf(host);
+    expect(
+      rows.findIndex((line) => line.includes("after")),
+      `case ${i}`,
+    ).toBe(row);
+    expect(rows[row - 1]!.trimEnd().endsWith("…"), `case ${i}`).toBe(i < 2);
+  }),
+};
+
 export const TextAlign: StoryObj = {
   render: () => html`
     <mono-wind>
@@ -351,13 +628,37 @@ export const TextAlign: StoryObj = {
         <div class="border border-neutral-500 px-1 text-center">
           text-center too — each line centers at a whole-cell offset
         </div>
-        <div class="border border-neutral-500 px-1 text-justify">
-          text-justify would be off-grid, so it is forced back to start
+        <div class="max-w-40 border border-neutral-500 px-1 text-justify">
+          text-justify shares each line's leftover cells among its gaps
         </div>
       </div>
     </mono-wind>
   `,
   play: ({ canvasElement }) => expectBrowserRowsToMatchEngine(canvasElement),
+};
+
+/** Justified text (specs/cell-model.md "Text alignment"), lengths in
+ * `u`: wrapping paragraphs, a line's leftover odd and in halves, one
+ * with an inline block mid-line, and one broken hard, its line before
+ * the break at the start. */
+const justifyCases = (u: Unit): string[] =>
+  (
+    [
+      [22, "each line but the last fills the width, its gaps sharing what is left"],
+      [24, "each line but the last line"],
+      [
+        24,
+        `a <span style="display:inline-block;width:${u(5)}">box</span> sits mid-line and moves with its gaps as the text does`,
+      ],
+      [22, "a line before<br>a hard break keeps to the start of its row"],
+    ] as const
+  ).map(([width, text]) => `<p style="text-align:justify;width:${u(width)}">${text}</p>`);
+
+/** Each word on the browser's row, at the cell nearest its fractional
+ * column — either neighbor at a half. */
+export const Justify: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(justifyCases, (host, native) => expectWordsAsNative(host, native, 0.1)),
 };
 
 export const Leading: StoryObj = {

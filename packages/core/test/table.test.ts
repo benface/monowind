@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderPlainText } from "../src/plain-text.ts";
+import { renderGridRows, renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { render } from "../src/render.ts";
 import { buildTree } from "../src/tree.ts";
@@ -92,19 +92,19 @@ describe("collapsed borders", () => {
         <tr><td style="border: 3px double">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
     );
-    // The wider double wins the shared line. Mixed-style junctions fall
-    // back to the light set — light, since double has no heavier weight
-    // to carry in — so only the all-double corners show double junctions.
+    // The wider double wins the shared line. A junction whose top edge
+    // is double on one side and single on the other has no Unicode
+    // glyph, so it falls back to the light set.
     expect(art).toBe(["╔══┬──┐", "║aa║bb│", "╚══┴──┘"].join("\n"));
   });
 
-  it("a wider border wins the shared edge and draws heavy, junctions with it", () => {
+  it("a wider border wins the shared edge and draws heavy, junctions mixed with it", () => {
     const art = plainText(
       `<table style="border-collapse: collapse">
         <tr><td style="border: 2px solid">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
     );
-    expect(art).toBe(["┏━━┳──┐", "┃aa┃bb│", "┗━━┻──┘"].join("\n"));
+    expect(art).toBe(["┏━━┱──┐", "┃aa┃bb│", "┗━━┹──┘"].join("\n"));
   });
 
   it("resolves the lattice with the table's set: a cell's own rings set has no say", () => {
@@ -113,7 +113,7 @@ describe("collapsed borders", () => {
         <tr><td style="border: 2px solid; --mw-border-glyphs: ascii">aa</td><td style="${CELL_BORDER}">bb</td></tr>
       </table>`,
     );
-    expect(art).toBe(["┏━━┳──┐", "┃aa┃bb│", "┗━━┻──┘"].join("\n"));
+    expect(art).toBe(["┏━━┱──┐", "┃aa┃bb│", "┗━━┹──┘"].join("\n"));
   });
 
   it("draws a lattice line at the table set's band thickness: two cells under single", () => {
@@ -253,6 +253,17 @@ describe("column sizing", () => {
     );
     layoutRoot(node, 60);
     expect(node.localRect.width).toBe(10); // 4 + 6, no borders
+  });
+
+  it("sizes an auto table's percent padding against its container beside its margins", () => {
+    const node = build(
+      `<div><table style="margin: 0 64px; padding: 0 10%"><tr><td>hello world</td></tr></table></div>`,
+    );
+    layoutRoot(node, 100);
+    const table = node.children[0]!;
+    // 10% of 100 a side, the cell's text on one row.
+    expect(table.resolvedPadding).toMatchObject({ left: 10, right: 10 });
+    expect(table.localRect.width).toBe(31);
   });
 
   it("wraps cell text when a fixed cell width caps the column", () => {
@@ -431,13 +442,35 @@ describe("percent heights and legacy attributes", () => {
     expect(row.children.map((c) => c.localRect.width)).toEqual([8, 1]);
   });
 
+  it("lines baseline cells' first text rows up, the row growing to hold them", () => {
+    // `a` one row down its padding, `b` shifted to meet it.
+    expect(
+      plainText(
+        `<table><tr><td style="vertical-align: baseline; padding-top: 4px">a</td><td style="vertical-align: baseline">b</td></tr></table>`,
+      ),
+    ).toBe("\nab");
+    // An empty cell's baseline, its content's top, lowers nothing, and
+    // its height holds the shift.
+    expect(
+      plainText(
+        `<table><tr><td style="vertical-align: baseline; padding-top: 8px">a</td><td style="vertical-align: baseline">b</td><td style="vertical-align: baseline; height: 20px"></td></tr></table>`,
+      ),
+    ).toBe("\n\nab\n\n");
+    // A cell whose content draws no line has its baseline at its
+    // content's bottom (CSS 2 §17.5.3).
+    expect(
+      plainText(
+        `<table><tr><td style="vertical-align: baseline">a</td><td style="vertical-align: baseline"><div style="height: 12px"></div></td></tr></table>`,
+      ),
+    ).toBe("\n\na");
+  });
+
   it("honors the legacy valign and align attributes", () => {
     const art = plainText(`<table><tr><td>a<br>b<br>c</td><td valign="bottom">z</td></tr></table>`);
     expect(art).toBe(["a", "b", "cz"].join("\n"));
     const node = build(`<table><tr><td align="center">x</td></tr></table>`);
     const cell = node.children[0]!.children[0]!.children[0]!;
     expect(cell.style.textAlign).toBe("center");
-    expect(cell.style.textAlignBlocked).toBe(false);
   });
 });
 
@@ -574,6 +607,46 @@ describe("structure", () => {
         `<table style="caption-side: bottom"><caption>cap</caption><tr><td>body</td></tr></table>`,
       ),
     ).toBe(["body", "cap"].join("\n"));
+  });
+
+  it("sets its caption outside the table's border and padding, margins and all", () => {
+    const table = (side: string, caption: string) =>
+      plainText(
+        `<table style="border: 1px solid; padding: 0 4px; border-spacing: 0; caption-side: ${side}"><caption style="${caption}">cap</caption><tr><td>body text</td></tr></table>`,
+      );
+    expect(table("top", "text-align: left")).toBe(
+      ["cap", "┌───────────┐", "│ body text │", "└───────────┘"].join("\n"),
+    );
+    expect(table("bottom", "text-align: left; margin: 4px 0 0 8px")).toBe(
+      ["┌───────────┐", "│ body text │", "└───────────┘", "", "  cap"].join("\n"),
+    );
+    // Auto margins center a sized caption; negative ones reach past the
+    // table, the box starting at the margin box's end.
+    expect(table("top", "text-align: left; width: 12px; margin: 0 auto")).toMatch(/^ {5}cap\n/);
+    const node = build(
+      `<table style="border: 1px solid"><caption style="margin: -4px 0 0 -8px">cap</caption><tr><td>body</td></tr></table>`,
+    );
+    layoutRoot(node, 60);
+    expect(node.children[0]!.localRect).toMatchObject({ x: -2, y: -1 });
+    expect(node.tableBox).toEqual({ top: 0, height: 3 });
+  });
+
+  it("fills a collapsed table's rows alone, not its caption's", () => {
+    const node = build(
+      `<table style="border-collapse: collapse; background-color: red"><caption>cap</caption><tr><td>body</td></tr></table>`,
+    );
+    layoutRoot(node, 60);
+    const [caption, body] = renderGridRows(node).segments;
+    expect(caption!.some((segment) => segment.backgroundColor)).toBe(false);
+    expect(body!.every((segment) => segment.backgroundColor === "red")).toBe(true);
+  });
+
+  it("floors the table's width at its caption's min-content, not its max-content", () => {
+    expect(
+      plainText(
+        `<table style="border-spacing: 0"><caption style="text-align: left">a long caption</caption><tr><td>x</td></tr></table>`,
+      ),
+    ).toBe(["a long", "caption", "x"].join("\n"));
   });
 
   it("hides stray text through its container, which its rows show through", () => {

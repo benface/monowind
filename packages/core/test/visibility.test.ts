@@ -184,7 +184,7 @@ describe("a hidden box's own ink, each piece", () => {
     ],
     [
       "a truncation ellipsis",
-      { whiteSpace: "nowrap", overflow: { x: "clip", y: "clip" }, textOverflow: "ellipsis" },
+      { whiteSpace: "nowrap", overflow: { x: "hidden", y: "hidden" }, textOverflow: "ellipsis" },
       "a line too long for it",
     ],
   ];

@@ -42,15 +42,14 @@ reversed flex axis swaps them alone (steps 7–9) and they are `start`
 and `end` elsewhere — with css-align's overflow position beside it:
 `safe` (Tailwind's `*-safe` utilities) sets the field's flag
 (`justifyContentSafe`, …), which changes nothing while overflow
-alignment is always safe (cell-model.md deviation 21), `unsafe` reads
+alignment is always safe (cell-model.md deviation 19), `unsafe` reads
 as the bare keyword, and `legacy` (`justify-items`) drops out. A
-baseline is safe, and places an item at the line edge its baseline
-group sits at, as `flex-start` (`flex-end` for `last baseline`), and
-anything else — a grid item, an out-of-flow child's static position —
-at its fallback `start` (`end`); `align-content` reads it as
-`flex-start` (`end`) (deviation 2). Any other value warns once and
-reads as the property's initial value (`normal`, or `auto` for
-`align-self` and `justify-self`).
+baseline is safe. It groups a row's items (steps 5 and 8); a column's
+items take it as `flex-start` (`flex-end` for `last baseline`), an
+out-of-flow child's static position as its fallback `start` (`end`),
+and `align-content` as `flex-start` (`end`). Any other value warns
+once and reads as the property's initial value (`normal`, or `auto`
+for `align-self` and `justify-self`).
 
 ## Row algorithm
 
@@ -89,25 +88,26 @@ reads as the property's initial value (`normal`, or `auto` for
      among the rest until nothing new violates. When clamps bind, the line
      may underfill (justify-content sees the leftover) or overflow.
    - **Automatic minimum size** (`min-width/height: auto`, the CSS
-     default, §4.5): a flex item with visible overflow never shrinks below
-     its min-content main size (longest breakable segment in a row; in a
-     column, its content's own height — a container's items, a text
-     leaf's lines — whatever height or `min-height` floor the item has),
-     capped by its own width or height and its max-width or max-height —
-     a `w-3` item holding a longer word stays 3 wide, the word
-     overflowing, and two `h-15` items holding a line each shrink to
+     default, §4.5): a flex item that is not a scroll container never
+     shrinks below its min-content main size (longest breakable segment
+     in a row; in a column, its content's own height — a container's
+     items, a text leaf's lines — whatever height or `min-height` floor
+     the item has), capped by its own width or height and its max-width
+     or max-height — a `w-3` item holding a longer word stays 3 wide, the
+     word overflowing, and two `h-15` items holding a line each shrink to
      share an `h-20` column, containers and aligned text leaves alike, as
      Chromium and Firefox lay them out (probed 2026-09-23; WebKit keeps a
      grid item at its height, and grows a `min-h-*` aligned leaf from its
-     floor), save for a percent-height child (deviation 3). Non-visible
-     overflow (e.g. `truncate`) or an explicit `min-w-0`/`min-h-0`
-     disables it — exactly the CSS idiom for shrinkable/truncatable flex
-     children.
+     floor), save for a percent-height child (deviation 2). A scroll
+     container (`overflow: hidden | auto | scroll`, e.g. `truncate`) or
+     an explicit `min-w-0`/`min-h-0` disables it — exactly the CSS idiom
+     for shrinkable/truncatable flex children; `overflow: clip` keeps it.
 4. **Lay out each item at its final width** (text re-wraps at that width,
    nested containers re-lay out).
 5. **Line height**: the tallest item on the line, its fixed cross-axis
    margins included (auto ones count 0) — an auto-height row holding a
-   `my-1` item is three rows tall. For a single `nowrap`
+   `my-1` item is three rows tall — or a baseline group's extent (step
+   8), its members' shifts counted, if taller. For a single `nowrap`
    line whose container has a bounded inner height (explicit `height` or
    `min-height`), the line stretches to that height, so cross-axis
    alignment sees the enforced size.
@@ -134,7 +134,7 @@ reads as the property's initial value (`normal`, or `auto` for
    engine).
    An overflowing line (a negative leftover, auto margins taking none)
    starts at the start edge whatever the keyword: overflow alignment is
-   always safe (cell-model.md deviation 21), where CSS centers or ends
+   always safe (cell-model.md deviation 19), where CSS centers or ends
    it past the start edge, the space-* keywords falling back to start
    (probed 2026-09-24, every engine).
 8. **Cross-axis placement**: cross-axis auto margins win (both auto →
@@ -146,9 +146,15 @@ reads as the property's initial value (`normal`, or `auto` for
    item larger than its line sits at the line's start, like an
    overflowing line (step 7). The column's cross axis aligns the same
    way, with the left and right margins; grid items align in their
-   areas with the same function. Under `wrap-reverse` the cross axis
-   runs backwards: `flex-start` and `flex-end` swap, `start` and `end`
-   (the `place-*` utilities) keeping the writing mode's, and an item
+   areas with the same function. In a row's line, the items aligned by
+   `baseline` whose cross margins are not auto form a group
+   (css-flexbox §9.4 step 8): each sits where its first text row meets
+   the group's deepest (a box drawing no line by its last row), its
+   margins counted, and the group rides the line's cross-start. `last
+baseline` lines up last text rows at the line's end the same way.
+   Under `wrap-reverse` the cross axis runs backwards: `flex-start` and
+   `flex-end` swap, and a baseline group's ends with them, `start` and
+   `end` (the `place-*` utilities) keeping the writing mode's, and an item
    `stretch` leaves short of its line (an explicit height, a
    `max-height`) sits at the line's end, `flex-start` being stretch's
    fallback. A column's items (its one line) and a text leaf's anonymous
@@ -202,6 +208,15 @@ Same shape, transposed, with these specifics:
 - Unbounded inner height → children take their hypothetical sizes (bases
   clamped by their own min/max); container content height is their sum
   plus gaps and fixed margins, and main-axis auto margins get no space.
+
+## A container of text alone
+
+A flex container holding only text lays it out as its one anonymous
+item, aligned by `justify-content` along the main axis and
+`align-items` across it at whole-cell offsets, which the engine folds
+into its own padding (layout.ts `alignLeafText`); the native text, the
+container's own, lands on the same cells. Text wider or taller than
+the box stays at the start (cell-model.md deviation 19).
 
 ## Integer distribution (shared)
 
@@ -273,17 +288,10 @@ from the other, all three engines agreeing unless named (probed
 
 1. `flex-wrap: wrap` only wraps in the row direction; column containers
    never wrap.
-2. No baseline alignment: a baseline item sits at the line edge its
-   baseline group starts from (`items-baseline` behaves as
-   `items-start`, `items-baseline-last` as `items-end`), where CSS
-   lines up the items' first text rows, which their margins, borders
-   and padding can set apart. Under `wrap-reverse` that puts a group's
-   shorter items at the line's bottom, where CSS lines their first rows
-   up with the tallest's (probed 2026-09-25).
-3. A column item's content height — its automatic minimum, an intrinsic
+2. A column item's content height — its automatic minimum, an intrinsic
    basis — counts a percent-height child against the item's own
    definite height, as WebKit does: in an `h-20` column, an `h-15` item
    holding an `h-full` child keeps 15 rows beside an `h-15` sibling's 5,
    where Chromium and Firefox take the child's percent as `auto` for the
    minimum and share the column 10/10 (probed 2026-09-23).
-4. All the cell-model deviations (integer rounding, etc.) apply.
+3. All the cell-model deviations (integer rounding, etc.) apply.

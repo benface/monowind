@@ -99,16 +99,30 @@ export type AlignItems = "start" | "center" | "end" | FlexEdge | Baseline | "str
 type AlignContent = JustifyContent;
 type AlignSelf = "auto" | AlignItems;
 export type BorderStyle = "solid" | "double" | "dashed" | "dotted";
-/** Per-axis overflow state. `hidden` reads as `"clip"` (no scroll
- * container, cheaper — the precise semantic for what the engine
- * does); `auto` and `scroll` are both scroll containers
- * (`scrollsAxis`), differing only in the gutter — `scroll` reserves
- * it always, `auto` only once content overflows. */
-export type OverflowAxis = "visible" | "clip" | "auto" | "scroll";
+/** Per-axis overflow state. `hidden` and `clip` both clip, and the
+ * engine scrolls neither; `hidden` is a scroll container to CSS
+ * (`isScrollContainer`: its automatic minimum 0, a formatting-context
+ * root), `clip` not. `auto` and `scroll` scroll (`scrollsAxis`),
+ * differing only in the gutter — `scroll` reserves it always, `auto`
+ * only once content overflows. */
+export type OverflowAxis = "visible" | "clip" | "hidden" | "auto" | "scroll";
 
 export function scrollsAxis(axis: OverflowAxis): boolean {
   return axis === "auto" || axis === "scroll";
 }
+
+/** Clips, unscrolled: `hidden` or `clip`. */
+export function clipsAxis(axis: OverflowAxis): boolean {
+  return axis === "hidden" || axis === "clip";
+}
+
+export function isScrollContainer(axis: OverflowAxis): boolean {
+  return axis === "hidden" || scrollsAxis(axis);
+}
+
+/** A box that is a scroll container, on either axis. */
+export const hasScrollport = ({ x, y }: Overflow): boolean =>
+  isScrollContainer(x) || isScrollContainer(y);
 export interface Overflow {
   x: OverflowAxis;
   y: OverflowAxis;
@@ -126,10 +140,21 @@ export interface LineBand {
   x: number;
   width: number;
 }
-/** `nowrap` disables soft wrapping; `pre` additionally preserves the
- * source's spaces and newlines (specs/cell-model.md). Everything else
- * (`pre-wrap` included) behaves as `normal`. */
-type WhiteSpace = "normal" | "nowrap" | "pre";
+/** `white-space` (specs/cell-model.md "White-space and truncation"):
+ * `nowrap` and `pre` never soft-wrap, `pre` keeping the source's spaces
+ * and newlines; `pre-line` keeps its newlines, `pre-wrap` and
+ * `break-spaces` its spaces too, all three wrapping. */
+type WhiteSpace = "normal" | "nowrap" | "pre" | "pre-line" | "pre-wrap" | "break-spaces";
+
+/** Whether lines soft-wrap under a `white-space`. */
+export function softWraps(whiteSpace: WhiteSpace): boolean {
+  return whiteSpace !== "nowrap" && whiteSpace !== "pre";
+}
+
+/** How a wrapping `white-space` keeps its spaces (wrap.ts `preserve`). */
+export function preservedSpaces(whiteSpace: WhiteSpace): "hang" | "break" | undefined {
+  return whiteSpace === "pre-wrap" ? "hang" : whiteSpace === "break-spaces" ? "break" : undefined;
+}
 
 /** A length in whole cells, or a percentage kept symbolic until layout.
  * Percentages resolve against the CSS-appropriate basis at layout time:
@@ -268,11 +293,13 @@ export type TrackBreadth =
   | { kind: "min-content" }
   | { kind: "max-content" }
   /** `min()` / `max()` over fixed breadths — the canonical responsive
-   * auto-fill pattern `minmax(min(8rem, 100%), 1fr)`. Resolvable only
-   * when every argument is (a percent argument needs a definite axis);
-   * otherwise the whole function behaves as `auto`. `calc()` arithmetic
-   * stays unsupported (specs/grid.md deviations). */
-  | { kind: "math"; fn: "min" | "max"; args: TrackBreadth[] };
+   * auto-fill pattern `minmax(min(8rem, 100%), 1fr)` — and a `calc()`,
+   * its percentage and cells summed. Resolvable only when every
+   * argument is (a percent argument needs a definite axis); otherwise
+   * the whole function behaves as `auto`. */
+  | { kind: "math"; fn: "min" | "max" | "sum"; args: TrackBreadth[] }
+  /** `fit-content(L)`'s maximum: max-content, capped at `limit`. */
+  | { kind: "fit-content"; limit: TrackBreadth };
 
 /** A grid track as a normalized minmax pair — every track-size form reads
  * as one (`8rem` → minmax(cells, cells), `1fr` → minmax(auto, fr), …). */
@@ -287,7 +314,9 @@ export interface TrackSize {
  * resolves its count at layout time against the definite axis size. */
 export type GridTemplate =
   | { kind: "none" }
-  | { kind: "subgrid" }
+  /** `subgrid`, its own line names from its first line (`subgrid [a]
+   * [b]`) beside the parent's it inherits. */
+  | { kind: "subgrid"; lineNames?: string[][] }
   | {
       kind: "tracks";
       tracks: TrackSize[];
@@ -506,7 +535,7 @@ export interface CellStyle {
   justifyContent: JustifyContent;
   /** `safe` in the value, css-align's overflow position; each alignment
    * field has its flag. Layout aligns every overflow as `safe`
-   * (specs/cell-model.md deviation 21). */
+   * (specs/cell-model.md deviation 19). */
   justifyContentSafe: boolean;
   /** Flex: multi-line (wrap-enabled) containers only, per CSS. Grid: row
    * track distribution. */
@@ -571,8 +600,9 @@ export interface CellStyle {
   /** `top/right/bottom/left`; `null` = `auto`. Percentages resolve against
    * the containing block (width for left/right, height for top/bottom). */
   insets: PerSide<CellLength | null>;
-  gapX: CellLength;
-  gapY: CellLength;
+  /** `null` = `normal`: 0, or a subgrid's parent's gap (specs/grid.md). */
+  gapX: CellLength | null;
+  gapY: CellLength | null;
   /** Cells per edge: the weight band's thickness (specs/cell-model.md
    * "Box model") — one under the defaults, two under a set's rings. */
   border: Insets;
@@ -591,6 +621,9 @@ export interface CellStyle {
    * `thin` and `auto` both defer to `scrollbarSize`
    * (specs/scrolling.md). */
   scrollbarWidth: "auto" | "none";
+  /** A scroll container's `scroll-padding` in cells, which a reveal
+   * stops clear of past its border and bars (specs/scrolling.md). */
+  scrollPadding: Insets;
   /** Bar thickness in cells per axis — `x` the horizontal bar's
    * height, `y` the vertical bar's width (`--mw-scrollbar-size-x/y`,
    * the scrollbar-*, scrollbar-x-*, scrollbar-y-* utilities; default
@@ -621,6 +654,10 @@ export interface CellStyle {
   /** Paint-only: with `nowrap` + clipping, the browser draws the ellipsis.
    * The engine only needs it for the plain-text renderer's mirror of that. */
   textOverflow: TextOverflow;
+  /** `-webkit-line-clamp` on a vertical `-webkit-box`: a text leaf's
+   * lines past it are cut, the last kept ending in `…`
+   * (specs/cell-model.md "White-space and truncation"). */
+  lineClamp: number | null;
   /** Computed colors: the text's ink, and the box's fill (undefined
    * where transparent). */
   color: string | undefined;
@@ -637,20 +674,23 @@ export interface CellStyle {
   /** Its glyph properties' values (`GLYPH_PROPERTIES`), which its
    * glyphs take where they differ from the host's. */
   glyph: GlyphValues;
-  textDecorationLine: string;
-  /** True when text-align is `justify` — forced back to `start` (its
-   * extra per-line word spacing is fractional). See cell-model spec. */
-  textAlignBlocked: boolean;
+  textDecoration: TextDecoration;
   /** Computed text-align, normalized LTR. `end` offsets each line by
-   * W − line, `center` by floor((W − line) / 2) — whole cells, painted
-   * by the grid (the browser's own fractional centering only touches
-   * the invisible light-DOM copy). */
-  textAlign: "start" | "center" | "end";
-  /** First-line indent in cells (per CSS: applies once to the first
-   * formatted line of the block; `<br>` doesn't re-indent). Charged
-   * against the wrap width of the first line and offsets that line's
-   * paint x. Percentages resolve to 0 (unsupported). */
-  textIndent: number;
+   * W − line, `center` by floor((W − line) / 2), `justify` shares it
+   * among a line's gaps — whole cells, painted by the grid (the
+   * browser's own fractional ones only touch the invisible light-DOM
+   * copy). */
+  textAlign: "start" | "center" | "end" | "justify";
+  /** `text-wrap-style` (specs/cell-model.md "White-space and
+   * truncation"): where a wrapping leaf's lines break. */
+  textWrapStyle: "auto" | "balance" | "pretty";
+  /** `word-break` (specs/cell-model.md "Line breaking"); its
+   * `break-word` wraps as `normal` under the `anywhere` lock. */
+  wordBreak: "normal" | "break-all" | "keep-all";
+  /** First-line indent (per CSS: applies once to the first formatted
+   * line of the block; `<br>` doesn't re-indent), signed, a percentage
+   * of the leaf's content width; a leaf resolves it (`indent`). */
+  textIndent: CellLength;
   tableRole: TableRole;
   tableLayout: "auto" | "fixed";
   /** True for `border-collapse: collapse` (Tailwind preflight's default
@@ -662,11 +702,11 @@ export interface CellStyle {
   captionSide: "top" | "bottom";
   /** Computed `vertical-align` normalized (the companion's baseline
    * lock is measuring-gated, so the read sees the authored/UA value).
-   * Consumed by table cells (`td`/`th` default to the UA's `middle`;
-   * `baseline` behaves as `start`) and by atomic inline boxes, where
-   * only `end` (bottom) acts — it drops the line's text to the box's
+   * Consumed by table cells (`td`/`th` default to the UA's `middle`,
+   * specs/table.md) and by atomic inline boxes, where `baseline` acts
+   * as `start` and `end` (bottom) drops the line's text to the box's
    * last row (specs/cell-model.md). */
-  verticalAlign: "start" | "center" | "end";
+  verticalAlign: "start" | "center" | "end" | "baseline";
   /** Computed `opacity` (0..1): below 1, the element paints as a group
    * the walk blends into the cells beneath (specs/cell-model.md
    * "Opacity and translucency"). */
@@ -799,10 +839,15 @@ export interface InlineElement {
   tracking: number;
   padLeft: number;
   padRight: number;
+  /** A relative element's insets as authored, and in cells against its
+   * leaf's content box (`insets`, each layout's; specs/positioning.md
+   * "Inline elements"). */
+  insetLengths?: PerSide<CellLength | null>;
   insets: PerSide<number | null> | null;
-  /** A sticky element's insets, constraints for its shift
-   * (specs/sticky.md), and the shift for the current scroll offsets. */
-  sticky?: PerSide<number | null>;
+  /** A sticky element's insets, constraints for its shift against its
+   * scrollport (specs/sticky.md), and the shift for the current scroll
+   * offsets. */
+  sticky?: PerSide<CellLength | null>;
   stickyShift?: { x: number; y: number };
   /** Its `anchor-name`s, for the boxes anchored to it
    * (specs/anchor-positioning.md), and its own `anchor-scope`. */
@@ -814,7 +859,7 @@ export interface InlineElement {
   color: string | undefined;
   backgroundColor: string | undefined;
   glyph: GlyphValues;
-  textDecorationLine: string;
+  textDecoration: TextDecoration;
   /** Its computed `visibility` is `visible`: a hidden one's cells stay
    * blank, their space kept. */
   visible: boolean;
@@ -906,15 +951,16 @@ export interface LayoutNode {
    * inline-box and padding markers) fall between runs; renderer leaves
    * have no map. */
   charSource?: CharSourceRun[];
-  /** True on an atomic inline-level box (`inline-flex`/`inline-block`/
+  /** On an atomic inline-level box (`inline-flex`/`inline-block`/
    * `inline-grid`) riding its parent leaf's text run as a single
-   * unbreakable unit: the leaf's run holds an OBJECT REPLACEMENT
-   * CHARACTER (U+FFFC) for it whose advance is the box's laid-out width.
-   * The box stays IN FLOW in the browser (sized to whole cells by the
-   * companion stylesheet) so the browser's own line layout places it —
-   * engine and browser agree because both treat it as an atomic unit of
-   * the same width (specs/cell-model.md). */
-  inlineBox?: boolean;
+   * unbreakable unit, its used margins: the leaf's run holds an OBJECT
+   * REPLACEMENT CHARACTER (U+FFFC) for it whose advance is the box's
+   * margin box. The box stays IN FLOW in the browser (sized to whole
+   * cells, its margins too, by the companion stylesheet) so the
+   * browser's own line layout places it — engine and browser agree
+   * because both treat it as an atomic unit of the same width
+   * (specs/cell-model.md). */
+  inlineBox?: Insets;
   /** The product of the opacities of the inline elements between the box
    * and its leaf or container, which the paint walk multiplies into the
    * box's own (specs/cell-model.md "Opacity and translucency"); absent
@@ -933,6 +979,8 @@ export interface LayoutNode {
         rowSpan: number;
         cols?: InheritedTracks | undefined;
         rows?: InheritedTracks | undefined;
+        /** The parent's names on the lines each axis spans. */
+        names: { col: string[][]; row: string[][] };
       }
     | undefined;
   /** An anonymous run (specs/cell-model.md "Inline content"): a
@@ -944,6 +992,10 @@ export interface LayoutNode {
   decorationRuns?: BorderRun[];
   /** A collapsed table's border lattice, resolved at paint (lattice.ts). */
   lattice?: TableLattice;
+  /** A captioned table's box, the rows from its top that its border,
+   * fill and shadows take, the caption outside it (specs/table.md
+   * "Caption"). */
+  tableBox?: { top: number; height: number } | undefined;
   /** A table part's lattice cells for this paint, in grid cells, handed
    * over by its table to paint in the part's own turn (lattice.ts). */
   latticeRuns?: BorderRun[];
@@ -969,6 +1021,10 @@ export interface LayoutNode {
    * pass beside floats, and what a later re-derivation of the leaf's
    * lines (the paint's) wraps against. */
   lineBands?: LineBand[];
+  /** A leaf's `text-indent` in cells, resolved against its content width
+   * as it lays out: charged against the first line's wrap width (a
+   * negative one widening it) and offsetting that line's x. */
+  indent?: number;
   /** Scroll geometry (specs/scrolling.md), written by layoutNode on
    * containers with a scroll axis: content extent and the derived
    * max offset, both in cells. Absent elsewhere. */
@@ -979,10 +1035,6 @@ export interface LayoutNode {
   /** A sticky box's shift for the current scroll offsets (specs/sticky.md),
    * part of its `paintOrigin`; absent = none. */
   stickyShift?: { x: number; y: number };
-  /** A text leaf's last line's row from its border-box top: the
-   * baseline its box aligns by natively, for a middle-aligned inline
-   * box's placement (specs/cell-model.md "Typography"). */
-  baselineRow?: number;
   /** An inline box's line's text row, from the box's top, as the line
    * metrics settled it (specs/cell-model.md "Typography"). */
   inlineTextRow?: number;
@@ -1029,7 +1081,11 @@ export interface LayoutNode {
   /** A text leaf's lines as its layout wrapped them, and each one's text
    * row in its content box: the paint and the hit place its glyphs by
    * them. */
-  lines?: Pick<MulticolLeafGeometry, "spans" | "textY">;
+  lines?: Pick<MulticolLeafGeometry, "spans" | "textY" | "lineY"> & { clamped?: boolean };
+  /** An out-of-flow element of a leaf's run: the leaf's character it
+   * sits before, and whether it was inline-level before its position
+   * blockified it (specs/positioning.md "Static position"). */
+  runSpot?: { char: number; inline: boolean };
   /** Paragraph-flow multicol child (specs/multicol.md "Fragmenting
    * text-leaf children"): stays IN FLOW in the browser inside the
    * container's native columns so the browser fragments it itself.
@@ -1080,6 +1136,8 @@ export interface MulticolLeafGeometry {
 export interface CellMetrics {
   /** The cell, a whole number of 1/64 px (see metrics.ts). */
   width: number;
+  /** The light DOM's natural advance, which `width` rounds up. */
+  advance?: number;
   height: number;
   letterSpacing: number;
   /** The grid's letter-spacing: the root's plus what rounds the
@@ -1102,6 +1160,44 @@ export interface CellMetrics {
    * probe's: `auto`, or in WebKit `0px`, which a `min-*-0` reads as too
    * (specs/anchor-positioning.md deviation 1). */
   autoMinimum?: string;
+}
+
+/** How a text decoration draws (specs/cell-model.md "Typography"): its
+ * lines, style, color (resolved on the decorating box) and thickness,
+ * one object per distinct value (`decorationOf`), so paints compare
+ * them by identity. The underline's offset, inherited, is a glyph
+ * property. */
+export interface TextDecoration {
+  readonly line: string;
+  readonly style: string;
+  readonly color: string;
+  readonly thickness: string;
+}
+
+export const NO_DECORATION: TextDecoration = {
+  line: "none",
+  style: "solid",
+  color: "currentcolor",
+  thickness: "auto",
+};
+
+/** At most 256, as an animation's colors are endless. */
+const decorations = new Map<string, TextDecoration>();
+
+/** A decoration's value as a string. */
+export const decorationKey = (value: TextDecoration): string =>
+  `${value.line}|${value.style}|${value.color}|${value.thickness}`;
+
+/** The one object for a decoration's value. */
+export function decorationOf(value: TextDecoration): TextDecoration {
+  if (!value.line || value.line === "none") return NO_DECORATION;
+  const key = decorationKey(value);
+  let decoration = decorations.get(key);
+  if (!decoration) {
+    if (decorations.size === 256) decorations.clear();
+    decorations.set(key, (decoration = { ...value }));
+  }
+  return decoration;
 }
 
 export function defaultCellStyle(): CellStyle {
@@ -1148,19 +1244,20 @@ export function defaultCellStyle(): CellStyle {
     maxHeight: undefined,
     aspectRatio: null,
     padding: zeroInsets(),
-    margin: { top: 0, right: 0, bottom: 0, left: 0 },
+    margin: zeroInsets(),
     position: "static",
     float: "none",
     clear: "none",
     insets: { top: null, right: null, bottom: null, left: null },
-    gapX: 0,
-    gapY: 0,
+    gapX: null,
+    gapY: null,
     border: zeroInsets(),
     borderWeight: { top: 1, right: 1, bottom: 1, left: 1 },
     borderStyle: { top: "solid", right: "solid", bottom: "solid", left: "solid" },
     borderRadius: { tl: 0, tr: 0, bl: 0, br: 0 },
     overflow: { x: "visible", y: "visible" },
     scrollbarWidth: "auto",
+    scrollPadding: zeroInsets(),
     scrollbarSize: { x: 1, y: 1 },
     scrollbarInset: { x: 0, y: 0 },
     overscroll: { x: true, y: true },
@@ -1171,16 +1268,18 @@ export function defaultCellStyle(): CellStyle {
     lineGap: 0,
     tracking: 0,
     textOverflow: "clip",
+    lineClamp: null,
     color: undefined,
     backgroundColor: undefined,
     backgroundClear: false,
     backgroundImage: [],
     backgroundClip: "border-box",
     glyph: INITIAL_GLYPH,
-    textDecorationLine: "none",
+    textDecoration: NO_DECORATION,
     borderColor: { top: undefined, right: undefined, bottom: undefined, left: undefined },
-    textAlignBlocked: false,
     textAlign: "start",
+    textWrapStyle: "auto",
+    wordBreak: "normal",
     textIndent: 0,
     tableRole: "none",
     tableLayout: "auto",

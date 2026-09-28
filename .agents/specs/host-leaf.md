@@ -11,12 +11,12 @@ runs for text beside block children, 2026-09-06 (plan
 `<mono-wind>foo</mono-wind>` rendered nothing: the host was the one
 container whose direct text was never laid out, while `<div>foo</div>`
 anywhere inside it is a text leaf. The host's tree was built from its
-element children only, its own text flagged as dropped (then
-cell-model.md deviation 7) with a warning written for text NEXT TO
-block children, and the playground showed a blank preview to anyone
-who typed plain text. Wrapping the text in the light DOM is not an option: frameworks
-reconcile against the nodes they created, and a foreign wrapper breaks
-their next render, the author's selectors, and DOM round-trips. The
+element children only, its own text flagged as dropped with a warning
+written for text NEXT TO block children, and the playground showed a
+blank preview to anyone who typed plain text. Wrapping the text in the
+light DOM is not an option: frameworks reconcile against the nodes
+they created, and a foreign wrapper breaks their next render, the
+author's selectors, and DOM round-trips. The
 engine's own tree is the place to fix it, and it needs no new concept:
 the host is a container, and a container with no in-flow block child
 is a leaf.
@@ -35,10 +35,10 @@ is a leaf.
 - **The root leaf's style.** The virtual root's box style — no padding,
   border, margin, or size; the host's own padding and border stay
   outside the grid, as today — plus the host's text properties:
-  white-space, tab-size, text-indent, text-align (and its `justify`
-  block), text-overflow, overflow (for truncation), and the decoration
-  line. Tracking and line gap are zero by definition: the host's
-  letter-spacing and line-height ARE the cell. Its paint is the host's
+  white-space, tab-size, text-indent, text-align, text-overflow,
+  overflow (for truncation), and the decoration line. Tracking and line
+  gap are zero by definition: the host's letter-spacing and
+  line-height ARE the cell. Its paint is the host's
   color, weight, style, and decoration line, read as any leaf's (one
   style reader serves the root leaf and anonymous runs); the grid
   paints the decoration itself because an absolutely positioned
@@ -59,8 +59,13 @@ is a leaf.
   from its light parent, Chromium and WebKit from the slot, which the
   shadow sheet's own copy of the rule already covers (probed). The leaf
   typography rules the companion keys on laid-out descendants —
-  `nowrap`, `pre`, text-indent in cells, the `justify` block — gain
-  host variants, written on the host by the renderer as on any leaf.
+  `nowrap`, `pre`, text-indent in cells — gain host variants, written
+  on the host by the renderer as on any leaf.
+- **The host's `display` shapes the host's box alone.** Its one shadow
+  child, the viewport, is all that box lays out, so the engine lays the
+  host's children out as a block whatever the host's `display`, as CSS
+  does for a shadow host's slotted children (`flex`, `grid` belong on a
+  wrapper).
 - **Gestures and copy see the root leaf.** Hit-testing walks the root's
   children, so the semantic gestures consult the root leaf itself when
   no text leaf is under the cell; its paragraph unit is the run's DOM
@@ -81,13 +86,14 @@ is a leaf.
   has inline content; a host with neither is the empty zero-row root it
   is today.
 - Renderer, on the host only: `data-mw-leaf`, `data-mw-nowrap`,
-  `data-mw-pre`, `--mw-ti`, `data-mw-text-align-blocked`. No geometry
+  `data-mw-pre`, `--mw-ws`, `--mw-ti`. No geometry
   vars, no `data-mw-laid-out` (that rule absolutizes).
 - Companion CSS: host variants of the fill and decoration locks
   (`mono-wind:not([measuring])[data-mw-leaf]`), of the `::selection`
   invert, of the grid-mode selection lock (Firefox takes a slotted text
-  node's `user-select` from its light parent), and of the four leaf
-  typography rules; in the shadow sheet,
+  node's `user-select` from its light parent), and of the three leaf
+  typography rules (`nowrap`, `pre` through `--mw-ws`, text-indent);
+  in the shadow sheet,
   `#grid { -webkit-text-fill-color: currentColor }`.
 - The slot is a positioned block box (`display: flow-root`, absolute
   at the viewport's origin, in flow while the engine reads,
@@ -113,10 +119,13 @@ is a leaf.
 - **The host's centered lines** keep the browser's fractional centering
   in text mode: the half-cell nudge is a transform and would move the
   whole component.
-- **Column utilities on the host itself** are not modeled: the engine
-  lays the host out in one column while the browser still breaks the
-  host's box into columns, the grid's rows and the laid-out elements
-  with it, so both land out of place; use a wrapper.
+- **A `columns-*` host is one column**, grid and light DOM alike: CSS
+  would flow the viewport through the host's columns, fragmenting it;
+  the viewport spans them instead (`column-span: all`, shadow.css).
+  Put the columns on a wrapper.
+- **An `inline` or `contents` host lays nothing out**: it has no width
+  of its own to lay out in, so the engine warns once and renders
+  nothing, where CSS would place the viewport as a block of its own.
 - A mixed host's block children are flow children (cell-model.md):
   in the browser's flow, engine-sized and engine-margined, so the
   host's own runs sit natively on their rows; the shadow slot is a
@@ -153,14 +162,3 @@ is a leaf.
   elements, the root, or an anonymous run.
 - README "Selection" or the intro: a sentence that the host's own text
   renders like any element's.
-
-## Resolved: anonymous runs for text between block children
-
-Deferred at first (a node kind five modules must respect, plus a
-fragment path for a run's inline elements, for a markup shape the
-warning already named the fix for); done 2026-09-06 without the
-fragment path — a mixed block container's block children stay in the
-browser's flow (as multicol's spanners do), so the runs' native text
-and inline elements land on their rows by themselves. Spec:
-cell-model.md "Inline content"; plan
-`.agents/plans/2026-09-06-anonymous-runs.md`.

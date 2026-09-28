@@ -45,9 +45,9 @@ scrollport's bottom.
 
 - **The scroll container and the sticky view rectangle.** The box's
   scroll container is its nearest ancestor on its containing-block
-  chain (`positioning.md` "Paint order") with a scrolling axis
-  (`overflow: auto | scroll` on x or y — `scrollsAxis`), the host
-  included: a sticky box inside an absolute box skips a static
+  chain (`positioning.md` "Paint order") that is a scroll container
+  (`overflow: hidden | auto | scroll` on x or y — `isScrollContainer`),
+  the host included: a sticky box inside an absolute box skips a static
   scroller the absolute box escapes. Its scrollport is its padding box
   less the reserved gutter cells (`scrolling.md`); the sticky view
   rectangle is the scrollport inset by the box's non-`auto` insets —
@@ -56,9 +56,10 @@ scrollport's bottom.
   (deviation 1). A `fixed` ancestor, a top-layer element's included,
   ends the search: it paints outside the scrolling ancestors above it,
   so a sticky box inside it sticks only to a scroller inside it, as
-  CSS's scroll container for it is the viewport's. An ancestor that
-  only clips (`overflow: hidden`, read as `clip` — `cell-model.md`) is
-  passed over (deviation 2).
+  CSS's scroll container for it is the viewport's. A `hidden`
+  ancestor, which never scrolls (cell-model.md deviation 24), holds
+  the box where its normal position lies inside the view, as in CSS; a
+  `clip` one is no scroll container and is passed over.
 
 - **The shift, per axis, per css-position-3 §3.4.** In the scroll
   container's coordinates with its current offset applied — a box
@@ -136,7 +137,8 @@ scrollport's bottom.
   margins ignored (cell-model deviation 5), and applied per
   glyph through the path inline relative insets already take
   (`forEachLeafCell`, so paint, hit-testing and selection follow) — its
-  sticky insets constrain, they offset nothing. It forms a stacking
+  sticky insets constrain, they offset nothing, a percentage resolving
+  against the scrollport as a box's does. It forms a stacking
   context, its glyphs painting in its leaf's context's positioned step,
   over the line they land on (`positioning.md` "Paint order"). Natively
   the same path carries it: the inline-inset marker pins
@@ -166,10 +168,7 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
 
 1. No page-level sticking: without a scrolling ancestor inside the host
    a sticky box never shifts (as `fixed` anchors to the host).
-2. An `overflow: hidden` ancestor is not a scroll container here (it
-   reads as `clip`); it never scrolls, so the difference shows only for
-   a hidden box scrolled by script, which the engine does not mirror.
-3. All cell-model deviations apply: whole-cell shifts, an inline
+2. All cell-model deviations apply: whole-cell shifts, an inline
    element's margins ignored, and the native layer's fractional slide
    between cell steps (`scrolling.md`).
 
@@ -239,17 +238,20 @@ Probed 2026-09-11 in Chromium, Firefox, and WebKit with plain HTML
   per-axis rule above, pure rect math; `stickyShift`, a sticky box's
   shift from its scroll container's scrollport and its containing
   block where they paint, their `paintOrigin` or where a caller puts
-  them; `stick`, that shift onto its `paintOrigin` (`node.stickyShift`,
-  absent when zero); `stickInline`, each sticky inline element's
-  `stickyShift`, from its fragments' bounds taken once per leaf; and
+  them; `stick`, that shift onto its `paintOrigin`
+  (`node.stickyShift`, absent when zero); `stickInline`, each sticky
+  inline element's `stickyShift`, from its fragments' bounds taken
+  once per leaf; `shiftWithin`, where both resolve their insets'
+  percentages against the scrollport (`resolveInsets`); and
   `partLines`, the lattice line cells a table part's box takes in.
 - layout.ts: `layoutRoot` runs `placePainted` last.
 - types.ts: `paintOrigin` and `stickyShift` on the layout node,
   paint-time values beside `scroll`; an inline element's `sticky`
   (its insets, `null` for `auto`) and `stickyShift`.
 - tree.ts: a `position: sticky` inline element's insets, read as
-  constraints (`inlineElements[i].sticky`) where a relative one's are
-  offsets (`insets`).
+  constraints (`inlineElements[i].sticky`, `readElementInsets`) where
+  a relative one's are offsets (`insetLengths`, resolved into `insets`
+  at each layout by layout.ts `resolveLeafLengths`).
 - positioning.ts: a sticky box keeps its static position in the
   positioning pass; `stuckOn`, the shifts `stickyShift` puts on an
   anchor for the current scroll (anchor-positioning.md).

@@ -3,6 +3,8 @@ import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   centerOf,
+  channels,
+  countLayouts,
   frames,
   paintedBackground,
   paintedSpan,
@@ -40,9 +42,12 @@ export const SynthesizedPointerStates: StoryObj = {
     <mono-wind>
       <div class="flex max-w-max flex-col gap-1">
         <div class="group cursor-pointer border px-1 hover:text-rose-400" data-test="tile">
-          <span class="group-hover:underline">alpha</span> tile
+          <span class="group-hover:underline hover:text-cyan-400">alpha</span> tile
         </div>
         <div class="border px-1 active:text-amber-400" data-test="press">press tile</div>
+        <div class="border px-1" data-test="prose">
+          <i data-test="plain">plain</i> and <b data-test="bold">bold</b>
+        </div>
         <div inert class="cursor-pointer border px-1 hover:text-rose-400" data-test="inert">
           inert tile
         </div>
@@ -69,7 +74,7 @@ export const SynthesizedPointerStates: StoryObj = {
       expect(tile).toHaveAttribute("data-mw-hover");
       expect(getComputedStyle(tile).color).toBe(rose);
       // group-hover: on the inline child composes from the ancestor's
-      // attribute (inline elements carry no attribute themselves).
+      // attribute, the pointer off its own characters.
       const span = tile.querySelector("span")!;
       expect(span).not.toHaveAttribute("data-mw-hover");
       expect(getComputedStyle(span).textDecorationLine).toContain("underline");
@@ -77,6 +82,34 @@ export const SynthesizedPointerStates: StoryObj = {
       const painted = paintedSpan(host, "alpha")!;
       expect(painted.style.textDecorationLine).toContain("underline");
     });
+
+    // On its characters, the inline element hovers too, as natively.
+    const span = tile.querySelector("span")!;
+    host.dispatchEvent(new PointerEvent("pointermove", { ...at(span), bubbles: true }));
+    await waitFor(() => {
+      expect(span).toHaveAttribute("data-mw-hover");
+      expect(tile).toHaveAttribute("data-mw-hover");
+      expect(channels(paintedSpan(host, "alpha")!.style.color)).toEqual(
+        channels(getComputedStyle(span).color),
+      );
+      expect(getComputedStyle(span).color).not.toBe(rose);
+    });
+
+    // A plain inline element, whose classes name no hover variant, takes
+    // no hover: the pointer crossing into it changes no mark, and lays
+    // nothing out.
+    const plain = canvasElement.querySelector<HTMLElement>('[data-test="plain"]')!;
+    const bold = canvasElement.querySelector<HTMLElement>('[data-test="bold"]')!;
+    host.dispatchEvent(new PointerEvent("pointermove", { ...at(plain), bubbles: true }));
+    await waitFor(() => expect(plain.parentElement).toHaveAttribute("data-mw-hover"));
+    await frames(2);
+    const layouts = countLayouts(host);
+    host.dispatchEvent(new PointerEvent("pointermove", { ...at(bold), bubbles: true }));
+    await frames(3);
+    layouts.stop();
+    expect(bold).not.toHaveAttribute("data-mw-hover");
+    expect(plain).not.toHaveAttribute("data-mw-hover");
+    expect(layouts.count).toBe(0);
 
     // An inert tile is absent for interaction: its parent hovers, it
     // never does, and the mirrored cursor is the parent's grid-mode

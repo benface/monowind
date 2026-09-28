@@ -3,18 +3,21 @@
   position: relative;
   contain: layout style;
 }
+/* The host's one child: spanning, so a `columns-*` host fragments
+ * neither the grid nor the light DOM (specs/host-leaf.md). */
 #viewport {
   position: relative;
   width: 100%;
   height: 100%;
   background: inherit;
+  column-span: all;
 }
 /* Positioned, so the light DOM paints over the grid from its origin; a
  * block formatting context, so a flow child's top margin stays where
  * the engine put it (specs/cell-model.md "Inline content"). Out of the
- * host's flow, so the viewport's `min-height` alone gives it height
- * ("Host sizing"), except while the engine reads a shrink-to-fit
- * host's width off its content. */
+ * host's flow, so the viewport's `min-height` and `min-width` alone give
+ * it its size ("Host sizing"), except while the engine reads a
+ * shrink-to-fit host's width off its content. */
 slot {
   display: flow-root;
   position: absolute;
@@ -24,6 +27,9 @@ slot {
 }
 :host([measuring]) slot {
   position: relative;
+}
+:host([measuring]) #viewport {
+  min-width: 0 !important;
 }
 /* Sized to the ink extent, the host's background carried past the host
  * (specs/cell-model.md "Overflow"); the text fill undoes the host's

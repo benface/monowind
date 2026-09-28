@@ -42,9 +42,11 @@ parsed. Positions in px convert on the spacing scale.
   shapes CSS names), or its angle (conic, `from` and `at` honored),
   with the stops resolved as CSS resolves them (missing positions
   spread evenly, hints honored, repeating forms tiled) and
-  interpolated in the named color space (oklab, oklch, srgb,
-  srgb-linear, hsl, the polar ones with the four hue modes; others
-  fall back to oklab). A cell is a grid cell, not a square: the math
+  interpolated in the named color space (every space css-color-4
+  names: srgb, srgb-linear, display-p3, a98-rgb, prophoto-rgb,
+  rec2020, xyz-d65 or `xyz`, xyz-d50, lab, lch, oklab, oklch, hsl
+  and hwb, the polar ones with the four hue modes). A cell is a grid
+  cell, not a square: the math
   runs in px from the measured cell, so a diagonal is CSS's diagonal.
   The cell's glyphs keep their color; only the background changes, as
   with any fill.
@@ -93,12 +95,10 @@ parsed. Positions in px convert on the spacing scale.
    to the glyph shapes, and applies to the box's own text; the clip is
    read once, the first layer's, for every layer.
 3. `url()` images are ignored.
-4. Interpolation spaces other than oklab, oklch, srgb, srgb-linear,
-   and hsl interpolate in oklab.
-5. An editable's native selection (`styles.css`, its `--mw-ground`)
+4. An editable's native selection (`styles.css`, its `--mw-ground`)
    sits on the plain `background-color` under a gradient, not on the
    gradient's color at its cells.
-6. An hsl saturation below 0 (a color outside sRGB, Tailwind's
+5. An hsl saturation below 0 (a color outside sRGB, Tailwind's
    wide-gamut `oklch()` colors among them, which mix and paint
    unclipped and clip to sRGB only to composite, cell-model.md
    "Opacity and translucency") mixes as it is, as Chromium and
@@ -109,7 +109,9 @@ parsed. Positions in px convert on the spacing scale.
 
 - Node: the read (Chromium's serialization of Tailwind's utilities,
   angles and corners, stops with and without positions, hints, the
-  interpolation space, several layers, `url()` ignored); the paint —
+  interpolation space, several layers, `url()` ignored, a first stop
+  in any color function); the mix in every space against the
+  browsers' `color-mix()`; the paint —
   a two-stop horizontal gradient's colors per column, a vertical one
   per row, a diagonal, a radial's rings, a conic's sweep, stops at
   positions, a translucent stop over a `background-color`, glyphs
@@ -118,7 +120,8 @@ parsed. Positions in px convert on the spacing scale.
   colors; the hue modes on red to blue in hsl; the span runs.
 - Storybook: Tailwind's `bg-linear-*` presets with `from-*`/`via-*`/
   `to-*`, radial and conic forms, layers, a translucent stop over a
-  plain color, text over the cards; golden. Selection inverts per
+  plain color, the lab and display-p3 spaces, text over the cards;
+  golden. Selection inverts per
   cell as for any fill, pinned in the node tests.
 
 ## Touch points on implementation
@@ -128,9 +131,11 @@ parsed. Positions in px convert on the spacing scale.
 - types.ts: `backgroundImage: Gradient[]` and `backgroundClip` on
   `CellStyle`.
 - color.ts: computed colors parsed (`lab()`, `lch()` and every
-  `color()` space among them, cell-model.md "Opacity and translucency"),
-  prepared per space, mixed with the hue modes, composited clipped to
-  sRGB, written unclipped.
+  `color()` space among them, cell-model.md "Opacity and translucency");
+  `SPACES`, each space's way from sRGB and back and its hue, which
+  prepares, mixes with the hue modes, and parses `color()`;
+  `colorSpaceNamed`, the `<color-space>` keyword; composited clipped
+  to sRGB, written unclipped.
 - gradient.ts: the color at a cell (direction math, stop resolution,
   compositing), kept per box.
 - plain-text.ts `paintBox`: the fill paints per-cell colors when

@@ -349,7 +349,7 @@ goes wrong three ways (probed, three engines):
 - **Scrolling, sticky and relative items**: the marker is its item's
   content, and scrolls, sticks and shifts with it.
 - **Direction**: markers go left, the engine laying out left to right
-  (cell-model deviation 20).
+  (cell-model deviation 18).
 
 ## Deviations from CSS
 

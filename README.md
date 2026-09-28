@@ -245,6 +245,10 @@ gate) to keep grid-mode hover working:
 browser drops its hover with its pointer events, and the `:where()`
 drops the style at once where an engine lags.)
 
+A variant of your own that reaches `data-mw-hover` needs `hover` in its
+name to hover an inline element (a `<span>`), which joins the hover
+chain only where a class holding `hover` names it or an ancestor.
+
 ## Structure
 
 This is a monorepo managed with [pnpm workspaces](https://pnpm.io/workspaces):

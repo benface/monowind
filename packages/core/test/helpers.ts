@@ -1,5 +1,5 @@
 import { placePainted } from "../src/paint-origin.ts";
-import { createNode, defaultCellStyle } from "../src/types.ts";
+import { createNode, decorationOf, defaultCellStyle, NO_DECORATION } from "../src/types.ts";
 import type { CellStyle, Layer, LayoutNode } from "../src/types.ts";
 
 const stubElement = { getAttribute: () => null } as unknown as Element;
@@ -26,6 +26,9 @@ export function makeNode(overrides: {
 
 /** A length of `value` cells. */
 export const cells = (value: number) => ({ kind: "cells" as const, value });
+
+/** A plain underline in the text's color. */
+export const UNDERLINE = decorationOf({ ...NO_DECORATION, line: "underline" });
 
 /** A layer root's layer (specs/layers.md): no backdrop filter, its cells
  * drawn resampled or not. */

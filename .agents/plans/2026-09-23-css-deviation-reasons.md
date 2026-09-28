@@ -164,7 +164,7 @@ group; hit testing and the collapsed-table lattice follow the same
 order.
 
 Decided 2026-09-25: overflow alignment past the start edge follows
-stacking (cell-model.md deviation 21, `2026-09-25-overflow-alignment.md`).
+stacking (cell-model.md deviation 19, `2026-09-25-overflow-alignment.md`).
 
 Decided 2026-09-27: an absolute box's scroll range is fixed with
 overflow alignment, whose plan now holds it (both rework the range

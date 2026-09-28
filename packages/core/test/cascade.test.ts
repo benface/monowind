@@ -79,6 +79,7 @@ const FLOW = [
   "data-mw-float",
   "data-mw-multicol-flow",
   "data-mw-multicol-flow-span",
+  "data-mw-inline-box",
 ];
 
 /** Every variable render.ts writes, by what makes a rule's read of it
@@ -130,6 +131,11 @@ const VARIABLES = {
     "--mw-se-y": ["data-mw-scroll"],
     "--mw-gr": ["data-mw-scroll"],
     "--mw-gb": ["data-mw-scroll"],
+    "--mw-spt": ["data-mw-scroll"],
+    "--mw-spr": ["data-mw-scroll"],
+    "--mw-spb": ["data-mw-scroll"],
+    "--mw-spl": ["data-mw-scroll"],
+    "--mw-ws": ["data-mw-pre"],
   } as Record<string, string[]>,
   /** The parent's by design: an inline element takes its block's. */
   inherited: ["--mw-ls", "--mw-ink", "--mw-ground"],

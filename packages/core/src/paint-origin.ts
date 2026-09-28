@@ -6,6 +6,7 @@ import { containsAbsolute } from "./layout.ts";
 import { clipBounds, intersect } from "./plain-text.ts";
 import { scrollportOf, stick, stickInline } from "./sticky.ts";
 import type { Scrollport } from "./sticky.ts";
+import { hasScrollport } from "./types.ts";
 import type { Clip, LayoutNode } from "./types.ts";
 
 /** A box whose light element a scroll shifts (render.ts), with its parent. */
@@ -64,8 +65,9 @@ export function placePainted(root: LayoutNode): ShiftedBox[] {
     let port = from.port;
     const sticky = position === "sticky";
     if (sticky && parent) stick(node, parent, port, frame.table);
-    // A scroll container holds its own sticky inline elements too.
-    if (node.scrollRange) port = scrollportOf(node);
+    // A scroll container holds its own sticky inline elements too, a
+    // hidden one that never scrolls among them.
+    if (hasScrollport(node.style.overflow)) port = scrollportOf(node);
     const inline = node.inlineElements?.some((entry) => entry.sticky !== undefined) ?? false;
     if (inline) stickInline(node, port);
     // An absolute box escapes the scrollers between it and its containing block.

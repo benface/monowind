@@ -56,7 +56,7 @@ it as an anonymous run.
   border box never overlaps a float's margin box), taking the band's
   width when its own is `auto`, as browsers size one. A leaf CSS makes
   a root anyway — a flex, grid, table, or multicol box of bare text, a
-  scroll container, `overflow: hidden`/`clip`, a truncated leaf — is a
+  scroll container (`overflow: hidden` among them), a truncated leaf — is a
   root here too; an empty box passes under like a leaf. Text inside a
   container child therefore never wraps around a sibling's float; the
   float belongs in the container whose text should wrap.

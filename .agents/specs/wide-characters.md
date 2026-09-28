@@ -3,7 +3,7 @@
 Status: **implemented** (2026-09-05; plan:
 `.agents/plans/2026-09-05-wide-characters.md`; auto-scroll and the
 box-bounded nearest-unit search 2026-09-06). Carries cell-model.md
-deviation 10 (glyph widths are the `wcwidth` table's) and the
+deviation 8 (glyph widths are the `wcwidth` table's) and the
 grid-painted selection. Two findings from the implementation: a
 glyph box measured while a web font was still loading must be
 forgotten when the font lands (the

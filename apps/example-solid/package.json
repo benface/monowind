@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "@monowind/ui": "workspace:^",
-    "@solidjs/web": "2.0.0-rc.9",
-    "solid-js": "2.0.0-rc.9"
+    "@solidjs/web": "2.0.0-rc.10",
+    "solid-js": "2.0.0-rc.10"
   },
   "devDependencies": {
     "@monowind/vite": "workspace:*",
-    "@solidjs/vite-plugin": "3.0.0-next.44",
+    "@solidjs/vite-plugin": "3.0.0-next.46",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"

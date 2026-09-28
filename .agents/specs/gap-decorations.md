@@ -127,7 +127,9 @@ tracks overflow — joins it on the ring's straight run: a tee (`┬ ┴ ├
 ┤`) where it ends there, a cross (`┼`) where it runs on past, as
 Chromium paints a rule over its tracks' whole extent, over the border
 and beyond (probed 2026-09-25); a rule beside the box meets no border.
-The shared junction-glyph machinery serves both.
+The shared junction-glyph machinery serves both: a rule meeting a
+border or a rule of another line junctions by each arm's line, as
+borders do (cell-model.md "Borders: glyph mapping").
 
 ### Segments (rule-break, rule-inset, rule-visibility-items)
 
@@ -172,8 +174,7 @@ counts); the per-line column bands already end flush at their line.
    its weight band's thickness (in CSS rules never affect layout — a
    rule wider than its gap overflows the items, one with no gap is
    invisible). Same principle as borders occupying whole cells: ink
-   needs cells. A rule meeting a border of another weight junctions in
-   the heavier weight's glyph, as borders do.
+   needs cells.
 2. `rule-inset` is one uniform value: the per-axis and per-endpoint
    longhands (`column-rule-inset-cap-start`, …), percentages, and
    negative insets are unsupported until needed. Same for per-axis

@@ -130,6 +130,156 @@ describe("placeItems", () => {
   });
 });
 
+describe("baseline alignment (css-grid §11.8, probed 2026-09-27)", () => {
+  const pad = (top: number, bottom = 0) => ({ padding: { top, right: 0, bottom, left: 0 } });
+  const grid = (children: LayoutNode[], alignItems: CellStyle["alignItems"] = "baseline") =>
+    layoutRoot(
+      makeNode({
+        style: { display: "grid", gridTemplateColumns: tracks(fr(), fr()), alignItems },
+        children,
+      }),
+      20,
+    );
+
+  it("lines a row's first text rows up, the row sized to hold them", () => {
+    const padded = makeNode({ text: "a", style: pad(2) });
+    const plain = makeNode({ text: "b" });
+    const below = makeNode({ text: "c" });
+    grid([padded, plain, below]);
+    expect([padded.localRect.y, plain.localRect.y]).toEqual([0, 2]);
+    // The first row holds the shifted item: the next starts past it.
+    expect(below.localRect.y).toBe(3);
+  });
+
+  it("lines last text rows up at the row's end", () => {
+    const tall = makeNode({ text: "a", style: pad(0, 2) });
+    const plain = makeNode({ text: "b" });
+    grid([tall, plain], "last baseline");
+    expect([tall.localRect.y, plain.localRect.y]).toEqual([0, 0]);
+  });
+});
+
+describe("a grid holding only text, its anonymous item (probed 2026-09-27)", () => {
+  /** A grid of `style` over a run of `text`, in 30 cells. */
+  const textGrid = (style: Partial<CellStyle>, text = "one two three") => {
+    const run = makeNode({ text });
+    run.anonymous = true;
+    const grid = makeNode({ style: { display: "grid", ...style }, children: [run] });
+    layoutRoot(makeNode({ children: [grid] }), 30);
+    return { grid, run };
+  };
+
+  it("wraps the text in its first track, its offsets folded into the grid's padding", () => {
+    const { grid, run } = textGrid({ gridTemplateColumns: tracks(twFr(), twFr(), twFr()) });
+    expect(run.localRect).toMatchObject({ x: 0, width: 10, height: 2 });
+    // The native text, the grid's own, wraps where the item does.
+    expect(grid.resolvedPadding).toMatchObject({ left: 0, right: 20 });
+  });
+
+  it("aligns it by the grid's items and content, in a sized row", () => {
+    const centered = textGrid(
+      { justifyItems: "center", alignItems: "center", height: { kind: "cells", value: 3 } },
+      "ab",
+    );
+    expect(centered.run.localRect).toMatchObject({ x: 14, y: 1, width: 2 });
+    expect(centered.grid.resolvedPadding).toEqual({ top: 1, right: 14, bottom: 1, left: 14 });
+    const ended = textGrid(
+      { gridTemplateRows: tracks({ min: cellsB(3), max: cellsB(3) }), alignItems: "end" },
+      "ab",
+    );
+    expect(ended.run.localRect.y).toBe(2);
+    // The grid as tall as its row, the item's offset inside it.
+    expect(ended.grid.localRect.height).toBe(3);
+    expect(ended.grid.resolvedPadding).toMatchObject({ top: 2, bottom: 0 });
+  });
+
+  it("folds the offsets once where a max-height lays it out again", () => {
+    const { grid, run } = textGrid(
+      { gridTemplateColumns: tracks(twFr(), twFr()), maxHeight: 2 },
+      "one two three four five six seven",
+    );
+    expect(run.localRect).toMatchObject({ x: 0, width: 15 });
+    expect(grid.resolvedPadding).toMatchObject({ left: 0, right: 15 });
+  });
+
+  it("sizes a max-content grid by its tracks", () => {
+    const { grid } = textGrid(
+      { width: { kind: "max-content" }, gridTemplateColumns: tracks(twFr(), twFr()), gapX: 2 },
+      "ab",
+    );
+    expect(grid.localRect.width).toBe(6);
+  });
+});
+
+describe("fit-content() and calc() tracks (css-grid §7.2.4)", () => {
+  const sized = (track: TrackSize, text: string) => {
+    const item = makeNode({ text });
+    const grid = makeNode({
+      style: { display: "grid", gridTemplateColumns: tracks(track, fr()) },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [grid] }), 40);
+    return item.localRect.width;
+  };
+  const fit = (limit: number): TrackSize => ({
+    min: { kind: "auto" },
+    max: { kind: "fit-content", limit: cellsB(limit) },
+  });
+
+  it("sizes fit-content(L) as its content, capped at L, floored at its min-content", () => {
+    expect(sized(fit(10), "abc")).toBe(3);
+    expect(sized(fit(10), "abcd efgh ijkl mnop")).toBe(10);
+    expect(sized(fit(10), "abcdefghijkl")).toBe(12);
+  });
+
+  it("gives what a capped track leaves of a spanning item to the others", () => {
+    const item = makeNode({
+      text: "ab cd ef gh",
+      style: { gridColumnStart: line(1), gridColumnEnd: line(3) },
+    });
+    const grid = makeNode({
+      style: {
+        display: "grid",
+        width: { kind: "max-content" },
+        gridTemplateColumns: tracks(fit(2), auto()),
+      },
+      children: [item],
+    });
+    layoutRoot(makeNode({ children: [grid] }), 40);
+    expect(grid.localRect.width).toBe(11);
+  });
+
+  it("passes nothing on from a capped track its content already holds past its cap", () => {
+    const at = (column: number, row: number, end = column + 1) => ({
+      gridColumnStart: line(column),
+      gridColumnEnd: line(end),
+      gridRowStart: line(row),
+    });
+    const word = makeNode({ text: "abcde", style: at(1, 1) });
+    const other = makeNode({ text: "b", style: at(2, 1) });
+    const spanning = makeNode({ text: "aa aa aa aa aa aa aa", style: at(1, 2, 3) });
+    const grid = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(fit(2), auto()),
+        justifyContent: "start",
+      },
+      children: [word, other, spanning],
+    });
+    layoutRoot(makeNode({ children: [grid] }), 40);
+    expect([other.localRect.x, other.localRect.width]).toEqual([5, 15]);
+  });
+
+  it("sizes a calc() of a percentage and cells against the axis", () => {
+    const sum: TrackBreadth = {
+      kind: "math",
+      fn: "sum",
+      args: [{ kind: "percent", value: 100 }, cellsB(-2)],
+    };
+    expect(sized({ min: sum, max: sum }, "x")).toBe(38);
+  });
+});
+
 describe("grid track sizing via layout", () => {
   it("divides minmax(0, 1fr) columns evenly regardless of content", () => {
     const a = makeNode({ text: "abcdefgh" });
@@ -337,7 +487,7 @@ describe("grid track sizing via layout", () => {
   });
 });
 
-describe("overflowing alignment at the start edge (specs/cell-model.md deviation 21)", () => {
+describe("overflowing alignment at the start edge (specs/cell-model.md deviation 19)", () => {
   const lay = (style: Partial<CellStyle>, child: LayoutNode) => {
     const container = makeNode({
       style: { display: "grid", width: { kind: "cells", value: 10 }, ...style },
@@ -684,7 +834,7 @@ describe("the automatic minimum over the spanned tracks (css-grid §6.6)", () =>
   });
 
   it("leaves fr columns even beside a scroll container or a min-w-0 item", () => {
-    const hidden = word(6, { overflow: { x: "clip", y: "clip" } });
+    const hidden = word(6, { overflow: { x: "hidden", y: "hidden" } });
     expect(columns([fr(), fr()], [hidden, makeNode({})], 10)).toEqual([
       [0, 5],
       [5, 5],
@@ -696,7 +846,7 @@ describe("the automatic minimum over the spanned tracks (css-grid §6.6)", () =>
   });
 
   it("gives a scroll container's auto column only the space left", () => {
-    const hidden = word(6, { overflow: { x: "clip", y: "clip" } });
+    const hidden = word(6, { overflow: { x: "hidden", y: "hidden" } });
     expect(columns([auto(), auto()], [hidden, word(8)], 10)).toEqual([
       [0, 2],
       [2, 8],
@@ -717,7 +867,7 @@ describe("the automatic minimum over the spanned tracks (css-grid §6.6)", () =>
       return grid.localRect.width;
     };
     expect(minContent([fr()], [word(6)])).toBe(6);
-    expect(minContent([fr()], [word(6, { overflow: { x: "clip", y: "clip" } })])).toBe(0);
+    expect(minContent([fr()], [word(6, { overflow: { x: "hidden", y: "hidden" } })])).toBe(0);
     expect(minContent([fr(), fr()], [spanning(15)])).toBe(0);
   });
 
@@ -873,11 +1023,17 @@ describe("track template parsing", () => {
   it("parses keywords, percentages, and deferred forms", () => {
     expect(parseTrackTemplate("none", 16)).toEqual({ kind: "none" });
     expect(parseTrackTemplate("subgrid", 16)).toEqual({ kind: "subgrid" });
+    expect(parseTrackTemplate("subgrid [a] [b c]", 16)).toEqual({
+      kind: "subgrid",
+      lineNames: [["a"], ["b", "c"]],
+    });
     expect(parseTrackTemplate("50% auto", 16)).toEqual(
       tracks({ min: { kind: "percent", value: 50 }, max: { kind: "percent", value: 50 } }, auto()),
     );
-    // fit-content() is deferred and reads as auto.
-    expect(parseTrackTemplate("fit-content(100px)", 16)).toEqual(tracks(auto()));
+    // fit-content(L): an auto minimum, a max-content maximum capped at L.
+    expect(parseTrackTemplate("fit-content(100px)", 16)).toEqual(
+      tracks({ min: { kind: "auto" }, max: { kind: "fit-content", limit: cellsB(25) } }),
+    );
   });
 
   it("parses grid line longhands", () => {
@@ -992,8 +1148,15 @@ describe("min()/max() track breadths", () => {
         mode: "auto-fill",
       },
     });
-    // calc() arithmetic still degrades to auto.
-    expect(parseTrackTemplate("calc(100% - 8px) 1fr", 16)).toEqual(tracks(auto(), fr()));
+    // calc() is a fixed breadth, its percentage and cells summed.
+    const sum = {
+      kind: "math" as const,
+      fn: "sum" as const,
+      args: [{ kind: "percent" as const, value: 100 }, cellsB(-2)],
+    };
+    expect(parseTrackTemplate("calc(100% - 8px) 1fr", 16)).toEqual(
+      tracks({ min: sum, max: sum }, fr()),
+    );
   });
 
   it("caps responsive auto-fill tracks at the container width", () => {
@@ -1305,6 +1468,22 @@ describe("named lines and areas", () => {
   });
 });
 
+describe("a clip item's automatic minimum", () => {
+  it("floors its track at its content, where a hidden one's does not", () => {
+    const width = (overflow: CellStyle["overflow"]) => {
+      const item = makeNode({ text: "abcdefghij", style: { overflow } });
+      const root = makeNode({
+        style: { display: "grid", gridTemplateColumns: tracks(fr()) },
+        children: [item],
+      });
+      layoutRoot(root, 5);
+      return item.localRect.width;
+    };
+    expect(width({ x: "clip", y: "visible" })).toBe(10);
+    expect(width({ x: "hidden", y: "hidden" })).toBe(5);
+  });
+});
+
 describe("subgrid", () => {
   const subgridCols = (): GridTemplate => ({ kind: "subgrid" });
 
@@ -1343,6 +1522,170 @@ describe("subgrid", () => {
     expect(bigB.localRect.x).toBe(3);
     expect(c.localRect.x).toBe(14);
     expect(sub.localRect.width).toBe(16);
+  });
+
+  it("places its items by the parent's line names over its span, and its own", () => {
+    const placedAt = (sub: GridTemplate, start: GridLine, leading = false) => {
+      const item = makeNode({ text: "x", style: { gridColumnStart: start } });
+      const lead = makeNode({
+        text: "L",
+        style: { gridColumnStart: { kind: "span", value: 2 }, gridColumnEnd: line(1) },
+      });
+      const grid = makeNode({
+        style: {
+          display: "grid",
+          gridTemplateColumns: sub,
+          gridColumnStart: line(2),
+          gridColumnEnd: line(5),
+        },
+        children: [item],
+      });
+      const root = makeNode({
+        style: {
+          display: "grid",
+          gridTemplateColumns: {
+            kind: "tracks",
+            tracks: [fixed(2), fixed(3), fixed(4), fixed(5)],
+            lineNames: [["a"], ["b"], ["c"], ["d"], ["e"]],
+          },
+        },
+        children: leading ? [lead, grid] : [grid],
+      });
+      layoutRoot(root, 40);
+      return item.localRect.x;
+    };
+    // The subgrid spans lines b..e: `c` is its second line, 3 cells in.
+    expect(placedAt(subgridCols(), { kind: "name", name: "c" })).toBe(3);
+    // Its own `subgrid [p] [q] [r]` names its first lines.
+    const own: GridTemplate = { kind: "subgrid", lineNames: [["p"], ["q"], ["r"]] };
+    expect(placedAt(own, { kind: "name", name: "r" })).toBe(7);
+    // Implicit tracks before the explicit grid leave the names where they are.
+    expect(placedAt(subgridCols(), { kind: "name", name: "c" }, true)).toBe(3);
+  });
+
+  it("sizes the parent's tracks by a nested subgrid's items past both gaps' shifts", () => {
+    // Gutters of 4, 2, then 0: the middle item's track gains a cell per
+    // side at each level, so its 5 cells need only 1 of the parent's.
+    const item = makeNode({
+      text: "abcde",
+      style: { gridColumnStart: line(2), gridColumnEnd: line(3) },
+    });
+    const subgrid = (gap: number, children: LayoutNode[]) =>
+      makeNode({
+        style: {
+          display: "grid",
+          gridTemplateColumns: subgridCols(),
+          gridColumnStart: line(1),
+          gridColumnEnd: line(4),
+          gapX: gap,
+        },
+        children,
+      });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        width: { kind: "max-content" },
+        gridTemplateColumns: tracks(auto(), auto(), auto()),
+        gapX: 4,
+      },
+      children: [subgrid(2, [subgrid(0, [item])])],
+    });
+    layoutRoot(makeNode({ children: [root] }), 40);
+    expect(item.localRect.width).toBe(5);
+    expect(root.localRect.width).toBe(9);
+  });
+
+  it("moves each inner gutter to its own gap, half the difference per side", () => {
+    const rects = (gap: number) => {
+      const items = ["a", "b", "c", "d"].map((text) => makeNode({ text }));
+      const sub = makeNode({
+        style: {
+          display: "grid",
+          gridTemplateColumns: subgridCols(),
+          gridColumnStart: line(1),
+          gridColumnEnd: line(5),
+          gapX: gap,
+        },
+        children: items,
+      });
+      const root = makeNode({
+        style: {
+          display: "grid",
+          gridTemplateColumns: tracks(fixed(6), fixed(6), fixed(6), fixed(6)),
+          gapX: 2,
+        },
+        children: [sub],
+      });
+      layoutRoot(root, 40);
+      return items.map(({ localRect: { x, width } }) => [x, width]);
+    };
+    // Over the parent's 2-cell gutters at 6, 14 and 22, each item gains
+    // a cell on each inner side, and loses one under a 4-cell gap.
+    expect(rects(0)).toEqual([
+      [0, 7],
+      [7, 8],
+      [15, 8],
+      [23, 7],
+    ]);
+    expect(rects(4)).toEqual([
+      [0, 5],
+      [9, 4],
+      [17, 4],
+      [25, 5],
+    ]);
+    // An odd difference: the cell goes to the item after the gutter.
+    expect(rects(1)).toEqual([
+      [0, 6],
+      [7, 7],
+      [15, 7],
+      [23, 7],
+    ]);
+  });
+
+  it("counts the gap difference in the parent's track sizing, rows alike", () => {
+    const items = [makeNode({ text: "aaaa" }), makeNode({ text: "bbbb" })];
+    const cells = [
+      makeNode({ text: "x" }),
+      makeNode({ style: { height: { kind: "cells", value: 3 } } }),
+    ];
+    const cols = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: subgridCols(),
+        gridColumnStart: line(1),
+        gridColumnEnd: line(3),
+        gapX: 0,
+      },
+      children: items,
+    });
+    const rows = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateRows: { kind: "subgrid" },
+        gridRowStart: span(2),
+        gapY: 0,
+      },
+      children: cells,
+    });
+    const root = makeNode({
+      style: {
+        display: "grid",
+        gridTemplateColumns: tracks(auto(), auto()),
+        justifyContent: "start",
+        alignContent: "start",
+        gapX: 2,
+        gapY: 2,
+      },
+      children: [cols, rows],
+    });
+    layoutRoot(root, 40);
+    // Each 4-cell item needs 3 cells of its track, the other beyond the
+    // gutter's middle: tracks of 3 and 3, the second item at 4.
+    expect(cols.localRect.width).toBe(8);
+    expect(items[1]!.localRect).toMatchObject({ x: 4, width: 4 });
+    // The rows: 1 and 3 rows tall, needing 0 and 2 of theirs.
+    expect(rows.localRect.height).toBe(4);
+    expect(cells[1]!.localRect).toMatchObject({ y: 1, height: 3 });
   });
 
   it("adds the subgrid's border and padding to its edge tracks", () => {

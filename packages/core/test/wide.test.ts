@@ -121,7 +121,7 @@ describe("paint", () => {
       style: {
         width: { kind: "cells", value: 5 },
         whiteSpace: "nowrap",
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
         textOverflow: "ellipsis",
       },
     });
@@ -134,7 +134,7 @@ describe("paint", () => {
       style: {
         width: { kind: "cells", value: 3 },
         whiteSpace: "nowrap",
-        overflow: { x: "clip", y: "visible" },
+        overflow: { x: "hidden", y: "visible" },
       },
     });
     const root = makeNode({ children: [leaf] });

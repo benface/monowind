@@ -277,11 +277,12 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
      * a relayout, a routed wheel tick — land at once. */
     scroll-behavior: auto !important;
     /* The border and bar cells are native padding, inside the scrollport:
-     * a reveal (focus, scrollIntoView) stops clear of them. */
-    scroll-padding: calc(var(--mw-bt, 0) * var(--mw-ch, 1px))
-      calc((var(--mw-br, 0) + var(--mw-gr, 0)) * var(--mw-cw, 1px))
-      calc((var(--mw-bb, 0) + var(--mw-gb, 0)) * var(--mw-ch, 1px))
-      calc(var(--mw-bl, 0) * var(--mw-cw, 1px)) !important;
+     * a reveal (focus, scrollIntoView) stops clear of them, and of the
+     * authored scroll-padding past them, in cells. */
+    scroll-padding: calc((var(--mw-bt, 0) + var(--mw-spt, 0)) * var(--mw-ch, 1px))
+      calc((var(--mw-br, 0) + var(--mw-gr, 0) + var(--mw-spr, 0)) * var(--mw-cw, 1px))
+      calc((var(--mw-bb, 0) + var(--mw-gb, 0) + var(--mw-spb, 0)) * var(--mw-ch, 1px))
+      calc((var(--mw-bl, 0) + var(--mw-spl, 0)) * var(--mw-cw, 1px)) !important;
   }
   mono-wind [data-mw-scroll]:not([data-mw-measuring])::-webkit-scrollbar {
     display: none !important;
@@ -475,6 +476,13 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     display: block !important;
   }
 
+  /* An out-of-flow element's display before its position blockified it
+   * (specs/positioning.md "Static position"), read under this flag for
+   * the one read. */
+  mono-wind [data-mw-static-read][data-mw-measuring] {
+    position: static !important;
+  }
+
   /* Grid-quantized typography and the wrap model (specs/cell-model.md). Gated
    * on the measuring flag (unlike the font lock above) so the style reader
    * sees the AUTHORED white-space / letter-spacing / line-height — that's how nowrap,
@@ -581,20 +589,21 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     white-space: nowrap !important;
   }
 
-  /* `white-space: pre` leaves (specs/cell-model.md): the tree builder kept
-   * the source's spaces and newlines in the run, so the browser must render
-   * them too — on the leaf AND its inline descendants (the lock above would
-   * collapse text inside nested spans). Later than the nowrap rule, so it
-   * wins on the leaf itself at equal specificity. */
+  /* `white-space: pre` leaves (specs/cell-model.md), and `pre-line`,
+   * `pre-wrap` and `break-spaces` ones through `--mw-ws`: the tree builder
+   * kept the source's spaces or newlines in the run, so the browser must
+   * render them too — on the leaf AND its inline descendants (the lock
+   * above would collapse text inside nested spans). Later than the nowrap
+   * rule, so it wins on the leaf itself at equal specificity. */
   mono-wind:not([measuring])[data-mw-pre],
   mono-wind[data-mw-pre] :not([data-mw-measuring]),
   mono-wind [data-mw-pre]:not([data-mw-measuring]),
   mono-wind [data-mw-pre] *:not([data-mw-measuring]) {
-    white-space: pre !important;
+    white-space: var(--mw-ws) !important;
   }
 
-  /* Truncation (`truncate` = nowrap + clip + text-overflow: ellipsis)
-   * keeps `hidden` rather than the normalized `clip`: a clip box is no
+  /* Truncation (`truncate` = nowrap + hidden + text-overflow: ellipsis)
+   * keeps `hidden` where the lock below writes `clip`: a clip box is no
    * scroll container, so focus can never reveal what the ellipsis hides
    * — a link past the cut stays off screen for a keyboard (measured:
    * Chromium and Firefox scroll it into view under `hidden`, neither
@@ -643,13 +652,16 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
      * element (the engine already placed it). The template and content/item
      * alignment resets make a laid-out container's own grid/flex inert for
      * the one box the browser still lays out: the anonymous item holding a
-     * leaf's direct text (a template would trap it in track 1; the
+     * leaf's or a text grid's direct text (a template or an implicit
+     * track's size would trap it in a track; the
      * browser's place-* offsets are FRACTIONAL, off the cell grid — the
      * engine applies the quantized offsets through its owned padding
      * instead, specs/cell-model.md). */
     grid-area: auto !important;
     grid-template-columns: none !important;
     grid-template-rows: none !important;
+    grid-auto-columns: auto !important;
+    grid-auto-rows: auto !important;
     place-content: start !important;
     place-items: stretch !important;
   }
@@ -738,15 +750,18 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     top: calc((var(--mw-sy) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
     left: calc(var(--mw-sx) * var(--mw-cw, 1px)) !important;
     vertical-align: top !important;
-    /* Its advance in the line is its cells: the right margin gives back
-     * the shared rule's widening, else two boxes on an exactly full line
-     * outgrow the line's one unit of headroom and the browser wraps the
-     * second where the grid does not — and one Firefox unit more, the
-     * width and the margin each rounding there to the nearest 1/60px. */
-    margin-right: calc(
-      -1 * max(0, var(--mw-ls, 0) - var(--mw-pr, 0) - var(--mw-br, 0)) * var(--mw-cw, 1px) -
-        0.03125px - 0.0166667px
-    ) !important;
+    /* Its margins are the engine's cells; its advance in the line is its
+     * margin box: the right margin gives back the shared rule's widening,
+     * else two boxes on an exactly full line outgrow the line's one unit
+     * of headroom and the browser wraps the second where the grid does
+     * not — and one Firefox unit more, the width and the margin each
+     * rounding there to the nearest 1/60px. */
+    margin: calc(var(--mw-mt, 0) * var(--mw-ch, 1px))
+      calc(
+        (var(--mw-mr, 0) - max(0, var(--mw-ls, 0) - var(--mw-pr, 0) - var(--mw-br, 0))) *
+          var(--mw-cw, 1px) - 0.03125px - 0.0166667px
+      )
+      calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
   }
 
   /* Authored `vertical-align: bottom` on an atomic inline box: grid-exact
@@ -822,10 +837,8 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     min-height: 0 !important;
     max-width: none !important;
     max-height: none !important;
-    margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
-    margin-right: calc(var(--mw-mr, 0) * var(--mw-cw, 1px)) !important;
-    margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
-    margin-left: calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
+    margin: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) calc(var(--mw-mr, 0) * var(--mw-cw, 1px))
+      calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
     column-span: none !important;
   }
 
@@ -858,10 +871,8 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     right: auto !important;
     bottom: auto !important;
     left: calc(var(--mw-sx) * var(--mw-cw, 1px)) !important;
-    margin-top: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) !important;
-    margin-right: 0 !important;
-    margin-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
-    margin-left: calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
+    margin: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) 0 calc(var(--mw-mb, 0) * var(--mw-ch, 1px))
+      calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
   }
   mono-wind [data-mw-multicol-flow-span]:not([data-mw-measuring]) {
     column-span: all !important;
@@ -919,10 +930,11 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     padding-bottom: calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) !important;
   }
 
-  /* Author-requested `overflow: hidden` or `overflow: clip` — both keep
-   * content inside the engine-allocated box. Uses `clip` (no scroll
-   * container, cheaper, more precise semantic for what we're doing). */
-  mono-wind [data-mw-clip] {
+  /* A box clipping both axes (`overflow: hidden` or `clip`) keeps its
+   * content inside the engine-allocated box as `clip` (no scroll
+   * container, cheaper, the engine scrolling neither). Gated, as the read
+   * tells `hidden` from `clip` (specs/cell-model.md "Overflow"). */
+  mono-wind [data-mw-clip]:not([data-mw-measuring]) {
     overflow: clip !important;
   }
 
@@ -975,13 +987,5 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
       [data-mw-invisible]
     ) {
     visibility: visible !important;
-  }
-
-  /* Force off-grid text alignments back to `start`. `text-left`/`right`/`start`/
-   * `end`/`center` all land on whole cells (offset = (W - N) × cell width);
-   * `justify` produces fractional per-line offsets we can't snap to the grid. */
-  mono-wind:not([measuring])[data-mw-text-align-blocked],
-  mono-wind [data-mw-text-align-blocked]:not([data-mw-measuring]) {
-    text-align: start !important;
   }
 }

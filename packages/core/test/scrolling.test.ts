@@ -79,15 +79,17 @@ describe("scroll gutter", () => {
     expect(box.resolvedPadding.right).toBe(0);
   });
 
-  it("clip and visible reserve nothing", () => {
-    const box = makeNode({
-      style: { overflow: { x: "clip", y: "clip" }, width: { kind: "cells", value: 8 } },
-      text: "hi",
-    });
-    const root = makeNode({ children: [box] });
-    layoutRoot(root, 10);
-    expect(box.resolvedPadding).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
-    expect(box.scrollRange).toBeUndefined();
+  it("hidden, clip and visible reserve nothing", () => {
+    for (const axis of ["hidden", "clip", "visible"] as const) {
+      const box = makeNode({
+        style: { overflow: { x: axis, y: axis }, width: { kind: "cells", value: 8 } },
+        text: "hi",
+      });
+      const root = makeNode({ children: [box] });
+      layoutRoot(root, 10);
+      expect(box.resolvedPadding).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+      expect(box.scrollRange).toBeUndefined();
+    }
   });
 });
 
@@ -162,7 +164,7 @@ describe("scroll range", () => {
 
   it("a clipping child contributes only its box", () => {
     const child = makeNode({
-      style: { whiteSpace: "nowrap", overflow: { x: "clip", y: "clip" } },
+      style: { whiteSpace: "nowrap", overflow: { x: "hidden", y: "hidden" } },
       text: "a line far wider than the box",
     });
     const box = makeNode({
@@ -407,7 +409,7 @@ describe("scrolled paint", () => {
     });
     const outer = makeNode({
       style: {
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
         width: { kind: "cells", value: 8 },
         height: { kind: "cells", value: 2 },
       },

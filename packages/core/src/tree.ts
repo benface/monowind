@@ -1,4 +1,11 @@
-import { makeIntrinsicCache, widthContribution } from "./layout.ts";
+import {
+  fixedMargins,
+  isFlowChild,
+  makeIntrinsicCache,
+  resolveLength,
+  resolveMargin,
+  widthContribution,
+} from "./layout.ts";
 import { leafRendererFor, renderLeafContent } from "./leaf.ts";
 import type { LeafRegistration } from "./leaf.ts";
 import { pxToCells } from "./metrics.ts";
@@ -9,6 +16,8 @@ import {
   readAnchorNames,
   readAnchorScope,
   readCellStyle,
+  readDecoration,
+  readElementInsets,
   readGlyph,
   readOpacity,
   readOverflow,
@@ -20,7 +29,15 @@ import { animatedProperties } from "./animation.ts";
 import { inlineMembersOf, inlineOwners } from "./stacking.ts";
 import { casedClusters, readTextCase } from "./text-transform.ts";
 import type { TextCase } from "./text-transform.ts";
-import { createNode, defaultCellStyle } from "./types.ts";
+import {
+  clipsAxis,
+  createNode,
+  decorationOf,
+  defaultCellStyle,
+  NO_DECORATION,
+  preservedSpaces,
+  zeroInsets,
+} from "./types.ts";
 import { warnOnce } from "./warn.ts";
 import { clusterAdvance, clusterAdvances, graphemes, textCells } from "./width.ts";
 import {
@@ -30,8 +47,16 @@ import {
   lineAdvance,
   OBJECT_REPLACEMENT,
   wrapLineCount,
+  WBR_MARKER,
 } from "./wrap.ts";
-import type { CellMetrics, CellStyle, CharSourceRun, LayoutNode, PerSide } from "./types.ts";
+import type {
+  CellLength,
+  CellMetrics,
+  CellStyle,
+  CharSourceRun,
+  LayoutNode,
+  TextDecoration,
+} from "./types.ts";
 
 /** Per-textarea content width in cells, captured by the host BEFORE
  * the measuring attribute goes on — the engine's width rule is off
@@ -57,7 +82,7 @@ export function buildTree(
   textareaWidths?: TextareaWidths,
 ): LayoutNode | null {
   const tree = buildNode(root, { rootFontSizePx, cellMetrics, textareaWidths });
-  if (tree) propagateDecorations(tree, "none");
+  if (tree) propagateDecorations(tree, NO_DECORATION);
   return tree;
 }
 
@@ -84,9 +109,12 @@ function buildNode(root: Element, context: BuildContext): LayoutNode | null {
 
   // Form controls are always leaves — descending into a <select>'s
   // <option>s would leak that text into the grid.
+  // A grid's text is an anonymous item of its own (specs/grid.md).
   if (
     isFormControlTag(root.tagName) ||
-    (!roles.includes("block") && !splitsForBlock(elementChildren, roles))
+    (style.display !== "grid" &&
+      !roles.includes("block") &&
+      !splitsForBlock(elementChildren, roles))
   ) {
     return buildLeaf(root, style, elementChildren, roles, context);
   }
@@ -123,7 +151,9 @@ function buildChildren(
       for (const el of elements) build(el);
     } else {
       style ??= leafStyleOf(container, context);
-      const leaf = buildLeaf(container, style, elements, roles, context, run);
+      // The indent is the first formatted line's: a first run's alone.
+      const own = children.some(isFlowChild) ? { ...style, textIndent: 0 } : style;
+      const leaf = buildLeaf(container, own, elements, roles, context, run);
       leaf.anonymous = true;
       children.push(leaf);
     }
@@ -196,44 +226,42 @@ export function buildRoot(
   const tree = isLeaf
     ? buildLeaf(host, style, elementChildren, roles, context, nodes)
     : createNode(host, style, buildChildren(host, nodes, context, style));
-  propagateDecorations(tree, "none");
+  propagateDecorations(tree, NO_DECORATION);
   return tree;
 }
 
-/** Each box's and inline element's decoration lines, its own and those
- * its in-flow ancestors propagate (css-text-decor-3 §2), an inline
- * element a block split among them; an out-of-flow box, a float and an
- * atomic inline box take none. */
-function propagateDecorations(node: LayoutNode, propagated: string): void {
+/** Each box's and inline element's decoration, its own and those its
+ * in-flow ancestors propagate (css-text-decor-3 §2), an inline element a
+ * block split among them; an out-of-flow box, a float and an atomic
+ * inline box take none. */
+function propagateDecorations(node: LayoutNode, propagated: TextDecoration): void {
   const { style } = node;
-  style.textDecorationLine = decorationLines(style.textDecorationLine, propagated);
+  style.textDecoration = withPropagated(style.textDecoration, propagated);
   const entries = node.inlineElements ?? [];
   for (const entry of entries) {
-    const above =
-      entry.parent >= 0 ? entries[entry.parent]!.textDecorationLine : style.textDecorationLine;
-    entry.textDecorationLine = decorationLines(entry.textDecorationLine, above);
+    const above = entry.parent >= 0 ? entries[entry.parent]!.textDecoration : style.textDecoration;
+    entry.textDecoration = withPropagated(entry.textDecoration, above);
   }
+  // Through the inline elements a block splits, from `at` out.
+  const through = (at: Element | null): TextDecoration =>
+    !at || at === node.source
+      ? style.textDecoration
+      : withPropagated(readDecoration(getComputedStyle(at)), through(at.parentElement));
   for (const child of node.children) {
-    const { position, float } = child.style;
-    if (position === "absolute" || position === "fixed" || float !== "none" || child.inlineBox) {
-      propagateDecorations(child, "none");
-      continue;
-    }
-    let lines = style.textDecorationLine;
-    if (!child.anonymous) {
-      for (let at = child.source.parentElement; at && at !== node.source; at = at.parentElement) {
-        lines = decorationLines(getComputedStyle(at).textDecorationLine, lines);
-      }
-    }
-    propagateDecorations(child, lines);
+    if (!isFlowChild(child)) propagateDecorations(child, NO_DECORATION);
+    else if (child.anonymous) propagateDecorations(child, style.textDecoration);
+    else propagateDecorations(child, through(child.source.parentElement));
   }
 }
 
-/** Two `text-decoration-line` values together. */
-function decorationLines(own: string, propagated: string): string {
-  if (propagated === "none" || propagated === "" || own === propagated) return own;
-  if (own === "none" || own === "") return propagated;
-  return [...new Set(`${propagated} ${own}`.split(" "))].join(" ");
+/** A decoration with those propagated to it: their lines together,
+ * drawn as the innermost box draws its own (specs/cell-model.md
+ * "Typography"). */
+function withPropagated(own: TextDecoration, propagated: TextDecoration): TextDecoration {
+  if (propagated === NO_DECORATION || own === propagated) return own;
+  if (own === NO_DECORATION) return propagated;
+  const line = [...new Set(`${propagated.line} ${own.line}`.split(" "))].join(" ");
+  return decorationOf({ ...own, line });
 }
 
 /** A leaf's style from an element's text and inherited paint
@@ -253,7 +281,8 @@ function leafStyleOf(el: Element, { rootFontSizePx, cellMetrics }: BuildContext)
     pointerEvents: cs.pointerEvents !== "none",
   };
   // Truncation needs the clip; any other overflow stays the root's.
-  if (readOverflow(cs).x === "clip") style.overflow = { ...style.overflow, x: "clip" };
+  const { x } = readOverflow(cs);
+  if (clipsAxis(x)) style.overflow = { ...style.overflow, x };
   return style;
 }
 
@@ -276,7 +305,8 @@ function buildLeaf(
     style.tracking,
     {
       ...context,
-      preserve: style.whiteSpace === "pre",
+      preserve: style.whiteSpace === "pre" || preservedSpaces(style.whiteSpace) !== undefined,
+      breaks: style.whiteSpace === "pre-line",
       tabSize: style.tabSize,
       textCase: style.textCase,
     },
@@ -288,12 +318,15 @@ function buildLeaf(
   // every unit (specs/wide-characters.md).
   const { advances, charInline } = expandClusters(run);
   // Intrinsic advances for the box markers are the boxes' own width
-  // contributions — a sized box counts its width, not its content;
-  // layout overwrites them with the laid-out widths per pass.
+  // contributions and margins — a sized box counts its width, not its
+  // content; layout overwrites them with the laid-out margin boxes per
+  // pass.
   if (run.boxes.length > 0) {
     const cache = makeIntrinsicCache();
     eachObjectMarker(text, (charIndex, boxIndex) => {
-      advances[charIndex] = Math.max(1, widthContribution(run.boxes[boxIndex]!, "max", cache));
+      const box = run.boxes[boxIndex]!;
+      const margins = fixedMargins(resolveMargin(box.style.margin, 0), "x");
+      advances[charIndex] = Math.max(1, widthContribution(box, "max", cache) + margins);
     });
   }
   // Form controls with no explicit width would otherwise be 0 cells
@@ -301,7 +334,7 @@ function buildLeaf(
   // widths mirror the native ones: input's size attribute, textarea's
   // cols, and a select's option labels — the longest by default, the
   // SELECTED one under `field-sizing: content`, like the browser.
-  let intrinsicWidth = longestLineAdvance(text, advances, style.tracking);
+  let intrinsicWidth = longestLineAdvance(text, advances, style.tracking, style.textIndent);
   if (formControl && intrinsicWidth === 0) {
     // Number(): happy-dom (tests) returns these attributes as strings.
     if (tag === "INPUT") intrinsicWidth = Number((root as HTMLInputElement).size) || 20;
@@ -338,7 +371,10 @@ function buildLeaf(
     const trailingLine = value.endsWith("\n") ? 1 : 0;
     const wrappedLines =
       contentCells !== undefined && contentCells > 0
-        ? wrapLineCount(value, contentCells, { advances: clusterAdvances(value) }) + trailingLine
+        ? wrapLineCount(value, contentCells, {
+            advances: clusterAdvances(value),
+            preserve: "hang",
+          }) + trailingLine
         : value === ""
           ? 0
           : value.split(/\r\n?|\n/).length;
@@ -405,7 +441,38 @@ function buildLeaf(
   }
   const charSource = charSourceRuns(run);
   if (charSource.length > 0) node.charSource = charSource;
+  // Each spot's character as a code unit of the text, the spots in run
+  // order.
+  const units = new Map<Element, number>();
+  let index = 0;
+  let unit = 0;
+  for (const [element, at] of run.spots) {
+    while (index < at) unit += run.chars[index++]!.length;
+    units.set(element, unit);
+  }
+  for (const child of children) {
+    const at = units.get(child.source);
+    if (at !== undefined) child.runSpot = runSpotOf(child, at);
+  }
   return node;
+}
+
+/** Where an out-of-flow child sits in its leaf's run: before `char`,
+ * and, where an axis lacks insets to place it, whether it was
+ * inline-level — its display read with its position held static
+ * (styles.css `data-mw-static-read`). */
+function runSpotOf(child: LayoutNode, char: number): NonNullable<LayoutNode["runSpot"]> {
+  const el = child.source;
+  const { top, right, bottom, left } = child.style.insets;
+  if ((left !== null || right !== null) && (top !== null || bottom !== null)) {
+    return { char, inline: false };
+  }
+  el.setAttribute("data-mw-static-read", "");
+  try {
+    return { char, inline: computedDisplay(el, getComputedStyle(el)).startsWith("inline") };
+  } finally {
+    el.removeAttribute("data-mw-static-read");
+  }
 }
 
 /** A registered leaf renderer's node (specs/leaf-renderers.md): the
@@ -431,7 +498,7 @@ function buildRendererLeaf(
   // stretches coherently (columns stay aligned across rows, like
   // letter-spacing on a pre).
   const advances = clusterAdvances(text, style.tracking);
-  const intrinsicWidth = longestLineAdvance(text, advances, style.tracking);
+  const intrinsicWidth = longestLineAdvance(text, advances, style.tracking, style.textIndent);
   const node = createNode(root, style, [], text, intrinsicWidth, lines.length);
   if (advances.some((a) => a !== 1)) node.advances = advances;
   const runs = content?.runs ?? [];
@@ -455,7 +522,10 @@ function buildRendererLeaf(
         "font-weight": run.paint.fontWeight ?? style.glyph["font-weight"],
         "font-style": run.paint.fontStyle ?? style.glyph["font-style"],
       },
-      textDecorationLine: run.paint.textDecorationLine ?? style.textDecorationLine,
+      textDecoration:
+        run.paint.textDecorationLine === undefined
+          ? style.textDecoration
+          : decorationOf({ ...NO_DECORATION, line: run.paint.textDecorationLine }),
       visible: node.style.visible,
       pointerEvents: node.style.pointerEvents,
       opacity: 1,
@@ -555,14 +625,21 @@ interface LeafRun {
    * no character, and the leaf hangs them off itself for the
    * positioning pass the way it does its own. */
   positioned: LayoutNode[];
+  /** Each out-of-flow element met, direct ones included: the index of
+   * the character it sits before. */
+  spots: Map<Element, number>;
 }
 
 interface RunContext extends BuildContext {
-  /** Leaf-level `white-space: pre`: keep the source's spaces and newlines
-   * (tabs expand to `tabSize` stops from each hard line's start) instead
-   * of collapsing. Applies to the whole run — a `white-space` override on
-   * an inline descendant is not honored (specs/cell-model.md). */
+  /** Leaf-level `white-space: pre`, `pre-wrap` or `break-spaces`: keep
+   * the source's spaces and newlines (tabs expand to `tabSize` stops from
+   * each hard line's start) instead of collapsing. Applies to the whole
+   * run — a `white-space` override on an inline descendant is not honored
+   * (specs/cell-model.md). */
   preserve: boolean;
+  /** `white-space: pre-line`: a source newline breaks, the white space
+   * around it collapsing away as around a `<br>`. */
+  breaks: boolean;
   tabSize: number;
   /** The case of the element whose text is collected. */
   textCase: TextCase;
@@ -575,12 +652,12 @@ interface RunContext extends BuildContext {
  * write grid typography (and rewritten relative insets) onto.
  *
  * White space CSS collapses (wrap.ts `COLLAPSIBLE`) folds to single
- * spaces, source newlines included, as the browser folds it under
- * `white-space: normal` — ONLY `<br>` produces a hard `\n` — and is
- * stripped around a hard break (the browser strips it at line edges
- * too). A `white-space: pre` leaf skips all of that: spaces and
- * newlines survive as authored and tabs expand to tab stops (see
- * RunContext).
+ * spaces, source newlines included — save under `pre-line`, whose
+ * newlines break hard as `<br>` does — and is stripped around a hard
+ * break (the browser strips it at line edges too). A leaf that keeps
+ * its spaces (`pre`, `pre-wrap`, `break-spaces`) skips all of that:
+ * spaces and newlines survive as authored and tabs expand to tab stops
+ * (see RunContext).
  */
 function extractLeafRun(
   el: Element,
@@ -597,6 +674,7 @@ function extractLeafRun(
     inlineElements: [],
     boxes: [],
     positioned: [],
+    spots: new Map(),
   };
   if (nodes) collectRunNodes(el, nodes, tracking, ctx, run);
   else collectRun(el, tracking, ctx, run);
@@ -704,21 +782,24 @@ function inlineEntry(
           ),
     padLeft,
     padRight,
-    insets: position === "relative" ? inlineInsets(cs, ctx.rootFontSizePx) : null,
-    ...(position === "sticky" ? { sticky: inlineInsets(cs, ctx.rootFontSizePx) } : {}),
+    ...(position === "relative" && {
+      insetLengths: readElementInsets(element, cs, ctx.rootFontSizePx),
+    }),
+    insets: null,
+    ...(position === "sticky" && { sticky: readElementInsets(element, cs, ctx.rootFontSizePx) }),
     anchorNames,
     ...(anchorNames.length > 0 && { anchorScope: readAnchorScope(element, cs) }),
     color: cs.color,
     backgroundColor: isTransparentColor(backgroundColor) ? undefined : backgroundColor,
     glyph: readGlyph(cs),
-    textDecorationLine: cs.textDecorationLine,
+    textDecoration: readDecoration(cs),
     visible: readVisible(cs, element),
     pointerEvents: cs.pointerEvents !== "none",
     opacity,
     parent,
     positioned,
     zIndex,
-    // By the properties its entry holds (specs/positioning.md deviation 8).
+    // By the properties its entry holds (specs/positioning.md deviation 6).
     context:
       position === "sticky" ||
       zIndex !== null ||
@@ -770,7 +851,7 @@ function collectNodes(
           : casedClusters(text, clusters, ctx.textCase, contentLanguage(node), run.chars);
       let offset = 0;
       if (ctx.preserve) {
-        // `white-space: pre`: spaces and newlines survive as authored;
+        // Kept white space: spaces and newlines survive as authored;
         // tabs expand to the next `tabSize` stop (spaces are pushed
         // untracked — tab stops are grid columns, not glyphs).
         for (let i = 0; i < clusters.length; i++) {
@@ -795,9 +876,10 @@ function collectNodes(
         let inSpace = false;
         for (let i = 0; i < clusters.length; i++) {
           const ch = clusters[i]!;
-          const collapsible =
-            ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === "\f" || ch === "\r\n";
-          if (!collapsible) pushShown(run, shown[i]!, ch, tracking, node as Text, offset);
+          const newline = ch === "\r" || ch === "\n" || ch === "\r\n";
+          const collapsible = newline || ch === " " || ch === "\t" || ch === "\f";
+          if (ctx.breaks && newline) pushChar(run, "\n", 0, node as Text, offset + ch.length - 1);
+          else if (!collapsible) pushShown(run, shown[i]!, ch, tracking, node as Text, offset);
           else if (!inSpace) pushChar(run, " ", 1 + tracking, node as Text, offset);
           inSpace = collapsible;
           offset += ch.length;
@@ -805,8 +887,8 @@ function collectNodes(
       }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const child = node as Element;
-      if (child.tagName === "BR") {
-        pushChar(run, "\n", 0, null, -1);
+      if (child.tagName === "BR" || child.tagName === "WBR") {
+        pushChar(run, child.tagName === "BR" ? "\n" : WBR_MARKER, 0, null, -1);
         continue;
       }
       // Reads happen during the measure pass, so authored values are visible.
@@ -820,6 +902,7 @@ function collectNodes(
       // (a popover inside an inline element is one, and so is every
       // positioner a custom element wraps).
       if (position === "absolute" || position === "fixed") {
+        run.spots.set(child, run.chars.length);
         const box = buildNode(child, ctx);
         if (box) run.positioned.push(fadedBy(box, opacity));
         continue;
@@ -829,7 +912,7 @@ function collectNodes(
       if (isAtomicInline(display)) {
         const box = buildNode(child, ctx);
         if (box) {
-          box.inlineBox = true;
+          box.inlineBox = zeroInsets();
           pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
           run.boxes.push(fadedBy(box, opacity));
         }
@@ -877,21 +960,6 @@ function inlinePadCells(value: string, rootFontSizePx: number): number {
   return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
 }
 
-/** Authored insets of an inline relative element (offsets) or sticky
- * element (constraints, specs/sticky.md), in whole cells
- * (specs/positioning.md).
- * Percent insets on inline elements are unsupported (`null`), a
- * documented deviation. (Absolute/fixed inline elements never reach
- * here — they leave the run as out-of-flow boxes.) */
-function inlineInsets(cs: CSSStyleDeclaration, rootFontSizePx: number): PerSide<number | null> {
-  const side = (value: string): number | null => {
-    if (!value || value === "auto" || value.endsWith("%")) return null;
-    const px = parseFloat(value);
-    return Number.isFinite(px) ? pxToCells(px, rootFontSizePx) : null;
-  };
-  return { top: side(cs.top), right: side(cs.right), bottom: side(cs.bottom), left: side(cs.left) };
-}
-
 /** Collapse consecutive spaces (also across inline-element boundaries), trim
  * spaces at hard-line edges, and drop leading/trailing blank lines — keeping
  * chars and advances in lockstep. */
@@ -901,30 +969,37 @@ function normalizeRun(run: LeafRun): LeafRun {
   const sourceNode: (Text | null)[] = [];
   const sourceOffset: number[] = [];
   const inlineIndex: number[] = [];
+  // Each kept character's index in the run, where the spots map from.
+  const kept: number[] = [];
   const lineStart = () => {
     let i = chars.length;
     while (i > 0 && chars[i - 1] !== "\n") i--;
     return i;
   };
+  // A line's end loses its spaces, a `<wbr>` after them kept.
   const trimLineEnd = () => {
-    while (chars.length > lineStart() && chars[chars.length - 1] === " ") {
-      chars.pop();
-      advances.pop();
-      sourceNode.pop();
-      sourceOffset.pop();
-      inlineIndex.pop();
+    const start = lineStart();
+    let end = chars.length;
+    while (end > start && chars[end - 1] === WBR_MARKER) end--;
+    let from = end;
+    while (from > start && chars[from - 1] === " ") from--;
+    if (from === end) return;
+    for (const list of [chars, advances, sourceNode, sourceOffset, inlineIndex, kept]) {
+      list.splice(from, end - from);
     }
   };
   for (let i = 0; i < run.chars.length; i++) {
     const ch = run.chars[i]!;
     if (ch === " ") {
       // Skip spaces at a line start and after another space. Collapsing
-      // looks THROUGH inline-padding markers: white-space processing is
-      // character-based, so padding between two spaces doesn't stop them
-      // collapsing (and a space preceded only by padding still counts as
-      // line-start, both per CSS).
+      // looks THROUGH inline-padding and `<wbr>` markers: white-space
+      // processing is character-based, so padding between two spaces
+      // doesn't stop them collapsing (and a space preceded only by
+      // padding still counts as line-start, both per CSS).
       let previous = chars.length - 1;
-      while (previous >= 0 && chars[previous] === INLINE_PAD) previous--;
+      while (previous >= 0 && (chars[previous] === INLINE_PAD || chars[previous] === WBR_MARKER)) {
+        previous--;
+      }
       const atLineStart = previous < 0 || chars[previous] === "\n";
       if (atLineStart || chars[previous] === " ") continue;
     } else if (ch === "\n") {
@@ -935,21 +1010,20 @@ function normalizeRun(run: LeafRun): LeafRun {
     sourceNode.push(run.sourceNode[i] ?? null);
     sourceOffset.push(run.sourceOffset[i] ?? -1);
     inlineIndex.push(run.inlineIndex[i] ?? -1);
+    kept.push(i);
   }
   trimLineEnd();
+  // The spots come in run order.
+  const spots = new Map<Element, number>();
+  let index = 0;
+  for (const [element, at] of run.spots) {
+    while (index < kept.length && kept[index]! < at) index++;
+    spots.set(element, index);
+  }
   // Edge `\n`s stay: every leading <br> creates a line box and all but
   // the final trailing one do (probed, all engines) — the wrap layer
   // drops exactly that last one (dropFinalBreakSpan).
-  return {
-    chars,
-    advances,
-    sourceNode,
-    sourceOffset,
-    inlineIndex,
-    inlineElements: run.inlineElements,
-    boxes: run.boxes,
-    positioned: run.positioned,
-  };
+  return { ...run, chars, advances, sourceNode, sourceOffset, inlineIndex, spots };
 }
 
 function pushChar(run: LeafRun, ch: string, advance: number, source: Text | null, offset: number) {
@@ -1029,12 +1103,20 @@ function charSourceRuns(run: LeafRun): CharSourceRun[] {
   return runs;
 }
 
-function longestLineAdvance(text: string, advances: number[], tracking: number): number {
+/** A leaf's widest hard line, its first past a fixed `indent` (a
+ * percentage counting none, intrinsically). */
+function longestLineAdvance(
+  text: string,
+  advances: number[],
+  tracking: number,
+  indent: CellLength = 0,
+): number {
   let max = 0;
   let lineStart = 0;
   for (let i = 0; i <= text.length; i++) {
     if (i === text.length || text[i] === "\n") {
-      max = Math.max(max, lineAdvance(text, lineStart, i, advances, tracking));
+      const first = lineStart === 0 ? resolveLength(indent, undefined) : 0;
+      max = Math.max(max, first + lineAdvance(text, lineStart, i, advances, tracking));
       lineStart = i + 1;
     }
   }

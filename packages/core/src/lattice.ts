@@ -9,7 +9,7 @@
  * it slid over; parts moving together merge where they meet.
  */
 
-import { junctionGlyph, lineGlyph } from "./borders.ts";
+import { junctionGlyph, lineGlyph, mixedArms } from "./borders.ts";
 import { inPositionedStep, paintTurn } from "./stacking.ts";
 import type { BorderRun, BorderStyle, LatticeSegment, LayoutNode, TableLattice } from "./types.ts";
 
@@ -24,13 +24,27 @@ const UP = 8;
 const DOWN = 4;
 const LEFT = 2;
 const RIGHT = 1;
+const ARMS = [UP, DOWN, LEFT, RIGHT];
+
+type ArmSegment = LatticeSegment | null;
+
+/** Whether a segment outweighs another at a junction: wider, or as wide
+ * in a higher-ranked style. */
+function outweighs(segment: LatticeSegment, other: LatticeSegment): boolean {
+  return (
+    segment.weight > other.weight ||
+    (segment.weight === other.weight && STYLE_RANK[segment.style] > STYLE_RANK[other.style])
+  );
+}
 
 interface Cell {
   x: number;
   y: number;
-  mask: number;
   allDouble: boolean;
   dominant: LatticeSegment;
+  /** The heaviest segment on each arm (UP, DOWN, LEFT, RIGHT), null
+   * where none lands: the junction's arms and their lines. */
+  arms: [ArmSegment, ArmSegment, ArmSegment, ArmSegment];
   /** The one segment running through here — a line, not a junction —
    * or null once a second one lands. */
   only: { id: number; axis: "h" | "v" } | null;
@@ -202,31 +216,28 @@ export function resolveLattice(
     }
     // One key per cell; a scrolled table's cells sit at negative x.
     const key = y * 65536 + x + 32768;
-    const cell = map.get(key);
+    let cell = map.get(key);
     if (!cell) {
-      map.set(key, {
+      cell = {
         x,
         y,
-        mask: arm,
-        allDouble: segment.style === "double",
+        allDouble: true,
         dominant: segment,
+        arms: [null, null, null, null],
         only: axis ? { id, axis } : null,
-        owners: new Set(owners),
-      });
-      return;
-    }
-    cell.mask |= arm;
+        owners: new Set(),
+      };
+      map.set(key, cell);
+    } else if (!axis || cell.only?.id !== id) cell.only = null;
     cell.allDouble &&= segment.style === "double";
-    if (
-      segment.weight > cell.dominant.weight ||
-      (segment.weight === cell.dominant.weight &&
-        STYLE_RANK[segment.style] > STYLE_RANK[cell.dominant.style])
-    ) {
-      cell.dominant = segment;
+    if (outweighs(segment, cell.dominant)) cell.dominant = segment;
+    for (let i = 0; i < ARMS.length; i++) {
+      const held = cell.arms[i];
+      if (arm & ARMS[i]! && (!held || outweighs(segment, held))) cell.arms[i] = segment;
     }
-    if (!axis || cell.only?.id !== id) cell.only = null;
     for (const owner of owners) cell.owners.add(owner);
   };
+
   // The placements a segment gets: one per distinct shift of the cells
   // beside it, with every part that shares it; a shared segment is the
   // later part's for covering, so its own region never covers it.
@@ -330,17 +341,19 @@ export function resolveLattice(
   const runs: BorderRun[] = [];
   const parts = new Map<LayoutNode, BorderRun[]>();
   for (const cell of map.values()) {
+    const [up, down, left, right] = cell.arms;
     const glyph = cell.only
       ? lineGlyph(cell.dominant.style, cell.dominant.weight, cell.only.axis, set)
-      : junctionGlyph(
+      : (mixedArms(up, down, left, right, set) ??
+        junctionGlyph(
           cell.allDouble ? "double" : "solid",
           cell.dominant.weight,
-          (cell.mask & UP) !== 0,
-          (cell.mask & DOWN) !== 0,
-          (cell.mask & LEFT) !== 0,
-          (cell.mask & RIGHT) !== 0,
+          up !== null,
+          down !== null,
+          left !== null,
+          right !== null,
           set,
-        );
+        ));
     const run: BorderRun = { glyph, x: cell.x, y: cell.y, length: 1, color: cell.dominant.color };
     for (const owner of cell.owners) {
       if (owner === null) runs.push(run);

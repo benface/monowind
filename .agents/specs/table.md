@@ -24,13 +24,13 @@ same trick as grid).
 
 No used-value traps: `table-layout`, `border-collapse`, `border-spacing`
 (px → cells per axis), `caption-side`, and `vertical-align` all read
-from computed style — the companion's baseline lock (and the forced
-`text-align: start` on blocked elements) is measuring-gated, so the
-reader sees the authored/UA values from any authoring, Tailwind or
-plain CSS. The UA's `td`/`th { vertical-align: middle }` arrives the
-same way. `colspan`/`rowspan` are HTML content attributes
-on `<td>`/`<th>` (CSS has no span property, so div-tables can't span);
-parsed per HTML: `colspan` clamped to 1–1000, `rowspan` to 0–65534, and
+from computed style — the companion's baseline lock is
+measuring-gated, so the reader sees the authored/UA values from any
+authoring, Tailwind or plain CSS. The UA's
+`td`/`th { vertical-align: middle }` arrives the same way.
+`colspan`/`rowspan` are HTML content attributes on `<td>`/`<th>`
+(CSS has no span property, so div-tables can't span); parsed per
+HTML: `colspan` clamped to 1–1000, `rowspan` to 0–65534, and
 `rowspan="0"` spans to the end of the row group. `<col>`/`<colgroup>`
 `span` attributes and widths are read for column sizing. The legacy
 `valign`/`align` attributes work through their computed forms (browsers
@@ -110,7 +110,9 @@ the grid track machinery.
    `Σp ≥ 100%` demands everything, so `min(…, available)` yields the
    full available width. Inflation is skipped when available is
    indefinite (the table's own intrinsic sizing): percents behave as
-   auto there, grid's indefinite-axis rule.
+   auto there, grid's indefinite-axis rule. Both sums, and so the
+   intrinsic widths, floor at the caption's min-content across the
+   table's border box (see Caption).
 4. Percent widths resolve now, against the used content width (used
    table width minus chrome) — the same rule as percent flex bases and
    percent grid tracks against a definite axis, possible here because
@@ -169,14 +171,18 @@ the browsers' legacy pass (percent heights never contribute to the row
 height itself; that would be circular).
 `vertical-align: top | middle | bottom` normalizes to the engine's
 `start | center | end` and goes through the shared alignment-offset
-machinery (`center` floors the extra, as everywhere); `baseline` maps to
-`start`, the same rule as `items-baseline` in flex/grid (deviation 4).
-The default is `center` on `<td>`/`<th>` (UA `middle`, probed in all
-three engines; the companion's lock hides it, so the tag decides) and
-`start` on div-cells (CSS initial `baseline`). `text-align` follows the
-cell-model rules (start/center/end honored, justify blocked) — the
-UA's `th`/`caption` centering applies as-is, engine-quantized. The
-legacy `align` attribute maps through the same reader.
+machinery (`center` floors the extra, as everywhere); a row's
+`baseline` cells meet at its deepest baseline row (CSS 2 §17.5.3): a
+cell's first text row, else its content's last, so an empty cell's
+lowers nothing (probed 2026-09-28); their content shifts, the row
+growing past a cell's own height to hold it.
+The default is `center` on `<td>`/`<th>` (the UA's `middle`, probed in
+all three engines; the tag supplies it where no UA style applies, as
+in happy-dom) and `baseline` on div-cells (the CSS initial value).
+`text-align` follows the cell-model rules (start/center/end/justify
+honored, cell-model.md "Text alignment") — the UA's `th`/`caption`
+centering applies as-is, engine-quantized. The legacy `align`
+attribute maps through the same reader.
 
 ## Borders — collapsed
 
@@ -211,8 +217,8 @@ order").
 Rendering: junction glyphs. At each lattice intersection the glyph is
 picked from which of the four arms exist — `┼ ├ ┤ ┬ ┴ ─ │` and the
 corners — extending `borders.ts` with T- and cross-junction tables per
-border style; mixed-style junctions fall back to the light set, the
-existing corner convention. Line segments bordering a hole (missing
+border style — each arm drawn by the heaviest segment on it, as
+cell-model.md "Borders: glyph mapping" draws corners. Line segments bordering a hole (missing
 cell) exist only if the other side has a cell or is the table edge.
 
 A junction block wider than a cell — where a line carries a band
@@ -238,11 +244,20 @@ preflight's collapse default means this only appears when authored.
 
 ## Caption
 
-`display: table-caption` lays out as a block spanning the used table
-width, above the table box for `caption-side: top` (default), below for
-`bottom`; it sits inside the table's margin box (margins on the table
-wrap caption and grid together, per CSS). Margins on the caption itself
-are ignored.
+`display: table-caption` lays out as a block outside the table box's
+border and padding, as wide as its border box, above it for
+`caption-side: top` (default), below for `bottom`; the table's margins
+wrap both, per CSS. The table's node is the whole of it, as the
+browser's table element rect is, its border, fill and shadows taking
+the table box alone (`LayoutNode.tableBox`); a collapsed table's
+lattice starts under a top caption.
+
+The caption's margins resolve against the border box's width and
+place it as in block flow: auto ones center a sized caption, negative
+ones reach past the table, and its margin box stacks with the table
+box. Its min-content, margins included, floors the table's border
+box, so a long caption wraps at the table's width; its max-content
+does not widen it (probed 2026-09-27, every engine).
 
 ## Interaction with the rest of the engine
 
@@ -278,13 +293,10 @@ are ignored.
    width** (CSS 2.1 leaves it undefined; probed: all three engines
    match the formula on single-row cases, within a pixel). In intrinsic
    (indefinite-available) contexts percents behave as auto, as in grid.
-4. **`baseline` vertical alignment behaves as `start`** — the flex/grid
-   rule — where CSS lines up the cells' first text rows, which their
-   padding can set apart.
-5. **Extra table height is distributed equally to the non-percent
+4. **Extra table height is distributed equally to the non-percent
    rows** (undefined in CSS; browsers vary).
-6. **`empty-cells`** is not supported, and **`visibility: collapse`**
+5. **`empty-cells`** is not supported, and **`visibility: collapse`**
    on a row hides as `hidden`, its space kept, and on a column is not
    read (visibility.md deviation 1).
-7. Everything in `cell-model.md` (rounding, integer distribution ties)
+6. Everything in `cell-model.md` (rounding, integer distribution ties)
    applies.

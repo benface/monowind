@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { cellSize, expectBrowserRowsToMatchEngine } from "./helpers.ts";
+import { besideNative, cellSize, expectBrowserRowsToMatchEngine, type Unit } from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Table",
@@ -168,6 +168,25 @@ export const CaptionAndAlignment: StoryObj = {
     expect(cellsOf(top, "--mw-pt")).toBe(0);
     expect(cellsOf(bottom, "--mw-pt")).toBe(2);
   },
+};
+
+/** Captions (specs/table.md "Caption"), lengths in `u`: outside a
+ * bordered, padded table's box, above and below it, with margins; a
+ * long one wrapping at the table's width; a sized one centered. */
+const captionCases = (u: Unit): string[] => {
+  const table = (caption: string, side = "top", cell = "alpha beta") =>
+    `<table style="border-collapse:separate;border-spacing:${u(1)} ${u(1, "y")};border:solid;border-width:${u(1, "y")} ${u(1)};padding:${u(1, "y")} ${u(2)};caption-side:${side}"><caption style="text-align:left;${caption}">caption words</caption><tr><td>${cell}</td><td>gamma</td></tr></table>`;
+  return [
+    table(`margin:${u(2, "y")} ${u(4)} ${u(1, "y")} ${u(3)}`),
+    table(`margin:${u(1, "y")} 0 0 ${u(2)}`, "bottom"),
+    table("", "top", "x"),
+    table(`width:${u(8)};margin:0 auto`, "top", "alpha beta delta"),
+  ];
+};
+
+export const CaptionBox: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(captionCases),
 };
 
 export const AttributesAndGroups: StoryObj = {

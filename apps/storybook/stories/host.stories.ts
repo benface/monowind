@@ -16,6 +16,7 @@ import {
   pressAt,
   readyHost,
   release,
+  rowsOf,
   testHooks,
   transitionLayouts,
 } from "./helpers.ts";
@@ -553,5 +554,105 @@ export const OwnHeight: StoryObj = {
     await frames(5);
     expect(floorLayouts.count).toBe(4);
     floorLayouts.stop();
+  },
+};
+
+/** A host whose width is its content's is as wide as its columns and
+ * its chrome (specs/cell-model.md "Host sizing"): `w-fit`,
+ * `inline-block`, `float-left`, and a flex row's item, whose sibling
+ * starts past its right edge, the row narrowed laying it out narrower;
+ * and a host in a `flex-1` column narrows as the aside beside it
+ * grows. */
+export const OwnWidth: StoryObj = {
+  render: () => html`
+    <div class="flex flex-col gap-4">
+      <mono-wind data-test="fit" class="w-fit border px-1">${lines(2)}</mono-wind>
+      <div><mono-wind data-test="inline-block" class="inline-block">${lines(2)}</mono-wind></div>
+      <div class="flow-root">
+        <mono-wind data-test="float" class="float-left">${lines(2)}</mono-wind>
+      </div>
+      <div data-test="row" class="flex w-160">
+        <mono-wind data-test="item">A line of text in a flex row's item.</mono-wind>
+        <div data-test="sibling">sibling</div>
+      </div>
+      <div data-test="shell" class="flex w-160">
+        <div data-test="aside" class="w-40 shrink-0"></div>
+        <div class="flex-1">
+          <mono-wind data-test="column">A line of text in a flex-1 column.</mono-wind>
+        </div>
+      </div>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const hooks = testHooks(canvasElement);
+    await readyHost(canvasElement);
+    await frames(2);
+    const box = (name: string) => hooks(name).getBoundingClientRect();
+    // The width cap, the columns laid out and the chrome, is the width.
+    const capped = (name: string) => {
+      const cap = parseFloat(hooks(name).style.getPropertyValue("--mw-host-w"));
+      expect(cap, name).toBeGreaterThan(0);
+      expect(box(name).width, name).toBeCloseTo(cap, 1);
+    };
+    for (const name of ["fit", "inline-block", "float", "item"]) capped(name);
+    expect(rowsOf(hooks("item"))[0]).toContain("A line of text in a flex row's item.");
+    expect(box("sibling").left).toBeGreaterThanOrEqual(box("item").right - 0.5);
+    const layouts = countLayouts(hooks("item"));
+    hooks("row").classList.replace("w-160", "w-40");
+    await waitFor(() => expect(layouts.count).toBeGreaterThan(0));
+    await waitFor(() => {
+      capped("item");
+      expect(box("sibling").left).toBeGreaterThanOrEqual(box("item").right - 0.5);
+      expect(box("sibling").right).toBeLessThanOrEqual(box("row").right + 0.5);
+    });
+    layouts.stop();
+    // An inline width: a new utility's stylesheet would lay every host out.
+    hooks("aside").style.width = "30rem";
+    await waitFor(() => {
+      expect(box("column").right).toBeLessThanOrEqual(box("shell").right + 0.5);
+      expect(rowsOf(hooks("column")).filter((row) => row.trim()).length).toBeGreaterThan(1);
+    });
+  },
+};
+
+/** The host's display and columns lay out its one shadow child alone
+ * (specs/host-leaf.md): under `columns-2`, `grid grid-cols-2` and
+ * `flex gap-2` the children stay a block, each light element on its
+ * cells and the grid as wide as the host's content box. */
+export const HostDisplay: StoryObj = {
+  render: () => html`
+    <div class="flex w-160 flex-col gap-4">
+      ${["columns-2", "grid grid-cols-2", "flex gap-2"].map(
+        (classes) => html`
+          <mono-wind data-test="host" class=${classes}>
+            <p>A first paragraph.</p>
+            <div class="border px-1">A bordered box.</div>
+            <p data-test="late">A third paragraph.</p>
+            <p>A fourth paragraph, the last.</p>
+          </mono-wind>
+        `,
+      )}
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    await frames(2);
+    for (const host of canvasElement.querySelectorAll<HTMLElement>('[data-test="host"]')) {
+      const style = getComputedStyle(host);
+      const content =
+        host.getBoundingClientRect().width -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight) -
+        parseFloat(style.borderLeftWidth) -
+        parseFloat(style.borderRightWidth);
+      const grid = gridOf(host).getBoundingClientRect().width;
+      expect(Math.abs(content - grid), host.className).toBeLessThan(cellSize(host).width);
+      // A block: the third paragraph under the bordered box, at the start.
+      expect(rowsOf(host)[4], host.className).toMatch(/^A third paragraph\./);
+      for (const el of host.querySelectorAll<HTMLElement>("[data-mw-laid-out]")) {
+        await expectOnItsCells(host, el);
+      }
+      expectGridOnItsCells(host);
+    }
   },
 };

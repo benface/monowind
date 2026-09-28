@@ -1,11 +1,12 @@
 /**
  * Greedy word-wrap for monospace text on the cell grid, as a browser
- * wraps `white-space: normal; overflow-wrap: anywhere` text (styles.css
- * sets that): white space collapsing, hyphen break opportunities and
- * `\n` hard breaks per specs/cell-model.md "Whitespace collapsing" and
- * "Hyphen break opportunities". Text is a string plus optional
- * per-character `advances` (cells each character occupies, `1 +
- * tracking` for letter-spaced text).
+ * wraps text under `overflow-wrap: anywhere` (styles.css sets that):
+ * white space collapsing or kept (`preserve`), UAX #14's subset of break
+ * opportunities, a hyphen's break after it past a word's start, and
+ * `\n` hard breaks, per specs/cell-model.md "Whitespace collapsing" and
+ * "Line breaking". Text is a string plus optional per-character
+ * `advances` (cells each character occupies, `1 + tracking` for
+ * letter-spaced text).
  */
 
 import { clusterWidth } from "./width.ts";
@@ -34,6 +35,14 @@ interface WrapOptions {
    * line's row and the band floats leave there. Absent, every line has
    * the full width. */
   openLine?: ((index: number, closed: readonly LineSpan[]) => number) | undefined;
+  /** Preserved white space (specs/cell-model.md "White-space and
+   * truncation"): `hang`, `pre-wrap`'s, whose spaces at a soft break
+   * hang; `break`, `break-spaces`', whose every space takes its cell with
+   * a break after it. Either keeps a hard line's leading spaces. */
+  preserve?: "hang" | "break" | undefined;
+  /** `word-break` (specs/cell-model.md "Line breaking"): `break-all`
+   * breaks between any two letters, `keep-all` keeps CJK runs whole. */
+  wordBreak?: "normal" | "break-all" | "keep-all" | undefined;
 }
 
 export function wrapLines(text: string, width: number, options: WrapOptions = {}): string[] {
@@ -69,7 +78,7 @@ export function hardLineSpans(text: string): LineSpan[] {
 export function wrapLineSpans(text: string, width: number, options: WrapOptions = {}): LineSpan[] {
   // Nothing but collapsible white space is empty; a `\n` is a hard
   // break (a `<br>`), never collapsible.
-  if (!/[^ \t\r\f]/.test(text)) return [];
+  if (!options.preserve && !/[^ \t\r\f]/.test(text)) return [];
   const spans: LineSpan[] = [];
   let lineStart = 0;
   let indent = options.firstLineIndent ?? 0;
@@ -120,20 +129,45 @@ function trailingGap(text: string, index: number, advances?: number[]): number {
   return Math.max(0, (advances[first] ?? 1) - cells);
 }
 
-/** Widest unbreakable unit (breakable segment) in the text — the
- * min-content width of a wrapping leaf. */
+/** Widest unbreakable unit (breakable segment) in the text, the first
+ * past the first line's indent — the min-content width of a wrapping
+ * leaf. */
 export function longestSegmentAdvance(text: string, options: WrapOptions = {}): number {
   const { advances, tracking = 0 } = options;
   let longest = 0;
-  for (const word of wordRanges(text, 0, text.length)) {
-    for (const segment of breakableSegmentRanges(text, word.start, word.end)) {
-      longest = Math.max(
-        longest,
-        lineAdvance(text, segment.start, segment.end, advances, tracking),
-      );
-    }
+  let indent = options.firstLineIndent ?? 0;
+  for (const unit of lineUnits(text, 0, text.length, options)) {
+    const cells = lineCells(text, unit.start, unit.end, advances, tracking);
+    longest = Math.max(longest, indent + cells);
+    indent = 0;
   }
   return longest;
+}
+
+/** A soft hyphen shows at a line's end, a cell past its text. */
+export const SOFT_HYPHEN = "\u00ad";
+
+/** `<wbr>` in a run: a break opportunity standing for no text. */
+export const WBR_MARKER = "\u2063";
+
+/** Whether a line ending at `end` shows its soft hyphen, a cell past
+ * its text: not where its hard line ends. */
+export function showsHyphen(text: string, end: number): boolean {
+  return text[end - 1] === SOFT_HYPHEN && end < text.length && text[end] !== "\n";
+}
+
+/** The cells a line of `text[start, end)` takes (lineAdvance), a soft
+ * hyphen it shows drawn past its last character's gap. */
+export function lineCells(
+  text: string,
+  start: number,
+  end: number,
+  advances?: number[],
+  tracking = 0,
+): number {
+  return showsHyphen(text, end)
+    ? advanceOf(start, end, advances) + 1
+    : lineAdvance(text, start, end, advances, tracking);
 }
 
 /** U+FFFC marks an embedded atomic inline box (see LayoutNode.inlineBox):
@@ -165,29 +199,105 @@ export function eachObjectMarker(
   }
 }
 
-function breakableSegmentRanges(text: string, start: number, end: number): LineSpan[] {
-  const segments: LineSpan[] = [];
+/** A word's breakable segments, pushed onto `segments`. */
+function breakableSegmentRanges(
+  text: string,
+  start: number,
+  end: number,
+  { advances, wordBreak }: WrapOptions,
+  segments: LineSpan[],
+): void {
   let segmentStart = start;
-  for (let i = start; i < end; i++) {
+  const cut = (at: number): void => {
+    if (at <= segmentStart || at >= end) return;
+    segments.push({ start: segmentStart, end: at });
+    segmentStart = at;
+  };
+  for (let i = start; i < end;) {
     if (text[i] === OBJECT_REPLACEMENT) {
-      if (i > segmentStart) segments.push({ start: segmentStart, end: i });
-      segments.push({ start: i, end: i + 1 });
-      segmentStart = i + 1;
-      continue;
-    }
-    if (text[i] !== "-") continue;
-    // Word-initial runs aren't break opportunities (see file header).
-    const wordInitial = i === start;
-    while (i + 1 < end && text[i + 1] === "-") i++;
-    const next = i + 1;
-    if (!wordInitial && next < end) {
-      segments.push({ start: segmentStart, end: next });
-      segmentStart = next;
+      cut(i);
+      cut(i + 1);
+      i++;
+    } else if (text[i] === "-") {
+      // Word-initial runs aren't break opportunities (file header).
+      const wordInitial = i === start;
+      while (i + 1 < end && text[i + 1] === "-") i++;
+      if (!wordInitial) cut(i + 1);
+      i++;
+    } else {
+      const next = i + (isHighSurrogate(text.charCodeAt(i)) ? 2 : 1);
+      // Never inside a cluster, whose later units take no cells.
+      if (next < end && advances?.[next] !== 0 && breaksBetween(text, i, next, wordBreak)) {
+        cut(next);
+      }
+      i = next;
     }
   }
-  // A word ending on a marker has closed its last segment already.
   if (end > segmentStart) segments.push({ start: segmentStart, end });
-  return segments;
+}
+
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code < 0xdc00;
+
+/** The subset's classes (specs/cell-model.md "Line breaking"): a
+ * character with a break before and after it (CJK), none after it
+ * (opening punctuation), none before it (closing punctuation, `ー`,
+ * small kana, a combining mark), one after it alone (a zero-width
+ * space, `<wbr>`, a soft hyphen, an en dash, an ideographic space),
+ * one either side (an em dash, not between two), and none either side
+ * (a no-break space, inline padding). */
+type Break = "other" | "ideographic" | "opening" | "closing" | "after" | "dash" | "glue";
+
+const OPENING = new Set("([{（［｛〔〈《「『【〘〖〝｟｢");
+const CLOSING = new Set(
+  ")]},.:;!?、。，．：；？！）］｝〕〉》」』】〙〗〟｠｣・ヽヾゝゞ々〻ー゛゜" +
+    "ぁぃぅぇぉっゃゅょゎゕゖ" +
+    "ァィゥェォッャュョヮヵヶｧｨｩｪｫｬｭｮｯｰ",
+);
+const AFTER = new Set(["\u200b", WBR_MARKER, SOFT_HYPHEN, "–", "\u3000"]);
+const GLUE = new Set(["\u00a0", "\u202f", "\u2007", "\ufeff", INLINE_PAD]);
+const MARK = /\p{M}/u;
+
+/** The class of the character at `at`, as `word-break` has it: under
+ * `break-all` a letter breaks as an ideograph does, under `keep-all` an
+ * ideograph joins as a letter. */
+function breakClass(text: string, at: number, wordBreak: WrapOptions["wordBreak"]): Break {
+  const ch = text[at]!;
+  if (GLUE.has(ch)) return "glue";
+  if (AFTER.has(ch)) return "after";
+  if (ch === "—") return "dash";
+  if (CLOSING.has(ch) || MARK.test(ch)) return "closing";
+  if (OPENING.has(ch)) return "opening";
+  if (wordBreak === "break-all") return "ideographic";
+  const code = text.codePointAt(at)!;
+  const ideographic =
+    (code >= 0x2e80 && code <= 0xa4cf) ||
+    (code >= 0xac00 && code <= 0xd7a3) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xfe30 && code <= 0xfe4f) ||
+    (code >= 0xff00 && code <= 0xffef) ||
+    (code >= 0x20000 && code <= 0x3ffff);
+  return ideographic && wordBreak !== "keep-all" ? "ideographic" : "other";
+}
+
+/** Whether a line may break between the characters at `at` and
+ * `next`: ASCII pairs only at hyphens (breakableSegmentRanges), save
+ * under `break-all`, whose letters break as ideographs do, where
+ * `keep-all`'s ideographs join as letters. */
+function breaksBetween(
+  text: string,
+  at: number,
+  next: number,
+  wordBreak: WrapOptions["wordBreak"],
+): boolean {
+  const ascii = text.charCodeAt(at) < 0x80 && text.charCodeAt(next) < 0x80;
+  if (ascii && wordBreak !== "break-all") return false;
+  const before = breakClass(text, at, wordBreak);
+  const after = breakClass(text, next, wordBreak);
+  if (before === "glue" || after === "glue" || before === "opening") return false;
+  if (after === "closing" || after === "after" || text[next] === "-") return false;
+  if (before === "after") return true;
+  if (before === "dash" || after === "dash") return before !== after;
+  return before === "ideographic" || after === "ideographic";
 }
 
 /** CSS "document white space" only: space, tab, CR, LF, FF. Not NBSP
@@ -195,17 +305,23 @@ function breakableSegmentRanges(text: string, start: number, end: number): LineS
  * breaks at it, so it stays inside its word. */
 const COLLAPSIBLE = /[ \t\r\n\f]/;
 
-function wordRanges(text: string, start: number, end: number): LineSpan[] {
-  const words: LineSpan[] = [];
+/** A hard line's units, each followed by a break opportunity: its
+ * words' breakable segments, and under `break-spaces` each space. */
+function lineUnits(text: string, start: number, end: number, options: WrapOptions): LineSpan[] {
+  const { preserve } = options;
+  const units: LineSpan[] = [];
   let i = start;
   while (i < end) {
-    while (i < end && COLLAPSIBLE.test(text[i]!)) i++;
-    if (i >= end) break;
+    if (COLLAPSIBLE.test(text[i]!)) {
+      if (preserve === "break") units.push({ start: i, end: i + 1 });
+      i++;
+      continue;
+    }
     const wordStart = i;
     while (i < end && !COLLAPSIBLE.test(text[i]!)) i++;
-    words.push({ start: wordStart, end: i });
+    breakableSegmentRanges(text, wordStart, i, options, units);
   }
-  return words;
+  return units;
 }
 
 /** Wraps one hard line, pushing its line boxes onto `lines` — the flat
@@ -215,10 +331,11 @@ function wrapHardLine(
   start: number,
   end: number,
   width: number,
-  { advances, tracking = 0, openLine }: WrapOptions,
+  options: WrapOptions,
   firstLineIndent: number,
   lines: LineSpan[],
 ): void {
+  const { advances, tracking = 0, openLine, preserve } = options;
   // Every line box opens through the caller, an empty one included.
   let bandIndex = -1;
   let bandWidth = width;
@@ -229,62 +346,65 @@ function wrapHardLine(
     }
     return bandWidth;
   };
-  const words = wordRanges(text, start, end);
-  if (words.length === 0) {
+  const units = lineUnits(text, start, end, options);
+  if (units.length === 0) {
     band();
     lines.push({ start, end: start });
     return;
   }
   if (width <= 0) {
     band();
-    lines.push({ start: words[0]!.start, end: words[words.length - 1]!.end });
+    lines.push({ start: units[0]!.start, end: units[units.length - 1]!.end });
     return;
   }
 
-  let current: LineSpan | null = null;
-  // Advances accumulated over the current line, with words joined by ONE
-  // space each regardless of the source whitespace run (collapsing).
+  // Preserved, the line opens at the hard line's start, its leading
+  // spaces taking their cells.
+  let current: LineSpan | null = preserve ? { start, end: start } : null;
+  // Advances accumulated over the current line, what joins a unit to it
+  // included: ONE space per collapsed run, or the preserved ones.
   let advancesSum = 0;
   // Only the first line box (before the first `lines.push`) is charged
   // the text-indent — subsequent lines get the full width back.
-  let lineIndent = Math.max(0, firstLineIndent);
+  let lineIndent = firstLineIndent;
   const availableWidth = () => band() - lineIndent;
 
-  for (const word of words) {
-    let joinsPrevious = false; // segments after the first attach with no space
-    for (const segment of breakableSegmentRanges(text, word.start, word.end)) {
-      let segmentStart = segment.start;
-      const segmentEnd = segment.end;
-      const separatorStart = current !== null && !joinsPrevious ? segmentStart - 1 : segmentStart;
-      const candidate = advancesSum + advanceOf(separatorStart, segmentEnd, advances);
+  for (const unit of units) {
+    let segmentStart = unit.start;
+    const segmentEnd = unit.end;
+    if (current !== null) {
+      const from = preserve || current.end === segmentStart ? current.end : segmentStart - 1;
+      const candidate = advancesSum + advanceOf(from, segmentEnd, advances);
       const trailing = Math.min(tracking, trailingGap(text, segmentEnd - 1, advances));
-      if (current !== null && candidate - trailing <= availableWidth()) {
+      const cells = showsHyphen(text, segmentEnd) ? candidate + 1 : candidate - trailing;
+      if (cells <= availableWidth()) {
         current.end = segmentEnd;
         advancesSum = candidate;
-      } else {
-        if (current !== null) {
-          lines.push(current);
-          lineIndent = 0;
-        }
-        // Break a too-wide segment at cell boundaries: a chunk of exactly
-        // `width` stays as the current line (matching browser overflow-wrap).
-        for (;;) {
-          let fit = segmentStart;
-          while (
-            fit < segmentEnd &&
-            lineAdvance(text, segmentStart, fit + 1, advances, tracking) <= availableWidth()
-          )
-            fit++;
-          if (fit === segmentEnd || fit === segmentStart) break;
-          lines.push({ start: segmentStart, end: fit });
-          lineIndent = 0;
-          segmentStart = fit;
-        }
-        current = { start: segmentStart, end: segmentEnd };
-        advancesSum = advanceOf(segmentStart, segmentEnd, advances);
+        continue;
       }
-      joinsPrevious = true;
+      // A line with text or leading spaces closes; the spaces before the
+      // unit hang past it.
+      if (current.end > current.start || segmentStart > current.start) {
+        lines.push(current);
+        lineIndent = 0;
+      }
     }
+    // Break a too-wide segment at cell boundaries: a chunk of exactly
+    // `width` stays as the current line (matching browser overflow-wrap).
+    for (;;) {
+      let fit = segmentStart;
+      while (
+        fit < segmentEnd &&
+        lineCells(text, segmentStart, fit + 1, advances, tracking) <= availableWidth()
+      )
+        fit++;
+      if (fit === segmentEnd || fit === segmentStart) break;
+      lines.push({ start: segmentStart, end: fit });
+      lineIndent = 0;
+      segmentStart = fit;
+    }
+    current = { start: segmentStart, end: segmentEnd };
+    advancesSum = advanceOf(segmentStart, segmentEnd, advances);
   }
   if (current !== null) lines.push(current);
 }

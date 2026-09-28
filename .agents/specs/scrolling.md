@@ -34,7 +34,9 @@ truth.
   follow its scroll.
 - **The browser owns scroll physics; the engine mirrors on the grid.**
   Authored `overflow(-x|-y): auto | scroll` stays LIVE on the light
-  element (not normalized away like `clip`/`hidden` are), so the
+  element (not locked to `clip` as `clip`/`hidden` are), and so does a
+  scroll container's own `hidden` axis: render.ts writes the lock
+  (`data-mw-clip`) only on a box clipping both axes. The
   container scrolls natively — wheel, touch momentum, keyboard,
   `scrollIntoView`, focus-follows-scroll, anchors, and the
   `scrollTop`/`scrollLeft` programmatic API all come from the browser.
@@ -54,15 +56,17 @@ truth.
   PADDING box per CSS (reserved gutter cells excluded — the bar owns
   them): padding sits blank at the scroll extremes and content flows
   through it mid-scroll, under the border's own cells where the box has
-  one. The same rect covers `overflow: clip`. During a live grid-mode
-  drag, scroll repaints are HELD like any structural repaint
-  (`holdStructural`) and apply on release.
+  one. The same rect covers `overflow: hidden` and `clip`. During a
+  live grid-mode drag, scroll repaints are HELD like any structural
+  repaint (`holdStructural`) and apply on release.
 - **A reveal stops clear of the border and the bars.** Their cells are
   native padding, inside the scrollport, where CSS keeps a border
   outside it and a bar beside it: the companion locks `scroll-padding`
-  to them (`--mw-b*`, and `--mw-gr`/`--mw-gb` for the reserved bars),
-  so `scrollIntoView`, focus, and Tab bring an element into the cells
-  between.
+  to them (`--mw-b*`, and `--mw-gr`/`--mw-gb` for the reserved bars)
+  plus the container's authored `scroll-padding`, read in cells on the
+  spacing scale (`--mw-sp*`), so `scrollIntoView`, focus, and Tab
+  bring an element into the cells between, as clear of them as CSS
+  says.
 - **Scroll containers scroll at once.** The companion locks
   `scroll-behavior` to `auto`: the engine's own writes — a thumb drag,
   a routed wheel tick, a position restored after a relayout — must land
@@ -208,13 +212,16 @@ none` on EVERY element — a one-time pristine-probe detects that and
   CSS. The scrollable range is the laid-out content size minus the
   content box, in cells.
 - **Per-axis overflow in the style model.** `CellStyle.overflow` is
-  per-axis four-state (`visible | clip | auto | scroll`) read from
-  the longhands — `auto` and `scroll` are both scroll containers
-  (`scrollsAxis`), kept distinct because their GUTTERS differ
-  (reserved always vs on overflow). The CSS coercion applies (one non-visible axis forces
-  the other's `visible` to compute `auto`). Truncation keys on the
-  inline axis's clip; the sr-only heuristic reads raw `cs` as
-  before.
+  per-axis five-state (`visible | clip | hidden | auto | scroll`,
+  `OverflowAxis`) read from the longhands. `hidden`, `auto` and
+  `scroll` make a scroll container to CSS (`isScrollContainer`: an
+  automatic minimum of 0); the engine scrolls `auto` and `scroll`
+  alone (`scrollsAxis`), kept distinct because their GUTTERS differ
+  (reserved always vs on overflow), and clips `hidden` unscrolled, as
+  it clips `clip`. The CSS coercion applies (`readOverflow`): beside a
+  scroll-container axis, `visible` computes `auto` and `clip` computes
+  `hidden`. Truncation keys on the inline axis's clip (`hidden` or
+  `clip`); the sr-only heuristic reads raw `cs`.
 - **Bottom-stick across relayouts.** The browser preserves a
   container's scrollTop NUMBER through the engine's var rewrites, but
   a container settled at its MAX offset before a relayout that grows
@@ -289,10 +296,8 @@ none` on EVERY element — a one-time pristine-probe detects that and
   content-anchored: scrolling repaints the scroll container's cells and the
   selection keeps its grid coordinates (terminal behavior), rather
   than following the content.
-- An authored `scroll-padding` is not read: a scroll container's is
-  its border and bar cells ("A reveal stops clear of the border and
-  the bars"). An item's own `scroll-margin` (`scroll-mt-*`) still is,
-  the way to reveal it clear of a sticky header.
+- A percentage `scroll-padding` reads 0 (it resolves against the
+  scrollport, whose rows the reveal would split).
 - `scroll-behavior: smooth` is not applied to a scroll container
   ("Scroll containers scroll at once"); a script's own
   `scrollTo({ behavior: "smooth" })` still animates.

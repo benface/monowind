@@ -74,7 +74,8 @@ truth.
   rule behind the lattice mixing policy below.
 - **Lattice mixing policy**: a collapsed lattice resolves entirely
   with the TABLE's set; per-element overrides are for standalone
-  boxes — two sets never negotiate a shared junction.
+  boxes — two sets never negotiate a shared junction, whose glyph
+  follows cell-model.md "Borders: glyph mapping".
 - **Font pairing is the theme's responsibility**: a glyph missing
   from the themed font falls to the fallback font, whose different
   advance can drift the grid — themes pair sets with fonts verified

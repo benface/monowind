@@ -269,7 +269,7 @@ describe("top layer paint", () => {
       style: {
         layer: layered(),
         height: { kind: "cells", value: 1 },
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
       },
       children: [pop],
     });

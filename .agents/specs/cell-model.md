@@ -1,6 +1,6 @@
 # Spec: the cell model
 
-Status: normative for the engine and its tests, updated as milestones ship.
+Status: normative for the engine and its tests.
 
 This directory holds simplified, cell-adapted versions of the CSS features
 monowind re-implements. The guiding rule: **follow the CSS specs as closely as
@@ -23,9 +23,13 @@ section. Sibling specs: `flex.md`, `grid.md`, `positioning.md`,
   axis (an unbounded axis resolves to 0). Percent padding counts as 0 in
   intrinsic-size contributions, per CSS. Flex passes carry the containing
   block's width separately from the flex-assigned size, so percent padding
-  on flex items resolves against the parent's content width, per CSS. One
-  small approximation remains: for a margined child in block flow (or a
-  column's cross axis), the basis excludes the child's own margins.
+  on flex items resolves against the parent's content width, per CSS. A
+  percent width, its limits and percent padding resolve against the
+  containing block's width whatever the box's margins, the width they
+  leave being the space an auto width fills or shrinks within (`fill`):
+  `w-full mx-4` in 20 cells is 20 wide and overflows by 8, in block
+  flow, a float, a flex column, a grid item, multicol and an inline box
+  alike.
 - **Border width is a weight the glyph set interprets.** A border's px
   width picks the WEIGHT BAND the owner's glyph set registers nearest
   it, and the band says both what to draw and how many cells thick:
@@ -68,7 +72,7 @@ the same scale, and `+ − * /` with parentheses combine them — so
 `w`/`h` and the four min/max limits, active-checked against the computed px
 like viewport utilities (an inactive variant resolves elsewhere and wins).
 A term outside that model (`%`, `em`, `var()`) leaves the whole value to
-the computed px, as before. Plain-stylesheet calc() shares the viewport
+the computed px. Plain-stylesheet calc() shares the viewport
 deviation above.
 
 Insets and margins read the browser's computed `calc()` instead, which
@@ -174,11 +178,19 @@ flipped where it overflows (`anchor-positioning.md`).
 
 `overflow: hidden` and `overflow: clip` (either axis longhand too) both mark
 the element as clipping — content stays inside the engine-allocated box,
-normalized to `clip` internally (no scroll container, cheaper, the precise
-semantic for what we do). `auto` and `scroll` make the element a SCROLL
-CONTAINER: native scroll physics on the light element, cell-quantized
-mirroring on the grid, engine-drawn bars — specs/scrolling.md is the full
-contract.
+and the engine scrolls neither (deviation 24; the light element's lock,
+off while the engine reads, is `clip` on a box clipping both axes — a
+lone clipping axis is an authored `clip`, and a box with an `auto` or
+`scroll` axis keeps its `hidden` axis as authored). They differ as CSS has them: `hidden` makes a scroll
+container,
+so its automatic minimum is 0 and it roots a formatting context, and
+beside it the other axis's `visible` computes to `auto`, its `clip` to
+`hidden`; `clip` does none of these, so a clip flex or grid item keeps
+its content-based minimum, `overflow-x: clip` alone leaves y visible,
+and a clip box beside a float shortens its lines. `auto` and `scroll`
+make the element a SCROLL CONTAINER: native scroll physics on the light
+element, cell-quantized mirroring on the grid, engine-drawn bars —
+specs/scrolling.md is the full contract.
 
 Visible overflow paints past the host, as CSS paints it past any box: the
 grid is sized to the INK extent along each visible axis (a root leaf
@@ -194,14 +206,20 @@ left of the host has no cells and is dropped (deviation).
 
 The host's used width is a whole number of cells: each layout measures the
 host's natural CSS width (its own `width`/`max-width`, its container, its
-flex slot) with the engine's rule lifted, lays out the columns that fit,
+flex slot) with the engine's rule lifted, lays out the columns that fit
+at the text's own advance (the cell rounds it up a hair, so a host
+its text sizes holds as many columns as the text characters),
 and caps the box to exactly those columns plus its padding and border via
 an engine-owned `max-width` — so borders, backgrounds, and `mx-auto`
 centering land on the grid instead of a fractional edge. A cap rather than
 a width, so a shrinking container still shrinks the host natively; growth
 is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
-the window.
+the window. A host whose width is its content's (`w-fit`,
+`inline-block`, a float, an absolute box, a flex row's item) takes it
+from a spacer, as its height does: the shadow viewport's `min-width`,
+the columns laid out, lifted while the engine reads so the content
+measures anew.
 
 The height is CSS's too. The host keeps `height: auto`; its content
 lies out of its flow (the shadow's slot is positioned, outside the
@@ -222,7 +240,7 @@ it, where nothing reports the growth. Any change to the height, whatever
 changed it, is the host's own resize, which relays it out. A host with
 nothing to lay out and no height of its own is zero rows — its padding
 and border only, and an empty grid; a `min-h-*` floor above the content
-is deviation 23. A host in no box (inside `display: none`)
+is deviation 21. A host in no box (inside `display: none`)
 measures no cell and keeps its last layout, writing nothing, until
 its resize as it shows lays it out. The host's own inline content is the root
 leaf (specs/host-leaf.md), laid out inside the same content box. A
@@ -247,7 +265,8 @@ a rule reads a reset variable with no fallback. A variable written on
 every box and read under an engine flag alone (geometry, padding and
 border cells, leading, indent) needs none, nor does one read only
 under a flag render.ts sets with it (flow margins, multicol, the
-scroll spacer and gutters, `--mw-va`). `--mw-ls` and an editable's
+scroll spacer and gutters, `--mw-va`, a box's restored white space
+`--mw-ws`). `--mw-ls` and an editable's
 `--mw-ink`/`--mw-ground` are their parent's by design, so an inline
 element without its own takes its block's; the ground is written on
 every editable box, the theme's spelled out (`var(--mw-bg)`) where no
@@ -304,7 +323,7 @@ element's padding cells.
   line, 1 empty row between); length values (`leading-6` = 24px) go
   through the same floor, so they scale with the root font size like
   CSS. Preflight's default 1.5 floors to 1 row.
-  `leading-*` on inline elements is ignored (**deviation**). Rendering: the
+  `leading-*` on inline elements is ignored (deviation 25). Rendering: the
   browser paints wrapped lines with `line-height = rows × cell`, and the
   engine cancels CSS's half-leading (the (rows − 1)/2-row offset CSS puts
   above the first line) with an engine-owned shift so every glyph stays on
@@ -331,16 +350,19 @@ element's padding cells.
   host stays upright. A property joins the list by that rule; one that
   moves a glyph (`letter-spacing`, `font-stretch`, ligatures) cannot.
   `diagonal-fractions` and `stacked-fractions` are dropped, as they
-  merge glyphs. Color and `text-decoration-line` have paths of their
+  merge glyphs. Color and the text decoration have paths of their
   own. Note: bold/italic can render wider in some monospace fonts —
   listed under font risks, mitigated by font recommendations.
   A box's text shows the decoration lines its in-flow ancestors
   propagate beside its own (css-text-decor-3 §2): a paragraph in an
   `underline` block, and a span's text in an `underline` link, are
   underlined; an out-of-flow box, a float and an atomic inline box
-  start without them. **Deviation**: the grid draws a decoration line
-  in its glyph's color, solid, at the font's thickness;
-  `text-decoration-color`, `-style` and `-thickness` are never read.
+  start without them. Each draws as its decorating box draws it, in
+  that box's `text-decoration-style`, `-thickness` and `-color`, its
+  `currentcolor` resolved there: an underlined amber paragraph's line
+  stays amber under a cyan span. **Deviation**: where boxes that draw
+  theirs unlike each other stack their lines, all of them draw as the
+  innermost draws its own — a cell's span carries one decoration.
 - `text-transform`'s case shows on the grid, each text node mapped
   whole in its content language (`lang`): `istanbul` under `lang="tr"`
   is `İSTANBUL`, and a final `Σ` lowers to `ς`. A cluster the mapping
@@ -354,20 +376,21 @@ element's padding cells.
   grid takes one: a period ends a word, as in Chromium and Firefox
   (WebKit keeps `foo.bar` one word), and `ß` and the ligatures
   titlecase, as in Firefox and WebKit (Chromium leaves them).
-  `full-width` and `full-size-kana` are deviation 22.
+  `full-width` and `full-size-kana` are deviation 20.
 - Inline content must not disturb row height: `vertical-align` and any other
   baseline-shifting properties are neutralized on inline descendants.
   On ATOMIC inline boxes, authored `vertical-align: bottom` is honored —
   the box passes it through to the browser (grid-exact in every engine,
-  probed) and the engine drops the line's text to the box's last row
-  (the largest bottom-aligned box on the line wins; mixing top- and
-  bottom-aligned boxes on one line follows the engine's single text row);
-  `top` is the default pin. `middle` puts the line's text on the box's
-  middle row — the lower of the two for an even height — and places the
-  box natively by a whole-row baseline length the engine writes: the
-  rows from the box's own baseline (its last line's, where the box's own
-  alignment puts it — an `items-center h-3` box's on its middle row —
-  or its bottom edge where it draws no line of its own, in which case
+  probed) and the engine drops the line's text to the box's margin
+  box's last row (the largest bottom-aligned box on the line wins;
+  mixing top- and bottom-aligned boxes on one line follows the engine's
+  single text row); `top` is the default pin. `middle` puts the line's
+  text on the box's margin box's middle row — the lower of the two for
+  an even height — and places the box natively by a whole-row baseline
+  length the engine writes: the rows from the box's own baseline (its
+  last line's, where the box's own alignment puts it — an
+  `items-center h-3` box's on its middle row — or its bottom margin
+  edge where it draws no line of its own, in which case
   the row's measured baseline is added) to that row, so the browser's text lands on the
   same row in every engine (probed). `baseline` behaves as `top`
   (off-grid: descender-grown line boxes).
@@ -432,14 +455,29 @@ and its kin) is
 its own formatting context and keeps its blocks, and an out-of-flow
 child is built whole either way.
 
+**Inline padding and backgrounds.** An inline element's horizontal
+padding is quantized to whole cells: the run reserves the cells as
+blank markers glued to the element's edges (U+2060, so a wrap carries
+the padding with the edge like `box-decoration-break: slice`), and the
+companion stylesheet applies exactly those cells as the element's own
+padding, its inline descendants taking none. Percent padding reads as
+0 (deviation 26); vertical inline padding passes through untouched (it
+never moves layout, per CSS). Inline backgrounds (`bg-*`,
+focus-invert) are mirrored into the grid, cell-aligned, over the run's
+cells including the reserved padding cells (the light element's own
+background is transparent-locked).
+
 **Atomic inline boxes** (`inline-block`, `inline-flex`, `inline-grid`)
 ride the run as SINGLE UNBREAKABLE UNITS, per CSS: the run holds an
-object-replacement marker (U+FFFC) whose advance is the box's laid-out
-width (shrink-to-fit against the leaf's content box), with break
-opportunities on both sides like browsers give replaced elements. Where
-the container sizes itself to its content, the marker's advance is the
-box's width contribution, as it is for any child: a width of its own,
-clamped by its min and max, else its content's. The
+object-replacement marker (U+FFFC) whose advance is the box's margin
+box: its laid-out width (shrink-to-fit against the leaf's content box
+less its margins) and its horizontal margins, in cells, a percentage
+against the leaf's width, `auto` zero, a negative one overlapping its
+neighbor, with break opportunities on both sides like browsers give
+replaced elements. Where the container sizes itself to its content,
+the marker's advance is the box's width contribution and its margins,
+as it is for any child: a width of its own, clamped by its min and max,
+else its content's. The
 box stays IN FLOW — the engine sizes it to exactly those cells and the
 browser's own line layout places it, so the two agree by construction
 (its right margin gives back the layout-unit headroom and tracking
@@ -448,14 +486,19 @@ line holding several boxes that fits exactly fits natively too;
 `visual/agreement.spec.ts` checks every story, in all three engines,
 for such a box, a flow child, or a float off its cells);
 its interior is a normal layout subtree on the grid (`inline-flex`
-really is a flex container inside). A box taller than one row GROWS its
-line, per CSS line-box growth: the box is `vertical-align: top`, the
-line's text stays on the line's first row, and later lines shift down.
+really is a flex container inside). A margin box taller than one row
+GROWS its line, per CSS line-box growth: the box is `vertical-align:
+top`, its top margin's rows above it, the line's text stays on the
+line's first row, and later lines shift down; a negative top margin
+lifts the box above its line (probed 2026-09-28, all three engines). A
+bottom-aligned box's line text sits on its margin box's last row, a
+middle-aligned one's on its margin box's middle row.
 The leaf's boxes are paired with its markers by ORDER — the leaf's
 children are built in document order, so a box nested in an inline
 ancestor sorts into place — through one accessor (`inlineBoxesOf`),
-never by ad-hoc filtering. **Deviation:** the box's margins are ignored. A BLOCK-level element
-nested inside a run is skipped with a warning.
+never by ad-hoc filtering. A margin box narrower than a cell advances
+one (deviation 23). A BLOCK-level element nested inside a run is
+skipped with a warning (deviation 27).
 
 **Anonymous runs.** A container whose in-flow children mix inline
 content — text, inline elements, atomic inline boxes — with
@@ -487,7 +530,7 @@ on their rows through the typography lock, exactly as a leaf's do: the
 text is selectable and copied, a link in a run is clickable at its
 cells, a triple-click selects the run, find-in-page lands. In a mixed
 flex, grid, or multicol container the bare text stays where the
-browser flows it (deviation 7).
+browser flows it (deviation 6).
 CSS blockification then falls out for free: an authored `block`/`flex` on
 a `<span>` makes it a layout node; `position: absolute`/`fixed` blockifies
 at computed-value time, so a positioned span leaves the run and becomes an
@@ -517,25 +560,48 @@ last line box, but every other edge `<br>` counts (probed, all engines:
 the same rule that gives a final newline in `pre` content no line of
 its own.
 
-**Hyphen break opportunities**: like the browser, the wrap model can break
-a word after a hyphen run (`mx-auto` → `mx-` / `auto`), except a
-word-initial run (UAX #14 LB20a: `-top-1` → `-top-` / `1`, never `-` /
-`top-1`; probed — Chromium and WebKit agree, Firefox instead breaks
-BEFORE hyphens and is a documented divergence). Segments longer than the width
-break at cell boundaries (`overflow-wrap: anywhere`). Exotic UAX #14 line
-breaking (em dashes, CJK, soft hyphens, …) is not modeled — a deviation.
+**Line breaking**: like the browser, the wrap model can break a word
+after a hyphen run (`mx-auto` → `mx-` / `auto`), except a word-initial
+run (UAX #14 LB20a: `-top-1` → `-top-` / `1`, never `-` / `top-1`;
+probed — Chromium and WebKit agree, Firefox instead breaks BEFORE
+hyphens and is a documented divergence). A subset of UAX #14 beyond it
+(wrap.ts `breaksBetween`, an ASCII pair breaking only at a hyphen, save
+under `break-all`): a break after a zero-width space, a `<wbr>` (a
+zero-cell marker in the run that copies as nothing), a soft hyphen, an
+en dash and an ideographic space, never before one, nor before a
+hyphen; before and after an em dash, not between two; either side of a
+CJK ideograph, kana or Hangul, except before closing punctuation
+(`。、）」` and ASCII's `)]},.:;!?`), `ー`, small kana or a combining
+mark, and after opening punctuation (`「（`) — the kana as Firefox and
+WebKit have it, where Chromium breaks; never either side of a no-break
+space (U+00A0, U+202F, U+2007, U+FEFF) or an inline element's padding
+cell. A soft hyphen takes no cell, and where a line breaks at it shows
+as a `-` in a cell of its own at the line's end, which the line's fit
+and alignment count; a hard line's end shows none. `word-break: break-all` breaks between
+any two letters as between ideographs, punctuation's rules kept and a
+cluster whole, so a word fills its line's end; `keep-all` keeps CJK
+runs whole as words. Segments longer than the width break at cell
+boundaries (`overflow-wrap: anywhere`). **Deviation**: the rest
+of UAX #14 is not modeled (the platform exposes no line-break
+segmenter): a `?` before a letter breaks in every engine, a `/` in
+Firefox, and neither in the grid.
 
 ## Borders: glyph mapping
 
 `border-style` selects the glyph table, `border-width` its weight
 (above). Styles and colors are per-side (`border-t-cyan-400`,
 `[border-top-style:double]`): each edge uses its own style's glyphs and its
-own color. A corner where both adjacent edges share a style uses that
-style's corner glyph; mixed-style corners fall back to the light corners,
-as dashed/dotted do — deferred, not a Unicode gap: its mixed glyphs cover
-light×heavy completely and single×double wherever a junction's
-through-lines share a style (every corner: `╒ ╓ ╕ ╖ …`); only
-heavy×double has none. Corner color comes from the horizontal
+own color. A corner or junction takes its glyph by each arm's line —
+light, heavy or double, as the line glyph its band draws reads — so
+where the arms draw unlike lines it takes Unicode's mixed glyph for
+them (glyphs.ts `mixedJunction`): light × heavy completely (`┍ ┑ ┝ ┿
+╂ …`), single × double wherever each axis's arms share a line (`╒ ╓ ╞
+╤ ╪ ╫ …`); a cp437 set, whose heavy band is double, draws `╒═╤═╕`.
+Where the arms draw alike, where heavy meets double (Unicode has none)
+or a set's lines are no box drawing (`ascii`, `blocks`), the corner
+takes the style both edges share, else solid, at the heavier weight; a
+glyph the themed font declares missing (`--mw-missing-glyphs`, theming.md)
+falls back the same way. Corner color comes from the horizontal
 (top/bottom) edge.
 
 | style           | H   | V   | corners       | junctions       |
@@ -574,13 +640,8 @@ heavy×double has none. Corner color comes from the horizontal
   corner has no arc, so `rounded-*` leaves it square, like double. In
   a collapsed lattice the wider border wins a shared edge, as CSS
   collapses, and its band draws the line at the band's thickness; a
-  corner or junction where weights meet draws the heavier weight's
-  glyph, a side counting its weight only where its set has a band for
-  it — a 2px double side meets a light side at a light corner
-  (Unicode's mixed-weight junctions, `┿ ╂ ┝ …`, are a later
-  refinement).
-- Mixed-style junctions (light meets double: `╞ ╤ ╧ ╡` exist) —
-  resolution rules TBD in the decoration renderer; today light stands in.
+  corner or junction where weights meet takes each arm's line, as
+  above.
 
 ## Text alignment
 
@@ -606,26 +667,37 @@ to whole cells (normalized LTR: `right`/`end` → end). Per line, with
   `lineStart`, shared with the paint), so the grid and the native box
   agree on where the box is.
 
-`text-align: justify` redistributes inter-word spacing fractionally and
-stays **forced back to `start`** by the companion stylesheet (via the
-engine-owned `data-mw-text-align-blocked` attribute).
+`text-align: justify` fills each line but a paragraph's last — the
+leaf's, or one before a hard break — sharing its leftover cells among
+its gaps (spaces, no-break ones too): each word takes the cell nearest
+where an even share puts it, a half rounding up, so the gaps' cells
+differ by one at most (layout.ts `lineStart`'s `spread`, read by the
+paint, the hit and the atomic boxes' placement). The native copy
+justifies itself, fractionally, each word within half a cell of the
+grid's. Firefox, alone, gives the gap right after an atomic inline box
+one and a half shares of a justified line's leftover (probed on plain
+pages 2026-09-28), so there the words after it sit up to a cell off
+their grid cells. **Deviation**: `text-align-last` is not read, a
+paragraph's last line keeping to the start.
 
 ## Text indent
 
-`text-indent` is honored on text leaves, quantized to whole cells: the
-first formatted line wraps at `width − indent` and paints `indent`
-cells in (`<br>` lines don't re-indent, per CSS; alignment and
-truncation act on the reduced width). The companion rewrites the native
-value in cells (`--mw-ti × --mw-cw`, always set — the custom property
-inherits, so an `indent-0` child under an indented ancestor must pin
-its own 0) so the selectable light-DOM copy sits under the grid's
-glyphs; an authored `1rem` would otherwise resolve against the font
-size, not the cell width. **Deviations**, each a shortcut, not a grid
-limit: negative values clamp to 0 (a negative indent is whole cells
-too), percentages resolve to 0 (the computed value keeps the `%`, which
-resolves once, against the block's content width), and the indent
-doesn't count toward intrinsic sizing (browsers count it in min- and
-max-content).
+`text-indent` is honored on text leaves, quantized to whole cells and
+signed, a percentage resolving once against the leaf's content width:
+the first formatted line wraps at `width − indent` and paints `indent`
+cells in, a negative indent hanging it left of the content box and
+widening it (`-indent-6 pl-12`: the first line six cells in, the rest
+twelve); `<br>` lines don't re-indent, per CSS, and alignment and
+truncation act on the line's width. Min- and max-content count a
+length indent on the first line and its first segment, a negative one
+narrowing them, a percentage none. A mixed container's anonymous runs
+take its indent on its first formatted line alone: the first run's, a
+run after a block child starting at 0, as in CSS. The companion
+rewrites the native value in cells (`--mw-ti × --mw-cw`, always set —
+the custom property inherits, so an `indent-0` child under an indented
+ancestor must pin its own 0) so the selectable light-DOM copy sits
+under the grid's glyphs; an authored `1rem` would otherwise resolve
+against the font size, not the cell width.
 
 ## Opacity and translucency
 
@@ -650,7 +722,7 @@ with its color, painted in paint order:
   gradient's cell, inside the box `background-clip` names), an inline
   element's background under its text and padding cells — composites
   over the cell's background and hides its glyph, whatever its alpha:
-  the cell is blank beneath it (deviation 13). Over some but not all
+  the cell is blank beneath it (deviation 11). Over some but not all
   cells of a wide cluster, it blanks the cluster, as any paint over
   part of one does.
 - A **glyph** replaces the cell's glyph — a text run's space replaces
@@ -658,7 +730,7 @@ with its color, painted in paint order:
   background: blended into it where that background is opaque
   (`text-white/50` on `bg-blue-600` is their mix, opaque), kept as it
   is over a translucent background or none, for the browser to draw.
-  The glyph beneath is gone (deviation 13).
+  The glyph beneath is gone (deviation 11).
 - A color at **zero alpha** is no paint: a background there leaves
   the cell's as it was, an unpainted one unpainted, and a glyph's
   color over an opaque background is that background exactly, as
@@ -707,7 +779,7 @@ no character — an atomic inline box, an out-of-flow box, a block it
 splits around ("Inline content") — composites as a group of its own,
 at its own opacity times its inline ancestors'. An inline ancestor a
 block splits holds no entry of its own in the runs beside the block
-(deviation 18).
+(deviation 16).
 
 **The ground.** Beneath the main grid lies the host's ground: what a
 cell no background has reached shows — the host's background and
@@ -720,7 +792,7 @@ host's own background composited over those behind it down to an
 opaque one, `Canvas` past the root, or an author's own value, which
 names the ground where the derivation cannot see it. The ink is
 `--mw-fg`; each is resolved to a color every layout. A translucent
-host background shows denser than CSS paints it (deviation 17).
+host background shows denser than CSS paints it (deviation 15).
 `bg-clear` wipes its cells to the ground — background and glyph,
 through any group it sits in — and the group's own paint then
 composites over it.
@@ -778,7 +850,7 @@ draws that color. Its groups fade it by their opacity, over nothing
 on its span with the rest of the group; where its cell blends, on its
 glyph alone — a span of its own at that opacity, its underline in it,
 as WebKit draws a color emoji whole at any color alpha above 0 — so it
-fades over its cell's final background (deviation 15). A cell of it a
+fades over its cell's final background (deviation 13). A cell of it a
 later glyph blanks takes its color blended at that opacity, as a
 faded glyph's.
 
@@ -791,7 +863,7 @@ frame's opacity — a span over nothing takes it as its own, the one
 property the frame writes on it — and a layer's box takes the frame's
 opacity natively.
 
-**Deviations**: 13–18 of the running list ("Deviations from CSS").
+**Deviations**: 11–16 of the running list ("Deviations from CSS").
 
 ## Effects
 
@@ -849,8 +921,8 @@ This works because the text-visibility lock is
 `-webkit-text-fill-color: transparent`, NOT `color: transparent` — the
 computed `color` stays live and authored transitions actually run on
 it (the native decoration ink takes its own transparent lock, on
-`text-decoration-color`; the grid's decoration, in its glyph's color,
-follows `color`).
+`text-decoration-color`; the grid's decoration, its `currentcolor`
+resolved on its box at each read, follows `color`).
 A light element's gate is its own flag — `data-mw-measuring`, set on
 every light element as the layout sets the host's `measuring`, then
 `data-mw-settling` on the elements that settle — never the host's
@@ -898,10 +970,9 @@ config resolves after the settling flush, where the authored
 start nothing. CSS `animation` keyframes are sampled by the same loop,
 per element by what their properties need — a repaint for live
 paint-only ones, a box placement for a layer's effects, a relayout for
-the rest (specs/animations.md). **Deviations**: transitions of other
-non-sampled properties (geometry, say) flip to their target on the
-next relayout instead of fading; a `text-decoration-color` transition
-shows nothing, as the grid reads no decoration color ("Typography").
+the rest (specs/animations.md). **Deviation**: transitions of other
+non-sampled properties (geometry, a decoration's own color, say) flip
+to their target on the next relayout instead of fading.
 
 ## Selection
 
@@ -1024,13 +1095,20 @@ nearest `tabindex` above the cell's element, else off the focused
 control. The engine synthesizes
 both (pointer.ts + element.ts): pointer events stay on the grid, the
 pointer's cell is hit-tested against the layout tree, and the cell's
-element plus its ancestors — the same chain native `:hover` marks —
+element plus its ancestors — the same chain native `:hover` marks, the
+inline elements over the cell's character included, innermost last —
 carry `data-mw-hover` (`data-mw-active` between press and release,
 kept native-faithful: only while the pointer stays over the pressed
 element). variants.css redefines the Tailwind `hover:`/`active:` variants
 to match either the pseudo-class or the attribute, preserving
 Tailwind's own `(hover: hover)` media gate; `group-*` and `peer-*`
-compose from the redefined variants automatically. The hovered
+compose from the redefined variants automatically. A change of the
+hover chain lays the page out, so an inline element joins it only
+where its hover can restyle something: it or an ancestor names a hover
+variant (a class holding `hover`: `hover:`, `group-hover:`,
+`has-hover:`, …), or it is a `group` or a `peer` (pointer.ts
+`REACTS_TO_HOVER`; deviation 28); the press chain and the cursor take
+every one. The hovered
 element's computed `cursor` is mirrored onto the grid so
 `cursor-pointer` shows. An `inert` subtree is absent for interaction,
 as natively: the chain stops at it (its ancestor is what hovers), and
@@ -1114,9 +1192,7 @@ definition counts) — their selector must include `[data-mw-hover]`
 the README carries the snippet. **Deviations**: only the Tailwind
 variants (and selectors written against the data attributes)
 participate — raw `:hover` in hand-written CSS stays native-only;
-hover resolves to block-level boxes (inline elements carry no
-attribute, but `group-*` reaches them through an ancestor); overlaps
-resolve by grid paint order; native `title` tooltips and JS
+overlaps resolve by grid paint order; native `title` tooltips and JS
 pointer/click handlers on non-interactive elements still need a real
 hit target — `pointer-events-auto!` is the escape hatch, at the cost
 of grid selection over that element.
@@ -1127,8 +1203,9 @@ of grid selection over that element.
 `w-fit`) are supported:
 
 - **min-content**: the longest unbreakable unit — the longest breakable
-  segment under normal wrapping (words split at hyphen break
-  opportunities), a whole hard line under `nowrap`. A nowrap flex row sums its
+  segment under normal wrapping (words split at their break
+  opportunities, "Line breaking", `word-break` included), a whole hard
+  line under `nowrap`. A nowrap flex row sums its
   items' min-content (plus gaps); wrapping rows and block/column containers
   take the widest child.
 - **max-content**: the unwrapped intrinsic width (same measure used for
@@ -1184,8 +1261,9 @@ tall as it is wide") are physical.
   12 rows are tall, and a `min-h-*` past the fill widens the box past
   its container, as in all three engines. A limit never passes onto a
   set size: `w-20 min-h-40 aspect-video` is 20 wide and 40 tall.
-- **Automatic minimum.** While the box's overflow is visible and its
-  min on the derived axis is `auto`, that axis floors at the content,
+- **Automatic minimum.** While the box is no scroll container (its
+  overflow visible or `clip`) and its min on the derived axis is
+  `auto`, that axis floors at the content,
   capped by its max: a derived height at the content's height (text
   taller than the ratio grows the box), a derived width at the
   min-content width (a word longer than the width a short box
@@ -1206,33 +1284,70 @@ and grid items follow the rules their specs cite.
 
 ## White-space and truncation
 
-`white-space` is read per element and mapped to two engine values:
+`white-space` is read per element:
 
-- **`normal`** (default; also `pre-wrap`, `pre-line`, `break-spaces`): text
-  soft-wraps per the greedy word-wrap in `wrap.ts`.
-- **`nowrap`** (also `pre`): no soft wrapping. The leaf's content height is
-  its **hard-line count** (`<br>` still breaks, per CSS); its intrinsic
-  width is the longest hard line (same as normal). `pre` also preserves
-  whitespace (deviation 8).
+- **`normal`** (default): text soft-wraps per the greedy word-wrap in
+  `wrap.ts`.
+- **`nowrap`** and **`pre`**: no soft wrapping. The leaf's content
+  height is its **hard-line count** (`<br>` still breaks, per CSS); its
+  intrinsic width is the longest hard line (same as normal). `pre`
+  keeps the source's spaces and newlines, tabs expanding to their
+  stops.
+- **`pre-line`**: as `normal`, but each source newline breaks as a
+  `<br>` does, the white space around it collapsing away.
+- **`pre-wrap`** and **`break-spaces`**: spaces and newlines are kept as
+  under `pre` (tabs to their stops), and lines wrap, a hard line's
+  leading spaces taking their cells, a break after a space run.
+  `pre-wrap`'s spaces at a soft break hang: out of the fit and the
+  alignment, and on no line, as a collapsed space at a break is; the
+  next line starts at its text. `break-spaces`' every space takes its
+  cell, with a break after it, so spaces past the width wrap as a
+  word's letters do. A trailing space run counts in the max-content
+  width under both (probed).
 
-The companion stylesheet locks `white-space: normal` on all descendants (so
-browser wrapping matches the engine's), gated on the element's measuring
-flag so the style reader sees the authored value. Nowrap elements get the engine-owned
-`data-mw-nowrap` attribute, which switches the lock to `nowrap`.
+The companion stylesheet locks `white-space: normal` on all
+descendants (so browser wrapping matches the engine's), gated on the
+element's measuring flag so the style reader sees the authored value.
+Nowrap elements get the engine-owned `data-mw-nowrap` attribute, which
+switches the lock to `nowrap`; a companion rule restores `pre` and the
+three wrapping values on the leaf and its inline descendants from the
+box's `--mw-ws`, which a restoring box, and each box inside one,
+carries with its own value, so a box
+inside one keeps its own and the browser breaks the text where the grid
+does. The leaf's value decides for its whole run (deviation 7).
+
+`text-wrap-style` chooses where a wrapping leaf's lines break:
+`balance` takes the lines of the narrowest width that keeps their
+count, for a leaf of up to six lines (Chromium's limit; Firefox
+balances up to ten), as Chromium and Firefox search for it; `pretty`,
+whose choice CSS leaves to the browser, keeps a last line from holding
+one word, moving the word before it down where the two fit — as
+Chromium does for such a line; Firefox wraps greedily, and WebKit
+re-breaks the whole paragraph. **Deviation**: beside a float, the
+lines keep their greedy breaks.
 
 **Truncation** (Tailwind `truncate` = `overflow: hidden; text-overflow:
 ellipsis; white-space: nowrap`) is paint-only: the engine sizes the box at
 one hard line tall, and the browser clips and draws the `…` ellipsis
 itself. The ellipsis lands on-grid (U+2026 is one monospace glyph; the clip
 edge is the content edge, always a whole cell). For a nowrap element that
-also clips, the companion stylesheet uses `overflow: hidden` rather than
-the usual normalized `clip`, because only a scroll container can be
+clips on both axes, the companion stylesheet keeps `overflow: hidden`
+rather than `clip`, because only a scroll container can be
 scrolled to what the ellipsis hides: focus a link past the cut and
 Chromium and Firefox bring it into view under `hidden` and neither does
 under `clip` (WebKit under neither). `text-overflow` itself draws the
 same either way in all three. The plain-text renderer mirrors truncation:
 a clipped nowrap line is cut at the content width, with `…` in the last
 visible cell when `text-overflow: ellipsis` is set.
+
+**Line clamps** (Tailwind `line-clamp-*` = a vertical `-webkit-box` with
+`-webkit-line-clamp`, which Chromium and Firefox compute as `flow-root`):
+a text leaf's lines past the clamp are cut, its box as tall as the lines
+it keeps, and the last kept line ends in `…`, cut as truncation cuts a
+line where the `…` would not fit after it — where each engine cuts,
+given the host's sub-pixel headroom (probed 2026-09-28). **Deviation**:
+a clamp counts a leaf's own lines; a container's block children are
+not clamped.
 
 ## Form controls
 
@@ -1260,7 +1375,7 @@ Intrinsic sizes mirror the native ones:
   again, once, at the new width. `field-sizing: content` drops the `rows`
   floor to 1. A trailing newline shows its empty line (where the caret
   sits), unlike `<br>`. Line-gap rows from `leading-*` apply as on any
-  leaf; the wrap itself is deviation 19. The box grows to fit its value
+  leaf; the wrap itself is deviation 17. The box grows to fit its value
   unless a height is set (`h-*`, `max-h-*`), which clips it: a
   textarea never scrolls (`overflow: clip`) and has no resize handle.
 - `<select>`: the longest option label; the SELECTED option's label
@@ -1289,126 +1404,114 @@ lines); the explicit zero `clip` rect still drops them.
 1. No parent–child / empty-box margin collapsing (sibling collapsing works
    per CSS: `max` for two positives, `min` for two negatives, sum for mixed).
 2. All lengths round to whole cells (rule above).
-3. Font family/size are root-only; descendant `leading-*`/`tracking-*` are
-   re-quantized to whole rows/cells rather than applied as authored, and
-   `leading-*` on inline elements is ignored.
+3. Font family and size are root-only.
 4. Border-width is a weight the glyph set draws ("Box model"), not a
    length on the spacing scale.
-5. Inline elements ignore MOST layout-affecting properties (borders,
-   sizing, margins); an authored border warns, and its native width
-   is zeroed, so the browser draws none off the grid. Horizontal
-   padding IS honored, quantized to whole cells: the run reserves the
-   cells as blank markers glued to the
-   element's edges (U+2060, so a wrap carries the padding with the edge
-   like `box-decoration-break: slice`), and the companion stylesheet
-   applies exactly those cells as the element's own padding, its inline
-   descendants taking none — any raw off-grid inline padding is
-   neutralized. Percent padding reads as 0; vertical inline
-   padding passes through untouched (it never moves layout, per CSS).
-   Inline backgrounds (`bg-*`, focus-invert) are mirrored into the
-   grid, cell-aligned, over the run's cells INCLUDING the reserved
-   padding cells (the light-DOM bg itself is transparent-locked).
-   Atomic inline boxes ride the line per CSS (growing their line when
-   taller) but their margins are ignored, and BLOCK-level elements nested
-   inside a run are skipped with a warning.
-6. `text-align: justify` on descendants is forced to `start` (`center`
-   is honored, floor-quantized — see "Text alignment").
-   Content/item alignment on a flex or grid element whose content is BARE
-   text (`flex items-center justify-center`, `grid place-items-center`) IS
-   supported, but quantized: the browser's own anonymous-item alignment
-   would land at fractional, off-grid offsets, so the companion stylesheet
-   resets `place-content`/`place-items` on laid-out elements and the
-   engine folds the whole-cell offsets into its owned padding instead
-   (flex rows justify horizontally / align vertically, columns swap, grid
-   uses `justify-items`/`align-items`). The wrap is unchanged — the padded
-   content box is exactly the widest line. Text wider or taller than
-   its box stays at the start, where CSS would center or end it past
-   the start edge: padding can't go negative.
-7. An anonymous run's bare text in a mixed FLEX, GRID, or MULTICOL
+5. An inline element's borders, sizes and margins do nothing: an
+   authored border warns, and its native width is zeroed, so the
+   browser draws none off the grid.
+6. An anonymous run's bare text in a mixed FLEX, GRID, or MULTICOL
    container is laid out on the grid but stays where the browser flows
    it natively (see Inline content — a block container's flow children
    put it right), so its native line boxes, the hit boxes of its inline
    elements, and find-in-page highlights sit off the grid there.
-8. `white-space: pre` DOES preserve whitespace: spaces and newlines
-   survive as authored, tabs expand to `tab-size` stops (default 8)
-   measured from each hard line's start, and browsers render the same
-   preserved text (a companion rule restores `pre` on the leaf and its
-   inline descendants). Caveats: preservation is decided by the LEAF's
-   white-space (an override on an inline descendant is ignored), a final
-   newline produces no extra line (as in browsers), and tab stops under
-   `tracking-*` may drift from the browser's letter-spaced tabs.
-   `pre-wrap | pre-line | break-spaces` still collapse — only the
-   wrap/no-wrap half of their behavior is honored.
-9. ~~`aspect-ratio` is ignored~~ — resolved: "Aspect ratio".
-10. Glyph widths are the `wcwidth` table's, not the font's
-    (specs/wide-characters.md): East Asian wide and emoji-presentation
-    clusters take two cells, ambiguous-width symbols one; a cluster the
-    font draws off its cell count is scaled into a cell-sized box on the
-    grid, and the transparent native text keeps the font's advances (its
-    selection and drags are the engine's, so the drift never shows).
-11. A FLOW CHILD's `position: relative` insets move it on the grid only:
-    natively its insets are the engine's, so the browser's flow places
-    it (see Inline content), and the relative offset never reaches the
-    light DOM. A float is a flow child natively too (specs/float.md).
-12. Floats deviate as specs/float.md lists: every container is a BFC
+7. A leaf's `white-space` is its whole run's: an inline descendant's
+   own value (`nowrap`, `pre`, `pre-wrap`, …) is ignored, on the grid
+   and natively ("White-space and truncation").
+8. Glyph widths are the `wcwidth` table's, not the font's
+   (specs/wide-characters.md): East Asian wide and emoji-presentation
+   clusters take two cells, ambiguous-width symbols one; a cluster the
+   font draws off its cell count is scaled into a cell-sized box on the
+   grid, and the transparent native text keeps the font's advances (its
+   selection and drags are the engine's, so the drift never shows).
+9. A FLOW CHILD's `position: relative` insets move it on the grid only:
+   natively its insets are the engine's, so the browser's flow places
+   it (see Inline content), and the relative offset never reaches the
+   light DOM. A float is a flow child natively too (specs/float.md).
+10. Floats deviate as specs/float.md lists: every container is a BFC
     root (it contains its floats and steps aside from a sibling's), a
     float directly in a multicol container is ignored and warned, and
     `shape-outside` is ignored.
-13. One glyph per cell, owned by the front paint ("Opacity and
+11. One glyph per cell, owned by the front paint ("Opacity and
     translucency"). A glyph (a faded one, a text run's space, an
     `opacity: 0` element's) and a background of any alpha hide the
     glyph beneath, a layer's cells included. CSS shows the lower glyph
     through the upper's gaps, under a faded upper at 1 − α, and
     through a translucent background. The reason: a cell is one
     character on one background, and what covers it owns it.
-14. A layer inside a faded group composites over the group's blended
+12. A layer inside a faded group composites over the group's blended
     cells rather than over what lay beneath the group.
-15. A color emoji a group fades where its cell blends fades over its
+13. A color emoji a group fades where its cell blends fades over its
     cell's final background, not over what lay beneath its group: the
     group's own background shows through it. The cause: the emoji has
     no color to blend, and the cell one background.
-16. A blend clips each color to sRGB per channel first, as every
+14. A blend clips each color to sRGB per channel first, as every
     engine blends on an sRGB screen (`bg-yellow-400/50` over white:
     blue 128 against the browser's 127 in all three; probed
     2026-09-23), and a color no blend touches is written unclipped,
     `color(srgb …)` past sRGB. On a wide-gamut screen a browser blends
     in the screen's space, so there a translucent color outside sRGB
     blends duller than the browser's own.
-17. A translucent host background paints three times under the grid —
+15. A translucent host background paints three times under the grid —
     on the host, then on the shadow's viewport and grid, which inherit
     it so that the grid's overflow past the host carries it — so a
     cell no background has reached, and the translucent paint over it,
     show it denser than CSS, which paints it once. The cause: the
     shadow repaints the background it inherits.
-18. An inline element a block splits is no entry above the split
+16. An inline element a block splits is no entry above the split
     elements inside it: in `<em>x<span>a<p>b</p>c</span></em>`, `a` and
     `c` fold `span`'s entry alone, `em`'s background is not painted
     beneath them, and `em`'s opacity multiplies into `span`'s rather
     than nesting as a group — exact while `em` has no background.
-19. A textarea's row count wraps its value at the table widths alone,
-    ignoring its `letter-spacing` and its `white-space` (`nowrap`,
-    `pre`, `wrap="off"`), which its native text follows.
-20. Every box lays out left to right: `direction` is not read, and a
+17. A textarea's row count wraps its value as `pre-wrap` at the table
+    widths alone, ignoring its `letter-spacing` and another
+    `white-space` (`nowrap`, `pre`, `wrap="off"`), which its native
+    text follows.
+18. Every box lays out left to right: `direction` is not read, and a
     logical side (`ms-auto`, `inset-s-*`, `float-start`) takes the side
     it has in a left-to-right box.
-21. Overflow alignment is always `safe`: what overflows its alignment
+19. Overflow alignment is always `safe`: what overflows its alignment
     container — a flex line, an item larger than its line or grid
-    area, tracks wider than the grid, an out-of-flow box's static
-    position — aligns to the start edge whatever the keyword, where CSS
+    area, a flex container's bare text wider or taller than its box,
+    tracks wider than the grid, an out-of-flow box's static position —
+    aligns to the start edge whatever the keyword, where CSS
     centers or ends it past the start edge unless the value says
     `safe` (a `*-safe` class reads its keyword and changes nothing).
     The cause: scroll ranges start at 0 and the grid has no cells left
     of or above the host, so content past the start edge would be
     unreachable — a reversed scroll container, a chat pane's
     `flex-col-reverse overflow-y-auto`, would lose its overflow.
-22. `text-transform: full-width` and `full-size-kana` show the authored
+20. `text-transform: full-width` and `full-size-kana` show the authored
     characters, where Firefox and WebKit draw the full-width and
     full-size forms (Chromium draws neither, and Tailwind has no
     utility for them).
-23. A host's `min-h-*` floor above its content is definite to the root
+21. A host's `min-h-*` floor above its content is definite to the root
     ("Host sizing"): a child's `h-full` fills it, where CSS leaves a
     floor indefinite. The cause: the engine reads the height CSS gives
     the host, not which rule gave it.
+22. Tab stops under `tracking-*` count the grid's columns, where the
+    browser's letter-spaced tabs may stop elsewhere.
+23. An atomic inline box's margin box narrower than a cell advances
+    one ("Atomic inline boxes"): after a `w-0` box, or one whose
+    negative margin reaches its width, the text that follows sits a
+    cell further on than CSS puts it. The cause: a character of no
+    advance reads as a cluster's continuation.
+24. `overflow: hidden` clips and never scrolls: `scrollTop`,
+    `scrollIntoView` and focus leave a hidden box's content where it
+    is, where CSS scrolls it programmatically ("Overflow"). The cause:
+    the engine scrolls only `auto` and `scroll`.
+25. `leading-*` on an inline element is ignored ("Line height on the
+    grid").
+26. An inline element's percent padding reads as 0 ("Inline content").
+27. A block-level element nested inside a run is skipped with a
+    warning ("Atomic inline boxes").
+28. An inline element that neither names a hover variant nor sits
+    under one that does, and is no `group` or `peer`, is never hovered
+    for a variant reaching it from elsewhere: a sibling's
+    `[&:has(+_span:hover)]:`, or a custom variant named without
+    `hover` ("Pointer states"). The cause: each hover chain change lays
+    the page out, and a plain span would join and leave it at every
+    edge the pointer crosses.
 
 ## Touch points on implementation
 
@@ -1451,17 +1554,25 @@ For "Opacity and translucency":
   layout; an opacity transition samples as its animation
   (`transitionSampling`), its frames the repaint path's.
 - shadow.css: the viewport and grid inheriting the host's background
-  (deviation 17).
+  (deviation 15).
 - tree.ts: an inline entry's own opacity and its `parent` entry; a
   split element's entry (`collectRunNodes`), its split ancestors'
-  opacity multiplied in (`splitOpacity`, deviation 18); each box's and
-  entry's decoration lines, its ancestors' added (`propagateDecorations`).
+  opacity multiplied in (`splitOpacity`, deviation 16).
 - color.ts: `parseColor`, `lab()`, `lch()` and every `color()` space
   read through css-color-4's conversions (prophoto-rgb's D50 white
   adapted to D65); `colorAlpha`, 1 for a form it cannot read;
   `compositeColors`, clipping to sRGB as it blends, a zero-alpha color
   giving the color beneath as it is, and `serializeColor`, unclipped.
 - width.ts: `isColorEmoji`.
+
+For "Typography":
+
+- tree.ts: each box's and entry's decoration, its ancestors' lines
+  added (`propagateDecorations`, `withPropagated`).
+- types.ts: `TextDecoration`, one object per value, an empty or `none`
+  line none (`decorationOf`).
+- style.ts: `readDecoration`.
+- plain-text.ts: `applyDecoration`, onto a cell's span.
 
 For "Engine variables":
 
@@ -1495,11 +1606,13 @@ For "Aspect ratio":
 For "Host sizing":
 
 - shadow.css: the slot out of the host's flow but under
-  `:host([measuring])`, and the viewport, whose `min-height` is the
-  spacer.
+  `:host([measuring])`, and the viewport, whose `min-height` and
+  `min-width` are the spacer, the width lifted under
+  `:host([measuring])`.
 - element.ts: the height read before `measuring` (`sizedHeight`), the
   rows it gives the root where it is not the spacer's (`sizedRows`),
   the spacer written from the root's natural content rows
-  (`#spacerHeight`), and `#laidOutSize`, the height the resize
+  (`#spacerHeight`) and the columns laid out (the viewport's
+  `min-width`), and `#laidOutSize`, the height the resize
   observer compares.
 - layout.ts: `layoutRoot`'s `rows`, the root's forced height.

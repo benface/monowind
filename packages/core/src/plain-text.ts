@@ -7,11 +7,19 @@ import { compositeColors, parseColor, serializeColor } from "./color.ts";
 import type { Rgba } from "./color.ts";
 import { DEFAULT_CELL, gradientCells } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
-import { contentOrigin, edges, isInFlowBox, lineStart } from "./layout.ts";
+import { contentOrigin, edges, gapShare, isGap, isInFlowBox, lineStart } from "./layout.ts";
 import { glyphSetFor, scrollGlyphs } from "./glyphs.ts";
-import { advanceOf, INLINE_PAD, lineAdvance, OBJECT_REPLACEMENT } from "./wrap.ts";
+import {
+  advanceOf,
+  INLINE_PAD,
+  lineAdvance,
+  OBJECT_REPLACEMENT,
+  showsHyphen,
+  SOFT_HYPHEN,
+  WBR_MARKER,
+} from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
-import { GLYPH_PROPERTIES, zeroInsets } from "./types.ts";
+import { clipsAxis, GLYPH_PROPERTIES, NO_DECORATION, softWraps, zeroInsets } from "./types.ts";
 import type {
   CellStyle,
   Clip,
@@ -21,6 +29,7 @@ import type {
   Insets,
   LayoutNode,
   Rect,
+  TextDecoration,
 } from "./types.ts";
 import { clusterWidth, isColorEmoji } from "./width.ts";
 
@@ -55,7 +64,7 @@ export interface CellPaint {
   colors?: string[];
   /** Its glyph properties unlike the host's (`glyphStyle`). */
   glyph?: GlyphStyle;
-  textDecorationLine?: string;
+  decoration?: TextDecoration;
   /** Inside a light-DOM selection: painted swapped (specs/wide-characters.md). */
   selected?: true;
 }
@@ -70,7 +79,7 @@ export const PAINT_FIELDS = [
   "backgrounds",
   "colors",
   "glyph",
-  "textDecorationLine",
+  "decoration",
   "selected",
 ] as const satisfies readonly (keyof CellPaint)[];
 
@@ -286,7 +295,7 @@ function joinGradient(
     run.opacity === paint.opacity &&
     run.emojiOpacity === paint.emojiOpacity &&
     run.glyph === paint.glyph &&
-    run.textDecorationLine === paint.textDecorationLine;
+    run.decoration === paint.decoration;
   if (!joins) return false;
   const colors = (run[list] ??= Array.from({ length: runCells }, () => run[field]!));
   delete run[field];
@@ -306,7 +315,7 @@ export function samePaint(a: CellPaint, b: CellPaint | undefined): boolean {
     sameList(a.backgrounds, b?.backgrounds) &&
     sameList(a.colors, b?.colors) &&
     a.glyph === b?.glyph &&
-    a.textDecorationLine === b?.textDecorationLine &&
+    a.decoration === b?.decoration &&
     a.selected === b?.selected
   );
 }
@@ -344,7 +353,17 @@ export function applyCellPaint(paint: CellPaint, style: CSSStyleDeclaration): vo
       style.setProperty(property, paint.glyph[property as GlyphProperty]!);
     }
   }
-  if (paint.textDecorationLine !== undefined) style.textDecoration = paint.textDecorationLine;
+  if (paint.decoration) applyDecoration(paint.decoration, style);
+}
+
+/** A decoration onto a span's style, its initial values unwritten. */
+export function applyDecoration(decoration: TextDecoration, style: CSSStyleDeclaration): void {
+  const { line, style: kind, color, thickness } = decoration;
+  let value = line;
+  if (kind !== NO_DECORATION.style) value += ` ${kind}`;
+  if (color !== NO_DECORATION.color) value += ` ${color}`;
+  style.textDecoration = value;
+  if (thickness !== NO_DECORATION.thickness) style.textDecorationThickness = thickness;
 }
 
 /** The cells the box `background-clip` names sits inside the border
@@ -896,7 +915,7 @@ const barPaint = (color: string | undefined): CellPaint | undefined =>
   color ? { color } : undefined;
 
 /** The text styling a paint carries. */
-type TextFont = Pick<CellStyle, "glyph" | "textDecorationLine">;
+type TextFont = Pick<CellStyle, "glyph" | "textDecoration">;
 
 /** Glyph properties unlike the host's, one object per distinct set, so
  * paints compare them by identity. */
@@ -946,8 +965,7 @@ function textPaint(source: TextFont, color: string | undefined, base: TextFont):
   if (color) paint.color = color;
   const glyph = glyphStyle(source.glyph, base.glyph);
   if (glyph) paint.glyph = glyph;
-  if (source.textDecorationLine !== "none" && source.textDecorationLine !== "")
-    paint.textDecorationLine = source.textDecorationLine;
+  if (source.textDecoration !== NO_DECORATION) paint.decoration = source.textDecoration;
   return paint;
 }
 
@@ -1090,7 +1108,8 @@ function putRuns(put: PutGlyph, runs: readonly BorderRun[], dx = 0, dy = 0): voi
 function paintBox(node: LayoutNode, put: PutGlyph, walking: Walk): void {
   const { x: absX, y: absY } = node.paintOrigin;
   const style = node.style;
-  const box = { x: absX, y: absY, width: node.localRect.width, height: node.localRect.height };
+  const { top, height } = node.tableBox ?? { top: 0, height: node.localRect.height };
+  const box = { x: absX, y: absY + top, width: node.localRect.width, height };
   // A hidden box's own ink stays unpainted, its subtree walking on
   // (specs/visibility.md).
   const visible = style.visible;
@@ -1108,12 +1127,12 @@ function paintBox(node: LayoutNode, put: PutGlyph, walking: Walk): void {
     // `bg-clear` wiping the border box first; gradient layers fill a
     // color per cell over the plain color (specs/gradients.md), a
     // `text` clip's tint going to the glyphs instead.
-    const { width, height } = node.localRect;
+    const { width } = box;
     const layers = style.backgroundImage;
     const fill = (paint: CellPaint, within: Insets): void => {
       for (let dy = within.top; dy < height - within.bottom; dy++) {
         for (let dx = within.left; dx < width - within.right; dx++) {
-          put(absX + dx, absY + dy, " ", paint);
+          put(box.x + dx, box.y + dy, " ", paint);
         }
       }
     };
@@ -1125,7 +1144,7 @@ function paintBox(node: LayoutNode, put: PutGlyph, walking: Walk): void {
       for (let dy = inset.top; dy < height - inset.bottom; dy++) {
         for (let dx = inset.left; dx < width - inset.right; dx++) {
           const color = colors[dy]![dx];
-          if (color) put(absX + dx, absY + dy, " ", { backgroundColor: color, gradient: "fill" });
+          if (color) put(box.x + dx, box.y + dy, " ", { backgroundColor: color, gradient: "fill" });
         }
       }
     } else if (style.backgroundClip !== "text" && style.backgroundColor !== undefined) {
@@ -1179,6 +1198,7 @@ function paintText(
     y: number,
     index: number,
     selected: boolean,
+    advance: number,
   ): void => {
     const turn = owners && index >= 0 ? owners[index]! : -1;
     // INLINE_PAD marks a blank inline-padding cell: no glyph, but
@@ -1190,7 +1210,12 @@ function paintText(
       }
       return;
     }
-    const cluster = length === 1 ? node.text[k]! : node.text.slice(k, k + length);
+    const cluster =
+      node.text[k] === SOFT_HYPHEN
+        ? "-"
+        : length === 1
+          ? node.text[k]!
+          : node.text.slice(k, k + length);
     const cells = clusterWidth(cluster);
     if (cells === 0) return;
     // Clipped to `text`, a glyph's own color composites over the
@@ -1208,20 +1233,25 @@ function paintText(
           : textPaint(style, tinted, base);
       if (tinted !== color) paint = { ...paint, gradient: "text" };
     }
-    put(turn, x, y, cluster, selected ? { ...paint, selected: true } : paint, cells);
+    const shown = selected ? { ...paint, selected: true as const } : paint;
+    put(turn, x, y, cluster, shown, cells);
+    // The cells past the glyph — tracking, a justified gap's share — are
+    // its element's: its background, decoration and selection fill them.
+    if (shown.backgroundColor === undefined && !shown.decoration && !shown.selected) return;
+    for (let c = cells; c < advance; c++) put(turn, x + c, y, " ", shown, 1);
   };
   forEachLeafCell(
     node,
     absX - (node.scroll?.x ?? 0),
     absY - (node.scroll?.y ?? 0),
-    (k, length, x, y) => {
+    (k, length, x, y, advance) => {
       const index = node.charInline?.[k] ?? -1;
       const entry = index >= 0 ? entries[index] : undefined;
       // An inline element's own visibility, else the leaf's: its cells
       // stay blank, their space kept.
       if (!(entry ? entry.visible : visible)) return;
       const selected = selection !== undefined && k >= selection.start && k < selection.end;
-      paintCell(k, length, x, y, index, selected);
+      paintCell(k, length, x, y, index, selected, advance);
     },
     (x, y) => {
       if (visible) put(-1, x, y, "…", leaf);
@@ -1287,6 +1317,7 @@ function forEachLeafCell(
   const contentY = absY + origin.y;
   const contentWidth = node.localRect.width - edges(style.border, node.resolvedPadding, "x");
   const { spans, textY } = node.multicolGeometry ?? node.lines ?? NO_LINES;
+  const clamped = node.lines?.clamped === true;
   // Only an inline member and what it holds shift.
   const { inlineElements: entries, inlineMembers } = node;
   const shifts = inlineMembers && entries?.map((_, index) => inlineShift(entries, index));
@@ -1294,23 +1325,55 @@ function forEachLeafCell(
     const span = spans[i]!;
     const row = contentY + textY[i]!;
     // The truncation acts within the line's width past its indent.
-    const line = lineStart(node, i, span, contentWidth);
+    const full = lineStart(node, i, span, contentWidth);
+    const clamp = clamped && i === spans.length - 1;
     const truncated =
-      truncates && style.whiteSpace !== "normal" && style.overflow.x === "clip"
-        ? truncateSpan(node.text, span, line.width - line.indent, node.advances, style)
+      truncates && (clamp || (!softWraps(style.whiteSpace) && clipsAxis(style.overflow.x)))
+        ? truncateSpan(node.text, span, full.width - full.indent, node.advances, style, clamp)
         : { end: span.end, ellipsis: false };
-    let x = contentX + line.x;
     const advances = node.advances;
+    // A clamped line is placed as the text it keeps and its ellipsis,
+    // unspread and unhyphenated.
+    const line = clamp
+      ? {
+          ...lineStart(
+            node,
+            i,
+            span,
+            contentWidth,
+            lineAdvance(node.text, span.start, truncated.end, advances, style.tracking) +
+              (truncated.ellipsis ? 1 : 0),
+          ),
+          spread: undefined,
+        }
+      : full;
+    let x = contentX + line.x;
+    let gap = 0;
+    // A soft hyphen shows as a cell's `-` where its line breaks.
+    const hyphen =
+      !clamp && truncated.end === span.end && showsHyphen(node.text, span.end) ? span.end - 1 : -1;
     for (let k = span.start; k < truncated.end;) {
-      const advance = advanceOf(k, k + 1, advances);
+      const advance = k === hyphen ? 1 : advanceOf(k, k + 1, advances);
       let length = 1;
-      if (advances) while (k + length < truncated.end && advances[k + length] === 0) length++;
+      // A cluster's later units ride its first; a `<wbr>` is none of them.
+      if (advances) {
+        while (
+          k + length < truncated.end &&
+          advances[k + length] === 0 &&
+          k + length !== hyphen &&
+          node.text[k + length] !== WBR_MARKER
+        )
+          length++;
+      }
+      // A justified gap's cells are its own.
+      const cells =
+        advance + (line.spread && isGap(node.text[k]) ? gapShare(line.spread, gap++) : 0);
       if (node.text[k] !== OBJECT_REPLACEMENT && advance > 0) {
         const inline = node.charInline?.[k] ?? -1;
         const shift = shifts && inline >= 0 ? shifts[inline] : undefined;
-        onChar(k, length, x + (shift?.x ?? 0), row + (shift?.y ?? 0), advance);
+        onChar(k, length, x + (shift?.x ?? 0), row + (shift?.y ?? 0), cells);
       }
-      x += advance;
+      x += cells;
       k += length;
     }
     if (truncated.ellipsis) onEllipsis?.(x, row);
@@ -1538,7 +1601,8 @@ export function thumbSpan(
 /**
  * Mirror of what the browser paints for a clipped nowrap line: cut at the
  * content width, with `…` in the last visible cell when `text-overflow:
- * ellipsis` is set (the ellipsis reserves one cell).
+ * ellipsis` is set (the ellipsis reserves one cell). A `clamp`'s last
+ * line ends in `…` whether or not it overflows.
  */
 function truncateSpan(
   text: string,
@@ -1546,14 +1610,16 @@ function truncateSpan(
   contentWidth: number,
   advances: number[] | undefined,
   style: LayoutNode["style"],
+  clamp = false,
 ): { end: number; ellipsis: boolean } {
-  const { textOverflow, tracking } = style;
-  if (lineAdvance(text, span.start, span.end, advances, tracking) <= contentWidth) {
+  const { tracking } = style;
+  if (!clamp && lineAdvance(text, span.start, span.end, advances, tracking) <= contentWidth) {
     return { end: span.end, ellipsis: false };
   }
-  const limit = textOverflow === "ellipsis" ? contentWidth - 1 : contentWidth;
+  const ellipsis = clamp || style.textOverflow === "ellipsis";
+  const limit = ellipsis ? contentWidth - 1 : contentWidth;
   let end = span.start;
   while (end < span.end && lineAdvance(text, span.start, end + 1, advances, tracking) <= limit)
     end++;
-  return { end, ellipsis: textOverflow === "ellipsis" && contentWidth > 0 };
+  return { end, ellipsis: ellipsis && contentWidth > 0 };
 }

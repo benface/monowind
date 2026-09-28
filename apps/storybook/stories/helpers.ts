@@ -1,4 +1,6 @@
+import { html } from "lit";
 import { ref } from "lit/directives/ref.js";
+import type { StoryObj } from "@storybook/web-components-vite";
 import { useCallback, useEffect, useRef } from "storybook/preview-api";
 import { expect, waitFor } from "storybook/test";
 import { wrapLines, type MonoWindElement } from "monowind";
@@ -10,6 +12,9 @@ export const isFirefox = navigator.userAgent.includes("Firefox");
 
 /** Chromium, where a check leans on what only its engine does. */
 export const isChromium = navigator.userAgent.includes("Chrome/");
+
+export type Engine = "chromium" | "firefox" | "webkit";
+const engine: Engine = isChromium ? "chromium" : isFirefox ? "firefox" : "webkit";
 
 /** Typed OM, which tells the engine the cascade's pick (Firefox before 157
  * has none). */
@@ -222,6 +227,165 @@ export const layerBox = (host: HTMLElement, text: string): HTMLElement | undefin
 export const showsRow = (host: HTMLElement, text: string): boolean =>
   rowsOf(host).some((row) => row.includes(text));
 
+/** Each case's markup laid out by the browser beside its host: case
+ * `i`'s `[data-test="case-i"]` holds the host, then a native box, which
+ * takes the markup as wide as the host, in its grid's font and
+ * letter-spacing (a glyph a cell wide), at its cell's height. Each
+ * case's host and native box. */
+async function nativeCopies(
+  canvasElement: HTMLElement,
+  host: HTMLElement,
+  markups: readonly string[],
+): Promise<[HTMLElement, HTMLElement][]> {
+  const cell = cellSize(host);
+  // Longhands: the shorthand serializes empty where they came apart.
+  const { fontFamily, fontSize, fontWeight, fontStyle, letterSpacing } = getComputedStyle(
+    gridOf(host),
+  );
+  const pairs = markups.map((markup, i) => {
+    const [caseHost, native] = canvasElement.querySelectorAll<HTMLElement>(
+      `[data-test="case-${i}"] > *`,
+    );
+    Object.assign(native!.style, {
+      width: `${caseHost!.getBoundingClientRect().width}px`,
+      fontFamily,
+      fontSize,
+      fontWeight,
+      fontStyle,
+      lineHeight: `${cell.height}px`,
+      letterSpacing,
+    });
+    native!.innerHTML = markup;
+    return [caseHost!, native!] as [HTMLElement, HTMLElement];
+  });
+  await frames(2);
+  return pairs;
+}
+
+/** Each run of non-space text under an element, with its range. */
+function* words(el: Element): Generator<{ word: string; range: Range }> {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    for (const match of text.textContent!.matchAll(/\S+/g)) {
+      const range = document.createRange();
+      range.setStart(text, match.index);
+      range.setEnd(text, match.index + match[0].length);
+      yield { word: match[0], range };
+    }
+  }
+}
+
+/** Each word of a native copy's text (`nativeCopies`) on the host's
+ * grid where the browser puts it: the same row, and the column the
+ * browser's rounds to — either neighbor where the browser's lies within
+ * `halfSlack` of a half, which its layout units decide. */
+export function expectWordsAsNative(host: HTMLElement, native: HTMLElement, halfSlack = 0): void {
+  const cell = cellSize(host);
+  const origin = native.getBoundingClientRect();
+  const rows = rowsOf(host);
+  // Each row searched past its last word, a word repeated or inside
+  // another's not matched early.
+  const searched: number[] = [];
+  for (const { word, range } of words(native)) {
+    const rect = range.getBoundingClientRect();
+    const row = Math.floor((rect.top + rect.height / 2 - origin.top) / cell.height);
+    const column = (rect.left - origin.left) / cell.width;
+    const drawn = rows[row]?.indexOf(word, searched[row]) ?? -1;
+    searched[row] = drawn + word.length;
+    const message = `${word} on row ${row}, the browser's at ${column.toFixed(2)}`;
+    if (Math.abs(column - Math.floor(column) - 0.5) < halfSlack) {
+      expect([Math.floor(column), Math.ceil(column)], message).toContain(drawn);
+    } else {
+      expect(drawn, message).toBe(Math.round(column));
+    }
+  }
+}
+
+/** A `[data-test]` element's offset from `root`'s box, in cells. */
+export function cellOffset(
+  root: Element,
+  name: string,
+  cell: { width: number; height: number },
+): { x: number; y: number } {
+  const origin = root.getBoundingClientRect();
+  const box = root.querySelector(`[data-test="${name}"]`)!.getBoundingClientRect();
+  return { x: (box.left - origin.left) / cell.width, y: (box.top - origin.top) / cell.height };
+}
+
+/** Each row of a native copy's text (`nativeCopies`) as the host's grid
+ * draws it: the same characters, row by row — a soft hyphen the row
+ * ends at shown as `-`, invisible ones left out. */
+export function expectLinesAsNative(host: HTMLElement, native: HTMLElement): void {
+  const cell = cellSize(host);
+  const top = native.getBoundingClientRect().top;
+  const rows: string[] = [];
+  const walker = document.createTreeWalker(native, NodeFilter.SHOW_TEXT);
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    let offset = 0;
+    for (const char of text.textContent!) {
+      const range = document.createRange();
+      range.setStart(text, offset);
+      range.setEnd(text, offset + char.length);
+      offset += char.length;
+      const rect = range.getBoundingClientRect();
+      if (rect.height === 0) continue;
+      const row = Math.floor((rect.top + rect.height / 2 - top) / cell.height);
+      rows[row] = (rows[row] ?? "") + char;
+    }
+  }
+  const shown = (row: string | undefined) =>
+    (row ?? "")
+      .replace(/\u00ad$/, "-")
+      .replace(/[\u00ad\u200b\u2063]/g, "")
+      .trim();
+  const drawn = rowsOf(host).map(shown);
+  rows.forEach((row, i) => expect(drawn[i], `row ${i}`).toBe(shown(row)));
+}
+
+/** A length of `cells` along an axis, as CSS. */
+export type Unit = (cells: number, axis?: "x" | "y") => string;
+
+/** A case beside the browser: its markup, and the engines a spec says
+ * depart from CSS there, whose copies go unchecked. */
+export type NativeCase = string | { markup: string; departs?: readonly Engine[] | undefined };
+const markupOf = (nativeCase: NativeCase): string =>
+  typeof nativeCase === "string" ? nativeCase : nativeCase.markup;
+
+/** A story's render and play laying out each case by the engine, its
+ * lengths on the spacing scale, and by the browser beside it at the
+ * measured cell (`nativeCopies`), each pair `check`ed, every word where
+ * the browser puts it by default. Test-only: the story tags itself
+ * `!dev` and `!golden`, which the indexer reads from its own literal. */
+export const besideNative = (
+  cases: (u: Unit) => readonly NativeCase[],
+  check: (host: HTMLElement, native: HTMLElement, i: number) => unknown = (host, native) =>
+    expectWordsAsNative(host, native),
+  hostClass = "w-80",
+): StoryObj => ({
+  render: () =>
+    html`${cases((cells) => `${cells * 0.25}rem`).map(
+      (nativeCase, i) => html`
+        <div data-test="case-${i}" class="mb-2 flex gap-4">
+          <mono-wind class=${hostClass} .innerHTML=${markupOf(nativeCase)}></mono-wind>
+          <div data-test="native" style="contain: layout"></div>
+        </div>
+      `,
+    )}`,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const cell = cellSize(host);
+    const measured = cases(
+      (cells, axis = "x") => `${cells * cell[axis === "x" ? "width" : "height"]}px`,
+    );
+    const copies = await nativeCopies(canvasElement, host, measured.map(markupOf));
+    for (const [i, [caseHost, native]] of copies.entries()) {
+      const nativeCase = measured[i]!;
+      if (typeof nativeCase !== "string" && nativeCase.departs?.includes(engine)) continue;
+      await check(caseHost, native, i);
+    }
+  },
+});
+
 /** A wait for the grid to paint a row holding `text`. */
 export const expectRow = (host: HTMLElement, text: string): Promise<void> =>
   waitFor(() => expect(showsRow(host, text), `the grid paints "${text}"`).toBe(true));
@@ -373,6 +537,11 @@ async function textLeaves(host: Element): Promise<HTMLElement[]> {
   return leaves;
 }
 
+/** The rects of each run of non-space text under an element. */
+function wordRects(el: Element): DOMRect[] {
+  return [...words(el)].flatMap(({ range }) => [...range.getClientRects()]);
+}
+
 /** Assert that the browser painted every laid-out leaf's text on exactly
  * the rows the engine allocated — the wrap models must agree in every
  * engine (specs/cell-model.md). `allowStretchedLeaves` relaxes the check
@@ -427,7 +596,9 @@ export async function expectBrowserRowsToMatchEngine(
         const textAlign = getComputedStyle(el).textAlign;
         const label = el.textContent!.trim();
         if (/right|end/.test(textAlign)) {
-          const textRight = Math.max(...rects.map((r) => r.right));
+          // Word by word: a line's fragment spans the spaces `pre-wrap`
+          // hangs past the edge.
+          const textRight = Math.max(...wordRects(el).map((r) => r.right));
           const expectedRight =
             box.left + (cells("--mw-w") - cells("--mw-br") - cells("--mw-pr")) * cellWidth;
           expect(Math.abs(textRight - expectedRight), `"${label}" text end`).toBeLessThan(1.5);

@@ -2,6 +2,8 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
+  besideNative,
+  cellOffset,
   cellSize,
   channels,
   countLayouts,
@@ -18,6 +20,9 @@ import {
   readyHosts,
   rowsOf,
   testHooks,
+  type Engine,
+  type NativeCase,
+  type Unit,
 } from "./helpers.ts";
 
 /**
@@ -85,6 +90,25 @@ export const InlineRelative: StoryObj = {
       </div>
     </mono-wind>
   `,
+};
+
+/** Percent insets on inline elements (specs/positioning.md "Inline
+ * elements"), lengths in `u`: against the block container's content
+ * box, a nested span's too, and down against a definite height, none
+ * under an auto one; a class's, which Firefox reads through the class
+ * scan. */
+const percentInsetCases = (u: Unit): string[] => [
+  `<p style="width:${u(24, "x")}">a <span style="position:relative;left:50%">xy</span></p>`,
+  `<p style="width:${u(24, "x")}">a <span>b <span style="position:relative;left:25%">c</span></span></p>`,
+  `<p style="width:${u(24, "x")};height:${u(8, "y")}">a <span style="position:relative;top:50%">x</span></p>`,
+  `<p style="width:${u(24, "x")}">a <span style="position:relative;top:50%">x</span></p>`,
+  `<p style="width:${u(24, "x")}">a <span class="relative left-1/2">xy</span></p>`,
+];
+
+/** Each case's words where the browser puts them. */
+export const InlinePercentInsets: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(percentInsetCases),
 };
 
 /** Test-only (hidden from the sidebar and the visual sweep): `z-index`
@@ -295,9 +319,6 @@ const FILLS = [
   "rgb(0, 128, 128)",
   "rgb(170, 110, 40)",
 ];
-
-/** A length in cells along an axis, as CSS. */
-type Unit = (cells: number, axis: "x" | "y") => string;
 
 /** A box of a stacking layout, its lengths in cells. */
 interface StackedBox {
@@ -1568,9 +1589,59 @@ export const AnchorVisibility: StoryObj = {
   },
 };
 
+/** An out-of-flow element's static position in its run
+ * (specs/positioning.md "Static position"), lengths in `u`: an
+ * inline span mid-line, in a centered line, with one inset, at a
+ * soft break, after a hard break and after an inline block; a
+ * block-level box; a flex container's own, its sole flex item. */
+const runSpots: { markup: (u: Unit) => string; departs?: Engine[] }[] = [
+  { markup: () => `before <span data-test="box" style="position:absolute">*</span>after it` },
+  {
+    markup: () =>
+      `<span style="display:block;text-align:center">mid <span data-test="box" style="position:absolute">*</span>line</span>`,
+  },
+  {
+    markup: (u) =>
+      `inset <span data-test="box" style="position:absolute;top:${u(2, "y")}">*</span>here`,
+  },
+  {
+    markup: () => `aaaa bbbb <span data-test="box" style="position:absolute">*</span>cccc dddd`,
+    departs: ["firefox"],
+  },
+  { markup: () => `a block <div data-test="box" style="position:absolute">*</div>after` },
+  { markup: () => `a<br><span data-test="box" style="position:absolute">*</span>b` },
+  {
+    markup: (u) =>
+      `a<span style="display:inline-block;width:${u(4, "x")}">x</span><span data-test="box" style="position:absolute">*</span>b`,
+  },
+  {
+    markup: () =>
+      `<div style="display:flex;justify-content:center">Hello<span data-test="box" style="position:absolute;top:0">**</span></div>`,
+  },
+];
+const runSpotCases = (u: Unit): NativeCase[] =>
+  runSpots.map(({ markup, departs }) => ({
+    markup: `<div style="position:relative;width:${u(12, "x")}">${markup(u)}</div>`,
+    departs,
+  }));
+
+/** Each box on the browser's cells; Firefox puts the soft break's at
+ * the next line's start. */
+export const RunSpot: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(runSpotCases, (host, native, i) => {
+    const cell = cellSize(host);
+    const at = (root: HTMLElement) => {
+      const { x, y } = cellOffset(root, "box", cell);
+      return { x: Math.round(x), y: Math.round(y) };
+    };
+    expect(at(host), `case ${i}`).toEqual(at(native));
+  }),
+};
+
 /** The anchor-choice probes (specs/anchor-positioning.md "Locked
  * decisions"), each in a relative block 20 rows tall, its `box`
- * anchored below `--a`, lengths in `unit`. */
+ * anchored below `--a`, lengths in `u`. */
 const acceptableCases = (u: Unit): string[] => {
   const anchor = (left: number) =>
     `<div style="anchor-name:--a;width:${u(4, "x")};margin-left:${u(left, "x")}">ANCH</div>`;
@@ -1594,60 +1665,22 @@ const acceptableCases = (u: Unit): string[] => {
   ];
 };
 
-/** Test-only (hidden from the sidebar and the visual sweep): which
- * element anchors a box, laid out by the engine, lengths on the spacing
- * scale, and by the browser beside it at the measured cell — the last
+/** Which element anchors a box, beside the browser's: the last
  * acceptable one in tree order, an `anchor-scope` keeping each list
- * item's box to its own. Each box sits on the browser's cells. */
+ * item's box to its own, each box on the browser's cells. */
 export const AnchorAcceptable: StoryObj = {
   tags: ["!dev", "!golden"],
-  render: () =>
-    html`${acceptableCases((cells) => `${cells * 0.25}rem`).map(
-      (markup, i) => html`
-        <div data-test="case-${i}" class="mb-2 flex gap-4">
-          <mono-wind class="w-40" .innerHTML=${markup}></mono-wind>
-          <div data-test="native"></div>
-        </div>
-      `,
-    )}`,
-  play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
-    const cell = cellSize(host);
-    const cases = acceptableCases(
-      (cells, axis) => `${cells * cell[axis === "x" ? "width" : "height"]}px`,
-    );
-    const { font, letterSpacing } = getComputedStyle(host);
-    for (const [i, markup] of cases.entries()) {
-      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
-        `[data-test="case-${i}"] > *`,
-      );
-      Object.assign(native!.style, {
-        width: `${grid!.getBoundingClientRect().width}px`,
-        font,
-        lineHeight: `${cell.height}px`,
-        letterSpacing,
-      });
-      native!.innerHTML = markup;
-    }
-    await frames(2);
-    for (const i of cases.keys()) {
-      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
-        `[data-test="case-${i}"] > *`,
-      );
-      const at = (root: HTMLElement) => {
-        const origin = root.getBoundingClientRect();
-        const box = root.querySelector('[data-test="box"]')!.getBoundingClientRect();
-        return {
-          x: (box.left - origin.left) / cell.width,
-          y: (box.top - origin.top) / cell.height,
-        };
-      };
-      const want = at(native!);
+  ...besideNative(
+    acceptableCases,
+    async (host, native, i) => {
+      const cell = cellSize(host);
+      const want = cellOffset(native, "box", cell);
       await waitFor(() => {
-        const got = at(grid!);
+        const got = cellOffset(host, "box", cell);
         expect(Math.abs(got.x - want.x), `case ${i} x`).toBeLessThan(0.5);
         expect(Math.abs(got.y - want.y), `case ${i} y`).toBeLessThan(0.5);
       });
-    }
-  },
+    },
+    "w-40",
+  ),
 };

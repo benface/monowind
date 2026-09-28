@@ -175,6 +175,20 @@ describe("lines beside floats", () => {
     expect(rows(root)).toEqual(["                  ab", "       abcdefghijkl…"]);
   });
 
+  it("shortens a clip box's lines beside a float, where a hidden box steps aside", () => {
+    const p = (overflow: string) =>
+      build(
+        `<div style="width: 80px">
+          <div style="float: left; width: 28px; height: 8px"></div>
+          <p style="overflow-x: ${overflow}; overflow-y: ${overflow}">ab</p>
+        </div>`,
+      ).root.children[1]!;
+    // The clip box's line opens past the float; the hidden box moves.
+    expect(rect(p("clip")).x).toBe(0);
+    expect(bands(p("clip"))).toEqual([[0, 7, 13]]);
+    expect(rect(p("hidden")).x).toBe(7);
+  });
+
   it("keeps an unbreakable line on its row, overflowing the band as browsers do", () => {
     const { root } = build(
       `<div style="width: 160px">

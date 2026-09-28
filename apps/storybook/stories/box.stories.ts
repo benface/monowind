@@ -2,7 +2,7 @@ import { html } from "lit";
 import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { glyphSetFor, registerBorderGlyphs } from "monowind";
-import { cellSize, frames, isChromium, isFirefox, readyGrid, readyHost } from "./helpers.ts";
+import { besideNative, cellSize, readyGrid, type Engine, type Unit } from "./helpers.ts";
 
 // A set drawing 2px as two rings of the default lines (the rings a
 // theme without heavy glyphs registers, specs/theming.md).
@@ -67,7 +67,8 @@ export const BorderWidths: StoryObj = {
     };
     expect(cornerOf("heavy")).toBe("┏━┃");
     expect(cornerOf("double")).toBe("╔═║");
-    expect(cornerOf("mixed")).toBe("┏─┃");
+    // A heavy side meets a light one at Unicode's mixed corner.
+    expect(cornerOf("mixed")).toBe("┎─┃");
     expect(cornerOf("ascii")).toBe("+-|");
     expect(cornerOf("cp437")).toBe("╔═║");
     // One cell per edge for heavy and double, two for the ascii rings.
@@ -200,15 +201,11 @@ export const AspectRatio: StoryObj = {
   `,
 };
 
-type Unit = (cells: number, axis?: "x" | "y") => string;
-
 /** The aspect-ratio probes (specs/cell-model.md, flex.md, grid.md,
  * positioning.md), each a `data-test="box"` in its setting, lengths in
- * `unit`; `departs` names an engine the spec says departs from CSS, and
+ * `u`; `departs` names the engines the spec says depart from CSS, and
  * `rounds` the roundings on the way to the box, each half a cell. */
-const aspectCases = (
-  u: Unit,
-): { markup: string; departs?: "chromium" | "firefox" | "webkit"; rounds?: number }[] => {
+const aspectCases = (u: Unit): { markup: string; departs?: Engine[]; rounds?: number }[] => {
   const words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo";
   return [
     { markup: `<div data-test="box" style="width:${u(20)};aspect-ratio:1"></div>` },
@@ -244,7 +241,7 @@ const aspectCases = (
     },
     {
       markup: `<div style="display:flex;flex-direction:column;align-items:start"><div data-test="box" style="aspect-ratio:4/1">ab</div></div>`,
-      departs: "webkit",
+      departs: ["webkit"],
     },
     {
       markup: `<div style="display:grid;grid-template-columns:${u(20)}"><div data-test="box" style="aspect-ratio:16/9"></div></div>`,
@@ -254,11 +251,11 @@ const aspectCases = (
     },
     {
       markup: `<div style="display:grid;grid-template-columns:${u(20)};grid-template-rows:${u(20, "y")}"><div data-test="box" style="aspect-ratio:2;justify-self:start">ab</div></div>`,
-      departs: "chromium",
+      departs: ["chromium"],
     },
     {
       markup: `<div style="display:grid;grid-template-columns:${u(10)} ${u(10)}"><div data-test="box" style="aspect-ratio:2;align-self:stretch"></div><div style="height:${u(20, "y")}"></div></div>`,
-      departs: "firefox",
+      departs: ["firefox"],
     },
     {
       markup: `<div style="display:grid;grid-template-columns:auto 1fr"><div data-test="box" style="height:${u(5, "y")};aspect-ratio:2"></div><div>x</div></div>`,
@@ -275,55 +272,72 @@ const aspectCases = (
   ];
 };
 
-/** Test-only (hidden from the sidebar and the visual sweep): each
- * aspect-ratio probe laid out by the engine, lengths on the spacing
- * scale, and by the browser beside it at the measured cell; each box
- * is within half a cell of the browser's on both axes, the engine
- * rounding its derived side once. */
+/** A case's `box` against the browser's, in cells on each axis. */
+const boxDrift = (host: HTMLElement, native: HTMLElement) => {
+  const cell = cellSize(host);
+  const box = host.querySelector<HTMLElement>('[data-test="box"]')!;
+  const want = native.querySelector('[data-test="box"]')!.getBoundingClientRect();
+  const cells = (name: string) => Number(box.style.getPropertyValue(name));
+  return {
+    width: Math.abs(cells("--mw-w") - want.width / cell.width),
+    height: Math.abs(cells("--mw-h") - want.height / cell.height),
+  };
+};
+
+/** Each aspect-ratio probe beside the browser's: its box within half a
+ * cell of the browser's on both axes per rounding on the way. */
 export const AspectRatioAgainstNative: StoryObj = {
   tags: ["!dev", "!golden"],
-  render: () =>
-    html`${aspectCases((cells) => `${cells * 0.25}rem`).map(
-      ({ markup }, i) => html`
-        <div data-test="case-${i}" class="mb-2 flex gap-4">
-          <mono-wind class="w-40" .innerHTML=${markup}></mono-wind>
-          <div data-test="native" style="contain: layout"></div>
-        </div>
-      `,
-    )}`,
-  play: async ({ canvasElement }) => {
-    const host = await readyHost(canvasElement);
-    const cell = cellSize(host);
-    const cases = aspectCases(
-      (cells, axis = "x") => `${cells * cell[axis === "x" ? "width" : "height"]}px`,
-    );
-    const engine = isChromium ? "chromium" : isFirefox ? "firefox" : "webkit";
-    const { font, letterSpacing } = getComputedStyle(host);
-    for (const [i, { markup }] of cases.entries()) {
-      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
-        `[data-test="case-${i}"] > *`,
-      );
-      Object.assign(native!.style, {
-        width: `${grid!.getBoundingClientRect().width}px`,
-        font,
-        lineHeight: `${cell.height}px`,
-        letterSpacing,
-      });
-      native!.innerHTML = markup;
-    }
-    await frames(2);
-    for (const [i, { departs, rounds = 1 }] of cases.entries()) {
-      if (departs === engine) continue;
-      const [grid, native] = canvasElement.querySelectorAll<HTMLElement>(
-        `[data-test="case-${i}"] > *`,
-      );
-      const box = grid!.querySelector<HTMLElement>('[data-test="box"]')!;
-      const cells = (name: string) => Number(box.style.getPropertyValue(name));
-      const want = native!.querySelector('[data-test="box"]')!.getBoundingClientRect();
-      const off = (engineCells: number, px: number, cellPx: number) =>
-        Math.abs(engineCells - px / cellPx) - rounds * 0.5;
-      expect(off(cells("--mw-w"), want.width, cell.width), `case ${i} width`).toBeLessThan(0.01);
-      expect(off(cells("--mw-h"), want.height, cell.height), `case ${i} height`).toBeLessThan(0.01);
-    }
-  },
+  ...besideNative(
+    aspectCases,
+    (host, native, i) => {
+      const { rounds = 1 } = aspectCases(() => "")[i]!;
+      const drift = boxDrift(host, native);
+      expect(drift.width, `case ${i} width`).toBeLessThan(rounds * 0.5 + 0.01);
+      expect(drift.height, `case ${i} height`).toBeLessThan(rounds * 0.5 + 0.01);
+    },
+    "w-40",
+  ),
+};
+
+/** Percentages beside margins (specs/cell-model.md "Units and value
+ * mapping"): each case's `box`, lengths in `u`, its percent width or
+ * limit against its parent's width, the margins aside. */
+const percentCases = (u: Unit): string[] => {
+  const box = (style: string) => `<div data-test="box" style="${style}">x</div>`;
+  return [
+    box(`width:100%;margin:0 ${u(4)}`),
+    box(`width:50%;margin-left:${u(2)}`),
+    box(`width:100%;max-width:50%;margin:0 ${u(2)}`),
+    box(`float:left;width:50%;margin-right:${u(2)}`),
+    `<div style="display:flex;flex-direction:column">${box(`width:100%;margin:0 ${u(4)}`)}</div>`,
+    `<div style="display:grid;grid-template-columns:100%">${box(
+      `width:50%;margin-left:${u(2)};justify-self:start`,
+    )}</div>`,
+    `aa <span data-test="box" style="display:inline-block;width:50%;margin:0 ${u(2)}">x</span>`,
+  ];
+};
+
+/** Each percentage case beside the browser's: its box's width within
+ * half a cell. */
+export const PercentBesideMargins: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(percentCases, (host, native, i) =>
+    expect(boxDrift(host, native).width, `case ${i}`).toBeLessThanOrEqual(0.5),
+  ),
+};
+
+/** Baseline alignment (specs/flex.md, grid.md, table.md): each case's
+ * words, lengths in `u`, in a flex row, a div-table and a grid whose
+ * boxes their padding or a box drawing no line sets apart. */
+const baselineCases = (u: Unit): string[] => [
+  `<div style="display:flex;align-items:baseline;gap:${u(1)}"><div>alpha</div><div style="padding-top:${u(1, "y")}">bravo</div><div><div style="padding-top:${u(2, "y")}">charlie</div></div></div>`,
+  `<div style="display:flex;align-items:baseline;gap:${u(1)}"><div style="width:${u(2)};height:${u(3, "y")};background:gray"></div><div>delta</div></div>`,
+  `<div style="display:table"><div style="display:table-row"><div style="display:table-cell">echo</div><div style="display:table-cell;padding-top:${u(1, "y")}">foxtrot</div></div></div>`,
+  `<div style="display:grid;grid-template-columns:1fr 1fr;align-items:baseline"><div>golf</div><div style="padding-top:${u(2, "y")}">hotel</div></div>`,
+];
+
+export const Baseline: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(baselineCases),
 };

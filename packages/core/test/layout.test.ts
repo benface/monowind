@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { layoutRoot } from "../src/layout.ts";
+import { renderPlainText } from "../src/plain-text.ts";
 import type { CellStyle } from "../src/types.ts";
 import { cells, makeNode } from "./helpers.ts";
 
@@ -335,7 +336,7 @@ describe("atomic inline boxes in text runs", () => {
   const leafWithBox = () => {
     // "aa \uFFFC bb" with a 4-cell box (its own text "wxyz").
     const box = makeNode({ text: "wxyz" });
-    box.inlineBox = true;
+    box.inlineBox = { top: 0, right: 0, bottom: 0, left: 0 };
     const leaf = makeNode({ text: "aa \uFFFC bb", children: [box] });
     leaf.advances = [1, 1, 1, 1, 1, 1, 1];
     return { box, leaf };
@@ -372,11 +373,144 @@ describe("atomic inline boxes in text runs", () => {
   });
 });
 
+describe("an atomic inline box's margins (CSS 2 §10.8)", () => {
+  /** "aa \uFFFC bb" in a leaf `width` wide, its box "wxyz" under
+   * `margin` and `verticalAlign`. */
+  const placed = (
+    margin: Partial<CellStyle["margin"]>,
+    { width = 40, verticalAlign = "start" as CellStyle["verticalAlign"] } = {},
+  ) => {
+    const box = makeNode({
+      text: "wxyz",
+      style: { margin: { top: 0, right: 0, bottom: 0, left: 0, ...margin }, verticalAlign },
+    });
+    box.inlineBox = { top: 0, right: 0, bottom: 0, left: 0 };
+    const leaf = makeNode({ text: "aa \uFFFC bb", children: [box] });
+    leaf.advances = [1, 1, 1, 1, 1, 1, 1];
+    layoutRoot(makeNode({ style: { maxWidth: width }, children: [leaf] }), 40);
+    return { box: box.localRect, leaf, row: box.inlineTextRow };
+  };
+
+  it("joins the horizontal margins to the box's advance", () => {
+    const { box, leaf } = placed({ left: 1, right: 2 });
+    expect(box.x).toBe(4);
+    expect(leaf.textExtent!.width).toBe(13);
+    // A negative one overlaps the text before.
+    const overlapped = placed({ left: -1 });
+    expect(overlapped.box.x).toBe(2);
+    expect(overlapped.leaf.textExtent!.width).toBe(9);
+    // A percentage against the leaf's width, the margin box in the fit.
+    expect(placed({ left: { percent: 10 } }).box.x).toBe(7);
+    const wrapped = placed({ left: 1, right: 2 }, { width: 8 });
+    expect(wrapped.box).toMatchObject({ x: 1, y: 1 });
+  });
+
+  it("grows the line by the vertical margins, a negative top lifting the box", () => {
+    expect(placed({ top: 1 })).toMatchObject({ box: { y: 1 }, leaf: { localRect: { height: 2 } } });
+    expect(placed({ bottom: 1 })).toMatchObject({
+      box: { y: 0 },
+      leaf: { localRect: { height: 2 } },
+    });
+    expect(placed({ top: -1 })).toMatchObject({
+      box: { y: -1 },
+      leaf: { localRect: { height: 1 } },
+    });
+  });
+
+  it("aligns its margin box's bottom with the line's under vertical-align: bottom", () => {
+    expect(placed({ bottom: 1 }, { verticalAlign: "end" }).row).toBe(1);
+    expect(placed({ top: 1 }, { verticalAlign: "end" }).row).toBe(1);
+  });
+});
+
+describe("percentages beside margins (CSS 2 §10.3.3)", () => {
+  const percent = (value: number) => ({ kind: "percent" as const, value });
+  /** A box of `style` under a 20-wide parent of `parent`, its rect. */
+  const sized = (style: Partial<CellStyle>, parent: Partial<CellStyle> = {}) => {
+    const box = makeNode({ text: "x", style });
+    layoutRoot(makeNode({ style: parent, children: [box] }), 20);
+    return box.localRect;
+  };
+  const mx = (cells: number) => ({ top: 0, right: cells, bottom: 0, left: cells });
+
+  it("resolves a block's width, limits and padding against its parent's width", () => {
+    // `w-full mx-4`: 20 wide, overflowing by 8.
+    expect(sized({ width: percent(100), margin: mx(4) })).toMatchObject({ x: 4, width: 20 });
+    expect(sized({ width: percent(50), margin: mx(2) }).width).toBe(10);
+    expect(sized({ width: percent(100), maxWidth: { percent: 50 }, margin: mx(2) }).width).toBe(10);
+    const padded = makeNode({
+      text: "x",
+      style: { margin: mx(2), padding: { top: 0, right: 0, bottom: 0, left: { percent: 10 } } },
+    });
+    layoutRoot(makeNode({ children: [padded] }), 20);
+    expect(padded.resolvedPadding.left).toBe(2);
+    // An auto width still fills what its margins leave.
+    expect(sized({ margin: mx(2) }).width).toBe(16);
+  });
+
+  it("does so for a float, a flex column's item, a grid item and a column's box", () => {
+    expect(sized({ float: "left", width: percent(50), margin: mx(2) }).width).toBe(10);
+    expect(
+      sized({ width: percent(100), margin: mx(4) }, { display: "flex", flexDirection: "column" })
+        .width,
+    ).toBe(20);
+    expect(
+      sized(
+        { width: percent(50), margin: mx(2), justifySelf: "start" },
+        {
+          display: "grid",
+          gridTemplateColumns: {
+            kind: "tracks",
+            tracks: [{ min: { kind: "cells", value: 20 }, max: { kind: "cells", value: 20 } }],
+          },
+        },
+      ).width,
+    ).toBe(10);
+    // Two 10-wide columns: a box in one, a spanner across both.
+    const multicol = { display: "multicol" as const, columnCount: 2, gapX: 0 };
+    expect(sized({ width: percent(100), margin: mx(2) }, multicol).width).toBe(10);
+    expect(sized({ width: percent(100), margin: mx(2), columnSpan: true }, multicol).width).toBe(
+      20,
+    );
+  });
+
+  it("does so for an inline box, against its paragraph's width", () => {
+    const box = makeNode({ text: "wxyz", style: { width: percent(50), margin: mx(2) } });
+    box.inlineBox = { top: 0, right: 0, bottom: 0, left: 0 };
+    const leaf = makeNode({ text: "\uFFFC", children: [box] });
+    leaf.advances = [1];
+    layoutRoot(makeNode({ children: [leaf] }), 20);
+    expect(box.localRect).toMatchObject({ x: 2, width: 10 });
+  });
+});
+
+describe("text-indent (probed 2026-09-27)", () => {
+  const indented = (textIndent: CellStyle["textIndent"], style: Partial<CellStyle> = {}) => {
+    const leaf = makeNode({
+      text: "aaa bbb ccc ddd",
+      style: { textIndent, maxWidth: 20, ...style },
+    });
+    const root = makeNode({ children: [leaf] });
+    layoutRoot(root, 40);
+    return { leaf, art: renderPlainText(root) };
+  };
+
+  it("hangs a negative indent left of the content box", () => {
+    // `-indent-6 pl-12`: the first line six cells in and six wider, the rest twelve.
+    const { art } = indented(-6, { padding: { top: 0, right: 0, bottom: 0, left: 12 } });
+    expect(art).toBe("      aaa bbb ccc\n            ddd");
+  });
+
+  it("resolves a percentage against the content width", () => {
+    expect(indented({ percent: 10 }).art).toBe("  aaa bbb ccc ddd");
+  });
+});
+
 describe("multi-row inline boxes grow their line (CSS line-box growth)", () => {
   it("pushes following lines down by the box's extra rows", () => {
     // Box is 2 rows tall (hard break); leaf wraps to put text after it.
     const box = makeNode({ text: "aa\nbb" });
-    box.inlineBox = true;
+    box.inlineBox = { top: 0, right: 0, bottom: 0, left: 0 };
     const leaf = makeNode({ text: "xx \uFFFC yy", children: [box] });
     leaf.advances = [1, 1, 1, 1, 1, 1, 1];
     const container = makeNode({ style: { maxWidth: 5 }, children: [leaf] });
@@ -425,13 +559,6 @@ describe("percent spacing", () => {
     layoutRoot(root, 40);
     // gap = 10% of 40 = 4: second item at 2 + 4 = 6.
     expect(items[1]!.localRect.x).toBe(6);
-  });
-});
-
-describe("overflow", () => {
-  it("carries overflow: clip through to CellStyle so the CSS override applies", () => {
-    const container = makeNode({ style: { overflow: { x: "clip", y: "clip" } } });
-    expect(container.style.overflow).toEqual({ x: "clip", y: "clip" });
   });
 });
 
@@ -629,21 +756,24 @@ describe("quantized content alignment on text leaves", () => {
         height: { kind: "cells", value: 4 },
       },
     });
+    // A grid's text is an anonymous item of its own.
+    const run = makeNode({ text: "ab" });
+    run.anonymous = true;
     const grid = makeNode({
-      text: "ab",
       style: {
         display: "grid",
         justifyItems: "center",
         alignItems: "center",
         height: { kind: "cells", value: 3 },
       },
+      children: [run],
     });
     const root = makeNode({ children: [column, grid] });
     layoutRoot(root, 10);
     // Column: justify = vertical (end → all 3 rows above), align =
     // horizontal (center → 4 + 4).
     expect(column.resolvedPadding).toEqual({ top: 3, right: 4, bottom: 0, left: 4 });
-    // Grid: place-items center on both axes.
+    // Grid: place-items center on both axes, the item's offsets folded in.
     expect(grid.resolvedPadding).toEqual({ top: 1, right: 4, bottom: 1, left: 4 });
   });
 
@@ -699,7 +829,7 @@ describe("aspect ratio (specs/cell-model.md)", () => {
   it("floors a derived axis at its content while overflow is visible and its min auto", () => {
     const words = "aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo";
     expect(size(box(4, { width: cells(12) }, words))).toBe("12x4");
-    const hidden = { x: "clip", y: "clip" } as const;
+    const hidden = { x: "hidden", y: "hidden" } as const;
     expect(size(box(4, { width: cells(12), overflow: hidden }, words))).toBe("12x3");
     expect(size(box(4, { width: cells(12), minHeight: 0 }, words))).toBe("12x3");
     expect(size(box(2, { height: cells(1) }, "abcdefghij"))).toBe("10x1");

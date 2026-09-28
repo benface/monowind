@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderPlainText } from "../src/plain-text.ts";
 import { layoutRoot } from "../src/layout.ts";
+import { renderPlainText } from "../src/plain-text.ts";
 import { charIndexAt, positionOf } from "../src/selection.ts";
 import { buildRoot, buildTree } from "../src/tree.ts";
-import { INLINE_PAD } from "../src/wrap.ts";
+import { INLINE_PAD, WBR_MARKER } from "../src/wrap.ts";
 import { inlineBoxesOf } from "../src/types.ts";
 import type { PerSide } from "../src/types.ts";
 
@@ -69,6 +69,7 @@ describe("buildTree", () => {
       el('<div>a <span style="position: relative; top: 4px">shifted</span> b</div>'),
       16,
     )!;
+    layoutRoot(node, 20);
     expect(node.inlineElements?.length).toBe(1);
     expect(node.inlineElements![0]!.insets).toEqual({
       top: 1, // 4px = 1 cell at 16px root font size
@@ -78,16 +79,40 @@ describe("buildTree", () => {
     });
   });
 
-  it("records inline elements without insets as not positioned (percent insets too)", () => {
-    const node = buildTree(
-      el(
-        '<div><span style="position: relative">plain</span> <i style="position: relative; top: 50%">pct</i></div>',
-      ),
-      16,
-    )!;
+  it("reads a stylesheet's inset on a relative inline element, lacking Typed OM", () => {
+    const sheet = document.head.appendChild(document.createElement("style"));
+    sheet.textContent = ".raised { position: relative; top: -8px }";
+    try {
+      const node = buildTree(el('<div>a <span class="raised">up</span> b</div>'), 16)!;
+      layoutRoot(node, 20);
+      expect(node.inlineElements![0]!.insets).toMatchObject({ top: -2 });
+    } finally {
+      sheet.remove();
+    }
+  });
+
+  it("records inline elements without insets as not positioned", () => {
+    const node = buildTree(el('<div><span style="position: relative">plain</span></div>'), 16)!;
+    layoutRoot(node, 20);
     const noInsets = (e: { insets: PerSide<number | null> | null }) =>
       e.insets === null || Object.values(e.insets).every((v) => v === null);
     expect(node.inlineElements?.every(noInsets)).toBe(true);
+  });
+
+  it("resolves an inline element's percent insets against its leaf's content box", () => {
+    const insets = (height: string) => {
+      const node = buildTree(
+        el(
+          `<div style="${height}"><span style="position: relative; left: 50%">a</span> <i style="position: relative; top: 50%">b</i></div>`,
+        ),
+        16,
+      )!;
+      layoutRoot(node, 20);
+      return node.inlineElements!.map((entry) => entry.insets);
+    };
+    // Half the leaf's 20 cells across; half its 10 rows down, where definite.
+    expect(insets("height: 40px")).toMatchObject([{ left: 10 }, { top: 5 }]);
+    expect(insets("")).toMatchObject([{ left: 10 }, { top: 0 }]);
   });
 
   it("gives tracked characters wider advances, inline spans included", () => {
@@ -141,7 +166,7 @@ describe("buildTree", () => {
     const atomic = buildTree(el('<div>a <div style="display: inline-flex">xy</div> b</div>'), 16)!;
     expect(atomic.text).toBe("a \uFFFC b");
     expect(atomic.children.length).toBe(1);
-    expect(atomic.children[0]!.inlineBox).toBe(true);
+    expect(atomic.children[0]!.inlineBox).toBeDefined();
     expect(atomic.children[0]!.text).toBe("xy");
     // The marker's intrinsic advance is the box's max-content width.
     expect(atomic.advances![2]).toBe(2);
@@ -180,7 +205,7 @@ describe("buildTree", () => {
       16,
     )!;
     expect(atomic.text).toBe("a \uFFFC c");
-    expect(atomic.children[0]!.inlineBox).toBe(true);
+    expect(atomic.children[0]!.inlineBox).toBeDefined();
   });
 
   it("collects a NESTED atomic inline box as a marker too", () => {
@@ -189,7 +214,7 @@ describe("buildTree", () => {
       16,
     )!;
     expect(node.text).toBe("a b \uFFFC c");
-    expect(node.children[0]!.inlineBox).toBe(true);
+    expect(node.children[0]!.inlineBox).toBeDefined();
   });
 
   it("counts a w-fit atomic inline box at its max-content in the run's width", () => {
@@ -200,6 +225,56 @@ describe("buildTree", () => {
       16,
     )!;
     expect(node.intrinsicWidth).toBe(15);
+  });
+
+  it("counts an atomic inline box's margins in the run's width", () => {
+    const node = buildTree(
+      el('<div>ab <span style="display: inline-block; margin: 0 8px 0 4px">chip</span> c</div>'),
+      16,
+    )!;
+    // "ab " 3, the margin box 1 + 4 + 2, " c" 2.
+    expect(node.intrinsicWidth).toBe(12);
+  });
+
+  it("indents a mixed container's first run alone", () => {
+    const node = buildTree(el('<div style="text-indent: 8px">first<p>block</p>second</div>'), 16)!;
+    // The block inherits the indent for its own first line.
+    expect(node.children.map((child) => [child.text, child.style.textIndent])).toEqual([
+      ["first", 2],
+      ["block", 2],
+      ["second", 0],
+    ]);
+  });
+
+  it("indents the first run past a leading float, the first formatted line", () => {
+    const node = buildTree(
+      el('<div style="text-indent: 8px"><div style="float: left">f</div>first<p>block</p></div>'),
+      16,
+    )!;
+    expect(node.children.map((child) => [child.text, child.style.textIndent])).toEqual([
+      ["f", 2],
+      ["first", 2],
+      ["block", 2],
+    ]);
+  });
+
+  it("counts a fixed indent in a leaf's intrinsic widths, a negative one narrowing", () => {
+    const width = (style: string) => {
+      const node = buildTree(el(`<div><div style="${style}">ab cdefgh</div></div>`), 16)!;
+      layoutRoot(node, 40);
+      return node.children[0]!.localRect.width;
+    };
+    expect(width("width: max-content; text-indent: 48px")).toBe(21);
+    expect(width("width: min-content; text-indent: 48px")).toBe(14);
+    expect(width("width: max-content; text-indent: -4px")).toBe(8);
+  });
+
+  it("builds a grid holding only text over one anonymous run, its item", () => {
+    const node = buildTree(el('<div style="display: grid">some text</div>'), 16)!;
+    expect(node.text).toBe("");
+    expect(node.children.map((child) => [child.anonymous, child.text])).toEqual([
+      [true, "some text"],
+    ]);
   });
 
   it("splits through `contents`, a float, and keeps an out-of-flow child of the split", () => {
@@ -256,7 +331,7 @@ describe("buildTree", () => {
     expect(first!.inlineElements).toHaveLength(1);
     expect(first!.children[0]!.style.position).toBe("absolute");
     expect(last!.text).toBe("\uFFFC baz");
-    expect(last!.children[0]!.inlineBox).toBe(true);
+    expect(last!.children[0]!.inlineBox).toBeDefined();
     // A flex container's runs are its anonymous items.
     const flex = buildTree(el('<div style="display: flex">foo<div>bar</div>baz</div>'), 16)!;
     expect(flex.children.map((child) => child.anonymous)).toEqual([true, undefined, true]);
@@ -356,10 +431,70 @@ describe("white-space: pre", () => {
     expect(node.text).toBe("ab      c\n        d");
   });
 
-  it("keeps collapsing without the pre flag", () => {
-    const node = buildTree(el('<div style="white-space: pre-line">a\n b</div>'), 16)!;
-    expect(node.style.whiteSpace).toBe("normal");
-    expect(node.text).toBe("a b");
+  it("keeps spaces and newlines under pre-wrap and break-spaces, its lines wrapping", () => {
+    const lines = { "pre-wrap": ["a", "b", "", "c"], "break-spaces": ["a ", " b", "  ", "c"] };
+    for (const [whiteSpace, expected] of Object.entries(lines)) {
+      const node = buildTree(el(`<div style="white-space: ${whiteSpace}">a  b\n  c</div>`), 16)!;
+      expect(node.style.whiteSpace).toBe(whiteSpace);
+      expect(node.text).toBe("a  b\n  c");
+      layoutRoot(node, 2);
+      expect(node.lines!.spans.map(({ start, end }) => node.text.slice(start, end))).toEqual(
+        expected,
+      );
+    }
+  });
+
+  it("breaks at newlines under pre-line, its spaces collapsing and its lines wrapping", () => {
+    const node = buildTree(
+      el('<div style="white-space: pre-line">a  \n  b  c\nd <span>e\nf</span></div>'),
+      16,
+    )!;
+    expect(node.style.whiteSpace).toBe("pre-line");
+    expect(node.text).toBe("a\nb c\nd e\nf");
+    layoutRoot(node, 2);
+    expect(node.lines!.spans.map(({ start, end }) => node.text.slice(start, end))).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+    ]);
+  });
+});
+
+describe("a textarea's rows", () => {
+  it("wraps its value as pre-wrap, its spaces kept", () => {
+    const textarea = el(
+      '<textarea style="field-sizing: content"></textarea>',
+    ) as HTMLTextAreaElement;
+    textarea.value = "          x";
+    const node = buildTree(textarea, 16, undefined, new Map([[textarea, 5]]))!;
+    // The spaces hang past the line's end, the `x` on the next.
+    expect(node.intrinsicHeight).toBe(2);
+  });
+});
+
+describe("<wbr>", () => {
+  it("keeps a <wbr> as a break opportunity standing for no text", () => {
+    const node = buildTree(el("<p>super<wbr>califragilistic</p>"), 16)!;
+    expect(node.text).toBe(`super${WBR_MARKER}califragilistic`);
+    layoutRoot(node, 16);
+    expect(node.lines!.spans.map(({ start, end }) => node.text.slice(start, end))).toEqual([
+      `super${WBR_MARKER}`,
+      "califragilistic",
+    ]);
+  });
+
+  it("draws nothing for one", () => {
+    const node = buildTree(el("<p>super<wbr>long</p>"), 16)!;
+    layoutRoot(node, 20);
+    expect(renderPlainText(node)).toBe("superlong");
+  });
+
+  it("collapses the spaces around one, and trims them before a break", () => {
+    expect(buildTree(el("<p>a <wbr> b</p>"), 16)!.text).toBe(`a ${WBR_MARKER}b`);
+    expect(buildTree(el("<p>a <wbr><br>b</p>"), 16)!.text).toBe(`a${WBR_MARKER}\nb`);
   });
 });
 

@@ -63,6 +63,7 @@ export function measureCellMetrics(host: HTMLElement, probe: HTMLElement): CellM
     "computedStyleMap" in probe ? probe.computedStyleMap().get("min-width")?.toString() : undefined;
   return {
     width,
+    advance: measured,
     height: rect.height,
     letterSpacing,
     gridLetterSpacing: letterSpacing + (width - measured),

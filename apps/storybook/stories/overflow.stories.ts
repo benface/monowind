@@ -1,7 +1,21 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
-import { cellSize, dragTo, gridOf, hoverOver, pressAt, readyHost, release } from "./helpers.ts";
+import {
+  besideNative,
+  cellOffset,
+  cellSize,
+  countLayouts,
+  dragTo,
+  frames,
+  gridOf,
+  hoverOver,
+  pressAt,
+  readyHost,
+  release,
+  rowsOf,
+  type Unit,
+} from "./helpers.ts";
 
 /**
  * Overflow (specs/scrolling.md): `clip` culls at the padding box;
@@ -582,5 +596,80 @@ export const ThumbRelease: StoryObj = {
       expect(cells).toBeGreaterThan(0);
       expect(Math.abs(box.scrollTop - cells * height)).toBeLessThan(1);
     });
+  },
+};
+
+/** `overflow: hidden` and `clip` in a flex row (specs/cell-model.md
+ * "Overflow"), lengths in `u`: a hidden item shrinks past its word, a
+ * clip one keeps it, a nowrap one and a vertical one too, and one
+ * hidden beside a scrolling axis scrolls. */
+const clipCases = (u: Unit): string[] =>
+  [
+    "overflow:hidden",
+    "overflow-x:clip",
+    "overflow-x:clip;white-space:nowrap",
+    "overflow-y:clip",
+    `overflow-x:hidden;overflow-y:auto;height:${u(1, "y")}`,
+  ].map(
+    (overflow) =>
+      `<div data-test="row" style="display:flex;width:${u(20)}"><div data-test="item" style="${overflow}">abcdefghijklmnopqrstuvwxyzabcd</div><div data-test="next">next</div></div>`,
+  );
+
+/** Each clip case's next item where the browser puts it, and each
+ * item's native overflow the author's, `hidden` locked as `clip`: on
+ * the first layout, a relayout after the lock's first write, and once
+ * the author's overflow is gone. */
+export const ClipAndHidden: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(clipCases, async (host, native, i) => {
+    const overflow = (root: HTMLElement) => {
+      const { overflowX, overflowY } = getComputedStyle(root.querySelector('[data-test="item"]')!);
+      return [overflowX, overflowY].map((axis) => axis.replace("hidden", "clip"));
+    };
+    const matches = (label: string) => {
+      const want = Math.round(cellOffset(native, "next", cellSize(host)).x);
+      expect(rowsOf(host)[0]!.indexOf("next"), label).toBe(want);
+      expect(overflow(host), label).toEqual(overflow(native));
+    };
+    const relayout = async (change: (root: HTMLElement) => void) => {
+      const layouts = countLayouts(host);
+      for (const root of [host, native]) change(root);
+      await waitFor(() => expect(layouts.count).toBeGreaterThan(0));
+      await frames(2);
+      layouts.stop();
+    };
+    matches(`case ${i}`);
+    await relayout((root) => root.querySelector('[data-test="row"]')!.classList.add("relaid"));
+    matches(`case ${i} relaid`);
+    await relayout((root) => {
+      root.querySelector<HTMLElement>('[data-test="item"]')!.style.overflow = "visible";
+    });
+    matches(`case ${i} visible`);
+  }),
+};
+
+/** Test-only (hidden from the sidebar and the visual sweep): a reveal
+ * stops clear of a scroll container's authored `scroll-padding` past
+ * its border and bar (specs/scrolling.md), `scroll-pb-2` two rows
+ * above the bottom border. */
+export const ScrollPadding: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div data-test="list" class="h-8 w-20 scroll-pb-2 overflow-y-auto border">
+        ${Array.from({ length: 12 }, (_, i) => html`<button class="block">item ${i + 1}</button>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const cell = cellSize(host).height;
+    const list = canvasElement.querySelector<HTMLElement>('[data-test="list"]')!;
+    const buttons = list.querySelectorAll("button");
+    buttons[7]!.scrollIntoView({ block: "end" });
+    await waitFor(() => expect(list.scrollTop).toBeGreaterThan(0));
+    const gap = list.getBoundingClientRect().bottom - buttons[7]!.getBoundingClientRect().bottom;
+    // The bottom border's row and the two rows of padding.
+    expect(Math.abs(gap - 3 * cell)).toBeLessThan(1);
   },
 };

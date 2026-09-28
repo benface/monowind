@@ -12,12 +12,33 @@ export interface Rgba {
   a: number;
 }
 
-export type ColorSpace = "oklab" | "oklch" | "srgb" | "srgb-linear" | "hsl";
+/** The spaces `color()` names. */
+const RGB_SPACES = [
+  "srgb",
+  "srgb-linear",
+  "display-p3",
+  "a98-rgb",
+  "prophoto-rgb",
+  "rec2020",
+  "xyz-d65",
+  "xyz-d50",
+] as const;
+
+/** A space CSS interpolates in (css-color-4 `<color-space>`). */
+export type ColorSpace =
+  | (typeof RGB_SPACES)[number]
+  | "lab"
+  | "lch"
+  | "oklab"
+  | "oklch"
+  | "hsl"
+  | "hwb";
 export type HueMode = "shorter" | "longer" | "increasing" | "decreasing";
-/** The hue's index among a polar space's coordinates, −1 elsewhere. */
-const hueIndex = (space: ColorSpace): number => (space === "oklch" ? 2 : space === "hsl" ? 0 : -1);
 
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
+/** An angle in degrees, within [0, 360). */
+const turn = (degrees: number): number => ((degrees % 360) + 360) % 360;
 
 /** A component: a number, a percentage of `scale`, or `none` (0). */
 const component = (token: string, scale = 1): number => {
@@ -122,7 +143,34 @@ const REC2020_BETA = 0.018053968510807;
 
 const D50_WHITE = [0.3457 / 0.3585, 1, (1 - 0.3457 - 0.3585) / 0.3585] as const;
 
+type Coords = [number, number, number];
 type FromSpace = (x: number, y: number, z: number, alpha: number) => Rgba;
+
+/** A 3×3 matrix's inverse, by its cofactors. */
+function invert([[a, b, c], [d, e, f], [g, h, i]]: Matrix): Matrix {
+  const [A, B, C] = [e! * i! - f! * h!, f! * g! - d! * i!, d! * h! - e! * g!];
+  const det = a! * A + b! * B + c! * C;
+  return [
+    [A / det, (c! * h! - b! * i!) / det, (b! * f! - c! * e!) / det],
+    [B / det, (a! * i! - c! * g!) / det, (c! * d! - a! * f!) / det],
+    [C / det, (b! * g! - a! * h!) / det, (a! * e! - b! * d!) / det],
+  ];
+}
+
+const LINEAR_SRGB_TO_XYZ = invert(XYZ_TO_LINEAR_SRGB);
+const D65_TO_D50 = invert(D50_TO_D65);
+
+const toLinear = (r: number, g: number, b: number): Coords => [
+  srgbToLinear(r),
+  srgbToLinear(g),
+  srgbToLinear(b),
+];
+
+/** XYZ from sRGB, its white D65's, and D50's. */
+const toXyz = (r: number, g: number, b: number): Coords =>
+  transform(LINEAR_SRGB_TO_XYZ, ...toLinear(r, g, b));
+const toXyzD50 = (r: number, g: number, b: number): Coords =>
+  transform(D65_TO_D50, ...toXyz(r, g, b));
 
 /** From XYZ, its white D65's. */
 const fromXyz: FromSpace = (x, y, z, alpha) =>
@@ -130,54 +178,159 @@ const fromXyz: FromSpace = (x, y, z, alpha) =>
 
 const fromXyzD50: FromSpace = (x, y, z, alpha) => fromXyz(...transform(D50_TO_D65, x, y, z), alpha);
 
-/** An RGB space through XYZ: its transfer to linear light, then its matrix. */
-const throughXyz =
-  (toLinear: (c: number) => number, matrix: Matrix, from: FromSpace): FromSpace =>
-  (r, g, b, alpha) =>
-    from(...transform(matrix, toLinear(r), toLinear(g), toLinear(b)), alpha);
+/** A space's way from sRGB and back, and its hue's index where it has one. */
+interface Space {
+  to: (r: number, g: number, b: number) => Coords;
+  from: FromSpace;
+  hue?: number;
+}
 
-/** Each space `color()` names. */
-const COLOR_SPACES = new Map<string, FromSpace>([
-  ["srgb", (r, g, b, a) => ({ r, g, b, a })],
-  ["srgb-linear", fromLinear],
-  ["xyz", fromXyz],
-  ["xyz-d65", fromXyz],
-  ["xyz-d50", fromXyzD50],
-  ["display-p3", throughXyz(srgbToLinear, LINEAR_P3_TO_XYZ, fromXyz)],
-  [
-    "a98-rgb",
-    throughXyz((c) => Math.sign(c) * Math.abs(c) ** (563 / 256), LINEAR_A98_TO_XYZ, fromXyz),
-  ],
-  [
-    "prophoto-rgb",
-    throughXyz(
-      (c) => (Math.abs(c) <= 16 / 512 ? c / 16 : Math.sign(c) * Math.abs(c) ** 1.8),
-      LINEAR_PROPHOTO_TO_XYZ,
-      fromXyzD50,
-    ),
-  ],
-  [
-    "rec2020",
-    throughXyz(
-      (c) =>
-        Math.abs(c) < REC2020_BETA * 4.5
-          ? c / 4.5
-          : Math.sign(c) * ((Math.abs(c) + REC2020_ALPHA - 1) / REC2020_ALPHA) ** (1 / 0.45),
-      LINEAR_REC2020_TO_XYZ,
-      fromXyz,
-    ),
-  ],
-]);
+/** An RGB space through XYZ: its transfer to linear light and back, its
+ * matrix to XYZ, and whether that XYZ's white is D50's. */
+function rgbSpace(
+  decode: (c: number) => number,
+  encode: (c: number) => number,
+  matrix: Matrix,
+  d50 = false,
+): Space {
+  const back = invert(matrix);
+  const [to, from] = d50 ? [toXyzD50, fromXyzD50] : [toXyz, fromXyz];
+  return {
+    to: (r, g, b) => transform(back, ...to(r, g, b)).map(encode) as Coords,
+    from: (r, g, b, alpha) => from(...transform(matrix, decode(r), decode(g), decode(b)), alpha),
+  };
+}
+
+/** A transfer by a power, extended to any component by its sign. */
+const power =
+  (exponent: number) =>
+  (c: number): number =>
+    Math.sign(c) * Math.abs(c) ** exponent;
+
+const KAPPA = 24389 / 27;
+const EPSILON = 216 / 24389;
+
+/** CIE Lab from sRGB, its white D50's. */
+function toLab(r: number, g: number, b: number): Coords {
+  const [x, y, z] = toXyzD50(r, g, b);
+  const f = (t: number): number => (t > EPSILON ? Math.cbrt(t) : (KAPPA * t + 16) / 116);
+  const [fx, fy, fz] = [f(x / D50_WHITE[0]), f(y), f(z / D50_WHITE[2])];
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
 
 /** From CIE Lab, its white D50's. */
 function fromLab(L: number, a: number, b: number, alpha: number): Rgba {
-  const kappa = 24389 / 27;
-  const epsilon = 216 / 24389;
   const fy = (L + 16) / 116;
-  const cubeOrLinear = (f: number): number => (f ** 3 > epsilon ? f ** 3 : (116 * f - 16) / kappa);
+  const cubeOrLinear = (f: number): number => (f ** 3 > EPSILON ? f ** 3 : (116 * f - 16) / KAPPA);
   const x = cubeOrLinear(fy + a / 500) * D50_WHITE[0];
-  const y = L > kappa * epsilon ? fy ** 3 : L / kappa;
+  const y = L > KAPPA * EPSILON ? fy ** 3 : L / KAPPA;
   return fromXyzD50(x, y, cubeOrLinear(fy - b / 200) * D50_WHITE[2], alpha);
+}
+
+/** A Lab space's polar form: lightness, chroma, and a hue in degrees,
+ * missing (NaN) below `epsilon`'s chroma. */
+function polar(lab: Space, epsilon: number): Space {
+  return {
+    to: (r, g, b) => {
+      const [L, A, B] = lab.to(r, g, b);
+      const chroma = Math.hypot(A, B);
+      return [L, chroma, chroma < epsilon ? NaN : turn((Math.atan2(B, A) * 180) / Math.PI)];
+    },
+    from: (L, C, H, alpha) => {
+      const rad = (H * Math.PI) / 180;
+      return lab.from(L, C * Math.cos(rad), C * Math.sin(rad), alpha);
+    },
+    hue: 2,
+  };
+}
+
+/** HSL from sRGB; a color outside sRGB can take a saturation below 0,
+ * kept as Chromium and Firefox keep it (specs/gradients.md, deviation 5). */
+const toHsl = (r: number, g: number, b: number): Coords => {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d < 1e-9) return [NaN, l <= 1e-9 || l >= 1 - 1e-9 ? NaN : 0, l];
+  const span = 1 - Math.abs(2 * l - 1);
+  const s = span === 0 ? 0 : d / span;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [turn(h * 60), s, l];
+};
+
+const fromHsl = (h: number, s: number, l: number, a: number): Rgba => {
+  const hue = turn(Number.isNaN(h) ? 0 : h);
+  const f = (n: number): number => {
+    const k = (n + hue / 30) % 12;
+    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return { r: f(0), g: f(8), b: f(4), a };
+};
+
+/** HWB from sRGB: HSL's hue, missing where whiteness and blackness leave
+ * no color, and those two. */
+const toHwb = (r: number, g: number, b: number): Coords => {
+  const white = Math.min(r, g, b);
+  const black = 1 - Math.max(r, g, b);
+  return [white + black >= 1 - 1e-9 ? NaN : toHsl(r, g, b)[0], white, black];
+};
+
+const fromHwb = (h: number, white: number, black: number, a: number): Rgba => {
+  if (white + black >= 1) {
+    const grey = white / (white + black);
+    return { r: grey, g: grey, b: grey, a };
+  }
+  const pure = fromHsl(h, 1, 0.5, a);
+  const scale = (c: number): number => c * (1 - white - black) + white;
+  return { r: scale(pure.r), g: scale(pure.g), b: scale(pure.b), a };
+};
+
+const PROPHOTO_DECODE = power(1.8);
+const PROPHOTO_ENCODE = power(1 / 1.8);
+
+const OKLAB: Space = {
+  to: (r, g, b) => linearToOklab(...toLinear(r, g, b)),
+  from: fromOklab,
+};
+const LAB: Space = { to: toLab, from: fromLab };
+
+/** Each space CSS interpolates in (`SPACES`) and `color()` names. */
+const SPACES: Record<ColorSpace, Space> = {
+  srgb: { to: (r, g, b) => [r, g, b], from: (r, g, b, a) => ({ r, g, b, a }) },
+  "srgb-linear": { to: toLinear, from: fromLinear },
+  "display-p3": rgbSpace(srgbToLinear, linearToSrgb, LINEAR_P3_TO_XYZ),
+  "a98-rgb": rgbSpace(power(563 / 256), power(256 / 563), LINEAR_A98_TO_XYZ),
+  "prophoto-rgb": rgbSpace(
+    (c) => (Math.abs(c) <= 16 / 512 ? c / 16 : PROPHOTO_DECODE(c)),
+    (c) => (Math.abs(c) < 1 / 512 ? c * 16 : PROPHOTO_ENCODE(c)),
+    LINEAR_PROPHOTO_TO_XYZ,
+    true,
+  ),
+  rec2020: rgbSpace(
+    (c) =>
+      Math.abs(c) < REC2020_BETA * 4.5
+        ? c / 4.5
+        : Math.sign(c) * ((Math.abs(c) + REC2020_ALPHA - 1) / REC2020_ALPHA) ** (1 / 0.45),
+    (c) =>
+      Math.abs(c) < REC2020_BETA
+        ? c * 4.5
+        : Math.sign(c) * (REC2020_ALPHA * Math.abs(c) ** 0.45 - (REC2020_ALPHA - 1)),
+    LINEAR_REC2020_TO_XYZ,
+  ),
+  "xyz-d65": { to: toXyz, from: fromXyz },
+  "xyz-d50": { to: toXyzD50, from: fromXyzD50 },
+  lab: LAB,
+  lch: polar(LAB, 1e-4),
+  oklab: OKLAB,
+  oklch: polar(OKLAB, 1e-6),
+  hsl: { to: toHsl, from: fromHsl, hue: 0 },
+  hwb: { to: toHwb, from: fromHwb, hue: 0 },
+};
+
+/** The space a `<color-space>` keyword names, `xyz` as `xyz-d65`. */
+export function colorSpaceNamed(name: string): ColorSpace | undefined {
+  if (name === "xyz") return "xyz-d65";
+  return Object.hasOwn(SPACES, name) ? (name as ColorSpace) : undefined;
 }
 
 /** Parse a computed color; null for a form engines serialize as
@@ -211,17 +364,15 @@ export function parseColor(value: string): Rgba | null {
         component(tokens[2] ?? "", ok ? 0.4 : 125),
       ];
       if ([L, second, third].some((c) => !Number.isFinite(c))) return null;
-      const rad = (third * Math.PI) / 180;
-      const a = polar ? second * Math.cos(rad) : second;
-      const b = polar ? second * Math.sin(rad) : third;
-      return ok ? fromOklab(L, a, b, alpha) : fromLab(L, a, b, alpha);
+      return SPACES[fn as ColorSpace].from(L, second, third, alpha);
     }
     case "color": {
-      const [space = "", ...rest] = tokens;
+      const [name = "", ...rest] = tokens;
       const [r, g, b] = rest.map((t) => component(t));
-      const from = COLOR_SPACES.get(space);
-      if (!from || r === undefined || [r, g, b].some((c) => !Number.isFinite(c))) return null;
-      return from(r, g!, b!, alpha);
+      const space = colorSpaceNamed(name);
+      if (!space || !(RGB_SPACES as readonly string[]).includes(space)) return null;
+      if (r === undefined || [r, g, b].some((c) => !Number.isFinite(c))) return null;
+      return SPACES[space].from(r, g!, b!, alpha);
     }
     default:
       return null;
@@ -241,40 +392,9 @@ export interface Prepared {
   a: number;
 }
 
-/** HSL from sRGB; a color outside sRGB can take a saturation below 0,
- * kept as Chromium and Firefox keep it (specs/gradients.md, deviation 6). */
-const toHsl = (r: number, g: number, b: number): [number, number, number] => {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  const d = max - min;
-  if (d < 1e-9) return [NaN, l <= 1e-9 || l >= 1 - 1e-9 ? NaN : 0, l];
-  const span = 1 - Math.abs(2 * l - 1);
-  const s = span === 0 ? 0 : d / span;
-  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  return [(((h * 60) % 360) + 360) % 360, s, l];
-};
-
-const fromHsl = (h: number, s: number, l: number, a: number): Rgba => {
-  const hue = (((Number.isNaN(h) ? 0 : h) % 360) + 360) % 360;
-  const f = (n: number): number => {
-    const k = (n + hue / 30) % 12;
-    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-  };
-  return { r: f(0), g: f(8), b: f(4), a };
-};
-
 /** A color ready to mix in a space, once per gradient stop. */
 export function prepareColor({ r, g, b, a }: Rgba, space: ColorSpace): Prepared {
-  if (space === "srgb") return { c: [r, g, b], a };
-  if (space === "hsl") return { c: toHsl(r, g, b), a };
-  const linear: [number, number, number] = [srgbToLinear(r), srgbToLinear(g), srgbToLinear(b)];
-  if (space === "srgb-linear") return { c: linear, a };
-  const [L, A, B] = linearToOklab(...linear);
-  if (space === "oklab") return { c: [L, A, B], a };
-  const chroma = Math.hypot(A, B);
-  const hue = chroma < 1e-6 ? NaN : ((((Math.atan2(B, A) * 180) / Math.PI) % 360) + 360) % 360;
-  return { c: [L, chroma, hue], a };
+  return { c: SPACES[space].to(r, g, b), a };
 }
 
 /** Ready a pair of stops to mix in place, as CSS readies each pair: a
@@ -284,9 +404,8 @@ export function alignPair(from: Prepared, to: Prepared, space: ColorSpace, mode:
     if (Number.isNaN(from.c[i]!)) from.c[i] = Number.isNaN(to.c[i]!) ? 0 : to.c[i]!;
     if (Number.isNaN(to.c[i]!)) to.c[i] = from.c[i]!;
   }
-  const i = hueIndex(space);
-  if (i < 0) return;
-  const turn = (hue: number): number => ((hue % 360) + 360) % 360;
+  const i = SPACES[space].hue;
+  if (i === undefined) return;
   let delta = turn(to.c[i]!) - turn(from.c[i]!);
   if (mode === "shorter") {
     if (delta > 180) delta -= 360;
@@ -305,28 +424,14 @@ export function alignPair(from: Prepared, to: Prepared, space: ColorSpace, mode:
 export function mixColors(from: Prepared, to: Prepared, t: number, space: ColorSpace): Rgba {
   const a = from.a + (to.a - from.a) * t;
   if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
-  const hue = hueIndex(space);
+  const { hue, from: back } = SPACES[space];
   // A component still missing (a lone stop, never paired) reads 0.
   const at = (p: Prepared, i: number): number => p.c[i]! || 0;
   const lerp = (i: number): number =>
     i === hue
       ? at(from, i) + (at(to, i) - at(from, i)) * t
       : (at(from, i) * from.a * (1 - t) + at(to, i) * to.a * t) / a;
-  const [x, y, z] = [lerp(0), lerp(1), lerp(2)];
-  switch (space) {
-    case "srgb":
-      return { r: x, g: y, b: z, a };
-    case "srgb-linear":
-      return fromLinear(x, y, z, a);
-    case "hsl":
-      return fromHsl(x, y, z, a);
-    case "oklab":
-      return fromOklab(x, y, z, a);
-    default: {
-      const rad = (z * Math.PI) / 180;
-      return fromOklab(x, y * Math.cos(rad), y * Math.sin(rad), a);
-    }
-  }
+  return back(lerp(0), lerp(1), lerp(2), a);
 }
 
 /** `over` composited onto `under` (source-over), each clipped to sRGB

@@ -6,7 +6,7 @@
  */
 
 import { partExtent } from "./lattice.ts";
-import { edges, resolveLength } from "./layout.ts";
+import { edges, resolveInsets } from "./layout.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
 import type { CellLength, LayoutNode, PerSide, TableLattice } from "./types.ts";
 
@@ -72,8 +72,9 @@ function shiftWithin(
   box: Box,
   block: Box,
   view: Box,
-  insets: PerSide<number | null>,
+  lengths: PerSide<CellLength | null>,
 ): { x: number; y: number } | undefined {
+  const insets = resolveInsets(lengths, view.x.end - view.x.start, view.y.end - view.y.start);
   const x = stickyShiftAxis(box.x, block.x, view.x, insets.left, insets.right);
   const y = stickyShiftAxis(box.y, block.y, view.y, insets.top, insets.bottom);
   return x === 0 && y === 0 ? undefined : { x, y };
@@ -116,15 +117,7 @@ export function stickyShift(
     x: { start: origin.x - lines.left, end: origin.x + width + lines.right },
     y: { start: origin.y - lines.top, end: origin.y + height + lines.bottom },
   };
-  const across = view.x.end - view.x.start;
-  const down = view.y.end - view.y.start;
-  const { insets } = node.style;
-  return shiftWithin(box, contentBox(part ?? parent, port.node, at), view, {
-    top: inset(insets.top, down),
-    right: inset(insets.right, across),
-    bottom: inset(insets.bottom, down),
-    left: inset(insets.left, across),
-  });
+  return shiftWithin(box, contentBox(part ?? parent, port.node, at), view, node.style.insets);
 }
 
 /** A leaf's sticky inline elements, each shifted within the leaf's
@@ -174,11 +167,6 @@ function partLines(lattice: TableLattice, part: LayoutNode): Readonly<PerSide<nu
     left: isCell ? lattice.vLines[c0]! : 0,
     right: isCell ? lattice.vLines[c1 + 1]! : 0,
   };
-}
-
-/** A sticky inset in cells, a percentage against the scrollport. */
-function inset(length: CellLength | null, viewSize: number): number | null {
-  return length === null ? null : resolveLength(length, viewSize);
 }
 
 /** A node's content box in painted cells, where its children paint, its

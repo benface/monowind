@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { gridOffsetAt, paintGrid } from "../src/paint.ts";
 import { layoutRoot } from "../src/layout.ts";
-import { cells, layered, makeNode } from "./helpers.ts";
-import { INITIAL_GLYPH } from "../src/types.ts";
+import { cells, layered, makeNode, UNDERLINE } from "./helpers.ts";
+import { decorationOf, INITIAL_GLYPH, NO_DECORATION } from "../src/types.ts";
 import type { GlyphValues, LayoutNode } from "../src/types.ts";
 
 /** The three paint tiers (specs/cell-model.md "Selection"): identical
@@ -258,7 +258,7 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     // WebKit draws a color emoji whole at any color alpha above 0.
     const target = document.createElement("pre");
     const tree = (opacity: number) => {
-      const style = { opacity, color: "rgb(0 0 0)", textDecorationLine: "underline" };
+      const style = { opacity, color: "rgb(0 0 0)", textDecoration: UNDERLINE };
       const leaf = makeNode({ style, text: "\u{1F600}", intrinsicWidth: 2 });
       leaf.advances = [2, 0];
       const root = makeNode({ style: { backgroundColor: "rgb(255 255 255)" }, children: [leaf] });
@@ -310,6 +310,26 @@ describe("paintGrid rows and boxes (specs/wide-characters.md)", () => {
     // The overdraw a shared box leaves at each joint is ink the neighbor
     // draws anyway, twice over in a translucent color.
     expect(spans).toEqual(["███", "█", "█", "█"]);
+  });
+
+  it("takes an empty decoration line for none", () => {
+    expect(decorationOf({ ...UNDERLINE, line: "" })).toBe(NO_DECORATION);
+  });
+
+  it("boxes clusters with unlike decorations apart", () => {
+    const target = document.createElement("pre");
+    const glyph = (line: string) =>
+      makeNode({ style: { textDecoration: decorationOf({ ...UNDERLINE, line }) }, text: "█" });
+    const root = makeNode({ children: [glyph("underline"), glyph("overline")] });
+    layoutRoot(root, 1);
+    const glyphs = {
+      box: () => ({ scale: 1.2, lineHeight: 19, advance: 9.6 }),
+      shift: () => 0,
+      generation: 0,
+    };
+    paintGrid(root, target, { glyphs });
+    const lines = Array.from(target.querySelectorAll("span"), (span) => span.style.textDecoration);
+    expect(lines).toEqual(["underline", "overline"]);
   });
 
   it("drops the shade mark from a span patched in place once its font draws it whole", () => {

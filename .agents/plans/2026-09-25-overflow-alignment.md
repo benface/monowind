@@ -1,7 +1,7 @@
 # Overflow alignment past the start edge
 
 Status: **planned 2026-09-25**. Today every overflowing alignment is
-`safe` (cell-model.md deviation 21), as in v0.3.2. This plan makes it
+`safe` (cell-model.md deviation 19), as in v0.3.2. This plan makes it
 CSS's, and keeps what CSS keeps reachable reachable. It also counts
 an absolute box toward the scroll ranges on its containing-block
 chain (added 2026-09-27: both rework the range `contentExtent` takes).
@@ -92,7 +92,7 @@ static position's `soleItemMainOffset`). The review found:
 6. **Host edge**: decide from the probe whether the grid grows left
    and up or keeps the drop. At the root, CSS cannot scroll there
    either.
-7. **Docs**: remove deviation 21 and scrolling.md's absolute-box
+7. **Docs**: remove deviation 19 and scrolling.md's absolute-box
    deviation. Restore the unsafe wording in flex.md steps 7-9,
    grid.md "Items in their areas" and positioning.md's static
    position. Add the reversed origin to scrolling.md.
@@ -122,6 +122,6 @@ static position's `soleItemMainOffset`). The review found:
 - Gap rules: a rule crossing the left border over tracks overflowing
   the start.
 - The host-edge decision.
-- The flipped tests pinning deviation 21 (flex, grid,
+- The flipped tests pinning deviation 19 (flex, grid,
   positioning.test.ts "starts an overflowing flex static position")
   flip back.

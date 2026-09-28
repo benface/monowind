@@ -2,7 +2,13 @@ import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import type { MonoWindElement } from "monowind";
-import { cellSize, expectBrowserRowsToMatchEngine, readyHost } from "./helpers.ts";
+import {
+  besideNative,
+  cellSize,
+  expectBrowserRowsToMatchEngine,
+  readyHost,
+  type Unit,
+} from "./helpers.ts";
 
 const meta: Meta = {
   title: "Features / Grid",
@@ -478,4 +484,54 @@ export const GapDecorations: StoryObj = {
     expect(lines[lineWith("rule-inset") - 1]).toContain("┘");
     expect(lines[lineWith("overlap-join") - 1]).not.toContain("┘");
   },
+};
+
+/** A grid holding only text (specs/grid.md "Items in their areas"): its
+ * text one anonymous item, lengths in `u`, wrapped in its track, placed
+ * by the grid's items and content, the tracks sizing the grid. */
+const textGridCases = (u: Unit): string[] => [
+  `<div style="display:grid;width:${u(36)};grid-template-columns:repeat(3,minmax(0,1fr))">one two three four five six seven</div>`,
+  `<div style="display:grid;place-items:center;height:${u(3, "y")}">centered</div>`,
+  `<div style="display:grid;grid-template-rows:${u(3, "y")};align-items:end">ended</div>`,
+  `<div style="display:grid;width:max-content;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:${u(2)}">ab cd</div>`,
+  `<div style="display:grid;grid-auto-columns:${u(8)}">an implicit track's width</div>`,
+];
+
+export const TextOnlyGrid: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(textGridCases),
+};
+
+/** `fit-content()` and `calc()` tracks (specs/grid.md "Track sizes"),
+ * lengths in `u`: a short item and a long one in a fit-content column,
+ * and a calc() of the width less cells. */
+const trackCases = (u: Unit): string[] => [
+  `<div style="display:grid;grid-template-columns:fit-content(${u(10)}) 1fr"><div>abc</div><div>tail</div></div>`,
+  `<div style="display:grid;grid-template-columns:fit-content(${u(10)}) 1fr"><div>abcd efgh ijkl mnop</div><div>tail</div></div>`,
+  `<div style="display:grid;grid-template-columns:calc(100% - ${u(8)}) 1fr"><div>head</div><div>tail</div></div>`,
+];
+
+export const TrackFunctions: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(trackCases),
+};
+
+/** A subgrid's own gap (specs/grid.md "Subgrid"), lengths in `u`: none
+ * and a wider one over the parent's gutters, a row subgrid's none, and
+ * none over auto tracks its items size. */
+const subgridGapCases = (u: Unit): string[] => {
+  const items = (...words: string[]) => words.map((word) => `<div>${word}</div>`).join("");
+  const columns = (gap: number, tracks = `repeat(4,${u(8)})`) =>
+    `<div style="display:grid;grid-template-columns:${tracks};justify-content:start;column-gap:${u(2)}"><div style="grid-column:span 4;display:grid;grid-template-columns:subgrid;column-gap:${u(gap)}">${items("aaaa", "bbbb", "cccc", "dddd")}</div></div>`;
+  return [
+    columns(0),
+    columns(4),
+    `<div style="display:grid;grid-template-rows:repeat(3,${u(2, "y")});row-gap:${u(2, "y")}"><div style="grid-row:span 3;display:grid;grid-template-rows:subgrid;row-gap:0">${items("one", "two", "three")}</div></div>`,
+    columns(0, "repeat(4,auto)"),
+  ];
+};
+
+export const SubgridGap: StoryObj = {
+  tags: ["!dev", "!golden"],
+  ...besideNative(subgridGapCases),
 };

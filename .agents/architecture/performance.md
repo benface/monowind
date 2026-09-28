@@ -986,7 +986,7 @@ before these fixes):
   relayout's JS (2.8%, three alternated CPU profiles each; a build
   without them matched before within 0.1 ms). The grid draws none of
   those effects on an inline element, so it reads none of them
-  (positioning.md deviation 8). Reading every element's unset
+  (positioning.md deviation 6). Reading every element's unset
   background without a color parse, and an inline element's font size
   only where its letter spacing needs it, took back another 0.5 ms.
 
@@ -1102,3 +1102,49 @@ placement until a box changes one (16 µs, slower), one shift object
 reused by the scan (0.7 µs of the shifted span's 18), and each glyph
 turn walking its leaf again in place of the held glyphs (the faded
 paint 20% slower).
+
+### The deviation batch (2026-09-28)
+
+The css-deviations plan's items against the last commit (2110a55),
+every bundle's page open at once in Chromium, alternated rounds, two
+sittings. Time to interactive (`pnpm bench`, the median of 7 runs,
+each bundle run twice):
+
+| shape      | last commit, ms | now, ms  |
+| ---------- | --------------- | -------- |
+| boxes      | 174, 189        | 173, 173 |
+| blocks     | 227, 224        | 230, 231 |
+| prose      | 193, 180        | 181, 180 |
+| faded      | 191, 190        | 192, 200 |
+| positioned | 171, 172        | 175, 175 |
+
+Per relayout (20 a round, 12 rounds) and per hover step (20 a round,
+8 rounds), CPU, the median of rounds, the last commit's two bundles
+averaged:
+
+| measure                         | last commit, ms | now, ms    |
+| ------------------------------- | --------------- | ---------- |
+| prose relayout                  | 54.7, 54.5      | 54.2, 53.7 |
+| clipped relayout                | 26.6, 26.8      | 26.8, 26.6 |
+| positioned relayout             | 59.6, 52.2      | 59.2, 52.8 |
+| boxes relayout                  | 26.5, 27.3      | 26.4, 27.6 |
+| prose hover, link to link       | 63.1, 66.5      | 63.7, 66.3 |
+| prose hover, across plain spans | 33.6, 32.0      | 33.0, 31.7 |
+
+A clipped relayout's style and layout take 0.2 ms more (its script
+none): the clip lock, off while the engine reads so the read tells
+`hidden` from `clip`, makes each of its 300 `overflow-hidden` boxes a
+scroll container and back per read — the price of reading them apart,
+and of the lock lifting once the author's overflow goes. Hovering
+across plain spans cost 60 ms a step while every inline element joined
+the hover chain, each span edge a chain change and so a layout; an
+inline element now joins only where its hover can restyle something.
+The bundle is 573.2 KB (169.1 KB gzipped), 13.8 KB (6.3 KB) more,
++2.5% (+3.9%). Taken back in review: 1.5–2 ms of a positioned
+relayout (a scroller's vars and `scroll-padding` read and written on
+scrollers alone, values read twice read once), the white-space var
+written on every box (now only inside a box that restores
+white-space), justify's spread as arithmetic in place of a map a line,
+a hit's character carried from the entry that takes the cell, the
+table's baselines grouped in one pass, and a word's segments pushed
+straight onto its line's units.

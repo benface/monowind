@@ -749,9 +749,16 @@ describe("an anchor in a scroller", () => {
 
 describe("an anchor on a sticky box", () => {
   /** A fixed menu under a button in a list's sticky header, the list
-   * scrolled `by` rows; its header in a section `rows` tall; the menu
-   * absolute inside the header where `inside`. */
-  const stuck = (by: number, rows = 12, style: Partial<CellStyle> = {}, inside = false) => {
+   * scrolled `by` rows; its header in a section `rows` tall, inside an
+   * `overflow: hidden` box where `hidden`; the menu absolute inside the
+   * header where `inside`. */
+  const stuck = (
+    by: number,
+    rows = 12,
+    style: Partial<CellStyle> = {},
+    inside = false,
+    hidden = false,
+  ) => {
     const button = makeNode({
       text: "ANCH",
       source: document.createElement("div"),
@@ -775,7 +782,13 @@ describe("an anchor on a sticky box", () => {
     const list = makeNode({
       source: document.createElement("div"),
       style: { overflow: { x: "visible", y: "auto" }, height: { kind: "cells", value: 4 } },
-      children: [spacer(1), section, spacer(12)],
+      children: [
+        spacer(1),
+        hidden
+          ? makeNode({ style: { overflow: { x: "hidden", y: "hidden" } }, children: [section] })
+          : section,
+        spacer(12),
+      ],
     });
     const root = makeNode({
       style: { minHeight: 8 },
@@ -804,6 +817,11 @@ describe("an anchor on a sticky box", () => {
     });
     expect(y).toBe(6);
     expect(root.anchorScrollers).toBeUndefined();
+  });
+
+  it("anchors to the button where a hidden box holds its header, unstuck", () => {
+    const { y, below } = stuck(3, 12, {}, false, true);
+    expect(y).toBe(below);
   });
 
   it("moves a box in the same header with it once", () => {

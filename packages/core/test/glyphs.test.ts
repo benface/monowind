@@ -3,6 +3,7 @@ import {
   glyphSetFor,
   glyphSetNameFor,
   missingGlyphs,
+  mixedJunction,
   onGlyphRegistryChange,
   registerBorderGlyphs,
   weightBand,
@@ -418,5 +419,19 @@ describe("a font's gaps (specs/theming.md)", () => {
         "\u2514\u2500\u2500\u2500\u2500\u2500\u2518",
       ].join("\n"),
     );
+  });
+});
+
+describe("mixed junctions", () => {
+  it("draw Unicode's glyph for unlike lines, save one the font has not got", () => {
+    expect(mixedJunction([null, "\u2502", null, "\u2501"])).toBe("\u250d");
+    expect(mixedJunction(["\u2551", "\u2551", "\u2500", null])).toBe("\u2562");
+    // Alike, heavy beside double, or no box drawing: none.
+    expect(mixedJunction([null, "\u2502", null, "\u2500"])).toBeUndefined();
+    expect(mixedJunction([null, "\u2501", null, "\u2550"])).toBeUndefined();
+    expect(mixedJunction([null, "|", null, "\u2501"])).toBeUndefined();
+    const set = glyphSetFor(glyphSetNameFor(null, '"\u250d"'));
+    expect(mixedJunction([null, "\u2502", null, "\u2501"], set)).toBeUndefined();
+    expect(mixedJunction([null, "\u2503", null, "\u2500"], set)).toBe("\u250e");
   });
 });

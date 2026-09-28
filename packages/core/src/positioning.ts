@@ -24,7 +24,7 @@ import { roundHalfAwayFromZero } from "./metrics.ts";
 import { clipBounds, inlineElementRects } from "./plain-text.ts";
 import { scrollportOf, stickyShift } from "./sticky.ts";
 import { IMPLICIT_ANCHOR, setAnchorSize } from "./style.ts";
-import { SIDES } from "./types.ts";
+import { hasScrollport, SIDES } from "./types.ts";
 import type {
   AnchorInset,
   AnchorScope,
@@ -261,7 +261,7 @@ function stuckOn(frames: Frame[]): Anchor["stuck"] {
       const shift = view && stickyShift(box, frames[i - 1]!.node, view, table, at);
       if (shift) stuck.push({ box, scroller: port, ...shift });
     }
-    if (box.scrollRange) scroller = box;
+    if (hasScrollport(box.style.overflow)) scroller = box;
     if (box.style.display === "table") table = box;
   });
   return stuck;

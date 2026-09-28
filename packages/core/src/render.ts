@@ -1,6 +1,7 @@
-import { isFormattingContextRoot } from "./layout.ts";
+import { baselineRow, isFlowChild, isFormattingContextRoot } from "./layout.ts";
 import { placePainted } from "./paint-origin.ts";
 import { zIndexApplies } from "./stacking.ts";
+import { clipsAxis, softWraps } from "./types.ts";
 import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
 /**
@@ -30,11 +31,12 @@ const BOX_NAMES = (
   "data-mw-top data-mw-laid-out data-mw-inline-box data-mw-multicol-flow " +
   "data-mw-multicol-flow-span data-mw-float data-mw-flow data-mw-area data-mw-vbottom " +
   "data-mw-vmiddle data-mw-nowrap data-mw-multicol data-mw-multicol-balance data-mw-pre " +
-  "data-mw-clip data-mw-scroll data-mw-text-align-blocked data-mw-table-hidden " +
+  "data-mw-clip data-mw-scroll data-mw-table-hidden " +
   "data-mw-force-hidden data-mw-invisible data-mw-hidden-runs --mw-z --mw-sx --mw-sy --mw-mt " +
   "--mw-mr --mw-mb --mw-ml --mw-va --mw-vb --mw-lh --mw-lhs --mw-colc --mw-colg --mw-x --mw-y " +
-  "--mw-w --mw-h --mw-se-x --mw-se-y --mw-gr --mw-gb --mw-pt --mw-pr --mw-pb --mw-pl --mw-bt " +
-  "--mw-br --mw-bb --mw-bl --mw-ti --mw-ink --mw-ground"
+  "--mw-w --mw-h --mw-se-x --mw-se-y --mw-gr --mw-gb --mw-spt --mw-spr --mw-spb --mw-spl " +
+  "--mw-pt --mw-pr --mw-pb --mw-pl --mw-bt --mw-br --mw-bb --mw-bl --mw-ti --mw-ws --mw-ink " +
+  "--mw-ground"
 ).split(" ");
 
 /** An inline element's insets' flag and variables. */
@@ -78,6 +80,23 @@ function setAttr(el: Element, name: string, value: string | null): void {
   else el.setAttribute(name, value);
 }
 
+type WhiteSpace = LayoutNode["style"]["whiteSpace"];
+
+/** Whether a box's native text needs its `white-space` restored
+ * (styles.css `data-mw-pre`), the lock's `normal` or `nowrap` rendering
+ * the rest. */
+const restores = (whiteSpace: WhiteSpace | null): boolean =>
+  whiteSpace !== null && whiteSpace !== "normal" && whiteSpace !== "nowrap";
+
+/** A box's `white-space` restored, its value in `--mw-ws`, which its
+ * inline elements inherit — on a box `inside` a restored one too, whose
+ * rule reaches it. */
+function restoreWhiteSpace(el: HTMLElement, whiteSpace: WhiteSpace | null, inside: boolean): void {
+  const restored = restores(whiteSpace);
+  setFlag(el, "data-mw-pre", restored);
+  setVar(el, "--mw-ws", restored || inside ? whiteSpace : null);
+}
+
 /** Boolean attribute toggle, skipped when already in the target state. */
 function setFlag(el: Element, name: string, on: boolean): void {
   if (el.hasAttribute(name) === on) return;
@@ -91,6 +110,7 @@ function walk(
   boxes: Set<Element>,
   insets: Set<Element>,
   ground?: string,
+  inside = false,
 ): void {
   if (node.inlineElements) {
     for (const entry of node.inlineElements) {
@@ -114,8 +134,11 @@ function walk(
   if (!parent) markRoot(node);
   else if (!node.anonymous) {
     boxes.add(node.source);
-    positionElement(node, parent);
+    positionElement(node, parent, inside);
   }
+  // Below a box whose white-space is restored, every box writes its own.
+  const flagged = parent ? !node.anonymous : holdsText(node);
+  const within = inside || (flagged && restores(node.style.whiteSpace));
   // The ground the grid paints under this box: its own fill, else the
   // nearest above, `bg-clear` cutting through to the theme's.
   // A hidden box paints no fill: the ground stays the one above it.
@@ -136,7 +159,7 @@ function walk(
       const applies = zIndexApplies(child, node) && !child.inlineBox;
       setVar(child.source as HTMLElement, "--mw-z", applies ? child.style.zIndex : null);
     }
-    walk(child, node, boxes, insets, own);
+    walk(child, node, boxes, insets, own, within);
   }
 }
 
@@ -154,6 +177,11 @@ function syncEditableColors(el: HTMLElement, node: LayoutNode, ground: string | 
   setVar(el, "--mw-ground", ground ?? "var(--mw-bg)");
 }
 
+/** Whether the root's own text is on the grid: the root leaf, or a
+ * mixed host's anonymous runs. */
+const holdsText = (node: LayoutNode): boolean =>
+  node.text.length > 0 || node.children.some((child) => child.anonymous);
+
 /** The host's flags when its own text is on the grid — the root leaf,
  * or a mixed host's anonymous runs (specs/host-leaf.md): the
  * companion's host variants of the leaf typography rules key on them.
@@ -162,13 +190,12 @@ function syncEditableColors(el: HTMLElement, node: LayoutNode, ground: string | 
  * variant in styles.css. */
 function markRoot(node: LayoutNode): void {
   const el = node.source as HTMLElement;
-  const leaf = node.text.length > 0 || node.children.some((child) => child.anonymous);
-  const { whiteSpace, textAlignBlocked, textIndent } = node.style;
+  const leaf = holdsText(node);
+  const { whiteSpace } = node.style;
   setFlag(el, "data-mw-leaf", leaf);
-  setFlag(el, "data-mw-nowrap", leaf && whiteSpace !== "normal");
-  setFlag(el, "data-mw-pre", leaf && whiteSpace === "pre");
-  setFlag(el, "data-mw-text-align-blocked", leaf && textAlignBlocked);
-  setVar(el, "--mw-ti", leaf ? textIndent : null);
+  setFlag(el, "data-mw-nowrap", leaf && !softWraps(whiteSpace));
+  restoreWhiteSpace(el, leaf ? whiteSpace : null, false);
+  setVar(el, "--mw-ti", leaf ? nativeIndent(node) : null);
 }
 
 /**
@@ -248,21 +275,28 @@ function areaKeywords({ x, y }: PositionArea): string {
   return `${ACROSS[x] ?? x} ${DOWN[y] ?? y}`;
 }
 
+/** The indent a box's own first native line takes, in cells: a leaf's,
+ * or its first anonymous run's where that holds its first line. */
+function nativeIndent(node: LayoutNode): number {
+  if (node.indent !== undefined) return node.indent;
+  const first = node.children.find(isFlowChild);
+  return (first?.anonymous ? first.indent : undefined) ?? 0;
+}
+
 /** The row of a box's native baseline within it: its last line's, or
  * its last run's last line's; undefined for a box that draws no line
  * of its own, whose baseline is its bottom edge. */
 function nativeBaselineRow(node: LayoutNode): number | undefined {
-  if (node.text.length > 0) return node.baselineRow;
+  if (node.text.length > 0) return baselineRow(node, true);
   for (let i = node.children.length - 1; i >= 0; i--) {
     const child = node.children[i]!;
-    if (child.anonymous && child.baselineRow !== undefined) {
-      return child.localRect.y + child.baselineRow;
-    }
+    const row = child.anonymous ? baselineRow(child, true) : undefined;
+    if (row !== undefined) return child.localRect.y + row;
   }
   return undefined;
 }
 
-function positionElement(node: LayoutNode, parent: LayoutNode): void {
+function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean): void {
   const el = node.source as HTMLElement;
   // A top-layer element's box is the viewport's (specs/top-layer.md):
   // the companion places it from the grid's client origin, in the
@@ -275,7 +309,7 @@ function positionElement(node: LayoutNode, parent: LayoutNode): void {
   setFlag(el, "data-mw-pointer-none", !node.style.pointerEvents);
   writeShift(node, parent);
   const padding = node.resolvedPadding;
-  const { border, textAlignBlocked, overflow, whiteSpace, tracking, lineGap } = node.style;
+  const { border, overflow, whiteSpace, tracking, lineGap } = node.style;
   // Atomic inline boxes and paragraph-flow multicol children stay IN
   // FLOW (the browser's own line layout / column fragmentation places
   // them); everything else is engine-positioned. Same geometry vars, a
@@ -296,7 +330,7 @@ function positionElement(node: LayoutNode, parent: LayoutNode): void {
     "data-mw-flow",
     node.flow && !float ? (isFormattingContextRoot(node) ? "box" : "text") : null,
   );
-  const flowMargins = flow ?? flowSpan ?? node.flow;
+  const flowMargins = flow ?? flowSpan ?? node.flow ?? node.inlineBox;
   setVar(el, "--mw-mt", flowMargins ? (flowMargins.top ?? 0) : null);
   setVar(el, "--mw-mr", flowMargins ? (flowMargins.right ?? 0) : null);
   setVar(el, "--mw-mb", flowMargins ? (flowMargins.bottom ?? 0) : null);
@@ -307,22 +341,25 @@ function positionElement(node: LayoutNode, parent: LayoutNode): void {
   // Bottom-aligned atomic boxes keep their browser alignment (grid-exact,
   // probed); a middle-aligned one takes a whole-row baseline length
   // (specs/cell-model.md "Typography"): rows from its own baseline —
-  // its last line's, or its bottom edge where it draws no line — to its
-  // line's text row; everything else is pinned top by the companion rule.
+  // its last line's, or its bottom margin edge where it draws no line —
+  // to its line's text row; everything else is pinned top by the
+  // companion rule.
   const { verticalAlign } = node.style;
   setFlag(el, "data-mw-vbottom", Boolean(node.inlineBox) && verticalAlign === "end");
   const middle =
     Boolean(node.inlineBox) && verticalAlign === "center" && node.inlineTextRow !== undefined;
   setFlag(el, "data-mw-vmiddle", middle);
   const baseline = middle ? nativeBaselineRow(node) : undefined;
-  setVar(el, "--mw-va", middle ? node.inlineTextRow! - (baseline ?? rect.height) : null);
+  const margin = node.inlineBox;
+  const edge = (margin?.top ?? 0) + (baseline ?? rect.height + (margin?.bottom ?? 0));
+  setVar(el, "--mw-va", middle ? node.inlineTextRow! - edge : null);
   setVar(el, "--mw-vb", middle && baseline === undefined ? 1 : null);
   // Grid typography (specs/cell-model.md): extra cells per character, rows
   // per wrapped line, and the half-leading cancellation shift.
   setVar(el, "--mw-ls", tracking);
   setVar(el, "--mw-lh", lineGap + 1);
   setVar(el, "--mw-lhs", -lineGap / 2);
-  setFlag(el, "data-mw-nowrap", whiteSpace !== "normal");
+  setFlag(el, "data-mw-nowrap", !softWraps(whiteSpace));
   // A multicol TEXT LEAF or paragraph-flow container keeps native
   // columns, driven by the engine's used values so the browser
   // fragments on the same lines (specs/multicol.md "Browser
@@ -336,24 +373,34 @@ function positionElement(node: LayoutNode, parent: LayoutNode): void {
   setFlag(el, "data-mw-multicol-balance", Boolean(multicol?.nativeBalance));
   setVar(el, "--mw-colc", multicol?.columnCount ?? null);
   setVar(el, "--mw-colg", multicol?.gap ?? null);
-  // `white-space: pre` leaves also keep their preserved spaces
-  // browser-side (the tree builder kept them in the run) — see styles.css.
-  setFlag(el, "data-mw-pre", whiteSpace === "pre");
+  restoreWhiteSpace(el, whiteSpace, inside);
   setVar(el, "--mw-x", rect.x);
   setVar(el, "--mw-y", rect.y);
   setVar(el, "--mw-w", rect.width);
   setVar(el, "--mw-h", rect.height);
-  setFlag(el, "data-mw-clip", overflow.x === "clip" || overflow.y === "clip");
+  // The clip lock, on a box clipping both axes: a lone clipping axis is
+  // an authored `clip`, and a scroller keeps its `hidden` axis.
+  setFlag(el, "data-mw-clip", clipsAxis(overflow.x) && clipsAxis(overflow.y));
   const range = node.scrollRange;
+  // A scroller's vars, cleared off a box that stops scrolling, none
+  // on the rest.
+  if (range || el.hasAttribute("data-mw-scroll")) {
+    // The scroll-range spacer's end (styles.css), the first cell for an
+    // axis with no range.
+    const { width, height } = node.localRect;
+    setVar(el, "--mw-se-x", range ? (range.maxX > 0 ? range.maxX + width : 1) : null);
+    setVar(el, "--mw-se-y", range ? (range.maxY > 0 ? range.maxY + height : 1) : null);
+    // The bars' cells, which --mw-pr/--mw-pb include, for scroll-padding,
+    // and the authored scroll-padding beside them.
+    const { scrollPadding } = node.style;
+    setVar(el, "--mw-gr", range ? (node.scrollGutterCells?.right ?? 0) : null);
+    setVar(el, "--mw-gb", range ? (node.scrollGutterCells?.bottom ?? 0) : null);
+    setVar(el, "--mw-spt", range ? scrollPadding.top : null);
+    setVar(el, "--mw-spr", range ? scrollPadding.right : null);
+    setVar(el, "--mw-spb", range ? scrollPadding.bottom : null);
+    setVar(el, "--mw-spl", range ? scrollPadding.left : null);
+  }
   setFlag(el, "data-mw-scroll", range !== undefined);
-  // The scroll-range spacer's end (styles.css), the first cell for an
-  // axis with no range.
-  const { width, height } = node.localRect;
-  setVar(el, "--mw-se-x", range ? (range.maxX > 0 ? range.maxX + width : 1) : null);
-  setVar(el, "--mw-se-y", range ? (range.maxY > 0 ? range.maxY + height : 1) : null);
-  // The bars' cells, which --mw-pr/--mw-pb include, for scroll-padding.
-  setVar(el, "--mw-gr", range ? (node.scrollGutterCells?.right ?? 0) : null);
-  setVar(el, "--mw-gb", range ? (node.scrollGutterCells?.bottom ?? 0) : null);
   // Border and padding cells apart: styles.css sums them as native
   // padding and reads the border cells alone for scroll-padding.
   setVar(el, "--mw-pt", padding.top);
@@ -372,8 +419,7 @@ function positionElement(node: LayoutNode, parent: LayoutNode): void {
   // the grid) sits under the glyphs the engine painted. Always set —
   // custom properties inherit, so an unset var on an `indent-0` child
   // would resolve to an indented ancestor's value.
-  setVar(el, "--mw-ti", node.style.textIndent);
-  setFlag(el, "data-mw-text-align-blocked", textAlignBlocked);
+  setVar(el, "--mw-ti", nativeIndent(node));
   setFlag(el, "data-mw-table-hidden", Boolean(node.tableHidden));
   setFlag(el, "data-mw-force-hidden", Boolean(node.forceHidden));
   setFlag(el, "data-mw-invisible", !node.style.visible);

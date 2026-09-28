@@ -5,10 +5,14 @@ import { percentToCells } from "./metrics.ts";
 import { warnOnce } from "./warn.ts";
 import { distributeInteger } from "./flex.ts";
 import {
+  baselineRow,
+  blockCrossOffset,
   blockStaticSlot,
   boxChrome,
   clampSize,
   contentOrigin,
+  edges,
+  fixedMargins,
   intrinsicOuterWidth,
   isInFlowBox,
   isOutOfFlow,
@@ -573,34 +577,36 @@ function tableData(node: LayoutNode, cache: IntrinsicCache): TableData {
 }
 
 /** Content-box intrinsic widths: column bounds plus lattice/spacing
- * chrome, floored by the caption. Percents behave as auto here (the
- * indefinite-axis rule); inflation applies only against a definite
- * available width, in `tableUsedOuterWidth`. */
+ * chrome, both floored by the caption's min-content across the border
+ * box (probed). Percents behave as auto here (the indefinite-axis rule);
+ * inflation applies only against a definite available width, in
+ * `tableUsedOuterWidth`. */
 export function tableIntrinsicInnerWidths(
   node: LayoutNode,
   cache: IntrinsicCache,
 ): { min: number; max: number } {
   const { structure, bounds, chromeX } = tableData(node, cache);
-  let min = bounds.min.reduce((a, b) => a + b, 0) + chromeX;
-  let max = bounds.max.reduce((a, b) => a + b, 0) + chromeX;
-  if (structure.caption) {
-    min = Math.max(min, intrinsicOuterWidth(structure.caption, "min", cache));
-    max = Math.max(max, intrinsicOuterWidth(structure.caption, "max", cache));
-  }
-  return { min, max };
+  const caption = structure.caption
+    ? intrinsicOuterWidth(structure.caption, "min", cache) - boxChrome(node.style, "x")
+    : 0;
+  return {
+    min: Math.max(bounds.min.reduce((a, b) => a + b, 0) + chromeX, caption),
+    max: Math.max(bounds.max.reduce((a, b) => a + b, 0) + chromeX, caption),
+  };
 }
 
 /** Used outer width of an auto-width table (specs/table.md step 3):
  * shrink-to-fit with percent inflation, floored at the min sum, capped
- * at the available width. Fixed layout always fills. */
+ * at its fill, its percent padding against the containing block's
+ * width (`basis`). Fixed layout always fills. */
 export function tableUsedOuterWidth(
   node: LayoutNode,
-  availableWidth: number,
+  { basis, fill }: { basis: number; fill: number },
   cache: IntrinsicCache,
 ): number {
   const { bounds, chromeX } = tableData(node, cache);
-  const { min, max } = tableIntrinsicInnerWidths(node, cache);
-  const outerChromeX = boxChrome(node.style, "x", availableWidth);
+  const { min } = tableIntrinsicInnerWidths(node, cache);
+  const outerChromeX = boxChrome(node.style, "x", basis);
 
   // Percent inflation (css-tables-3 style, probed): each percent column
   // demands max ÷ p, the rest demand sum ÷ (1 − Σp); Σp ≥ 100% demands
@@ -623,10 +629,8 @@ export function tableUsedOuterWidth(
     }
     demand = Math.max(demand, Math.ceil((nonPercentMax * 100) / (100 - sumPercent)));
   }
-  // `max` (not just the column demand) so the caption's own max-content
-  // participates in shrink-to-fit.
-  const target = Math.max(demand + chromeX, max) + outerChromeX;
-  return Math.max(min + outerChromeX, Math.min(target, availableWidth));
+  const target = demand + chromeX + outerChromeX;
+  return Math.max(min + outerChromeX, Math.min(target, fill));
 }
 
 // ---------------------------------------------------------------------------
@@ -668,11 +672,22 @@ export function layoutTable(
   }
   const gridWidth = x + chrome.vLines[C]!;
 
-  // Caption first: a top caption shifts the grid down.
+  // Caption first, outside the table box's border and padding, as wide
+  // as its border box, which its margins resolve against: a top caption
+  // shifts the grid down by its margin box.
+  const { caption } = structure;
+  const { border } = style;
+  const padding = node.resolvedPadding;
   let captionHeight = 0;
-  if (structure.caption) {
-    layoutNode(structure.caption, innerWidth, undefined, contentLeft, contentTop, "fill", cache);
-    captionHeight = structure.caption.localRect.height;
+  let captionMarginTop = 0;
+  if (caption) {
+    const boxWidth = innerWidth + edges(border, padding, "x");
+    const margin = resolveMargin(caption.style.margin, boxWidth);
+    const fill = Math.max(0, boxWidth - fixedMargins(margin, "x"));
+    layoutNode(caption, boxWidth, undefined, 0, 0, "fill", cache, { fill });
+    caption.localRect.x = blockCrossOffset(margin, boxWidth, caption.localRect.width);
+    captionHeight = caption.localRect.height + fixedMargins(margin, "y");
+    captionMarginTop = margin.top ?? 0;
   }
 
   // Cell natural heights at their final span widths. Percent heights in
@@ -688,6 +703,23 @@ export function layoutTable(
     layoutNode(cell.node, spanWidth, undefined, 0, 0, "fill", cache, { width: spanWidth });
     naturalHeights.set(cell, cell.node.localRect.height);
   }
+  // A row's baseline cells meet at its deepest baseline row (CSS 2
+  // §17.5.3): a cell's first text row, else its content's last; each
+  // one's shift moves its content, which the row's size holds.
+  const firsts = new Map<PlacedCell, number>();
+  const deepest: number[] = [];
+  for (const cell of structure.cells) {
+    const { node } = cell;
+    if (node.style.verticalAlign !== "baseline") continue;
+    const bottom = node.style.border.bottom + node.resolvedPadding.bottom;
+    const first = baselineRow(node) ?? node.naturalContentHeight - bottom - 1;
+    firsts.set(cell, first);
+    deepest[cell.row] = Math.max(deepest[cell.row] ?? first, first);
+  }
+  const shifts = new Map<PlacedCell, number>();
+  for (const [cell, first] of firsts) shifts.set(cell, deepest[cell.row]! - first);
+  const contribution = (cell: PlacedCell): number =>
+    Math.max(naturalHeights.get(cell)!, cell.node.naturalContentHeight + (shifts.get(cell) ?? 0));
 
   // Row heights: fixed (and, against a definite table height, percent —
   // probed: all engines pin such rows and give the leftover to the
@@ -718,7 +750,7 @@ export function layoutTable(
     if (cell.rowSpan === 1) {
       const floor = percentFloor(cell.node.style.height);
       if (floor > 0) percentRows[cell.row] = true;
-      rowHeights[cell.row] = Math.max(rowHeights[cell.row]!, naturalHeights.get(cell)!, floor);
+      rowHeights[cell.row] = Math.max(rowHeights[cell.row]!, contribution(cell), floor);
     }
   const rowSpanning = structure.cells
     .filter((cell) => cell.rowSpan > 1)
@@ -728,7 +760,7 @@ export function layoutTable(
     const provided =
       rowHeights.slice(cell.row, rowEnd).reduce((a, b) => a + b, 0) +
       linesWithin(chrome.hLines, cell.row, rowEnd);
-    const excess = naturalHeights.get(cell)! - provided;
+    const excess = contribution(cell) - provided;
     if (excess <= 0) continue;
     const shares = distributeInteger(
       Array.from({ length: cell.rowSpan }, () => 1),
@@ -741,7 +773,7 @@ export function layoutTable(
       definiteInnerHeight - captionHeight - chromeY - rowHeights.reduce((a, b) => a + b, 0);
     if (extra > 0) {
       // Percent rows are pinned at their share; the rest split the
-      // leftover (equally — deviation 5).
+      // leftover (equally — specs/table.md deviation 4).
       const receivers: number[] = [];
       for (let r = 0; r < R; r++) if (!percentRows[r]) receivers.push(r);
       const targets = receivers.length > 0 ? receivers : Array.from({ length: R }, (_, r) => r);
@@ -754,7 +786,7 @@ export function layoutTable(
   }
 
   // Row y positions, table-content-relative.
-  const gridTop = structure.caption && node.style.captionSide === "top" ? captionHeight : 0;
+  const gridTop = caption && style.captionSide === "top" ? captionHeight : 0;
   const rowY: number[] = [];
   let y = gridTop;
   for (let r = 0; r < R; r++) {
@@ -816,7 +848,7 @@ export function layoutTable(
     }
     // Align the CONTENT, not the box: an explicit cell height tallens
     // the natural box, but vertical-align still centers within it.
-    alignCellContent(cell.node, areaHeight - cell.node.naturalContentHeight);
+    alignCellContent(cell.node, areaHeight - cell.node.naturalContentHeight, shifts.get(cell) ?? 0);
     cell.node.localRect = {
       x: colX[cell.col]!,
       y: 0,
@@ -831,8 +863,11 @@ export function layoutTable(
     child.staticSlot = blockStaticSlot(margin, contentLeft + chrome.vLines[0]!, contentTop + top);
   }
 
-  if (structure.caption && node.style.captionSide === "bottom")
-    structure.caption.localRect.y = contentTop + gridBottom;
+  // The table box: the rows its border, fill and shadows take.
+  const boxHeight = contentTop + gridBottom - gridTop + border.bottom + padding.bottom;
+  node.tableBox = caption ? { top: gridTop, height: boxHeight } : undefined;
+  if (caption)
+    caption.localRect.y = captionMarginTop + (style.captionSide === "top" ? 0 : boxHeight);
 
   if (chrome.collapsed && C > 0 && R > 0) {
     const cells: TableLattice["cells"] = Array.from({ length: R }, () =>
@@ -864,14 +899,14 @@ export function layoutTable(
 }
 
 /** Fold the cell's leftover block-axis space into its content per
- * `vertical-align`: leaves take it as engine-owned padding (the
- * alignLeafText pattern); containers shift their children. Either way
- * the children move with it — a leaf's inline boxes were placed at the
- * padding before it grew. */
-function alignCellContent(cell: LayoutNode, delta: number): void {
+ * `vertical-align`, a baseline cell's by its row's `shift`: leaves take
+ * it as engine-owned padding (the alignLeafText pattern); containers
+ * shift their children. Either way the children move with it — a
+ * leaf's inline boxes were placed at the padding before it grew. */
+function alignCellContent(cell: LayoutNode, delta: number, shift: number): void {
   if (delta <= 0) return;
   const align = cell.style.verticalAlign;
-  const offset = align === "center" ? Math.floor(delta / 2) : align === "end" ? delta : 0;
+  const offset = align === "center" ? Math.floor(delta / 2) : align === "end" ? delta : shift;
   if (!cell.children.some(isInFlowBox)) {
     // The FULL delta lands in padding even at offset 0 (top alignment):
     // the renderers then account for every row of the stretched box.

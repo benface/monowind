@@ -27,9 +27,10 @@ import type { Direction } from "./focus.ts";
 import type { Remembered } from "./positioning.ts";
 import {
   cellAtPoint,
-  chainOf,
+  chainAt,
   hitRect,
   hitStack,
+  hoverChainAt,
   isInert,
   nearestCells,
   pointKey,
@@ -216,13 +217,13 @@ const COVERED_EVENTS = ["mousedown", "click", "dblclick", "auxclick"] as const;
 
 /** Whether the grid shows `el` where the cell's own element is
  * `innermost`: that element, one containing it, or one it contains
- * that has no box of its own — an inline element's cells are its
- * block's, and native hover climbs to its ancestors. A descendant
- * WITH a box would have been the cell's element had the grid shown it
- * there, so one that was not hit is not shown: an item scrolled under
- * its container's glyph border is inside the native padding box, the
- * engine having drawn that border in cells the browser gives the
- * content. */
+ * that has no box of its own — native hover climbs to its ancestors,
+ * and a cell the grid gives a block may be an inline element's to the
+ * browser. A descendant WITH a box would have been the cell's element
+ * had the grid shown it there, so one that was not hit is not shown:
+ * an item scrolled under its container's glyph border is inside the
+ * native padding box, the engine having drawn that border in cells the
+ * browser gives the content. */
 const showsElement = (innermost: Element, el: Element, hasBox: HasBox): boolean =>
   el === innermost || el.contains(innermost) || (innermost.contains(el) && !hasBox(el));
 
@@ -1694,9 +1695,7 @@ export class MonoWindElement extends HTMLElementBase {
    * grid, retargeted to the host. */
   #focusTargetAt(at: PointerHit): HTMLElement | null {
     const layout = this.#lastLayout;
-    const target = layout
-      ? chainOf(stackAt(layout, at)).at(-1)?.closest<HTMLElement>("[tabindex]")
-      : null;
+    const target = layout ? chainAt(layout, at).at(-1)?.closest<HTMLElement>("[tabindex]") : null;
     return target && this.contains(target) ? target : null;
   }
 
@@ -1753,7 +1752,7 @@ export class MonoWindElement extends HTMLElementBase {
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!layout || !metrics) return false;
-    const cell = chainOf(stackAt(layout, this.#cellAt(e.clientX, e.clientY, metrics))).at(-1);
+    const cell = chainAt(layout, this.#cellAt(e.clientX, e.clientY, metrics)).at(-1);
     return cell !== undefined && !showsElement(cell, target, this.#hasBox);
   }
 
@@ -2228,6 +2227,7 @@ export class MonoWindElement extends HTMLElementBase {
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     let chain: Element[] = [];
+    let hovered: Element[] = [];
     if (
       this.#hoverClient &&
       layout &&
@@ -2238,7 +2238,9 @@ export class MonoWindElement extends HTMLElementBase {
     ) {
       const { x, y } = this.#hoverClient;
       this.#hoverKey = this.#pointKey(x, y, metrics);
-      chain = chainOf(stackAt(layout, this.#cellAt(x, y, metrics)));
+      const at = this.#cellAt(x, y, metrics);
+      chain = chainAt(layout, at);
+      hovered = hoverChainAt(layout, at);
     } else {
       this.#hoverKey = null;
     }
@@ -2251,7 +2253,7 @@ export class MonoWindElement extends HTMLElementBase {
     // is over the pressed element, drop when it leaves, return when it
     // re-enters. (Mid-drag hover changes track normally — the paint
     // hold keeps their restyles off the grid until release.)
-    const hover = MonoWindElement.#hoverCapable?.matches ? chain : [];
+    const hover = MonoWindElement.#hoverCapable?.matches ? hovered : [];
     const pressIndex = this.#pressTarget ? chain.indexOf(this.#pressTarget) : -1;
     const press = pressIndex >= 0 ? chain.slice(0, pressIndex + 1) : [];
     let changed = this.#applyChain("data-mw-hover", this.#hovered, hover);
@@ -2879,11 +2881,32 @@ export class MonoWindElement extends HTMLElementBase {
 
       // (2) Available cells from the host's CONTENT box — authored padding
       // on the host stays outside the grid (the shadow slot box, which
-      // laid-out children position against, already sits inside it).
-      // clientWidth excludes the border; subtract the padding ourselves.
+      // laid-out children position against, already sits inside it) — at
+      // its fractional width, counted at the light DOM's own advance: a
+      // host its text sizes holds as many cells as the text characters.
       const padX = pxSum(hostStyle, "padding-left", "padding-right");
-      const availableCols = Math.max(0, Math.floor((this.clientWidth - padX) / metrics.width));
+      const chromeX =
+        hostStyle.boxSizing === "border-box"
+          ? padX + pxSum(hostStyle, "border-left-width", "border-right-width")
+          : 0;
+      const usedWidth = parseFloat(hostStyle.width);
+      const contentWidth = Number.isFinite(usedWidth)
+        ? usedWidth - chromeX
+        : this.clientWidth - padX;
+      // A millionth of a cell past the quotient, which float division
+      // leaves a hair short (302.4 ÷ 8.4).
+      const availableCols = Math.max(
+        0,
+        Math.floor(contentWidth / (metrics.advance ?? metrics.width) + 1e-6),
+      );
       if (!(availableCols > 0)) {
+        const { display } = hostStyle;
+        if (display === "inline" || display === "contents") {
+          warnOnce(
+            this,
+            `A <mono-wind> with display: ${display} lays nothing out; give it a box, such as block or inline-block.`,
+          );
+        }
         this.#laidOutSize = null;
         return;
       }
@@ -2946,19 +2969,19 @@ export class MonoWindElement extends HTMLElementBase {
       if (this.#grid.style.width !== gridWidth) this.#grid.style.width = gridWidth;
       if (this.#grid.style.height !== gridHeight) this.#grid.style.height = gridHeight;
 
-      // (6) The spacer, the content's rows, the host's height where it
-      // has none of its own (specs/cell-model.md "Host sizing").
+      // (6) The spacer, the content's rows and the columns laid out, the
+      // host's size where it has none of its own (specs/cell-model.md
+      // "Host sizing").
       const spacerHeight = virtualRoot.naturalContentHeight * metrics.height;
       if (spacerHeight !== this.#spacerHeight) {
         this.#viewport.style.minHeight = `${spacerHeight}px`;
         this.#spacerHeight = spacerHeight;
       }
+      const spacerWidth = `${availableCols * metrics.width}px`;
+      if (this.#viewport.style.minWidth !== spacerWidth)
+        this.#viewport.style.minWidth = spacerWidth;
       // Cap the width to the columns laid out (specs/cell-model.md "Host
       // sizing"); the companion applies it outside measuring.
-      const chromeX =
-        hostStyle.boxSizing === "border-box"
-          ? padX + pxSum(hostStyle, "border-left-width", "border-right-width")
-          : 0;
       setVar(this, "--mw-host-w", `${availableCols * metrics.width + chromeX}px`);
       this.#laidOutSize = {
         width: availableCols * metrics.width,

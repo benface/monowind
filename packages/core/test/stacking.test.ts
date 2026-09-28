@@ -241,7 +241,7 @@ function randomTree(seed: number): LayoutNode {
       order: pick([0, 0, 0, -1, 1]),
     };
     const node = box(`n${i}`, style, [], next() < 0.6 ? "t" : "");
-    if (next() < 0.1) node.inlineBox = true;
+    if (next() < 0.1) node.inlineBox = { top: 0, right: 0, bottom: 0, left: 0 };
     if (next() < 0.05) node.forceHidden = true;
     if (next() < 0.03) node.tableHidden = true;
     parent.children.push(node);
@@ -316,7 +316,7 @@ function comparator(root: LayoutNode): (a: Expected, b: Expected) => number {
   const atomic = (node: LayoutNode) =>
     !isRoot(node) &&
     !member(node) &&
-    (node.inlineBox === true || ["flex", "grid"].includes(parent.get(node)!.style.display));
+    (node.inlineBox !== undefined || ["flex", "grid"].includes(parent.get(node)!.style.display));
   const painter = (node: LayoutNode) =>
     isRoot(node) || member(node) || floated(node) || atomic(node);
   const context = (node: LayoutNode) =>

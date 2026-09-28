@@ -309,9 +309,10 @@ export const BoxShadow: StoryObj = {
  * Gradient backgrounds (specs/gradients.md): a color per cell at the
  * cell's center — Tailwind's linear presets and angles, stops with
  * positions, radial and conic forms, layers, a translucent stop over
- * a plain color, the oklch and hsl spaces with a hue mode, and
- * `background-clip`: the padding box, and `text`, the gradient
- * through transparent glyphs; elsewhere glyphs keep their own color.
+ * a plain color, the oklch, hsl, lab and display-p3 spaces, a hue
+ * mode, and `background-clip`: the padding box, and `text`, the
+ * gradient through transparent glyphs; elsewhere glyphs keep their own
+ * color.
  */
 export const Gradients: StoryObj = {
   render: () => html`
@@ -375,6 +376,18 @@ export const Gradients: StoryObj = {
           bg-linear-to-r/hsl
         </div>
         <div
+          data-test="lab"
+          class="bg-[linear-gradient(to_right_in_lab,var(--color-red-500),var(--color-blue-500))] px-1"
+        >
+          in lab
+        </div>
+        <div
+          data-test="display-p3"
+          class="bg-[linear-gradient(to_right_in_display-p3,var(--color-red-500),var(--color-blue-500))] px-1"
+        >
+          in display-p3
+        </div>
+        <div
           data-test="clip-padding"
           class="border-2 border-neutral-400 bg-linear-to-r from-amber-400 to-pink-600 bg-clip-padding px-1"
         >
@@ -415,13 +428,24 @@ export const Gradients: StoryObj = {
         .slice(1)
         .map(Number);
       expect(Math.abs(r! - 251) + Math.abs(g! - 44) + Math.abs(b! - 54)).toBeLessThan(12);
-      // The longer hue arc from cyan to blue runs the long way round:
-      // its middle is nowhere near the oklch row's.
-      const middle = (name: string) => {
-        const run = stops(spans.find((span) => span.textContent!.startsWith(name))!);
+      // A row's middle cell, the row holding `text`.
+      const rows: HTMLElement[][] = [[]];
+      for (const node of gridOf(host).childNodes) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent === "\n") rows.push([]);
+        else if (node instanceof HTMLElement) rows.at(-1)!.push(node);
+      }
+      const center = (text: string) => {
+        const row = rows.find((spans) => spans.some((span) => span.textContent!.includes(text)))!;
+        const run = row.flatMap(stops);
+        expect(run.length, text).toBeGreaterThan(0);
         return run[Math.floor(run.length / 2)]!;
       };
-      expect(middle("bg-linear-to-r/longer")).not.toBe(middle("bg-linear-to-r/oklch"));
+      // The longer hue arc from cyan to blue runs the long way round:
+      // its middle is nowhere near the oklch row's.
+      expect(center("bg-linear-to-r/longer")).not.toBe(center("bg-linear-to-r/oklch"));
+      // Each space its own middle, at the same cell of two rows alike
+      // but for it: lab's is not display-p3's.
+      expect(center("in lab")).not.toBe(center("in display-p3"));
       // Clipped to text, the row is one span whose hard stops show
       // through its glyphs.
       const clipped = spans.find((span) => span.textContent!.startsWith("bg-clip-text"))!;

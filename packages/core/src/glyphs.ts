@@ -160,11 +160,17 @@ export function glyphSetNameFor(
   const cached = names.get(declared);
   if (cached !== undefined) return cached;
   const missing = missingGlyphs(declared);
-  const set = missing.size > 0 ? withoutGlyphs(glyphSetFor(name) ?? {}, missing) : undefined;
+  const base = glyphSetFor(name) ?? {};
+  // A font without a mixed junction needs a set that says so too.
+  const mixed = [...missing].some((glyph) => JUNCTION_GLYPHS.has(glyph));
+  const set =
+    (missing.size > 0 ? withoutGlyphs(base, missing) : undefined) ??
+    (mixed ? Object.freeze({ ...base }) : undefined);
   let resolved = name;
   if (set !== undefined) {
     resolved = `${key}\u0000${declared}`;
     derived.set(resolved, set);
+    missingOf.set(set, missing);
   }
   names.set(declared, resolved);
   return resolved;
@@ -398,6 +404,67 @@ export function weightBand(style: BorderStyle, weight: number, set?: BorderGlyph
  * double side meets a light side at a light corner. */
 export function junctionWeight(style: BorderStyle, weight: number, set?: BorderGlyphSet): number {
   return weightBand(style, weight, set).band ? weight : 1;
+}
+
+/* === Mixed junctions ================================================= */
+
+/** A junction arm's line, as the glyph its band draws reads: light,
+ * heavy or double (specs/cell-model.md "Borders: glyph mapping"). */
+type ArmLine = "l" | "h" | "d";
+
+const ARM_LINES: Readonly<Record<string, ArmLine>> = {
+  "─": "l",
+  "│": "l",
+  "╌": "l",
+  "╎": "l",
+  "┄": "l",
+  "┊": "l",
+  "━": "h",
+  "┃": "h",
+  "╍": "h",
+  "╏": "h",
+  "┉": "h",
+  "┋": "h",
+  "═": "d",
+  "║": "d",
+};
+
+/** Unicode's mixed box-drawing junctions, each a glyph and its arms'
+ * lines — up, down, left, right, a space for none: light × heavy whole,
+ * single × double where each axis's arms share a line; heavy × double
+ * has none. */
+const JUNCTIONS: ReadonlyMap<string, string> = (() => {
+  const table =
+    "┍ l h┎ h l┑ lh ┒ hl ┕l  h┖h  l┙l h ┚h l " +
+    "┝ll h┞hl l┟lh l┠hh l┡hl h┢lh h┥llh ┦hll " +
+    "┧lhl ┨hhl ┩hlh ┪lhh ┭ lhl┮ llh┯ lhh┰ hll" +
+    "┱ hhl┲ hlh┵l hl┶l lh┷l hh┸h ll┹h hl┺h lh" +
+    "┽llhl┾lllh┿llhh╀hlll╁lhll╂hhll╃hlhl╄hllh" +
+    "╅lhhl╆lhlh╇hlhh╈lhhh╉hhhl╊hhlh╒ l d╓ d l" +
+    "╕ ld ╖ dl ╘l  d╙d  l╛l d ╜d l ╞ll d╟dd l" +
+    "╡lld ╢ddl ╤ ldd╥ dll╧l dd╨d ll╪lldd╫ddll";
+  const junctions = new Map<string, string>();
+  for (let i = 0; i < table.length; i += 5) junctions.set(table.slice(i + 1, i + 5), table[i]!);
+  return junctions;
+})();
+const JUNCTION_GLYPHS: ReadonlySet<string> = new Set(JUNCTIONS.values());
+
+/** The glyphs a font's missing list takes from a derived set's mixed
+ * junctions (glyphSetNameFor). */
+const missingOf = new WeakMap<BorderGlyphSet, Set<string>>();
+
+/** A junction whose arms (up, down, left, right; null for none) draw
+ * unlike lines — each the line glyph its band draws — Unicode's mixed
+ * glyph for them; undefined where they draw alike, a line is no box
+ * drawing, Unicode has none, or the set's font has not got it. */
+export function mixedJunction(
+  lines: readonly (string | null)[],
+  set?: BorderGlyphSet,
+): string | undefined {
+  // A line no box drawing reads "?", which no junction has.
+  const code = lines.map((line) => (line === null ? " " : (ARM_LINES[line] ?? "?"))).join("");
+  const glyph = JUNCTIONS.get(code);
+  return glyph === undefined || (set && missingOf.get(set)?.has(glyph)) ? undefined : glyph;
 }
 
 /* === Built-in sets ==================================================== */

@@ -3,6 +3,7 @@ import { DEFAULT_CELL } from "./gradient.ts";
 import type { CellSize } from "./gradient.ts";
 import {
   applyCellPaint,
+  applyDecoration,
   glyphKey,
   isBarePaint,
   PAINT_FIELDS,
@@ -18,6 +19,7 @@ import type {
 } from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
 import { readOpacity } from "./style.ts";
+import { decorationKey } from "./types.ts";
 import type { LayoutNode, Backdrop } from "./types.ts";
 
 /**
@@ -642,8 +644,9 @@ function applySegment(
   const emoji = span.firstElementChild;
   if (emoji instanceof HTMLElement) {
     span.style.textDecoration = "";
-    emoji.style.opacity = String(segment.emojiOpacity);
-    emoji.style.textDecoration = segment.textDecorationLine ?? "";
+    span.style.textDecorationThickness = "";
+    emoji.style.cssText = `opacity: ${segment.emojiOpacity}`;
+    if (segment.decoration) applyDecoration(segment.decoration, emoji.style);
   }
   if (!segment.box) return;
   const cells = segment.cells ?? 1;
@@ -685,7 +688,13 @@ function sameSegment(a: CellSegment, b: CellSegment): boolean {
 function segmentKey(segment: CellSegment): string {
   let key = `${segment.text}\x1f${segment.cells}`;
   for (const field of PAINT_FIELDS) {
-    key += `\x1f${field === "glyph" ? glyphKey(segment.glyph) : (segment[field] ?? "")}`;
+    const value =
+      field === "glyph"
+        ? glyphKey(segment.glyph)
+        : field === "decoration"
+          ? segment.decoration && decorationKey(segment.decoration)
+          : segment[field];
+    key += `\x1f${value ?? ""}`;
   }
   return key;
 }

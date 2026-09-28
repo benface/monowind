@@ -77,7 +77,7 @@ nearest positioned ancestor** (`position` ≠ static — relative, absolute,
 fixed, or sticky), or the `<mono-wind>` host's content box when there is
 none. The companion stylesheet's own `position: absolute` on laid-out
 elements is an implementation detail and does NOT make an element a
-containing block — only the author's `position` does (deviation 7).
+containing block — only the author's `position` does (deviation 5).
 
 For a relative element, percent insets resolve against its own parent's
 content box (its containing block in flow).
@@ -100,6 +100,17 @@ content box (its containing block in flow).
   where it would have been in flow, per CSS:
   - Block parent: the flow cursor position at its DOM slot (x: content
     origin + margin; y: where the next in-flow sibling starts).
+  - Text run (an out-of-flow element met in a leaf's inline content):
+    its spot is where the run meets it, past a `<br>`, an atomic
+    inline box or inline padding before it. An element that was
+    inline-level before its position blockified it — its display read
+    once with its position held static, where an axis lacks insets
+    (styles.css `data-mw-static-read`) — sits at its spot's cell on its
+    line, the line's alignment and indent included; at a soft break, at
+    the end of the text before it, never back across a hard break, as
+    Chromium and WebKit have it (Firefox puts it at the next line's
+    start); a block-level one starts the next line, at the content
+    edge (probed 2026-09-27).
   - Flex parent: as if it were the **sole flex item** of the container —
     `justify-content` / `align-items` (with its own `align-self`,
     `stretch` as its fallback `flex-start`) applied to its hypothetical
@@ -109,9 +120,11 @@ content box (its containing block in flow).
     size including the box's fixed margins (`auto` margins
     count as 0 in the static position). An overflowing box sits at the
     start edge on either axis, as an overflowing line does
-    (cell-model.md deviation 21; CSS centers or ends it past the start
+    (cell-model.md deviation 19; CSS centers or ends it past the start
     edge, and centers it under `space-around` / `space-evenly`, probed
-    2026-09-24, all three engines).
+    2026-09-24, all three engines). A flex text leaf's own out-of-flow
+    child takes this position too, as a flex container's always does;
+    one inside its inline elements takes the text run's.
 - Margins apply between the inset edges and the box, per CSS. `auto`
   margins center within the inset-defined space when the size is definite
   (the `inset-0 m-auto` centering idiom). Per CSS 2 §10.3.7 and §10.6.4,
@@ -137,18 +150,17 @@ shift plus every inline ancestor's, as CSS moves an inline box's
 content with it: a static `<b>` in a `relative top-1` span moves with
 the span, and a relative span in another moves by both (`inlineShift`).
 
-- Only cell-mappable lengths are supported on inline insets; **percent
-  insets on inline elements are treated as 0** (deviation, a shortcut:
-  their basis is the block container's content box, which the engine
-  has). In Firefox, whose computed style gives them as used px where
-  Chromium and WebKit keep the `%`, the engine reads that px as a
-  length instead, so the element shifts by it, rounded to cells.
+- A percentage inset resolves against the block container's content
+  box, a nested span's too (not its parent span's): across against its
+  width, down against its height where definite, 0 under an auto one
+  (probed 2026-09-27). The entry keeps the authored length
+  (`insetLengths`, style.ts `readElementInsets`), which each layout
+  resolves in its leaf (`resolveInsets`); a sticky span's resolves
+  against its scrollport (sticky.md).
 - `absolute`/`fixed` on an inline element blockifies it, per CSS: it
   leaves the text run entirely (the text reflows without it) and becomes
-  an out-of-flow box positioned like any other. **Deviation:** its static
-  position approximates to its leaf's content-box origin rather than
-  CSS's hypothetical inline position (the spot mid-text where it would
-  have sat).
+  an out-of-flow box positioned like any other, its static position
+  where the run had it ("Static position").
 
 ## Paint order
 
@@ -184,7 +196,7 @@ collapsed-table lattice follow one order.
 
 `container-type` forms none (probed 2026-09-27 in all three engines,
 though MDN lists it). An inline element forms one by its position,
-`z-index` and opacity alone (deviation 8).
+`z-index` and opacity alone (deviation 6).
 
 **Members and steps.** A box paints in the positioned step when it is
 positioned or forms a stacking context. Every other box is in flow.
@@ -304,7 +316,7 @@ positioning would otherwise let it apply everywhere. In grid mode the
 covered marks give the pointer to what the grid shows (cell-model.md
 "Pointer states").
 
-**Deviations**: 5–8 below.
+**Deviations**: 3–6 below.
 
 ## Plain-text renderer
 
@@ -315,14 +327,9 @@ character's inline element, so its whole-cell insets move the glyphs.
 ## Deviations from CSS (summary)
 
 1. `fixed` anchors to the `<mono-wind>` host, not the viewport.
-2. Percent insets on inline elements are treated as 0 (in Firefox, as
-   the px it resolves them to).
-3. An out-of-flow element extracted from a text run takes its leaf's
-   content-box origin as its static position, not CSS's hypothetical
-   inline position.
-4. All cell-model deviations (integer rounding, etc.) apply; sticky's
+2. All cell-model deviations (integer rounding, etc.) apply; sticky's
    own are in `sticky.md`.
-5. **The light DOM stacks and clips as absolutely positioned boxes.**
+3. **The light DOM stacks and clips as absolutely positioned boxes.**
    Natively every laid-out element is `position: absolute`, so the
    in-flow ones stack with the positioned ones in tree order, and
    every clipping ancestor clips each one. Two effects follow. In
@@ -333,7 +340,7 @@ character's inline element, so its whole-cell insets move the glyphs.
    `absolute` box past a static `overflow-hidden` box, a `fixed` box)
    takes no press there. The cause: the engine places every box
    natively as an absolute one.
-6. **An inline element forms a stacking context for its glyphs
+4. **An inline element forms a stacking context for its glyphs
    alone.** An out-of-flow box inside an inline element that forms one
    is a member of its leaf's context, with its inline
    ancestors' opacity folded into its own group (cell-model.md
@@ -342,14 +349,14 @@ character's inline element, so its whole-cell insets move the glyphs.
    in tree order, before the leaf's out-of-flow boxes, where CSS puts
    a box that precedes it in the document first. The cause: an inline
    element is no node of the layout tree.
-7. **Only `position` makes a containing block.** A `transform`,
+5. **Only `position` makes a containing block.** A `transform`,
    `filter`, `perspective`, `contain: layout | paint` or a
    `will-change` of one makes none for layout, where CSS makes one for
    absolute and fixed descendants. They are placed against the nearest
    positioned ancestor, or the host. A layer root still ends their
    paint's chain ("Paint order"). The cause: the positioning pass
    reads the author's `position` alone.
-8. **An inline element's own effects form no stacking context.** A
+6. **An inline element's own effects form no stacking context.** A
    `filter`, `backdrop-filter`, `mix-blend-mode`, `clip-path`,
    `mask-image`, `isolation: isolate` or `will-change` of one leaves an
    inline element's glyphs in its leaf's turn, where CSS paints them in
@@ -359,6 +366,23 @@ character's inline element, so its whole-cell insets move the glyphs.
    (`../architecture/performance.md` "Stacking contexts").
 
 ## Touch points on implementation
+
+For "Static position" and "Inline elements":
+
+- tree.ts: `collectNodes` records each out-of-flow element's spot where
+  the run meets it (`LeafRun.spots`), and `buildLeaf` each out-of-flow
+  child's `runSpot` from it (`runSpotOf`); `inlineEntry` reads a
+  relative inline element's `insetLengths` and a sticky one's `sticky`
+  (`readElementInsets`).
+- style.ts: `readElementInsets`, an inline element's insets with
+  percentages kept, a side the class scan misses without Typed OM
+  its resolved value.
+- types.ts: a node's `runSpot`; an `InlineElement`'s `insetLengths`
+  and `insets`.
+- layout.ts: `layoutTextLeaf` gives a flex leaf's own out-of-flow
+  children the flex `staticSlot` and the others theirs from
+  `spotInRun`; `resolveLeafLengths` resolves each relative inline
+  element's `insets` at every layout (`resolveInsets`).
 
 For "Paint order":
 

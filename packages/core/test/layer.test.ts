@@ -354,7 +354,7 @@ describe("layer paint (specs/layers.md)", () => {
       intrinsicWidth: 4,
     });
     const box = makeNode({
-      style: { width: cells(4), height: cells(2), overflow: { x: "clip", y: "clip" } },
+      style: { width: cells(4), height: cells(2), overflow: { x: "hidden", y: "hidden" } },
       children: [badge],
     });
     const root = makeNode({ style: { width: cells(8) }, children: [box] });
@@ -375,11 +375,11 @@ describe("layer paint (specs/layers.md)", () => {
       intrinsicWidth: 6,
     });
     const inner = makeNode({
-      style: { width: cells(5), overflow: { x: "clip", y: "visible" } },
+      style: { width: cells(5), overflow: { x: "hidden", y: "visible" } },
       children: [badge],
     });
     const outer = makeNode({
-      style: { width: cells(6), height: cells(1), overflow: { x: "visible", y: "clip" } },
+      style: { width: cells(6), height: cells(1), overflow: { x: "visible", y: "hidden" } },
       children: [inner],
     });
     const root = makeNode({ style: { width: cells(8) }, children: [outer] });
@@ -400,12 +400,12 @@ describe("layer paint (specs/layers.md)", () => {
       intrinsicWidth: 6,
     });
     const between = makeNode({
-      style: { width: cells(3), overflow: { x: "clip", y: "visible" } },
+      style: { width: cells(3), overflow: { x: "hidden", y: "visible" } },
       children: [badge],
     });
     const card = makeNode({ style: { width: cells(5), layer: layered() }, children: [between] });
     const scroller = makeNode({
-      style: { width: cells(4), height: cells(1), overflow: { x: "clip", y: "clip" } },
+      style: { width: cells(4), height: cells(1), overflow: { x: "hidden", y: "hidden" } },
       children: [card],
     });
     const root = makeNode({ style: { width: cells(8), height: cells(3) }, children: [scroller] });
@@ -784,7 +784,7 @@ describe("layer nodes (paint.ts)", () => {
       style: {
         width: cells(4),
         height: cells(2),
-        overflow: { x: "clip", y: "clip" },
+        overflow: { x: "hidden", y: "hidden" },
         margin: { ...zeroInsets(), left: 1, top: 1 },
       },
       children: [badge],

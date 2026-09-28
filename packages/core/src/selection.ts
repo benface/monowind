@@ -1,7 +1,7 @@
 import { leafRendererFor } from "./leaf.ts";
 import { inlineBoxesOf } from "./types.ts";
 import type { CharSourceRun, LayoutNode } from "./types.ts";
-import { INLINE_PAD, OBJECT_REPLACEMENT } from "./wrap.ts";
+import { INLINE_PAD, OBJECT_REPLACEMENT, WBR_MARKER } from "./wrap.ts";
 
 /**
  * Character ↔ DOM position mapping over a leaf's `charSource` runs
@@ -480,7 +480,7 @@ function leafSlice(leaf: LayoutNode, range: Range): string {
     collectItems(box, range, items);
     return assemble(items);
   });
-  return slice.replaceAll(INLINE_PAD, "");
+  return slice.replaceAll(INLINE_PAD, "").replaceAll(WBR_MARKER, "");
 }
 
 /** Required breaks collapse to the largest of a run and vanish at

@@ -43,8 +43,8 @@ property: `color`, the `border-*-color` longhands, `opacity`,
 `rotate`, `scale`, `filter`, `backdrop-filter`). Any other keyframe
 property (geometry, say) is sampled by the same loop, through the
 relayout it drives; a `text-decoration-color` keyframe drives it too,
-but no read takes a decoration's color (cell-model.md "Typography"),
-so it shows nothing.
+each relayout's read taking the decoration's color (cell-model.md
+"Typography").
 
 ## Locked decisions
 

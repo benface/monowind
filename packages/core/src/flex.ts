@@ -3,6 +3,7 @@ import { gapRuleRuns, ruleBandSegments } from "./borders.ts";
 import type { GapSegment, GapStrip, RuleSegment } from "./borders.ts";
 import {
   autoMarginOffset,
+  baselineRow,
   boxChrome,
   clampSize,
   contentOrigin,
@@ -20,6 +21,7 @@ import {
   resolveWidthLimit,
 } from "./layout.ts";
 import type { IntrinsicCache, SizingMode } from "./layout.ts";
+import { isScrollContainer } from "./types.ts";
 import type { CellStyle, LayoutNode, NullableInsets } from "./types.ts";
 
 /**
@@ -152,11 +154,12 @@ export function layoutFlexRow(
         width: widths[i]!,
       });
     }
+    const groups = [baselineGroup(row, node, false), baselineGroup(row, node, true)];
     const height = row.reduce(
       (h, item) => Math.max(h, item.node.localRect.height + fixedMargins(item.margin, "y")),
-      0,
+      Math.max(...groups.map((group) => group?.extent ?? 0)),
     );
-    return { row, widths, availableForItems, height };
+    return { row, widths, availableForItems, height, groups };
   });
 
   // Line heights and cross offsets (specs/flex.md step 9). A single nowrap
@@ -200,7 +203,7 @@ export function layoutFlexRow(
   // Phase B: per line, stretch items to the (possibly grown) line height
   // and place them.
   for (let rowIndex = 0; rowIndex < lines.length; rowIndex++) {
-    const { row, widths, availableForItems } = lines[rowIndex]!;
+    const { row, widths, availableForItems, groups } = lines[rowIndex]!;
     const rowHeight = rowHeights[rowIndex]!;
     const y = lineOffsets[rowIndex]! + rowIndex * gapY;
 
@@ -243,20 +246,21 @@ export function layoutFlexRow(
     for (let i = 0; i < row.length; i++) {
       const item = row[i]!;
       const child = item.node;
-      child.localRect = {
-        ...child.localRect,
-        x: originX + positions[i]!,
-        y:
-          originY +
-          y +
-          alignedOffset(
+      // A baseline group rides the line's cross-start, or its end for
+      // the last baseline, the ends swapped under wrap-reverse.
+      const inGroup = groups.findIndex((group) => group?.members.has(child));
+      const group = groups[inGroup];
+      const atEnd = (inGroup === 1) !== node.style.wrapReverse;
+      const offset = group
+        ? (atEnd ? rowHeight - group.extent : 0) + group.members.get(child)!.top
+        : alignedOffset(
             lineAlign(child, node),
             item.margin.top,
             item.margin.bottom,
             rowHeight,
             child.localRect.height,
-          ),
-      };
+          );
+      child.localRect = { ...child.localRect, x: originX + positions[i]!, y: originY + y + offset };
     }
   }
 
@@ -310,6 +314,44 @@ export function layoutFlexRow(
   return lines.reduce((sum, line) => sum + line.height, 0) + totalGapY;
 }
 
+/** A line's items aligned by their first baselines, or their last,
+ * cross margins not auto (css-flexbox §9.4 step 8): each one's
+ * border-box top in the group, its baseline row where the group's
+ * deepest lies (a box drawing no line by its last row), and its shift
+ * from the group's edge; and the group's extent, which its line holds. */
+export function baselineGroup(
+  row: readonly { node: LayoutNode; margin: NullableInsets }[],
+  node: LayoutNode,
+  last: boolean,
+): { members: Map<LayoutNode, { top: number; shift: number }>; extent: number } | undefined {
+  const members = row.filter(
+    (item) =>
+      effectiveAlign(item.node, node) === (last ? "last baseline" : "baseline") &&
+      item.margin.top !== null &&
+      item.margin.bottom !== null,
+  );
+  if (members.length === 0) return undefined;
+  // Each member's rows from its margin edge, the far one for the last
+  // baseline, to its baseline row.
+  const depths = members.map(({ node: child, margin }) => {
+    const { height } = child.localRect;
+    const row = baselineRow(child, last) ?? height - 1;
+    return last ? margin.bottom! + height - 1 - row : margin.top! + row;
+  });
+  const deepest = Math.max(...depths);
+  const outer = ({ node: child, margin }: (typeof members)[number]): number =>
+    margin.top! + child.localRect.height + margin.bottom!;
+  const extent = Math.max(...members.map((member, i) => deepest - depths[i]! + outer(member)));
+  const placed = new Map<LayoutNode, { top: number; shift: number }>();
+  members.forEach((member, i) => {
+    const shift = deepest - depths[i]!;
+    const { margin } = member;
+    const top = last ? extent - shift - outer(member) + margin.top! : shift + margin.top!;
+    placed.set(member.node, { top, shift });
+  });
+  return { members: placed, extent };
+}
+
 /** Static slots for a flex container's out-of-flow children — the content
  * box plus alignment context, so the positioning pass can apply the CSS
  * "as if it were the sole flex item" rule once the box is sized. */
@@ -321,16 +363,23 @@ function recordFlexStaticSlots(
   contentHeight: number,
 ): void {
   for (const child of node.children) {
-    if (!isOutOfFlow(child.style)) continue;
-    child.staticSlot = {
-      kind: "flex",
-      direction: node.style.flexDirection,
-      originX,
-      originY,
-      innerWidth,
-      innerHeight: contentHeight,
-    };
+    if (isOutOfFlow(child.style)) {
+      child.staticSlot = flexStaticSlot(node, originX, originY, innerWidth, contentHeight);
+    }
   }
+}
+
+/** An out-of-flow child's static position as a flex container's sole
+ * item, in its content box. */
+export function flexStaticSlot(
+  node: LayoutNode,
+  originX: number,
+  originY: number,
+  innerWidth: number,
+  innerHeight: number,
+): NonNullable<LayoutNode["staticSlot"]> {
+  const direction = node.style.flexDirection;
+  return { kind: "flex", direction, originX, originY, innerWidth, innerHeight };
 }
 
 export function layoutFlexColumn(
@@ -345,13 +394,13 @@ export function layoutFlexColumn(
 
   const items = flexOrderedChildren(node).map((child) => {
     const margin = resolveMargin(child.style.margin, innerWidth);
-    const availableWidth = Math.max(0, innerWidth - fixedMargins(margin, "x"));
+    const fill = Math.max(0, innerWidth - fixedMargins(margin, "x"));
     // The cross-axis (width) stretch: the item's own align-self, else the
     // parent's align-items — a `self-start` item shrinks to fit.
     const widthMode: SizingMode = effectiveAlign(child, node) === "stretch" ? "fill" : "shrink";
     // First pass at intrinsic height along the main axis. A definite
     // container height is the basis for the child's percent height.
-    layoutNode(child, availableWidth, definiteInnerHeight, 0, 0, widthMode, cache);
+    layoutNode(child, innerWidth, definiteInnerHeight, 0, 0, widthMode, cache, { fill });
     const limitBasis = finiteInner ? innerHeight : undefined;
     // The base main size (flex-basis, else the item's height): cells, or
     // a percent of a definite container height; anything else — auto, an
@@ -381,7 +430,7 @@ export function layoutFlexColumn(
             undefined,
           )
         : (resolveLimit(child.style.minHeight, limitBasis) ?? 0),
-      boxChrome(child.style, "y", availableWidth),
+      boxChrome(child.style, "y", innerWidth),
     );
     const max = resolveLimit(child.style.maxHeight, limitBasis);
     return {
@@ -393,7 +442,7 @@ export function layoutFlexColumn(
       max,
       hypothetical: Math.max(0, clampSize(base, min, max)),
       margin,
-      availableWidth,
+      fill,
       widthMode,
       width: child.localRect.width,
     };
@@ -431,8 +480,10 @@ export function layoutFlexColumn(
     const derivesWidth = aspectRatio !== null && width === undefined;
     if (height !== item.node.localRect.height || (derivesWidth && item.widthMode === "shrink")) {
       const forced =
-        derivesWidth && item.widthMode === "fill" ? { height, width: item.width } : { height };
-      layoutNode(item.node, item.availableWidth, height, 0, 0, item.widthMode, cache, forced);
+        derivesWidth && item.widthMode === "fill"
+          ? { height, width: item.width, fill: item.fill }
+          : { height, fill: item.fill };
+      layoutNode(item.node, innerWidth, height, 0, 0, item.widthMode, cache, forced);
     }
   }
 
@@ -546,7 +597,7 @@ function mainAxisPositions(
  * Position each item along the main axis given its size and leftover
  * space. Returns the offset from container inner origin for each item.
  * Overflow alignment is always safe: a negative leftover aligns as start
- * (specs/cell-model.md deviation 21).
+ * (specs/cell-model.md deviation 19).
  */
 export function mainAxisOffsets(
   justify: CellStyle["justifyContent"],
@@ -850,7 +901,7 @@ export function automaticMinimum(
   specified: number | undefined,
   max: number | undefined,
 ): number {
-  if (overflow !== "visible") return 0;
+  if (isScrollContainer(overflow)) return 0;
   return Math.min(content(), specified ?? Infinity, max ?? Infinity);
 }
 

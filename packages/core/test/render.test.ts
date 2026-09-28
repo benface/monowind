@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { layoutRoot } from "../src/layout.ts";
+import { baselineRow, layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
 import { render, renderScroll } from "../src/render.ts";
 import { buildTree } from "../src/tree.ts";
@@ -65,7 +65,7 @@ it("aligns a middle-aligned inline box by its text's row after the box's own ali
   )!;
   // items-center puts the x on the box's middle row, the line's text row.
   expect(centered.resolvedPadding.top).toBe(1);
-  expect(centered.baselineRow).toBe(1);
+  expect(baselineRow(centered, true)).toBe(1);
   expect((centered.source as HTMLElement).style.getPropertyValue("--mw-va")).toBe("0");
 });
 

@@ -24,6 +24,30 @@ it("has no Typed OM in this environment (the point of this suite)", () => {
   ).toBeUndefined();
 });
 
+describe("overflow (specs/scrolling.md)", () => {
+  it("keeps clip apart from hidden, clip turning hidden beside a scroll container", () => {
+    const overflow = (style: string) => read({ style }).overflow;
+    expect(overflow("overflow-x: clip; overflow-y: visible")).toEqual({ x: "clip", y: "visible" });
+    expect(overflow("overflow-x: hidden; overflow-y: visible")).toEqual({ x: "hidden", y: "auto" });
+    expect(overflow("overflow-x: clip; overflow-y: auto")).toEqual({ x: "hidden", y: "auto" });
+  });
+});
+
+describe("a scroll container's scroll-padding (specs/scrolling.md)", () => {
+  it("reads in cells on the spacing scale, only where the box scrolls", () => {
+    // Longhands: happy-dom expands no shorthand.
+    const padded =
+      "scroll-padding-top: 16px; scroll-padding-right: 8px; scroll-padding-bottom: 4px";
+    expect(read({ style: `overflow: auto; ${padded}` }).scrollPadding).toEqual({
+      top: 4,
+      right: 2,
+      bottom: 1,
+      left: 0,
+    });
+    expect(read({ style: padded }).scrollPadding).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+  });
+});
+
 describe("viewport-relative sizing", () => {
   it("converts viewport utilities via the measured cell size, not the spacing scale", () => {
     // Physical intent: h-screen fills the real viewport. innerHeight ÷
@@ -305,10 +329,11 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
     expect(read({ style: "flex-basis: 24px" }).flexBasis).toEqual({ kind: "cells", value: 6 });
   });
 
-  it("reads percent gaps symbolically and normal as 0", () => {
+  it("reads percent gaps symbolically and normal as null", () => {
     const style = read({ style: "column-gap: 50%; row-gap: 8px" });
     expect(style.gapX).toEqual({ percent: 50 });
     expect(style.gapY).toBe(2);
+    expect(read({ style: "display: grid; gap: normal" })).toMatchObject({ gapX: null, gapY: null });
   });
 
   it("maps white-space and text-overflow", () => {
@@ -317,12 +342,9 @@ describe("plain computed reads (shared with the Typed OM path)", () => {
     expect(style.textOverflow).toBe("ellipsis");
   });
 
-  it("honors center, blocks justify — via computed text-align and the align attribute", () => {
-    // Computed detection is echo-safe: the forced-start rule is
-    // measuring-gated, so the read sees the authored value.
+  it("reads text-align, the align attribute's too", () => {
     expect(read({ style: "text-align: center" }).textAlign).toBe("center");
-    expect(read({ style: "text-align: center" }).textAlignBlocked).toBe(false);
-    expect(read({ style: "text-align: justify" }).textAlignBlocked).toBe(true);
+    expect(read({ style: "text-align: justify" }).textAlign).toBe("justify");
     expect(read({ style: "text-align: end" }).textAlign).toBe("end");
     const el = document.createElement("td");
     el.setAttribute("align", "CENTER");

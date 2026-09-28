@@ -5,6 +5,7 @@ import { renderCellSegments, renderPlainText } from "../src/plain-text.ts";
 import {
   cellAtPoint,
   hitChain,
+  hitHoverChain,
   hitStack,
   nearestCells,
   pointKey,
@@ -115,7 +116,7 @@ describe("hitChain", () => {
     const root = box("root", [0, 0, 30, 5], { children: [scroller] });
     expect(names(hitChain(root, 10, 1, null))).toEqual(["scroller", "line"]);
     // Its own clip keeps the ink inside the box.
-    line.style.overflow = { x: "clip", y: "clip" };
+    line.style.overflow = { x: "hidden", y: "hidden" };
     expect(names(hitChain(root, 10, 1, null))).toEqual(["scroller"]);
   });
 
@@ -132,7 +133,7 @@ describe('hitChain in the paint order (specs/positioning.md "Paint order")', () 
     const menu = box("menu", [0, 2, 6, 3], {
       style: { position: "absolute", zIndex: 10, ...menuStyle },
     });
-    const overflow = clip ? { x: "clip", y: "clip" } : { x: "visible", y: "visible" };
+    const overflow = clip ? { x: "hidden", y: "hidden" } : { x: "visible", y: "visible" };
     const wrapper = box("wrapper", [0, 0, 10, 2], {
       style: { position: "relative", overflow: overflow as LayoutNode["style"]["overflow"] },
       children: [menu],
@@ -159,7 +160,7 @@ describe('hitChain in the paint order (specs/positioning.md "Paint order")', () 
   it("hits an absolute box past a static clipping box its chain skips", () => {
     const a = box("a", [0, 4, 3, 2], { style: { position: "absolute" } });
     const clipper = box("clipper", [0, 0, 6, 3], {
-      style: { overflow: { x: "clip", y: "clip" } },
+      style: { overflow: { x: "hidden", y: "hidden" } },
       children: [a],
     });
     const containingBlock = box("containing block", [0, 0, 10, 8], {
@@ -252,7 +253,7 @@ function filledTree(seed: number): {
         stacking: next() < 0.1,
         display: next() < 0.15 ? "flex" : "block",
         float: position === "static" && next() < 0.15 ? "left" : "none",
-        overflow: next() < 0.1 ? { x: "clip", y: "clip" } : { x: "visible", y: "visible" },
+        overflow: next() < 0.1 ? { x: "hidden", y: "hidden" } : { x: "visible", y: "visible" },
       },
     });
     fills.set(color, node);
@@ -262,43 +263,82 @@ function filledTree(seed: number): {
   return { root, fills };
 }
 
+/** The `data-test` names on the chain at a cell of `markup`'s layout. */
+function chainIn(
+  markup: string,
+  width: number,
+  chain = hitChain,
+): (col: number, row: number) => (string | null)[] {
+  const host = document.createElement("div");
+  host.innerHTML = markup;
+  document.body.appendChild(host);
+  const root = buildTree(host.firstElementChild!, 16)!;
+  layoutRoot(root, width);
+  return (col, row) => chain(root, col, row, null).map((el) => el.getAttribute("data-test"));
+}
+
+describe("hitChain through inline elements", () => {
+  it("takes in the inline elements over the character, outermost first", () => {
+    const chain = chainIn(
+      `<div><p data-test="p">ab <em data-test="em">cd <b data-test="b">ef</b></em> gh</p></div>`,
+      20,
+    );
+    expect(chain(0, 0)).toEqual(["p"]);
+    expect(chain(3, 0)).toEqual(["p", "em"]);
+    expect(chain(6, 0)).toEqual(["p", "em", "b"]);
+    expect(chain(9, 0)).toEqual(["p"]);
+  });
+});
+
+describe("the hover chain", () => {
+  it("takes an inline element whose hover can restyle something, and no other", () => {
+    const markup = `<div><p data-test="p">ab <b data-test="plain">cd</b> <i data-test="hover" class="hover:underline">ef</i> <em data-test="group" class="group">gh</em> <u data-test="peer" class="peer">ij</u> <s data-test="named" class="group/item">kl</s></p></div>`;
+    const hovered = chainIn(markup, 30, hitHoverChain);
+    expect(hovered(3, 0)).toEqual(["p"]);
+    expect(hovered(6, 0)).toEqual(["p", "hover"]);
+    expect(hovered(9, 0)).toEqual(["p", "group"]);
+    expect(hovered(12, 0)).toEqual(["p", "peer"]);
+    expect(hovered(15, 0)).toEqual(["p", "named"]);
+    // The whole chain keeps every one, for the press and the cursor.
+    expect(chainIn(markup, 30)(3, 0)).toEqual(["p", "plain"]);
+    // An ancestor's variant reaching a descendant's hover takes them all.
+    for (const reach of ["has-hover:bg-red-500", "*:hover:underline"]) {
+      const reached = `<div><p data-test="p" class="${reach}">ab <b data-test="plain">cd</b></p></div>`;
+      expect(chainIn(reached, 20, hitHoverChain)(3, 0), reach).toEqual(["p", "plain"]);
+    }
+  });
+});
+
 describe("hitChain on an inline member's glyph", () => {
-  it("hits the span's paragraph where its glyph paints over the next one", () => {
-    const host = document.createElement("div");
-    host.innerHTML = `<div style="width: 40px"><p data-test="p">ab <span style="position: relative; top: 4px">XY</span></p><p data-test="next">zzzzzz</p></div>`;
-    document.body.appendChild(host);
-    const root = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(root, 10);
-    const chain = (col: number) =>
-      hitChain(root, col, 1, null).map((el) => el.getAttribute("data-test"));
-    expect(chain(3)).toEqual(["p"]);
-    expect(chain(1)).toEqual(["next"]);
+  it("hits the span where its glyph paints over the next paragraph", () => {
+    const chain = chainIn(
+      `<div style="width: 40px"><p data-test="p">ab <span data-test="span" style="position: relative; top: 4px">XY</span></p><p data-test="next">zzzzzz</p></div>`,
+      10,
+    );
+    expect(chain(3, 1)).toEqual(["p", "span"]);
+    expect(chain(1, 1)).toEqual(["next"]);
   });
 
   it("hits a static element's glyph where its relative span moves it", () => {
-    const host = document.createElement("div");
-    host.innerHTML = `<div style="width: 40px"><p data-test="p">ab <span style="position: relative; top: 4px">X<b>Y</b></span></p><p data-test="next">zzzzzz</p></div>`;
-    document.body.appendChild(host);
-    const root = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(root, 10);
-    expect(hitChain(root, 4, 1, null).map((el) => el.getAttribute("data-test"))).toEqual(["p"]);
+    const chain = chainIn(
+      `<div style="width: 40px"><p data-test="p">ab <span data-test="span" style="position: relative; top: 4px">X<b data-test="b">Y</b></span></p><p data-test="next">zzzzzz</p></div>`,
+      10,
+    );
+    expect(chain(4, 1)).toEqual(["p", "span", "b"]);
   });
 });
 
 describe("hitChain through an inline element that takes pointer events again", () => {
   it("hits its characters in a paragraph that takes none, over the box beneath", () => {
-    const host = document.createElement("div");
-    host.innerHTML = `<div style="position: relative"><div data-test="zone">zone text here</div><p data-test="p" style="pointer-events: none; position: absolute; top: 0; left: 0">aa <a data-test="link" style="pointer-events: auto">link</a></p></div>`;
-    document.body.appendChild(host);
-    const root = buildTree(host.firstElementChild!, 16)!;
-    layoutRoot(root, 20);
-    const chain = (col: number) =>
-      hitChain(root, col, 0, null).map((el) => el.getAttribute("data-test"));
-    // The link's cells are its paragraph's, as natively: its ancestors
+    const chain = chainIn(
+      `<div style="position: relative"><div data-test="zone">zone text here</div><p data-test="p" style="pointer-events: none; position: absolute; top: 0; left: 0">aa <a data-test="link" style="pointer-events: auto">link</a></p></div>`,
+      20,
+    );
+    // The link's cells are its own, as natively: it and its ancestors
     // hover, the paragraph among them.
-    expect(chain(4)).toEqual(["p"]);
+    expect(chain(4, 0)).toEqual(["p", "link"]);
     // The paragraph's own text passes the pointer to the zone.
-    expect(chain(0)).toEqual(["zone"]);
+    expect(chain(0, 0)).toEqual(["zone"]);
   });
 });
 
@@ -411,7 +451,7 @@ describe("the pointer's cell through a layer (specs/layers.md)", () => {
         at("root", [0, 0, 10, 2], {
           children: [
             at("view", [0, 0, 4, 1], {
-              style: { overflow: { x: "clip", y: "clip" } },
+              style: { overflow: { x: "hidden", y: "hidden" } },
               children: [
                 at("track", [0, 0, 8, 1], {
                   style: { layer },

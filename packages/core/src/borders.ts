@@ -3,6 +3,7 @@ import {
   glyphSetFor,
   JUNCTION_ROLES,
   junctionWeight,
+  mixedJunction,
   shadowRamp,
   weightBand,
 } from "./glyphs.ts";
@@ -159,10 +160,12 @@ export function collectShadowRuns(
   }
 }
 
-/** Paint one ring, each edge in its own style and weight. A corner takes
- * the style its edges share, else solid (specs/cell-model.md "Borders:
- * glyph mapping"), the heavier weight (junctionWeight), its radius's
- * glyph (cornerGlyph) and the horizontal edge's color. */
+/** Paint one ring, each edge in its own style and weight. A corner
+ * between edges drawing unlike lines takes Unicode's mixed glyph for
+ * them (`mixedArms`); else the style its edges share, else solid
+ * (specs/cell-model.md "Borders: glyph mapping"), the heavier weight
+ * (junctionWeight) and its radius's glyph (cornerGlyph); always the
+ * horizontal edge's color. */
 function paintRing(
   out: BorderRun[],
   styles: PerSide<BorderStyle>,
@@ -183,7 +186,20 @@ function paintRing(
       junctionWeight(styles[a], weights[a], set),
       junctionWeight(styles[b], weights[b], set),
     );
-    return cornerGlyph(style, role, radii[role], weightBand(style, weight, set), set);
+    const band = weightBand(style, weight, set);
+    const glyph = cornerGlyph(style, role, radii[role], band, set);
+    // An arc keeps the corner; a square one takes its arms' mixed glyph.
+    if (glyph !== band.roles[role]) return glyph;
+    const row = { style: styles[a], weight: weights[a] };
+    const column = { style: styles[b], weight: weights[b] };
+    const mixed = mixedArms(
+      a === "bottom" ? column : null,
+      a === "top" ? column : null,
+      b === "right" ? row : null,
+      b === "left" ? row : null,
+      set,
+    );
+    return mixed ?? glyph;
   };
   const { x, y, width, height } = rect;
   const hasCorners = width >= 2 && height >= 2;
@@ -241,6 +257,33 @@ export function lineGlyph(
   set?: BorderGlyphSet,
 ): string {
   return weightBand(style, weight, set).roles[axis];
+}
+
+/** An arm of a junction: the line it continues. */
+export interface Arm {
+  style: BorderStyle;
+  weight: number;
+}
+
+/** The mixed junction glyph for arms (up, down, left, right; null for
+ * none) drawing unlike lines at their weights (glyphs.ts
+ * `mixedJunction`), undefined where they draw alike or Unicode has
+ * none. */
+export function mixedArms(
+  up: Arm | null,
+  down: Arm | null,
+  left: Arm | null,
+  right: Arm | null,
+  set?: BorderGlyphSet,
+): string | undefined {
+  // Arms alike draw alike: no lookup.
+  const first = up ?? down ?? left ?? right;
+  const alike = (arm: Arm | null) =>
+    !arm || (arm.style === first!.style && arm.weight === first!.weight);
+  if (alike(up) && alike(down) && alike(left) && alike(right)) return undefined;
+  const line = (arm: Arm | null, axis: "h" | "v") =>
+    arm && lineGlyph(arm.style, arm.weight, axis, set);
+  return mixedJunction([line(up, "v"), line(down, "v"), line(left, "h"), line(right, "h")], set);
 }
 
 /** Junction glyph for a lattice intersection, from which of the four
@@ -492,19 +535,31 @@ function collectGapRuleRuns(ctx: GapRuleContext): BorderRun[] {
         for (let x = line.start; x < line.end; x++) {
           const up = inkAtBoundary(vLines, vWidth, x, y);
           const down = inkAtBoundary(vLines, vWidth, x, y + 1);
+          let glyph = lineGlyph(ctx.ruleY.style, ctx.ruleY.weight, "h", ctx.glyphs);
+          if (up || down) {
+            const left = inkAtBoundary(hLines, hWidth, y, x);
+            const right = inkAtBoundary(hLines, hWidth, y, x + 1);
+            const { ruleX, ruleY } = ctx;
+            glyph =
+              mixedArms(
+                up ? ruleX : null,
+                down ? ruleX : null,
+                left ? ruleY : null,
+                right ? ruleY : null,
+                ctx.glyphs,
+              ) ??
+              junctionGlyph(
+                allDouble ? "double" : "solid",
+                crossing,
+                up,
+                down,
+                left,
+                right,
+                ctx.glyphs,
+              );
+          }
           out.push({
-            glyph:
-              up || down
-                ? junctionGlyph(
-                    allDouble ? "double" : "solid",
-                    crossing,
-                    up,
-                    down,
-                    inkAtBoundary(hLines, hWidth, y, x),
-                    inkAtBoundary(hLines, hWidth, y, x + 1),
-                    ctx.glyphs,
-                  )
-                : lineGlyph(ctx.ruleY.style, ctx.ruleY.weight, "h", ctx.glyphs),
+            glyph,
             x: originX + x,
             y: originY + y,
             length: 1,
@@ -550,8 +605,17 @@ function collectRuleBorderJunctions(
       rule.weight,
       junctionWeight(ctx.borderStyle[side], ctx.borderWeight[side], ctx.glyphs),
     );
+    const edge = { style: ctx.borderStyle[side], weight: ctx.borderWeight[side] };
+    const [v, h] = axis === "x" ? [rule, edge] : [edge, rule];
+    const mixed = mixedArms(
+      up ? v : null,
+      down ? v : null,
+      left ? h : null,
+      right ? h : null,
+      ctx.glyphs,
+    );
     out.push({
-      glyph: junctionGlyph(style, weight, up, down, left, right, ctx.glyphs),
+      glyph: mixed ?? junctionGlyph(style, weight, up, down, left, right, ctx.glyphs),
       x,
       y,
       length: 1,
