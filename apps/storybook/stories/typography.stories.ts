@@ -1,5 +1,5 @@
 import { html } from "lit";
-import { expect } from "storybook/test";
+import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   besideNative,
@@ -464,6 +464,36 @@ export const InlineBoxMargins: StoryObj = {
     // its label's.
     const delta = rows.findIndex((line) => line.includes("delta"));
     expect(delta - rows.findIndex((line) => line.includes("mb-1"))).toBe(2);
+  },
+};
+
+/**
+ * Test-only: an atomic inline box on a leaded line, top-, bottom- and
+ * middle-aligned, its native text on its grid row, whatever its line's
+ * gap (render.ts `inlineLift`).
+ */
+export const LeadedInlineBoxes: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <p data-test="loose" class="leading-loose">
+        ab <span class="inline-block">top</span> cd
+        <span class="inline-block pt-2 align-bottom">bottom</span> ef
+        <span class="inline-block py-1 align-middle">middle</span> gh
+      </p>
+      <p data-test="three" class="mt-1 leading-[3]">
+        ab <span class="inline-block">top</span> cd
+        <span class="inline-block pt-2 align-bottom">bottom</span> ef
+        <span class="inline-block py-1 align-middle">middle</span> gh
+      </p>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const { by, measure } = await readyGrid(canvasElement);
+    await waitFor(() => {
+      const { expectNativeOnGrid } = measure();
+      for (const name of ["loose", "three"]) expectNativeOnGrid(by(name));
+    });
   },
 };
 

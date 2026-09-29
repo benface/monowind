@@ -3,8 +3,8 @@ import { layersAt } from "./paint.ts";
 import type { CellHit } from "./paint.ts";
 import {
   charIndexAtCell,
-  clipBounds,
   inClip,
+  inContentClip,
   inkClip,
   inlineShift,
   leafLineCovers,
@@ -62,7 +62,8 @@ export interface Hit {
  * (cellAtPoint), null for the main grid: a layer's subtree answers in
  * its own grid alone, where its transform draws it (specs/layers.md). */
 function hitAt(root: LayoutNode, col: number, row: number, through: LayoutNode | null): Hit {
-  return hitOf(root, lastTaking(root, through, col, row));
+  const index = paintIndex(root);
+  return hitOf(root, lastTaking(index, through && sameBox(index, through), col, row));
 }
 
 /** The hit of the entry taking a cell. */
@@ -80,15 +81,13 @@ function hitOf(root: LayoutNode, { order, index }: Taking): Hit {
 const REACTS_TO_HOVER =
   '[class*="hover"], [class*="hover"] *, .group, .peer, [class*="group/"], [class*="peer/"]';
 
-/** The inline elements over a hit's character, outermost first; for
- * the hover chain, those whose hover can restyle something. */
-function inlineOf({ glyph }: Hit, hovering: boolean): Element[] {
+/** The inline elements over a hit's character, outermost first. */
+function inlineOf({ glyph }: Hit): Element[] {
   const inline: Element[] = [];
   if (!glyph) return inline;
   const elements = glyph.node.inlineElements!;
   for (let at = glyph.node.charInline?.[glyph.index] ?? -1; at >= 0; at = elements[at]!.parent) {
-    const { element } = elements[at]!;
-    if (!hovering || element.matches(REACTS_TO_HOVER)) inline.unshift(element);
+    inline.unshift(elements[at]!.element);
   }
   return inline;
 }
@@ -103,16 +102,9 @@ interface Taking {
 const NONE_TAKING: Taking = { order: -1, index: -1 };
 
 /** The last entry that takes the cell on the grid of the layer
- * `through` roots (null the main grid): a nested layer's cells are its
- * own grid's, its span passed whole. */
-function lastTaking(
-  root: LayoutNode,
-  through: LayoutNode | null,
-  col: number,
-  row: number,
-): Taking {
-  const index = paintIndex(root);
-  const layer = through && sameBox(index, through);
+ * `layer` roots in `index` (null the main grid): a nested layer's cells
+ * are its own grid's, its span passed whole. */
+function lastTaking(index: PaintIndex, layer: LayoutNode | null, col: number, row: number): Taking {
   const span = layer ? index.spans.get(layer) : { start: 0, end: index.entries.length };
   if (!span) return NONE_TAKING;
   for (let i = span.end - 1; i >= span.start; i--) {
@@ -161,8 +153,7 @@ function takes(entry: PaintEntry, col: number, row: number): number | undefined 
     const taken =
       node.style.visible &&
       node.style.pointerEvents &&
-      inClip(inkClip(node), col, row) &&
-      inClip(clipBounds(node, x, y), col, row) &&
+      inContentClip(node, col, row) &&
       markerCovers(node, col, row);
     return taken ? -1 : undefined;
   }
@@ -178,9 +169,7 @@ function takes(entry: PaintEntry, col: number, row: number): number | undefined 
   // A turn's glyphs lie in the leaf's hit rect, moved by its member's shift.
   const shift = entry.member < 0 ? null : inlineShift(node.inlineElements!, entry.member);
   if (!inHitRect(node, col - (shift?.x ?? 0), row - (shift?.y ?? 0))) return undefined;
-  if (!inClip(inkClip(node), col, row) || !inClip(clipBounds(node, x, y), col, row)) {
-    return undefined;
-  }
+  if (!inContentClip(node, col, row)) return undefined;
   const index = charIndexAtCell(node, x, y, col, row, entry.member);
   if (index === null) return undefined;
   const at = node.charInline?.[index] ?? -1;
@@ -225,16 +214,17 @@ export function cellAtPoint(
   const row = Math.floor(y / cell.height);
   // The main grid's hit, its place in the paint order.
   let main: Taking | undefined;
+  const index = root && paintIndex(root);
+  const count = index?.entries.length ?? 0;
   for (const layer of layersAt(layers, x, y)) {
-    if (!root) return layer;
-    const index = paintIndex(root);
-    const count = index.entries.length;
-    const end = index.spans.get(sameBox(index, layer.layerRoot))?.end ?? count;
+    if (!index) return layer;
+    const box = sameBox(index, layer.layerRoot);
+    const end = index.spans.get(box)?.end ?? count;
     if (end < count) {
-      main ??= lastTaking(root, null, col, row);
+      main ??= lastTaking(index, null, col, row);
       if (main.order >= end) continue;
     }
-    const taking = lastTaking(root, layer.layerRoot, layer.col, layer.row);
+    const taking = lastTaking(index, box, layer.col, layer.row);
     if (taking.order >= 0) return { ...layer, hit: hitOf(root, taking) };
   }
   const found = main === undefined ? {} : { hit: hitOf(root!, main) };
@@ -254,11 +244,9 @@ export const stackAt = (root: LayoutNode, at: PointerHit): LayoutNode[] =>
 export const chainAt = (root: LayoutNode, at: PointerHit): Element[] =>
   chainOf(pointerHit(root, at));
 
-/** The chain the hover marks at a pointer's cell: an inline element in
- * it where its classes react to a hover, as a chain change lays the
- * page out (specs/cell-model.md "Pointer states"). */
-export const hoverChainAt = (root: LayoutNode, at: PointerHit): Element[] =>
-  chainOf(pointerHit(root, at), true);
+/** The part of a pointer's chain the hover marks. */
+export const hoverChainAt = (root: LayoutNode, at: PointerHit, chain: Element[]): Element[] =>
+  hoverOf(pointerHit(root, at), chain);
 
 /** What a point's hit is a function of until the next paint: its
  * main-grid cell and every layer's cell under it, for a pointer's
@@ -272,19 +260,29 @@ export function pointKey(layers: HTMLElement, x: number, y: number, cell: CellSi
 /** A hit's elements — what the synthesized states mark — cut at the
  * first inert one, where native :hover stops too. An anonymous run's
  * element is its container, already in the chain. */
-function chainOf(hit: Hit, hovering = false): Element[] {
+function chainOf(hit: Hit): Element[] {
   const boxes = hit.stack.filter((node) => !node.anonymous).map((node) => node.source);
-  const chain = [...boxes, ...inlineOf(hit, hovering)];
+  const chain = [...boxes, ...inlineOf(hit)];
   const inert = chain.findIndex(isInert);
   return inert < 0 ? chain : chain.slice(0, inert);
+}
+
+/** The part of a hit's chain the hover marks: its boxes', and an inline
+ * element where its classes react to a hover, as a chain change lays
+ * the page out (specs/cell-model.md "Pointer states"). */
+function hoverOf(hit: Hit, chain: Element[]): Element[] {
+  const boxes = hit.stack.filter((node) => !node.anonymous).length;
+  return chain.filter((element, i) => i < boxes || element.matches(REACTS_TO_HOVER));
 }
 
 export const hitStack = (...args: Parameters<typeof hitAt>): LayoutNode[] => hitAt(...args).stack;
 
 export const hitChain = (...args: Parameters<typeof hitAt>): Element[] => chainOf(hitAt(...args));
 
-export const hitHoverChain = (...args: Parameters<typeof hitAt>): Element[] =>
-  chainOf(hitAt(...args), true);
+export function hitHoverChain(...args: Parameters<typeof hitAt>): Element[] {
+  const hit = hitAt(...args);
+  return hoverOf(hit, chainOf(hit));
+}
 
 /** The cells a scroller moves toward a pointer past its box
  * (specs/wide-characters.md "auto-scrolls"): the distance past each

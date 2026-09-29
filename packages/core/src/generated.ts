@@ -29,12 +29,12 @@ export function generatedElements(root: Element): Record<Pseudo, ReadonlySet<Ele
   const after = [...selectors["::after"]].join(", ");
   // A page with no rule of its own has `q`s alone, found without a
   // match per element.
-  const found =
-    before === "q" && after === "q"
-      ? root.getElementsByTagName("q")
-      : root.querySelectorAll(`${before}, ${after}`);
+  if (before === "q" && after === "q") {
+    const quotes = new Set(root.getElementsByTagName("q"));
+    return { "::before": quotes, "::after": quotes };
+  }
   const elements = { "::before": new Set<Element>(), "::after": new Set<Element>() };
-  for (const el of found) {
+  for (const el of root.querySelectorAll(`${before}, ${after}`)) {
     if (el.matches(before)) elements["::before"].add(el);
     if (el.matches(after)) elements["::after"].add(el);
   }
@@ -135,8 +135,8 @@ function autoQuotes(language: string): string {
   return "“”‘’";
 }
 
-/** Chromium's `quotes: auto` pairs, outer then inner (probed
- * 2026-09-28), by the languages that take them. */
+/** Chromium's `quotes: auto` pairs, outer then inner (probed), by the
+ * languages that take them. */
 const AUTO_QUOTES = new Map(
   Object.entries({
     "„“‚‘": "bs-cyrl cs de et hr sk sl",

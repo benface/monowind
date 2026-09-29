@@ -1282,15 +1282,24 @@ export const decorationKey = (value: TextDecoration): string =>
   `${value.line}|${value.style}|${value.color}|${value.thickness}`;
 
 /** The one object for a decoration's value. */
+/** Whether a box is its element's own: no anonymous run's, no
+ * pseudo-element's. */
+export const isElementBox = (node: LayoutNode): boolean => !node.anonymous && !node.generated;
+
 export function decorationOf(value: TextDecoration): TextDecoration {
   if (!value.line || value.line === "none") return NO_DECORATION;
-  const key = decorationKey(value);
-  let decoration = decorations.get(key);
-  if (!decoration) {
-    if (decorations.size === 256) decorations.clear();
-    decorations.set(key, (decoration = { ...value }));
+  return intern(decorations, decorationKey(value), () => value);
+}
+
+/** The one value a cache holds for a key, made on a miss; at most 256
+ * kept, as an animation's values are endless. */
+export function intern<T>(cache: Map<string, T>, key: string, make: () => T): T {
+  let value = cache.get(key);
+  if (value === undefined) {
+    if (cache.size === 256) cache.clear();
+    cache.set(key, (value = make()));
   }
-  return decoration;
+  return value;
 }
 
 export function defaultCellStyle(): CellStyle {

@@ -609,18 +609,6 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   /* A block one in a multi-column flow keeps its text, its native lines
    * fragmenting as the grid's do (`data-mw-multicol-flow`), with its
    * vertical margins, or the padding they ride as. */
-  mono-wind [data-mw-before="flow"]:not([data-mw-measuring])::before,
-  mono-wind [data-mw-after="flow"]:not([data-mw-measuring])::after {
-    position: static !important;
-    display: block !important;
-    width: auto !important;
-    height: auto !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
-    max-width: none !important;
-    max-height: none !important;
-    column-span: none !important;
-  }
   mono-wind [data-mw-before="flow"]:not([data-mw-measuring])::before {
     padding-block: calc(var(--mw-before-pt) * var(--mw-ch, 1px))
       calc(var(--mw-before-pb) * var(--mw-ch, 1px)) !important;
@@ -891,10 +879,8 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   mono-wind [data-mw-inline-box]:not([data-mw-measuring]) {
     position: relative !important;
     /* A sticky inline box's shift for the scroll (specs/sticky.md; zero
-     * otherwise) and the same half-leading lift as
-     * laid-out elements — without it an inline box's NATIVE ink (a
-     * textarea's value under leading-*) sits centered in its line boxes
-     * instead of on its rows. */
+     * otherwise) and its lift from where its line's leading puts it
+     * (render.ts `inlineLift`), its native ink on its rows. */
     top: calc((var(--mw-sy) + var(--mw-lhs, 0)) * var(--mw-ch, 1px)) !important;
     left: calc(var(--mw-sx) * var(--mw-cw, 1px)) !important;
     vertical-align: top !important;
@@ -974,8 +960,11 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * collapse rule). Width and height stay natural — a chrome-less block's
    * natural height is full line boxes, exactly what fragmentation counts;
    * typography quantization and the color/background locks come from the
-   * universal rules, and line-height inherits from the container. */
-  mono-wind [data-mw-multicol-flow]:not([data-mw-measuring]) {
+   * universal rules, and line-height inherits from the container. A
+   * pseudo-element among them takes its margins from its own rule. */
+  mono-wind [data-mw-multicol-flow]:not([data-mw-measuring]),
+  mono-wind [data-mw-before="flow"]:not([data-mw-measuring])::before,
+  mono-wind [data-mw-after="flow"]:not([data-mw-measuring])::after {
     position: static !important;
     display: block !important;
     box-sizing: border-box !important;
@@ -985,9 +974,11 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     min-height: 0 !important;
     max-width: none !important;
     max-height: none !important;
+    column-span: none !important;
+  }
+  mono-wind [data-mw-multicol-flow]:not([data-mw-measuring]) {
     margin: calc(var(--mw-mt, 0) * var(--mw-ch, 1px)) calc(var(--mw-mr, 0) * var(--mw-cw, 1px))
       calc(var(--mw-mb, 0) * var(--mw-ch, 1px)) calc(var(--mw-ml, 0) * var(--mw-cw, 1px)) !important;
-    column-span: none !important;
   }
 
   /* text-indent (specs/cell-model.md): native px would resolve to the

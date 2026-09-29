@@ -253,18 +253,20 @@ describe("border weight bands", () => {
 describe("junction glyphs", () => {
   /** A style's junction glyph at every arm mask (up 8 / down 4 / left 2 /
    * right 1), in mask order. */
-  const junctions = (style: BorderStyle, weight: number, set?: string) =>
-    Array.from({ length: 16 }, (_, mask) =>
+  const junctions = (style: BorderStyle, weight: number, set?: string) => {
+    const arm = (on: number) => (on ? { style, weight } : null);
+    return Array.from({ length: 16 }, (_, mask) =>
       junctionGlyph(
         style,
         weight,
-        !!(mask & 8),
-        !!(mask & 4),
-        !!(mask & 2),
-        !!(mask & 1),
+        arm(mask & 8),
+        arm(mask & 4),
+        arm(mask & 2),
+        arm(mask & 1),
         glyphSetFor(set),
       ),
     ).join("");
+  };
 
   it("draws each mask's role from the style's table at its weight, stubs as lines", () => {
     expect(junctions("solid", 1)).toBe(" ───│┌┐┬│└┘┴│├┤┼");

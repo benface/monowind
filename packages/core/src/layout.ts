@@ -276,14 +276,17 @@ export function layoutNode(
   // model"): a zero-height box with a top border is its border row.
   const outerWidth = Math.max(
     forced?.width ??
-      (ratio !== null && style.width === undefined
-        ? ratioWidth(node, ratio, forcedHeight ?? setHeight, space, widthMode, cache, {
-            minWidth,
-            maxWidth,
-            minHeight,
-            maxHeight,
-          })
-        : clampSize(resolveWidth(node, space, widthMode, cache), minWidth, maxWidth)),
+      clampSize(
+        ratio !== null && style.width === undefined
+          ? ratioWidth(node, ratio, forcedHeight ?? setHeight, space, widthMode, cache, {
+              maxWidth,
+              minHeight,
+              maxHeight,
+            })
+          : resolveWidth(node, space, widthMode, cache),
+        minWidth,
+        maxWidth,
+      ),
     edges(style.border, padding, "x"),
   );
   const derivedHeight =
@@ -734,7 +737,7 @@ function alignLeafText(
  * geometry: `lineGap` rows between lines, per-line heights and text
  * drops from leafLineMetrics (multicol leaves fragment through
  * multicolLeafGeometry instead). Marker advances must be resolved. */
-export function leafLineGeometry(
+function leafLineGeometry(
   node: LayoutNode,
   contentWidth: number,
   intrusions?: Intrusions,
@@ -746,18 +749,9 @@ export function leafLineGeometry(
   bands: LineBand[] | undefined;
   clamped: boolean;
 } {
-  // Beside floats the opener records the bands; a later pass (the
-  // paint's) replays the recorded ones.
-  let bands: LineBand[] | undefined;
-  let opener: LineOpener | undefined;
-  if (intrusions) {
-    bands = [];
-    opener = lineOpener(node, contentWidth, intrusions, bands);
-  } else if (node.lineBands) {
-    const recorded = node.lineBands;
-    bands = recorded;
-    opener = (index) => recorded[index]?.width ?? contentWidth;
-  }
+  // Beside floats the opener records the bands.
+  const bands: LineBand[] | undefined = intrusions ? [] : undefined;
+  const opener = intrusions && lineOpener(node, contentWidth, intrusions, bands!);
   const wrapped = leafLineSpans(node, contentWidth, opener);
   const clamp = node.style.lineClamp ?? Infinity;
   const spans = wrapped.length > clamp ? wrapped.slice(0, clamp) : wrapped;
@@ -1580,30 +1574,27 @@ function ratioWidth(
   space: { basis: number; fill: number },
   mode: SizingMode,
   cache: IntrinsicCache,
-  limits: {
-    minWidth: number;
+  {
+    maxWidth,
+    minHeight,
+    maxHeight,
+  }: {
     maxWidth: number | undefined;
     minHeight: number;
     maxHeight: number | undefined;
   },
 ): number {
-  const { minWidth, maxWidth, minHeight, maxHeight } = limits;
   if (height !== undefined) {
-    return clampSize(
-      Math.max(
-        ratioSize(clampSize(height, minHeight, maxHeight), ratio, "x"),
-        ratioWidthFloor(node, maxWidth, cache),
-      ),
-      minWidth,
-      maxWidth,
+    return Math.max(
+      ratioSize(clampSize(height, minHeight, maxHeight), ratio, "x"),
+      ratioWidthFloor(node, maxWidth, cache),
     );
   }
-  const width = clampSize(
+  return clampSize(
     resolveWidth(node, space, mode, cache),
     ratioSize(minHeight, ratio, "x"),
     maxHeight === undefined ? undefined : ratioSize(maxHeight, ratio, "x"),
   );
-  return clampSize(width, minWidth, maxWidth);
 }
 
 /** A width the ratio derives, floored at the min-content width unless

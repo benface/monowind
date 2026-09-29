@@ -559,6 +559,21 @@ describe("the light DOM's pseudo-elements", () => {
     expect(written("split")).toEqual(["0", "1", "0", "0", ""]);
   });
 
+  it("move an atomic box on a leaded line to its rows from where the line's leading puts it", () => {
+    newHost();
+    pseudoStyles([
+      ["top", "::before", `content: "a"; display: inline-block`],
+      ["bottom", "::before", `content: "b"; display: inline-block; vertical-align: bottom`],
+    ]);
+    rendered(
+      `<p style="line-height: 48px">x <span data-test="top">y</span> <span data-test="bottom">z</span></p>`,
+    );
+    // Two gap rows a line: a row down from its top edge, a row up from
+    // its bottom one.
+    const y = (name: string) => styleOf(name).getPropertyValue("--mw-before-y");
+    expect([y("top"), y("bottom")]).toEqual(["1", "-1"]);
+  });
+
   it("place an absolute box in a container's text run where the run lies", () => {
     newHost();
     pseudoStyles([["s", "::after", `content: "↗"; position: absolute`]]);

@@ -168,9 +168,11 @@ it("styles.css keeps the theme layer to locks and the engine variables' resets",
 });
 
 it("styles.css reads on a pseudo-element the variables render.ts writes for its kind", () => {
-  const [text, flow, box] = [...render.matchAll(/vars\("([\w ]+)"\)/g)].map((match) =>
+  const [flow, box] = [...render.matchAll(/vars\("([\w ]+)"\)/g)].map((match) =>
     match[1]!.split(" "),
   );
+  // An inline one writes a flow's first five.
+  const text = flow!.slice(0, 5);
   for (const pseudo of ["before", "after"]) {
     const read = (flag: string) =>
       all.flatMap((d) =>

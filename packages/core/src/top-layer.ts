@@ -5,6 +5,7 @@
  * hit-tests in.
  */
 
+import { isElementBox } from "./types.ts";
 import type { LayoutNode, TopLayerEntry } from "./types.ts";
 
 /** Whether `el` is in the platform's top layer: an open popover or a
@@ -40,7 +41,7 @@ export class TopLayer {
     const entries: TopLayerEntry[] = [];
     const chain: LayoutNode[] = [];
     const visit = (node: LayoutNode): void => {
-      if (chain.length > 0 && !node.anonymous && !node.generated) {
+      if (chain.length > 0 && isElementBox(node)) {
         if (node.style.topLayer) this.enter(node.source);
         // A stack element paints from its host rect: a fixed box's.
         const rank = node.hostRect ? this.#rank.get(node.source) : undefined;

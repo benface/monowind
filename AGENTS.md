@@ -63,7 +63,8 @@ day it is done.
   needed (every package's shadow CSS, its `src/shadow.css`, the importer
   referencing `vite/client` for the source's consumers), not in a
   template literal, where a backtick in a comment closes the string.
-  Every build strips its comments (`scripts/vite-css.mjs`).
+  Every build strips its comments and trims its white space
+  (`scripts/vite-css.mjs`).
 - No plan-internal jargon in code, tests, or story text (milestone
   numbers, phase numbers, plan-file dates, "before/after" migration
   language). Describe what the code IS; cite a spec or a concrete rule

@@ -3,6 +3,7 @@
  * the properties they touch into what a frame does (specs/animations.md).
  */
 
+import { isElementBox } from "./types.ts";
 import type { LayoutNode } from "./types.ts";
 
 /** What a frame does for an element's running animations: `box`
@@ -147,7 +148,7 @@ export function animationPath(
 export function nodeIndex(root: LayoutNode): Map<Element, LayoutNode> {
   const index = new Map<Element, LayoutNode>();
   const visit = (node: LayoutNode): void => {
-    if (!node.anonymous && !node.generated) index.set(node.source, node);
+    if (isElementBox(node)) index.set(node.source, node);
     for (const child of node.children) visit(child);
   };
   visit(root);

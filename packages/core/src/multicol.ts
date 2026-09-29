@@ -59,7 +59,7 @@ function resolveColumnTracks(style: CellStyle, available: number, gap: number): 
 export function multicolIntrinsicInnerWidth(
   style: CellStyle,
   content: number,
-  kind: "min" | "max" = "max",
+  kind: "min" | "max",
 ): number {
   const gap = resolveGap(style, "x", undefined);
   if (kind === "min" && style.columnWidth !== null) return Math.min(style.columnWidth, content);

@@ -453,6 +453,36 @@ export const MovedHost: StoryObj = {
   },
 };
 
+/** Test-only: an element whose `style` a page's script rewrites, the
+ * engine's variables gone with it, takes them again at the layout the
+ * rewrite starts — and so does one restyled while out of the host, as
+ * it comes back. */
+export const RestyledElement: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <div class="flex gap-2">
+        <div class="w-12 border px-1">first</div>
+        <div data-test="second" class="w-12 border px-1">second</div>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const second = testHooks(canvasElement)("second");
+    const x = () => second.style.getPropertyValue("--mw-x");
+    const laidOut = x();
+    expect(laidOut).not.toBe("");
+    second.setAttribute("style", "color: red");
+    await waitFor(() => expect(x()).toBe(laidOut));
+    const parent = second.parentElement!;
+    second.remove();
+    await frames(2);
+    second.removeAttribute("style");
+    parent.append(second);
+    await waitFor(() => expect(x()).toBe(laidOut));
+  },
+};
+
 const lines = (count: number) =>
   Array.from({ length: count }, (_, i) => html`<p>line ${i + 1}</p>`);
 

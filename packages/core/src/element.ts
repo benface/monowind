@@ -66,7 +66,8 @@ import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
 import { gridOffsetAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics, sameMetrics } from "./metrics.ts";
 import { edges, layoutRoot } from "./layout.ts";
-import { render, renderScroll, setVar, wrotePseudoElements } from "./render.ts";
+import { forgetWrites, render, renderScroll, setVar, wrotePseudoElements } from "./render.ts";
+import { nameOf, PSEUDOS } from "./generated.ts";
 import { namedAnchors } from "./positioning.ts";
 import { TopLayer, isTopLayer } from "./top-layer.ts";
 import { buildRoot } from "./tree.ts";
@@ -686,6 +687,7 @@ export class MonoWindElement extends HTMLElementBase {
     // layout are drained before observation resumes, its marks outside
     // one are filtered by name, and its origin lives in the shadow.
     this.#mutationObserver = new MutationObserver((records) => {
+      forgetWrites(records);
       if (records.some((record) => this.#changesRendering(record))) this.#scheduleLayout();
     });
     this.#mutationObserver.observe(this, {
@@ -2240,7 +2242,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.#hoverKey = this.#pointKey(x, y, metrics);
       const at = this.#cellAt(x, y, metrics);
       chain = chainAt(layout, at);
-      hovered = hoverChainAt(layout, at);
+      if (MonoWindElement.#hoverCapable?.matches) hovered = hoverChainAt(layout, at, chain);
     } else {
       this.#hoverKey = null;
     }
@@ -2253,10 +2255,9 @@ export class MonoWindElement extends HTMLElementBase {
     // is over the pressed element, drop when it leaves, return when it
     // re-enters. (Mid-drag hover changes track normally — the paint
     // hold keeps their restyles off the grid until release.)
-    const hover = MonoWindElement.#hoverCapable?.matches ? hovered : [];
     const pressIndex = this.#pressTarget ? chain.indexOf(this.#pressTarget) : -1;
     const press = pressIndex >= 0 ? chain.slice(0, pressIndex + 1) : [];
-    let changed = this.#applyChain("data-mw-hover", this.#hovered, hover);
+    let changed = this.#applyChain("data-mw-hover", this.#hovered, hovered);
     changed = this.#applyChain("data-mw-active", this.#pressed, press) || changed;
     // Mirror the hovered cursor onto the grid (the real hit target) —
     // `cursor-pointer` on a click-wired element is invisible otherwise.
@@ -2756,6 +2757,9 @@ export class MonoWindElement extends HTMLElementBase {
       this.#layoutPending = false;
       cancelAnimationFrame(this.#layoutRequest);
     }
+    // The page's mutations still queued, which this pass's drain would
+    // take for its own: what they wrote is the page's (render.ts).
+    forgetWrites(this.#mutationObserver?.takeRecords() ?? []);
     // A queued frame can outlive the host's removal (story/app teardown,
     // SPA navigation): computed styles on a detached tree read as empty
     // strings, which would misclassify every element and misfire author
@@ -2931,9 +2935,11 @@ export class MonoWindElement extends HTMLElementBase {
         if (
           mayTransition(getComputedStyle(el)) ||
           (pseudos &&
-            ((el.hasAttribute("data-mw-before") &&
-              mayTransition(getComputedStyle(el, "::before"))) ||
-              (el.hasAttribute("data-mw-after") && mayTransition(getComputedStyle(el, "::after")))))
+            PSEUDOS.some(
+              (pseudo) =>
+                el.hasAttribute(`data-mw-${nameOf(pseudo)}`) &&
+                mayTransition(getComputedStyle(el, pseudo)),
+            ))
         ) {
           settling.elements.add(el);
         }

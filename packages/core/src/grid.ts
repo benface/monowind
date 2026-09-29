@@ -676,7 +676,7 @@ function subgridContributions(
   chrome: { start: number; end: number },
   parentGap: number,
   cache: IntrinsicCache,
-  outer = { before: 0, after: 0 },
+  outer: { before: number; after: number },
 ): SizingItem[] {
   const span = axis === "cols" ? subgrid.colSpan : subgrid.rowSpan;
   const structure = resolveGridStructure(child, undefined, undefined, 0, 0, subgrid);
@@ -1618,16 +1618,16 @@ function sizeTracks(
     if (crossesFr) continue;
 
     // Limits: grow the intrinsic-limit tracks toward the corresponding
-    // contribution (min-content maxes take the min contribution).
+    // contribution (min-content maxes take the min contribution). A
+    // `fit-content()` track freezes at its cap, the rest going on to the
+    // others (css-grid §11.5.1).
+    const open = (t: TrackState) => t.cap === undefined || effectiveLimit(t) < t.cap;
     for (const [kind, contribution] of [
       ["intrinsic-min", item.min],
       ["intrinsic-max", item.max],
     ] as const) {
       const current = spanned.reduce((s, t) => s + effectiveLimit(t), 0) + gaps;
       let needed = contribution - current;
-      // A `fit-content()` track freezes at its cap, the rest going on to
-      // the others (css-grid §11.5.1).
-      const open = (t: TrackState) => t.cap === undefined || effectiveLimit(t) < t.cap;
       let receivers = spanned.filter((t) => t.limitKind === kind && !t.collapsed && open(t));
       while (needed > 0 && receivers.length > 0) {
         const shares = distributeInteger(

@@ -286,6 +286,13 @@ one it wrote no inline insets on loses those; one whose pseudo-element
 it wrote nothing for, or another kind for, loses that pseudo-element's
 writes; and a box, an inline element's padding cells.
 
+A write happens only on change, against the engine's own last write
+to that element, so a relayout reads no inline style back. A page's
+own mutation that may have changed what the engine wrote — a `style`
+written, an element taken out of the host — forgets that element's
+last writes, which its next layout makes anew (the pending ones taken
+as the layout starts, before its own writes queue theirs).
+
 ## Typography
 
 - `font-family`, `font-size`, `line-height` (default **`normal`**), and
@@ -334,7 +341,11 @@ writes; and a box, an inline element's padding cells.
   browser paints wrapped lines with `line-height = rows × cell`, and the
   engine cancels CSS's half-leading (the (rows − 1)/2-row offset CSS puts
   above the first line) with an engine-owned shift so every glyph stays on
-  its row.
+  its row. An atomic inline box's shift starts from where its line's
+  leading puts it: half its line's gap below a top-aligned box's line
+  box top, above a bottom-aligned one's line box bottom, and none for a
+  middle-aligned one, whose baseline already holds its text (render.ts
+  `inlineLift`).
 - **Letter spacing on the grid** (`tracking-*`, every element including
   inline ones): `extra = max(0, floor(excess ÷ 0.025em))` where `excess` is
   the element's letter-spacing minus the root's (0.025em is Tailwind's
@@ -1602,7 +1613,10 @@ For "Engine variables":
   cascade.test.ts sorts render.ts's variables into their classes, and
   checks a pseudo-element's reads against its kind's writes.
 - render.ts: every write, `setVar` removing a variable (null) where
-  the reset stands for it; `render` clears an earlier layout's box
+  the reset stands for it, against its last write there
+  (`forgetWrites` forgetting what a page's mutation may have changed,
+  element.ts calling it from its observer and as a layout starts);
+  `render` clears an earlier layout's box
   writes (`BOX_NAMES`) and inline insets from the elements this one
   wrote none on (`clearUnwritten`), and a pseudo-element's
   (`PSEUDO_NAMES`), and `positionElement` an inline element's padding

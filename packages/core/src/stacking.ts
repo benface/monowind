@@ -77,14 +77,6 @@ interface Members {
   rest: Member[];
 }
 
-/** The members of `context`: the boxes in the positioned step reached
- * through in-flow boxes and through positioned boxes that form no
- * context, and their leaves' inline members; null where there are none. */
-export function membersOf(context: LayoutNode): Members | null {
-  const found = collectMembers(context, null);
-  return found && sortMembers(found);
-}
-
 function sortMembers(found: Member[]): Members {
   // A sort copies the list, which tree order most often leaves sorted.
   if (found.some((member, i) => i > 0 && member.z < found[i - 1]!.z)) {
@@ -95,6 +87,14 @@ function sortMembers(found: Member[]): Members {
   return { negative: found.slice(0, split), rest: split === 0 ? found : found.slice(split) };
 }
 
+/** The members of `context`: the boxes in the positioned step reached
+ * through in-flow boxes and through positioned boxes that form no
+ * context, and their leaves' inline members; null where there are none. */
+export function membersOf(context: LayoutNode): Members | null {
+  const found = collectMembers(context, null);
+  return found && sortMembers(found);
+}
+
 function collectMembers(node: LayoutNode, found: Member[] | null): Member[] | null {
   // A leaf's inline members, at its place in tree order.
   if (node.inlineMembers) {
@@ -102,8 +102,8 @@ function collectMembers(node: LayoutNode, found: Member[] | null): Member[] | nu
   }
   for (const child of ordered(node)) {
     if (skipped(child)) continue;
-    if (inPositionedStep(child, node)) {
-      const context = formsContext(child, node);
+    const context = formsContext(child, node);
+    if (context || child.style.position !== "static") {
       const z = zIndexApplies(child, node) ? (child.style.zIndex ?? 0) : 0;
       (found ??= []).push({ node: child, z, context, index: -1 });
       if (context) continue;

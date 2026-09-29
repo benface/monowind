@@ -3,6 +3,7 @@ import {
   containsAbsolute,
   edges,
   fixedMargins,
+  isOutOfFlow,
   isPositioned,
   layoutNode,
   resolveLength,
@@ -48,16 +49,6 @@ import type {
  * out-of-flow boxes against their containing blocks and apply relative
  * offsets, top-down so ancestor rects are final first (layout.ts has the
  * import cycle between the layout modules). */
-
-type Effective = "static" | "relative" | "absolute";
-
-/** Sticky lays out as static — its shift is the paint's (specs/sticky.md);
- * fixed as absolute. */
-function effectivePosition(style: CellStyle): Effective {
-  if (style.position === "absolute" || style.position === "fixed") return "absolute";
-  if (style.position === "relative") return "relative";
-  return "static";
-}
 
 interface Frame {
   node: LayoutNode;
@@ -145,13 +136,14 @@ export function positionOutOfFlow(
  * outermost absolute box, so an anchor later in flow is there for it. */
 function walk(child: LayoutNode, ancestors: Frame[], pass: Pass, deferred?: (() => void)[]): void {
   const { node: parent, absX, absY } = ancestors.at(-1)!;
-  const absolute = effectivePosition(child.style) === "absolute";
+  const absolute = isOutOfFlow(child.style);
   if (deferred) {
     const order = (pass.order += 1);
     if (absolute) {
+      const frames = ancestors.slice();
       deferred.push(() => {
         pass.order = order;
-        walk(child, ancestors, pass);
+        walk(child, frames, pass);
       });
       return;
     }
@@ -169,15 +161,16 @@ function walk(child: LayoutNode, ancestors: Frame[], pass: Pass, deferred?: (() 
   const x = absX + child.localRect.x;
   const y = absY + child.localRect.y;
   recordAnchors(child, x, y, ancestors, pass);
-  const frames = [...ancestors, { node: child, absX: x, absY: y }];
-  for (const grandchild of child.children) walk(grandchild, frames, pass, deferred);
+  ancestors.push({ node: child, absX: x, absY: y });
+  for (const grandchild of child.children) walk(grandchild, ancestors, pass, deferred);
+  ancestors.pop();
 }
 
 /** A relative box's offset: a pure visual shift, percent insets against
  * the parent's content box, `top` over `bottom` and `left` over `right`
- * (LTR). */
+ * (LTR); sticky's is the paint's (specs/sticky.md). */
 function offsetRelative(child: LayoutNode, parent: LayoutNode): void {
-  if (effectivePosition(child.style) !== "relative") return;
+  if (child.style.position !== "relative") return;
   const { border } = parent.style;
   const { insets } = child.style;
   const contentW = parent.localRect.width - edges(border, parent.resolvedPadding, "x");
@@ -203,8 +196,9 @@ function recordAnchors(
   ancestors: Frame[],
   pass: Pass,
 ): void {
-  const inline = child.inlineElements?.filter((entry) => entry.anchorNames.length > 0) ?? [];
-  if (child.style.anchorNames.length === 0 && inline.length === 0) return;
+  const naming = (entry: InlineElement) => entry.anchorNames.length > 0;
+  if (child.style.anchorNames.length === 0 && !child.inlineElements?.some(naming)) return;
+  const inline = child.inlineElements?.filter(naming) ?? [];
   const { position } = child.style;
   const boxes = [...ancestors.map((frame) => frame.node), child];
   const chain = containingChain(ancestors, position);

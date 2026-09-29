@@ -40,48 +40,43 @@ Absolute numbers belong to the machine that took them, so a comparison
 is only worth reading when every row of it was taken in one sitting.
 Record what moves under "History".
 
-## Where it stands (2026-09-27)
+## Where it stands (2026-09-29)
 
 Every release since v0.3.0, as npm serves its `dist/cdn.js`, against
-`main`, the tree on v0.3.3's commit (`c55cdd8`) with the rounds of
-2026-09-27 ("History"), and a second copy of `main`'s bundle for the
-noise. Chromium 153 headless, one sitting (load 7–11). Loads: six
-rounds of five runs alternated, the median of the 30. Relayouts,
+`main`, the tree of v0.3.4, and a second copy of `main`'s bundle for
+the noise. Chromium 153 headless, one sitting (load 5–8). Loads: six
+rounds of five runs alternated, the median of the rounds. Relayouts,
 hovers and the fade: every bundle's page open at once, driven in
-alternation, the median of 10–12 rounds, relayouts and hovers taken
-in both tab orders and averaged.
+alternation, the median of 10–12 rounds, relayouts and hovers taken in
+both tab orders and averaged.
 
 | measure (ms)                         | v0.3.0 | v0.3.1 | v0.3.2 | v0.3.3 | main | copy |
 | ------------------------------------ | ------ | ------ | ------ | ------ | ---- | ---- |
-| prose 300 load, interactive          | 349    | 346    | 340    | 204    | 209  | 207  |
-| boxes 300 load, interactive          | 178    | 357    | 247    | 189    | 195  | 197  |
-| blocks 40 load, interactive          | 144    | 119    | 94     | 84     | 85   | 85   |
-| faded 300 load, interactive          | 281    | 391    | 275    | 203    | 209  | 208  |
-| positioned 300 load, interactive     | 238    | 268    | 279    | 175    | 177  | 177  |
-| prose relayout, CPU                  | 90.9   | 91.8   | 86.2   | 72.2   | 61.0 | 60.4 |
-| boxes relayout, CPU                  | 38.7   | 66.5   | 35.2   | 28.1   | 28.1 | 28.7 |
-| prose hover step, CPU                | 97.6   | 99.5   | 92.6   | 67.8   | 65.1 | 64.6 |
-| boxes hover step, CPU                | 54.0   | 89.8   | 56.7   | 49.5   | 55.4 | 55.7 |
-| 2 s fade (150 boxes), CPU per frame  | 131.1  | 187.1  | 133.1  | 50.0   | 47.9 | 48.0 |
-| 2 s fade, frames in its middle 1.2 s | 10     | 7      | 10     | 25     | 26   | 26   |
+| prose 300 load, interactive          | 308    | 309    | 300    | 179    | 184  | 183  |
+| boxes 300 load, interactive          | 163    | 325    | 224    | 172    | 175  | 176  |
+| blocks 40 load, interactive          | 130    | 108    | 86     | 80     | 78   | 80   |
+| faded 300 load, interactive          | 269    | 379    | 260    | 192    | 197  | 197  |
+| positioned 300 load, interactive     | 230    | 269    | 266    | 175    | 176  | 177  |
+| prose relayout, CPU                  | 92.8   | 96.0   | 89.6   | 64.6   | 60.5 | 60.7 |
+| boxes relayout, CPU                  | 38.5   | 66.2   | 35.1   | 28.0   | 27.3 | 29.6 |
+| prose hover step, CPU                | 100.3  | 102.4  | 95.9   | 70.6   | 69.9 | 67.8 |
+| boxes hover step, CPU                | 56.4   | 95.0   | 70.4   | 56.8   | 54.1 | 57.2 |
+| 2 s fade (150 boxes), CPU per frame  | 146.4  | 187.1  | 143.7  | 49.7   | 48.5 | 47.9 |
+| 2 s fade, frames in its middle 1.2 s | 9      | 7      | 9      | 25     | 26   | 26   |
 
-Two readings of v0.3.3 in that sitting did not hold up: its prose
-relayout read 62.1 in one tab order and 82.4 in the other, and its
-boxes hover 49.5 against `main`'s 55.4 in both. Three sittings of
-v0.3.3, `main` and the copy alone, each bundle at every tab place,
-read prose relayout 66.5 / 64.1 / 64.5, boxes relayout 30.1 / 30.3 /
-30.3, and boxes hover 53.5 / 54.1 / 54.2 (style recalc 5.7 / 5.9 /
-5.9): `main` 3.6% faster on the prose relayout, its script, and level
-on the boxes. The loads put `main` 2–6 ms behind v0.3.3 there; a
-sitting of v0.3.3 and the batch's stages alone, 30 loads each, read
-boxes 189 / 190, prose 198 / 197 and faded 209 / 211 ms: level. (npm's
-v0.3.3 bundle and one built from its commit today are byte for byte
-the same.)
+Against v0.3.3, `main` is 6% faster on the prose relayout, and level
+within its copy's spread on the boxes relayout, the hovers, the fade
+and the blocks and positioned loads. The prose, boxes and faded loads
+stay 2–3% behind: the first paint's per-cell writes (clip, layer
+covers, group opacity), the reads the range's features add to a first
+layout (glyph properties, stacking), and the larger bundle's parse.
+The range's reads had put the boxes relayout 9–11% behind too, till
+this release's cuts ("0.3.4, leaner").
 
-Boxes load and boxes hover remain behind v0.3.0: the open raster gap,
-7,880 grid spans against 1,500 (the next section; "Against v0.3.0 and
-v0.3.1" measured it). The fade's total CPU is flat; since v0.3.3 it is
-spent on two and a half times the frames.
+Boxes load remains behind v0.3.0: the open raster gap, 7,880 grid
+spans against 1,500 (the next section; "Against v0.3.0 and v0.3.1"
+measured it). The fade's CPU a frame holds since v0.3.3, spent on two
+and a half times the frames.
 
 ## What a box is for, and what it costs to skip one
 
@@ -1215,3 +1210,62 @@ in the source map's compaction; and a pseudo-element's light DOM
 written as its own variables for its own compact rules, not renamed
 onto every element rule and mapped back — half the CSS, whose parse
 had cost every load about 1 ms, and 2 ms a relayout of `labels`.
+
+### 0.3.4, leaner (2026-09-29)
+
+The CDN bundle (`dist/cdn.js`) at each commit since v0.3.3, raw and
+gzipped, in KB; Tailwind's in-browser compiler, about 250 KB of it, is
+the same throughout:
+
+| commit                        | raw   | gzip  |
+| ----------------------------- | ----- | ----- |
+| v0.3.3                        | 546.6 | 157.4 |
+| stacking contexts             | +6.3  | +2.2  |
+| glyph properties, field drags | +1.2  | +0.6  |
+| `text-transform`              | +1.5  | +0.7  |
+| `aspect-ratio`                | +2.1  | +0.7  |
+| the host's own height         | +0.2  | +0.1  |
+| anchor positioning            | +1.4  | +0.6  |
+| the deviation batch           | +13.8 | +6.3  |
+| hidden content, button inputs | +0.7  | +0.2  |
+| list markers and counters     | +16.5 | +6.8  |
+| generated content             | +15.4 | +4.6  |
+| this commit                   | −5.6  | −0.3  |
+| 0.3.4                         | 600.1 | 180.0 |
+
+This commit changes no behavior but the leaded atomic inline box's
+native lift: the inlined stylesheets' white space trimmed at build
+(`scripts/vite-css.mjs`, 4.7 KB raw, 0.4 KB gzipped — white space
+compresses well); the predefined counter styles built from code points;
+a pointer move's hover chain derived from its chain, not walked again;
+the paint index resolved once a point, not once a layer; per-layout
+allocations gone from the positioning walk and the anchor records; and
+duplicated helpers merged (a junction glyph's mixed arms, the bounded
+caches, the selector split).
+
+And the reads the range added, which had put the boxes relayout 2.4–3.2
+ms (9–11%) behind v0.3.3: 5,400 more `getPropertyValue` calls a
+relayout (six glyph properties on every element, eight stacking
+properties and `anchor-scope` on every box, the features' own), and
+the host's height read before the reads. Cut: a scan for viewport
+utilities that built two regular expressions per call, several times
+per element, now one cheap test and each expression built once;
+a scroller's bar variables read where an axis scrolls, and a
+container's gap-rule settings where it lays out gaps; and `setVar`
+comparing against the engine's own last write to an element, not
+reading its inline style back — about 9,000 reads a relayout of the
+boxes page — a page's own `style` write or an element taken out
+forgetting it (cell-model.md "Engine variables"). Relayouts against
+v0.3.3, pairwise, both tab orders (task, ms): boxes 30.65 / 28.05 →
+29.54 / 27.98, prose 59.49 / 58.84 → 54.20 / 55.60, the prose relayout's
+script 3.6 ms less; a CPU profile of the boxes relayout reads 39.65 →
+38.99 ms, where it had read 1.7 ms over. Where the engine has made no
+write, it writes without comparing, as a first layout does everywhere
+(prose loads, six rounds alternated, medians: 186.5 ms comparing
+against the style itself, 190.5 against the last write but reading the
+style back before the first, 187 writing outright). The loads' rest,
+the first paint's per-cell writes (clip, layer covers, group opacity)
+the most of it, is "Where it stands". The host's height read before
+the reads, 0.4–0.5 ms, stays: kept from the last layout, it goes stale
+where the host's height follows what lies in it (`:has()`,
+`:focus-within`), which only a read as the layout starts sees.

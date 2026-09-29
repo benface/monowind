@@ -22,8 +22,8 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "npm-check-updates": "^23.1.0",
-    "oxfmt": "^0.70.0",
-    "oxlint": "^1.85.0",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
     "playwright": "^1.63.0"
   },
   "lint-staged": {

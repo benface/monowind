@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { baselineRow, layoutRoot } from "../src/layout.ts";
 import { renderPlainText } from "../src/plain-text.ts";
-import { render, renderScroll } from "../src/render.ts";
+import { forgetWrites, render, renderScroll } from "../src/render.ts";
 import { buildTree } from "../src/tree.ts";
 import type { LayoutNode } from "../src/types.ts";
 
@@ -51,6 +51,22 @@ it("places a middle-aligned inline box by a whole-row baseline length, its line'
   const bareStyle = (bare.source as HTMLElement).style;
   expect(bareStyle.getPropertyValue("--mw-va")).toBe("-2");
   expect(bareStyle.getPropertyValue("--mw-vb")).toBe("1");
+});
+
+it("lifts an inline box on a leaded line from its line's edge by its alignment, a middle one by none", () => {
+  const host = document.createElement("div");
+  const box = (name: string, style: string) =>
+    `<span style="display: inline-block; line-height: 48px; ${style}" data-test="${name}">${name}</span>`;
+  host.innerHTML = `<div style="width: 400px; line-height: 48px">a ${box("top", "")} b ${box("bottom", "vertical-align: bottom; padding-top: 8px")} c ${box("middle", "vertical-align: middle; padding: 4px 0")} d</div>`;
+  document.body.appendChild(host);
+  const node = buildTree(host.firstElementChild!, 16)!;
+  layoutRoot(node, 40);
+  render(node);
+  const lift = (name: string) =>
+    (host.querySelector(`[data-test="${name}"]`) as HTMLElement).style.getPropertyValue("--mw-lhs");
+  // Two gap rows a line: its box's top edge a row above its text row,
+  // its bottom edge a row below; the box's own lift a row more.
+  expect([lift("top"), lift("bottom"), lift("middle")]).toEqual(["0", "-2", "0"]);
 });
 
 it("aligns a middle-aligned inline box by its text's row after the box's own alignment moves it", () => {
@@ -106,6 +122,25 @@ it("writes nothing on a relayout that moves nothing, a stuck sticky span's shift
   layoutPass(host, 20, 1);
   expect(observer.takeRecords()).toEqual([]);
   observer.disconnect();
+});
+
+it("writes its variables again where a page's write, or a move out and back, may have changed them", () => {
+  const host = mount(`<div><div><p>a</p><p>b</p></div></div>`);
+  layoutPass(host, 20, 0);
+  const container = host.firstElementChild!.firstElementChild!;
+  const [first, second] = container.querySelectorAll("p");
+  const observer = new MutationObserver(() => {});
+  observer.observe(host, { attributes: true, childList: true, subtree: true });
+  first!.setAttribute("style", "color: red");
+  second!.remove();
+  second!.removeAttribute("style");
+  container.append(second!);
+  forgetWrites(observer.takeRecords());
+  observer.disconnect();
+  layoutPass(host, 20, 0);
+  expect([cells(first!, "--mw-y"), cells(second!, "--mw-y")]).toEqual([0, 1]);
+  expect(first!.style.getPropertyValue("--mw-w")).not.toBe("");
+  expect(second!.style.getPropertyValue("--mw-w")).not.toBe("");
 });
 
 /** The engine's flags and variables on an element, sorted. */

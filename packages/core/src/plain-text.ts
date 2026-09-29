@@ -29,7 +29,14 @@ import {
   WBR_MARKER,
 } from "./wrap.ts";
 import type { LineSpan } from "./wrap.ts";
-import { clipsAxis, GLYPH_PROPERTIES, NO_DECORATION, softWraps, zeroInsets } from "./types.ts";
+import {
+  clipsAxis,
+  GLYPH_PROPERTIES,
+  intern,
+  NO_DECORATION,
+  softWraps,
+  zeroInsets,
+} from "./types.ts";
 import type {
   CellStyle,
   Clip,
@@ -760,6 +767,12 @@ export const inClip = (clip: Clip | null, x: number, y: number): boolean =>
 export const inkClip = (node: LayoutNode): Clip | null =>
   node.style.layer ? null : (node.paintClip ?? null);
 
+/** Whether a cell lies inside the clips that cut a box's content: its
+ * ink's, and its own where it paints. */
+export const inContentClip = (node: LayoutNode, col: number, row: number): boolean =>
+  inClip(inkClip(node), col, row) &&
+  inClip(clipBounds(node, node.paintOrigin.x, node.paintOrigin.y), col, row);
+
 /** Whether a main-grid cell of a layer lies inside its clip and every
  * enclosing layer's. */
 function layerShows(layer: PaintedLayer, x: number, y: number): boolean {
@@ -931,11 +944,13 @@ type TextFont = Pick<CellStyle, "glyph" | "textDecoration">;
  * paints compare them by identity. */
 export type GlyphStyle = Readonly<Partial<Record<GlyphProperty, string>>>;
 
-/** At most 256, as an animation's values are endless. */
 const glyphStyles = new Map<string, GlyphStyle>();
 
 /** Each value set's style against the base it was last taken for. */
-const glyphStyleOf = new WeakMap<GlyphValues, { base: GlyphValues; style?: GlyphStyle }>();
+const glyphStyleOf = new WeakMap<
+  GlyphValues,
+  { base: GlyphValues; style: GlyphStyle | undefined }
+>();
 
 /** `source`'s glyph properties that differ from `base`'s, none where
  * none does. */
@@ -943,18 +958,12 @@ function glyphStyle(source: GlyphValues, base: GlyphValues): GlyphStyle | undefi
   if (source === base) return undefined;
   const known = glyphStyleOf.get(source);
   if (known?.base === base) return known.style;
-  const differing = GLYPH_PROPERTIES.filter((property) => source[property] !== base[property]);
-  let style: GlyphStyle | undefined;
-  if (differing.length > 0) {
-    const own = Object.fromEntries(differing.map((property) => [property, source[property]]));
-    const key = glyphKey(own);
-    style = glyphStyles.get(key);
-    if (!style) {
-      if (glyphStyles.size === 256) glyphStyles.clear();
-      glyphStyles.set(key, (style = own));
-    }
+  let own: Partial<Record<GlyphProperty, string>> | undefined;
+  for (const property of GLYPH_PROPERTIES) {
+    if (source[property] !== base[property]) (own ??= {})[property] = source[property];
   }
-  glyphStyleOf.set(source, style ? { base, style } : { base });
+  const style = own && intern(glyphStyles, glyphKey(own), () => own);
+  glyphStyleOf.set(source, { base, style });
   return style;
 }
 
@@ -1091,8 +1100,6 @@ function painter(root: Walk, tree: LayoutNode): PaintVisitor {
       const paint = textPaint(font, marker!.style.color ?? style.color, tree.style);
       forEachMarkerCell(
         node,
-        x - (node.scroll?.x ?? 0),
-        y - (node.scroll?.y ?? 0),
         (k, length, at, row, advance) => {
           const cluster = marker!.text.slice(k, k + length);
           const cells = clusterWidth(cluster);
@@ -1277,8 +1284,8 @@ function paintText(
   };
   forEachLeafCell(
     node,
-    absX - (node.scroll?.x ?? 0),
-    absY - (node.scroll?.y ?? 0),
+    absX,
+    absY,
     (k, length, x, y, advance) => {
       const index = node.charInline?.[k] ?? -1;
       const entry = index >= 0 ? entries[index] : undefined;
@@ -1325,14 +1332,13 @@ function paintBars(node: LayoutNode, put: PutGlyph): void {
 }
 
 /** A leaf laid out with no text. */
-const NO_LINES = { spans: [], textY: [] };
 
 /** The cells a leaf's text occupies: the per-line placement — the
  * lines its layout wrapped (a multicol leaf's fragmentation, else
  * `lines`), first-line indent, alignment, truncation, inline shifts,
  * per-character advances — in ONE place, so mapping a cell back to a
  * character (charIndexAtCell) cannot drift from the paint. `absX/absY`
- * is the leaf's border-box origin with its own scroll applied; U+FFFC
+ * is the leaf's border-box origin, its own scroll taken off here; U+FFFC
  * markers are skipped (their boxes paint themselves). Visits are per
  * CLUSTER: `index` is its first code unit, `length` its code units
  * (the following 0-advance units ride along, a 0-width cluster with
@@ -1346,13 +1352,16 @@ function forEachLeafCell(
   onEllipsis?: (x: number, y: number) => void,
   truncates = true,
 ): void {
-  const style = node.style;
+  const lines = node.multicolGeometry ?? node.lines;
+  if (!lines) return;
+  const { spans, textY } = lines;
+  const { style, advances } = node;
   const origin = contentOrigin(node);
-  const contentX = absX + origin.x;
-  const contentY = absY + origin.y;
+  const contentX = absX - (node.scroll?.x ?? 0) + origin.x;
+  const contentY = absY - (node.scroll?.y ?? 0) + origin.y;
   const contentWidth = node.localRect.width - edges(style.border, node.resolvedPadding, "x");
-  const { spans, textY } = node.multicolGeometry ?? node.lines ?? NO_LINES;
   const clamped = node.lines?.clamped === true;
+  const clips = truncates && truncatesLine(node, false);
   // Only an inline member and what it holds shift.
   const { inlineElements: entries, inlineMembers } = node;
   const shifts = inlineMembers && entries?.map((_, index) => inlineShift(entries, index));
@@ -1363,10 +1372,9 @@ function forEachLeafCell(
     const full = lineStart(node, i, span, contentWidth);
     const clamp = clamped && i === spans.length - 1;
     const truncated =
-      truncates && truncatesLine(node, clamp)
-        ? truncateSpan(node.text, span, full.width - full.indent, node.advances, style, clamp)
+      (truncates && clamp) || clips
+        ? truncateSpan(node, span, full.width - full.indent, clamp)
         : { end: span.end, ellipsis: false };
-    const advances = node.advances;
     // A clamped line is placed as the text it keeps and its ellipsis,
     // unspread and unhyphenated.
     const line = clamp
@@ -1420,20 +1428,20 @@ function forEachLeafCell(
 const truncatesLine = (node: LayoutNode, clamp: boolean): boolean =>
   clamp || (!softWraps(node.style.whiteSpace) && clipsAxis(node.style.overflow.x));
 
-/** A marker's cells (specs/lists.md), visited per cluster as a leaf's
+/** A marker's cells where its node paints (specs/lists.md), visited per cluster as a leaf's
  * are: an outside one's where its item's layout put it; an inside one's
  * before its leaf's first line, spread with it, and cut as its text is
  * (its `text-overflow`) where the line truncates in less room past its
  * `text-indent` than the marker needs. */
-export function forEachMarkerCell(
+function forEachMarkerCell(
   node: LayoutNode,
-  absX: number,
-  absY: number,
   onCluster: (index: number, length: number, x: number, y: number, advance: number) => void,
   onEllipsis?: (x: number, y: number) => void,
 ): void {
   const marker = node.marker;
   if (!marker) return;
+  const absX = node.paintOrigin.x - (node.scroll?.x ?? 0);
+  const absY = node.paintOrigin.y - (node.scroll?.y ?? 0);
   let x = absX + (marker.x ?? 0);
   let y = absY + (marker.y ?? 0);
   let spread: Spread | undefined;
@@ -1469,12 +1477,9 @@ export function forEachMarkerCell(
 
 /** Whether a marker's cells hold one `test` takes, where its node paints. */
 function someMarkerCell(node: LayoutNode, test: (x: number, y: number) => boolean): boolean {
-  const { x, y } = node.paintOrigin;
   let found = false;
   forEachMarkerCell(
     node,
-    x - (node.scroll?.x ?? 0),
-    y - (node.scroll?.y ?? 0),
     (_index, _length, at, row, advance) => {
       for (let c = 0; c < advance; c++) found ||= test(at + c, row);
     },
@@ -1584,20 +1589,15 @@ export function charIndexAtCell(
   const turns = member === undefined ? glyphTurns(node) : [member];
   let found: number | null = null;
   let latest = -1;
-  forEachLeafCell(
-    node,
-    absX - (node.scroll?.x ?? 0),
-    absY - (node.scroll?.y ?? 0),
-    (k, _length, x, y, advance) => {
-      if (y !== row || col < x || col >= x + advance) return;
-      const inline = node.charInline?.[k] ?? -1;
-      const turn = turns.indexOf(owners && inline >= 0 ? owners[inline]! : -1);
-      if (turn > latest) {
-        found = k;
-        latest = turn;
-      }
-    },
-  );
+  forEachLeafCell(node, absX, absY, (k, _length, x, y, advance) => {
+    if (y !== row || col < x || col >= x + advance) return;
+    const inline = node.charInline?.[k] ?? -1;
+    const turn = turns.indexOf(owners && inline >= 0 ? owners[inline]! : -1);
+    if (turn > latest) {
+      found = k;
+      latest = turn;
+    }
+  });
   return found;
 }
 
@@ -1625,8 +1625,8 @@ export function inlineElementRects(
   const rows = entries.map(() => new Map<number, { x0: number; x1: number }>());
   forEachLeafCell(
     node,
-    absX - (node.scroll?.x ?? 0),
-    absY - (node.scroll?.y ?? 0),
+    absX,
+    absY,
     (k, _length, x, y, advance) => {
       const inner = node.charInline![k] ?? -1;
       if (inner < 0) return;
@@ -1729,12 +1729,10 @@ export function thumbSpan(
  * line ends in `…` whether or not it overflows.
  */
 function truncateSpan(
-  text: string,
+  { text, advances, style }: LayoutNode,
   span: LineSpan,
   contentWidth: number,
-  advances: number[] | undefined,
-  style: LayoutNode["style"],
-  clamp = false,
+  clamp: boolean,
 ): { end: number; ellipsis: boolean } {
   const { tracking } = style;
   if (!clamp && lineAdvance(text, span.start, span.end, advances, tracking) <= contentWidth) {

@@ -5,6 +5,7 @@
  * "What the engine reads"), each sheet walked once.
  */
 
+import { splitTopLevel } from "./color.ts";
 import type { CounterStyleDescriptors } from "./counters.ts";
 import type { Pseudo } from "./generated.ts";
 
@@ -147,19 +148,5 @@ function parses(selector: string): boolean {
 }
 
 /** A selector list's selectors, split at its top-level commas. */
-function splitSelectors(list: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < list.length; i++) {
-    const char = list[i];
-    if (char === "(" || char === "[") depth++;
-    else if (char === ")" || char === "]") depth--;
-    else if (char === "," && depth === 0) {
-      parts.push(list.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  parts.push(list.slice(start).trim());
-  return parts.filter(Boolean);
-}
+const splitSelectors = (list: string): string[] =>
+  splitTopLevel(list, ",").map((part) => part.trim());

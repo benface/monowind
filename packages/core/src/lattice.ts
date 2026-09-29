@@ -9,7 +9,7 @@
  * it slid over; parts moving together merge where they meet.
  */
 
-import { junctionGlyph, lineGlyph, mixedArms } from "./borders.ts";
+import { junctionGlyph, lineGlyph } from "./borders.ts";
 import { inPositionedStep, paintTurn } from "./stacking.ts";
 import type { BorderRun, BorderStyle, LatticeSegment, LayoutNode, TableLattice } from "./types.ts";
 
@@ -344,16 +344,15 @@ export function resolveLattice(
     const [up, down, left, right] = cell.arms;
     const glyph = cell.only
       ? lineGlyph(cell.dominant.style, cell.dominant.weight, cell.only.axis, set)
-      : (mixedArms(up, down, left, right, set) ??
-        junctionGlyph(
+      : junctionGlyph(
           cell.allDouble ? "double" : "solid",
           cell.dominant.weight,
-          up !== null,
-          down !== null,
-          left !== null,
-          right !== null,
+          up,
+          down,
+          left,
+          right,
           set,
-        ));
+        );
     const run: BorderRun = { glyph, x: cell.x, y: cell.y, length: 1, color: cell.dominant.color };
     for (const owner of cell.owners) {
       if (owner === null) runs.push(run);

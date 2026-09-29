@@ -1,5 +1,6 @@
 import { inlineElementRects } from "./plain-text.ts";
 import { isInert } from "./pointer.ts";
+import { isElementBox } from "./types.ts";
 import type { LayoutNode, Rect } from "./types.ts";
 
 /**
@@ -98,7 +99,7 @@ export function focusableRects(root: LayoutNode): Focusable[] {
     // (specs/visibility.md).
     // An element's own box takes its focus; a pseudo-element's is its
     // element's decoration (specs/generated-content.md).
-    const own = !isRoot && !node.anonymous && !node.generated;
+    const own = !isRoot && isElementBox(node);
     if (!hidden && own && node.style.visible && isFocusable(node.source)) {
       out.push({
         element: node.source,

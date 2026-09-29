@@ -71,21 +71,26 @@ const roman = (upper: boolean) =>
   });
 
 /** Armenian and Georgian letters, one per weight, descending. */
-const lettered = (letters: string, weights: number[], range: number) =>
+const lettered = (letters: string[], weights: number[], range: number) =>
   style("additive", [], {
-    additive: weights.map((weight, i) => [weight, [...letters][i]!] as const),
+    additive: weights.map((weight, i) => [weight, letters[i]!] as const),
     range: [[1, range]],
   });
 
-const ARMENIAN_WEIGHTS = [
-  9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000, 900, 800, 700, 600, 500, 400, 300, 200, 100,
-  90, 80, 70, 60, 50, 40, 30, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
-];
+/** 9000 down to 1, nine per decade. */
+const ARMENIAN_WEIGHTS = Array.from(
+  { length: 36 },
+  (_, i) => (9 - (i % 9)) * 10 ** (3 - Math.floor(i / 9)),
+);
 const GEORGIAN_WEIGHTS = [10000, ...ARMENIAN_WEIGHTS];
+/** Armenian's letters by weight are its alphabet's code points, descending. */
+const armenian = (last: number) =>
+  Array.from({ length: 36 }, (_, i) => String.fromCodePoint(last - i));
 
+const HEBREW_UNITS = [..."יטחזוהדגבא"];
 const HEBREW = style("additive", [], {
   additive: [
-    ...[..."יטחזוהדגבא"].map((letter, i) => [10000 - 1000 * i, `${letter}׳`] as const),
+    ...HEBREW_UNITS.map((letter, i) => [10000 - 1000 * i, `${letter}׳`] as const),
     ...[..."תשרק"].map((letter, i) => [400 - 100 * i, letter] as const),
     ...[..."צפעסנמלכ"].map((letter, i) => [90 - 10 * i, letter] as const),
     [19, "יט"],
@@ -93,72 +98,40 @@ const HEBREW = style("additive", [], {
     [17, "יז"],
     [16, "טז"],
     [15, "טו"],
-    ...[..."יטחזוהדגבא"].map((letter, i) => [10 - i, letter] as const),
+    ...HEBREW_UNITS.map((letter, i) => [10 - i, letter] as const),
   ],
   range: [[1, 10999]],
 });
 
 const CJK = { suffix: "、" };
 
+/** Katakana, hiragana's code points shifted. */
+const katakana = (hiragana: string[]) =>
+  hiragana.map((kana) => String.fromCodePoint(kana.codePointAt(0)! + 0x60));
+const HIRAGANA = [
+  ..."あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわゐゑをん",
+];
+const HIRAGANA_IROHA = [
+  ..."いろはにほへとちりぬるをわかよたれそつねならむうゐのおくやまけふこえてあさきゆめみしゑひもせす",
+];
+
 /** The simple predefined counter styles (css-counter-styles-3 §6). */
 const PREDEFINED: Record<string, CounterStyle> = {
-  decimal: style("numeric", digitsFrom(0x30)),
   "decimal-leading-zero": style("numeric", digitsFrom(0x30), { pad: [2, "0"] }),
-  "arabic-indic": style("numeric", digitsFrom(0x660)),
-  armenian: lettered("ՔՓՒՑՐՏՎՍՌՋՊՉՈՇՆՅՄՃՂՁՀԿԾԽԼԻԺԹԸԷԶԵԴԳԲԱ", ARMENIAN_WEIGHTS, 9999),
-  "lower-armenian": lettered("քփւցրտվսռջպչոշնյմճղձհկծխլիժթըէզեդգբա", ARMENIAN_WEIGHTS, 9999),
-  bengali: style("numeric", digitsFrom(0x9e6)),
-  cambodian: style("numeric", digitsFrom(0x17e0)),
+  armenian: lettered(armenian(0x554), ARMENIAN_WEIGHTS, 9999),
+  "lower-armenian": lettered(armenian(0x584), ARMENIAN_WEIGHTS, 9999),
   "cjk-decimal": style("numeric", [..."〇一二三四五六七八九"], { ...CJK, range: [[0, Infinity]] }),
-  devanagari: style("numeric", digitsFrom(0x966)),
-  georgian: lettered("ჵჰჯჴხჭწძცჩშყღქფჳტსრჟპოჲნმლკითჱზვედგბა", GEORGIAN_WEIGHTS, 19999),
-  gujarati: style("numeric", digitsFrom(0xae6)),
-  gurmukhi: style("numeric", digitsFrom(0xa66)),
+  georgian: lettered([..."ჵჰჯჴხჭწძცჩშყღქფჳტსრჟპოჲნმლკითჱზვედგბა"], GEORGIAN_WEIGHTS, 19999),
   hebrew: HEBREW,
-  kannada: style("numeric", digitsFrom(0xce6)),
-  lao: style("numeric", digitsFrom(0xed0)),
-  malayalam: style("numeric", digitsFrom(0xd66)),
-  mongolian: style("numeric", digitsFrom(0x1810)),
-  myanmar: style("numeric", digitsFrom(0x1040)),
-  oriya: style("numeric", digitsFrom(0xb66)),
-  persian: style("numeric", digitsFrom(0x6f0)),
   "lower-roman": roman(false),
   "upper-roman": roman(true),
-  tamil: style("numeric", digitsFrom(0xbe6)),
-  telugu: style("numeric", digitsFrom(0xc66)),
-  thai: style("numeric", digitsFrom(0xe50)),
-  tibetan: style("numeric", digitsFrom(0xf20)),
   "lower-alpha": style("alphabetic", [..."abcdefghijklmnopqrstuvwxyz"]),
   "upper-alpha": style("alphabetic", [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"]),
   "lower-greek": style("alphabetic", [..."αβγδεζηθικλμνξοπρστυφχψω"]),
-  hiragana: style(
-    "alphabetic",
-    [
-      ..."あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわゐゑをん",
-    ],
-    CJK,
-  ),
-  "hiragana-iroha": style(
-    "alphabetic",
-    [
-      ..."いろはにほへとちりぬるをわかよたれそつねならむうゐのおくやまけふこえてあさきゆめみしゑひもせす",
-    ],
-    CJK,
-  ),
-  katakana: style(
-    "alphabetic",
-    [
-      ..."アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヰヱヲン",
-    ],
-    CJK,
-  ),
-  "katakana-iroha": style(
-    "alphabetic",
-    [
-      ..."イロハニホヘトチリヌルヲワカヨタレソツネナラムウヰノオクヤマケフコエテアサキユメミシヱヒモセス",
-    ],
-    CJK,
-  ),
+  hiragana: style("alphabetic", HIRAGANA, CJK),
+  "hiragana-iroha": style("alphabetic", HIRAGANA_IROHA, CJK),
+  katakana: style("alphabetic", katakana(HIRAGANA), CJK),
+  "katakana-iroha": style("alphabetic", katakana(HIRAGANA_IROHA), CJK),
   "cjk-earthly-branch": style("fixed", [..."子丑寅卯辰巳午未申酉戌亥"], {
     ...CJK,
     fallback: "cjk-decimal",
@@ -167,12 +140,39 @@ const PREDEFINED: Record<string, CounterStyle> = {
     ...CJK,
     fallback: "cjk-decimal",
   }),
-  disc: style("cyclic", ["•"], { suffix: " " }),
-  circle: style("cyclic", ["◦"], { suffix: " " }),
-  square: style("cyclic", ["▪"], { suffix: " " }),
-  "disclosure-open": style("cyclic", ["▾"], { suffix: " " }),
-  "disclosure-closed": style("cyclic", ["▸"], { suffix: " " }),
 };
+const BULLET_SYMBOLS = {
+  disc: "•",
+  circle: "◦",
+  square: "▪",
+  "disclosure-open": "▾",
+  "disclosure-closed": "▸",
+};
+for (const [name, symbol] of Object.entries(BULLET_SYMBOLS))
+  PREDEFINED[name] = style("cyclic", [symbol], { suffix: " " });
+/** Each decimal system's zero. */
+const ZEROS = {
+  decimal: 0x30,
+  "arabic-indic": 0x660,
+  bengali: 0x9e6,
+  cambodian: 0x17e0,
+  devanagari: 0x966,
+  gujarati: 0xae6,
+  gurmukhi: 0xa66,
+  kannada: 0xce6,
+  lao: 0xed0,
+  malayalam: 0xd66,
+  mongolian: 0x1810,
+  myanmar: 0x1040,
+  oriya: 0xb66,
+  persian: 0x6f0,
+  tamil: 0xbe6,
+  telugu: 0xc66,
+  thai: 0xe50,
+  tibetan: 0xf20,
+};
+for (const [name, zero] of Object.entries(ZEROS))
+  PREDEFINED[name] = style("numeric", digitsFrom(zero));
 PREDEFINED["upper-armenian"] = PREDEFINED.armenian!;
 PREDEFINED.khmer = PREDEFINED.cambodian!;
 PREDEFINED["lower-latin"] = PREDEFINED["lower-alpha"]!;
@@ -192,16 +192,6 @@ export function counterStyles(rules: CounterStyles = () => undefined): CounterSt
 }
 
 const PREDEFINED_ONLY = counterStyles();
-
-/** Whether a system writes a negative value's sign (css-counter-styles-3 §3.1). */
-const signed = (system: System): boolean => system !== "cyclic" && system !== "fixed";
-
-/** The range a style takes when its own is `auto`. */
-function autoRange(system: System): readonly (readonly [number, number])[] {
-  if (system === "alphabetic" || system === "symbolic") return [[1, Infinity]];
-  if (system === "additive") return [[0, Infinity]];
-  return [[-Infinity, Infinity]];
-}
 
 /** The longest representation a style writes, past which it falls back
  * (css-counter-styles-3's 60 code points). */
@@ -265,7 +255,7 @@ export function counterText(
   name: string,
   styles: CounterStyles = PREDEFINED_ONLY,
 ): string {
-  return represent(value, resolve(name, styles), styles, new Set());
+  return represent(value, resolve(name, styles), styles);
 }
 
 /** A marker's text: its style's prefix, the representation, and its
@@ -276,7 +266,7 @@ export function markerText(
   styles: CounterStyles = PREDEFINED_ONLY,
 ): string {
   const counter = resolve(name, styles);
-  return counter.prefix + represent(value, counter, styles, new Set()) + counter.suffix;
+  return counter.prefix + represent(value, counter, styles) + counter.suffix;
 }
 
 const resolve = (name: string, styles: CounterStyles): CounterStyle =>
@@ -286,22 +276,28 @@ function represent(
   value: number,
   counter: CounterStyle,
   styles: CounterStyles,
-  seen: Set<CounterStyle>,
+  seen = new Set<CounterStyle>(),
 ): string {
-  const fallback = (): string => {
+  const { system, range, negative, pad } = counter;
+  // An `auto` range is the system's own, open above.
+  const low =
+    system === "alphabetic" || system === "symbolic" ? 1 : system === "additive" ? 0 : -Infinity;
+  const inRange = range ? range.some(([from, to]) => value >= from && value <= to) : value >= low;
+  // A sign, where the system writes one (css-counter-styles-3 §3.1).
+  const minus = value < 0 && system !== "cyclic" && system !== "fixed";
+  const text = inRange ? initial(minus ? -value : value, counter) : undefined;
+  if (text === undefined) {
     seen.add(counter);
     const next = resolve(counter.fallback, styles);
     return represent(value, seen.has(next) ? PREDEFINED.decimal! : next, styles, seen);
-  };
-  const range = counter.range ?? autoRange(counter.system);
-  if (!range.some(([low, high]) => value >= low && value <= high)) return fallback();
-  const negative = value < 0 && signed(counter.system);
-  const text = initial(negative ? -value : value, counter);
-  if (text === undefined) return fallback();
-  const width = Math.min(counter.pad[0], MAX_LENGTH);
-  const sign = negative ? graphemes(counter.negative.join("")).length : 0;
-  const padded = counter.pad[1].repeat(Math.max(0, width - graphemes(text).length - sign)) + text;
-  return negative ? counter.negative[0] + padded + counter.negative[1] : padded;
+  }
+  const width = Math.min(pad[0], MAX_LENGTH);
+  let padded = text;
+  if (width > 0) {
+    const sign = minus ? graphemes(negative.join("")).length : 0;
+    padded = pad[1].repeat(Math.max(0, width - graphemes(text).length - sign)) + text;
+  }
+  return minus ? negative[0] + padded + negative[1] : padded;
 }
 
 /** A `@counter-style` rule's descriptors as the CSSOM serializes them

@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui-react",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "@monowind/ui as React hooks: a menu, a listbox, a select, a combobox, a dialog, a popover, a tooltip on the monowind grid",
   "keywords": [
     "accessibility",

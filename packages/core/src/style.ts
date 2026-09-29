@@ -12,9 +12,11 @@ import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import {
   autoTrack,
+  clipsAxis,
   decorationOf,
   GLYPH_PROPERTIES,
   INITIAL_GLYPH,
+  intern,
   isScrollContainer,
   NO_DECORATION,
   scrollsAxis,
@@ -134,7 +136,7 @@ export function readCellStyle(
         ? "grid"
         : rawDisplay === "table" || rawDisplay === "inline-table"
           ? "table"
-          : rawDisplay === "none" || isZeroClipped(el, cs)
+          : rawDisplay === "none" || isZeroClipped(el, cs, position)
             ? "none"
             : columnCount !== null || columnWidth !== null
               ? "multicol"
@@ -218,7 +220,6 @@ export function readCellStyle(
   const anchorInsets = anchorSource ? readAnchorInsets(anchorSource) : {};
   const { flexDirection, flexWrap, flexShrink, columnGap, rowGap, zIndex, breakInside } = cs;
   const alignItemsValue = cs.alignItems;
-  const ruleInset = cs.getPropertyValue("--mw-rule-inset").trim();
   // A flex column's main axis is block-wise, where `left` and `right` fall back to `start`.
   const justifyContent = readAlignment(
     el,
@@ -335,14 +336,7 @@ export function readCellStyle(
       x: (cs.overscrollBehaviorX || "auto") === "auto",
       y: (cs.overscrollBehaviorY || "auto") === "auto",
     },
-    scrollbarSize: {
-      x: readCells(cs.getPropertyValue("--mw-scrollbar-size-x")),
-      y: readCells(cs.getPropertyValue("--mw-scrollbar-size-y")),
-    },
-    scrollbarInset: {
-      x: readCells(cs.getPropertyValue("--mw-scrollbar-inset-x"), 0),
-      y: readCells(cs.getPropertyValue("--mw-scrollbar-inset-y"), 0),
-    },
+    ...readScrollbars(cs, overflow),
     ...readTextStyle(el, cs, rootFontSizePx),
     // Both readable because the companion stylesheet's typography rewrite
     // is measuring-gated.
@@ -352,7 +346,7 @@ export function readCellStyle(
     glyph: readGlyph(cs),
     backgroundColor: readAnimatedBackground(own, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
-    backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
+    backgroundImage: readBackgroundImage(cs, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
     layer: effects.layer,
     stacking: effects.set || readStacking(own, cs),
@@ -370,21 +364,9 @@ export function readCellStyle(
     boxShadow: readBoxShadow(cs.boxShadow, rootFontSizePx, metrics),
     zIndex: zIndex === "auto" || zIndex === "" ? null : Number(zIndex) || 0,
     latticeBorder: null,
-    ruleX:
-      display === "flex" || display === "grid" || display === "multicol"
-        ? readGapRule(cs, "x", set)
-        : null,
-    ruleY: display === "flex" || display === "grid" ? readGapRule(cs, "y", set) : null,
-    ruleBreak: readKeyword(RULE_BREAKS, cs.getPropertyValue("--mw-rule-break").trim(), "normal"),
-    ruleInset:
-      ruleInset === "overlap-join"
-        ? ruleInset
-        : Math.max(0, roundHalfAwayFromZero(parseFloat(ruleInset) || 0)),
-    ruleVisibilityItems: readKeyword(
-      RULE_VISIBILITIES,
-      cs.getPropertyValue("--mw-rule-visibility-items").trim(),
-      "normal",
-    ),
+    ...(display === "flex" || display === "grid" || display === "multicol"
+      ? readGapRules(cs, display, set)
+      : NO_GAP_RULES),
     columnCount,
     columnWidth,
     columnFill: cs.columnFill === "auto" ? "auto" : "balance",
@@ -627,13 +609,7 @@ export function setAnchorSize(
   switch (property) {
     case "width":
     case "height":
-      // A size takes whole cells or a plain percentage.
-      style[property] =
-        typeof length === "number"
-          ? { kind: "cells", value: length }
-          : length !== undefined && length.cells === undefined
-            ? { kind: "percent", value: length.percent }
-            : undefined;
+      style[property] = sizeOf(length);
       return;
     case "minWidth":
     case "minHeight":
@@ -644,6 +620,14 @@ export function setAnchorSize(
       style[property] = length;
   }
 }
+
+/** A length as a size: whole cells or a plain percentage. */
+const sizeOf = (length: CellLength | undefined): CellStyle["width"] =>
+  typeof length === "number"
+    ? { kind: "cells", value: length }
+    : length !== undefined && length.cells === undefined
+      ? { kind: "percent", value: length.percent }
+      : undefined;
 
 /** The elements a `visibility` fade holds visible, until when
  * (`performance.now()` time): CSS shows an element throughout a fade
@@ -1035,10 +1019,6 @@ function readAnimatedBackground(
   return tracked === "" ? undefined : tracked;
 }
 
-function isClipping(value: string): boolean {
-  return value === "hidden" || value === "clip";
-}
-
 /** Authored `scrollbar-width`, cached from the first CLEAN read: once
  * the element carries data-mw-scroll our own hiding lock sets it to
  * none, and Firefox never re-resolves the computed value when the
@@ -1083,6 +1063,27 @@ function readScrollbarColor(value: string): { thumb: string; track: string } | n
 }
 
 /** A `<integer>` custom property in cells, floored at `min`. */
+/** A scroller's bars' cells, each axis's thickness and inset; the
+ * initial ones where no axis scrolls, which no bar reads. */
+function readScrollbars(
+  cs: CSSStyleDeclaration,
+  overflow: CellStyle["overflow"],
+): Pick<CellStyle, "scrollbarSize" | "scrollbarInset"> {
+  if (!scrollsAxis(overflow.x) && !scrollsAxis(overflow.y)) return NO_SCROLLBARS;
+  return {
+    scrollbarSize: {
+      x: readCells(cs.getPropertyValue("--mw-scrollbar-size-x")),
+      y: readCells(cs.getPropertyValue("--mw-scrollbar-size-y")),
+    },
+    scrollbarInset: {
+      x: readCells(cs.getPropertyValue("--mw-scrollbar-inset-x"), 0),
+      y: readCells(cs.getPropertyValue("--mw-scrollbar-inset-y"), 0),
+    },
+  };
+}
+
+const NO_SCROLLBARS = { scrollbarSize: { x: 1, y: 1 }, scrollbarInset: { x: 0, y: 0 } } as const;
+
 function readCells(value: string, min = 1): number {
   return Math.max(min, Math.floor(Number(value) || min));
 }
@@ -1115,8 +1116,7 @@ export function readOverflow(cs: CSSStyleDeclaration): Overflow {
  * or a clipped ≤1px box. Treated as display:none by the ENGINE only:
  * the light-DOM element keeps its authored styles, so assistive tech
  * still reads it. */
-function isZeroClipped(el: Element, cs: CSSStyleDeclaration): boolean {
-  const { position } = cs;
+function isZeroClipped(el: Element, cs: CSSStyleDeclaration, position: string): boolean {
   if (position !== "absolute" && position !== "fixed") return false;
   const clip = cs.clip.replace(/\s/g, "");
   if (clip === "rect(0px,0px,0px,0px)" || clip === "rect(0,0,0,0)") return true;
@@ -1127,7 +1127,7 @@ function isZeroClipped(el: Element, cs: CSSStyleDeclaration): boolean {
   // dropped before it ever renders, staying 0x0 forever.
   if (leafRendererFor(el.tagName)) return false;
   return (
-    (isClipping(cs.overflow) || isClipping(cs.overflowX)) &&
+    (clipsAxis(cs.overflow as OverflowAxis) || clipsAxis(cs.overflowX as OverflowAxis)) &&
     parseFloat(cs.width) <= 1 &&
     parseFloat(cs.height) <= 1
   );
@@ -1316,6 +1316,34 @@ const RULE_VISIBILITIES = keywords("all", "around", "between");
  * registered `inherits: false`, so a container only sees its own. A
  * width is a weight, as for borders: the set's band draws it and
  * says its cells. */
+/** A container's gap rules (specs/gap-decorations.md): a multicol
+ * container's between columns alone. */
+function readGapRules(
+  cs: CSSStyleDeclaration,
+  display: string,
+  set: BorderGlyphSet | undefined,
+): typeof NO_GAP_RULES {
+  const inset = cs.getPropertyValue("--mw-rule-inset").trim();
+  return {
+    ruleX: readGapRule(cs, "x", set),
+    ruleY: display === "multicol" ? null : readGapRule(cs, "y", set),
+    ruleBreak: readKeyword(RULE_BREAKS, cs.getPropertyValue("--mw-rule-break").trim(), "normal"),
+    ruleInset:
+      inset === "overlap-join" ? inset : Math.max(0, roundHalfAwayFromZero(parseFloat(inset) || 0)),
+    ruleVisibilityItems: readKeyword(
+      RULE_VISIBILITIES,
+      cs.getPropertyValue("--mw-rule-visibility-items").trim(),
+      "normal",
+    ),
+  };
+}
+
+/** The gap rules of a box that lays out no gaps. */
+const NO_GAP_RULES: Pick<
+  CellStyle,
+  "ruleX" | "ruleY" | "ruleBreak" | "ruleInset" | "ruleVisibilityItems"
+> = { ruleX: null, ruleY: null, ruleBreak: "normal", ruleInset: 0, ruleVisibilityItems: "normal" };
+
 function readGapRule(
   cs: CSSStyleDeclaration,
   axis: "x" | "y",
@@ -1567,8 +1595,8 @@ const SIDE_STEMS = {
 /** A relative or sticky element's `top`/`right`/`bottom`/`left`,
  * percentages kept (the class scan standing in for Typed OM), `auto`
  * null. Without Typed OM, a side the scan misses is its resolved value:
- * a relative element's used offset, a sticky one's `auto` kept (probed
- * 2026-09-28, Chromium and Firefox). */
+ * a relative element's used offset, a sticky one's `auto` kept (probed,
+ * Chromium and Firefox). */
 export function readElementInsets(
   el: Element,
   cs: CSSStyleDeclaration,
@@ -1709,10 +1737,11 @@ function readBoxShadow(
  * shape, size, position, or space first when present, then the stops
  * with their positions and hints, a `currentcolor` stop the element's
  * `color`; other layers (`url()`, `none`) are left out. */
-function readBackgroundImage(value: string, color: string, rootFontSizePx: number): Gradient[] {
+function readBackgroundImage(cs: CSSStyleDeclaration, rootFontSizePx: number): Gradient[] {
   const gradients: Gradient[] = [];
+  const value = cs.backgroundImage;
   if (!value || value === "none") return gradients;
-  for (const layer of splitTopLevel(value.replace(/\bcurrentcolor\b/gi, color), ",")) {
+  for (const layer of splitTopLevel(value.replace(/\bcurrentcolor\b/gi, cs.color), ",")) {
     const match = /^\s*(repeating-)?(linear|radial|conic)-gradient\((.*)\)\s*$/s.exec(layer);
     if (!match) continue;
     const [, repeating, kind, inner] = match;
@@ -1953,10 +1982,7 @@ function readSpacing(value: string, rootFontSizePx: number): CellLength {
   // every other term in px: a percentage plus cells.
   if (value.startsWith("calc(")) {
     const calc = evaluateCalc(value, "width", undefined, rootFontSizePx);
-    if (!calc || calc.unitless) return 0;
-    const cells = roundHalfAwayFromZero(calc.cells);
-    if (calc.percent === 0) return cells;
-    return cells === 0 ? { percent: calc.percent } : { percent: calc.percent, cells };
+    return calc && !calc.unitless ? lengthCells(calc) : 0;
   }
   if (value.endsWith("%")) {
     const percent = parseFloat(value);
@@ -2092,14 +2118,10 @@ export function readGlyph(cs: CSSStyleDeclaration): GlyphValues {
     if (value.includes("fractions")) value = withoutFractions(value);
     key += `${value}\n`;
   }
-  let known = glyphSets.get(key);
-  if (!known) {
+  return intern(glyphSets, key, () => {
     const values = key.split("\n");
-    const entries = GLYPH_PROPERTIES.map((property, i) => [property, values[i]!]);
-    if (glyphSets.size === 256) glyphSets.clear();
-    glyphSets.set(key, (known = Object.fromEntries(entries) as GlyphValues));
-  }
-  return known;
+    return Object.fromEntries(GLYPH_PROPERTIES.map((property, i) => [property, values[i]!]));
+  }) as GlyphValues;
 }
 
 function withoutFractions(numeric: string): string {
@@ -2160,9 +2182,8 @@ function readSize(source: ReadSource, key: "width" | "height", computed: string)
     if (inline === "auto") return undefined;
     const intrinsic = intrinsicSizeKeyword(inline);
     if (intrinsic) return intrinsic;
-    const length = inlineLength(inline, resolved, rootFontSizePx);
-    if (typeof length === "number") return { kind: "cells", value: length };
-    if (length && length.cells === undefined) return { kind: "percent", value: length.percent };
+    const size = sizeOf(inlineLength(inline, resolved, rootFontSizePx));
+    if (size) return size;
   }
   // Intrinsic-keyword utilities (`w-min`…) must be caught by class scan here:
   // getComputedStyle would hand back the browser's *used* px width, which is
@@ -2223,27 +2244,45 @@ function viewportLengthPx(value: string): number | null {
  * units to plain px); callers active-check the result. `prefix` is
  * the utility stem ("h", "w", "min-h", …). */
 function viewportUtilityPx(classAttr: string, prefix: string): number | null {
-  if (typeof window === "undefined") return null;
-  const named = new RegExp(`(?:^|[\\s:.[!])${prefix}-(screen|[dsl]v[hw])(?![\\w-])`).exec(
-    classAttr,
-  );
-  if (named) {
-    const name = named[1]!;
+  if (typeof window === "undefined" || !VIEWPORT_UNIT.test(classAttr)) return null;
+  const { named, arbitrary } = viewportPatterns(prefix);
+  const name = named.exec(classAttr)?.[1];
+  if (name) {
     // h-screen = 100vh, w-screen = 100vw; explicit units name their axis.
     if (name === "screen") return prefix.includes("h") ? window.innerHeight : window.innerWidth;
     return name.endsWith("h") ? window.innerHeight : window.innerWidth;
   }
   // Arbitrary viewport values: h-[95dvh], min-h-[50vh], …
-  const arbitrary = new RegExp(
-    `(?:^|[\\s:.[!])${prefix}-\\[(-?[\\d.]+(?:[dsl]?v(?:h|w|min|max)|vi|vb))\\]`,
-  ).exec(classAttr);
-  return arbitrary ? viewportLengthPx(arbitrary[1]!) : null;
+  const length = arbitrary.exec(classAttr)?.[1];
+  return length ? viewportLengthPx(length) : null;
 }
+
+/** What every viewport utility holds, a class list without one read
+ * no further. */
+const VIEWPORT_UNIT = /screen|[dsl]v[hw]|[\d.][dsl]?v(?:[hwib]|min|max)/;
+
+/** A utility stem's viewport patterns, each built once. */
+const viewportPatterns = (prefix: string): { named: RegExp; arbitrary: RegExp } => {
+  let patterns = VIEWPORT_PATTERNS.get(prefix);
+  if (!patterns) {
+    patterns = {
+      named: new RegExp(`(?:^|[\\s:.[!])${prefix}-(screen|[dsl]v[hw])(?![\\w-])`),
+      arbitrary: new RegExp(
+        `(?:^|[\\s:.[!])${prefix}-\\[(-?[\\d.]+(?:[dsl]?v(?:h|w|min|max)|vi|vb))\\]`,
+      ),
+    };
+    VIEWPORT_PATTERNS.set(prefix, patterns);
+  }
+  return patterns;
+};
+
+const VIEWPORT_PATTERNS = new Map<string, { named: RegExp; arbitrary: RegExp }>();
 
 /** A computed `aspect-ratio` in columns per row, physical through the
  * measured cell (specs/cell-model.md "Aspect ratio"); null for `auto`
  * or a zero term. */
 export function readAspectRatio(value: string, metrics: CellMetrics | undefined): number | null {
+  if (!value || value === "auto") return null;
   const [width = 0, height = 1] = value.replace("auto", "").split("/").map(Number);
   if (!(width > 0 && height > 0)) return null;
   const cell = metrics ?? DEFAULT_CELL;

@@ -1270,20 +1270,13 @@ function collectNodes(
       // (a popover inside an inline element is one, and so is every
       // positioner a custom element wraps).
       if (position === "absolute" || position === "fixed") {
-        run.spots.set(child, run.chars.length);
-        const box = buildNode(child, ctx);
-        if (box) run.positioned.push(fadedBy(box, opacity));
+        pushBox(child, false, ctx, run, opacity);
         continue;
       }
       // An atomic inline box rides the run as ONE unbreakable unit: a
       // U+FFFC marker whose advance layout resolves to the box's width.
       if (isAtomicInline(display)) {
-        const box = buildNode(child, ctx);
-        if (box) {
-          box.inlineBox = zeroInsets();
-          pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
-          run.boxes.push(fadedBy(box, opacity));
-        }
+        pushBox(child, true, ctx, run, opacity);
         continue;
       }
       // A BLOCK-level element nested inside the run can't be laid out
@@ -1304,7 +1297,7 @@ function collectNodes(
       const entry = inlineEntry(child, cs, padLeft, padRight, ctx, parent);
       // Pad cells belong to the element too (its bg must fill them).
       collectOwned(run, entry, (index) => {
-        for (let i = 0; i < padLeft; i++) pushChar(run, INLINE_PAD, 1, null, -1);
+        pushPads(run, padLeft);
         collectRun(
           child,
           entry.tracking,
@@ -1313,7 +1306,7 @@ function collectNodes(
           opacity * entry.opacity,
           index,
         );
-        for (let i = 0; i < padRight; i++) pushChar(run, INLINE_PAD, 1, null, -1);
+        pushPads(run, padRight);
       });
     } else if (node instanceof GeneratedText) {
       pushText(node.text, node.source, tracking, ctx, run);
@@ -1408,44 +1401,57 @@ function collectGenerated(
 ): void {
   const role = childRole(node);
   if (role === "none") return;
-  if (role === "out-of-flow") {
-    run.spots.set(node, run.chars.length);
-    const box = buildGeneratedBox(node, ctx);
-    if (box) run.positioned.push(fadedBy(box, opacity));
-    return;
-  }
   if (role === "block") {
     warnSkippedRunContent(node.parentElement);
     return;
   }
-  if (isAtomicInline(node.display)) {
-    const box = buildGeneratedBox(node, ctx);
-    if (box) {
-      box.inlineBox = zeroInsets();
-      pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
-      run.boxes.push(fadedBy(box, opacity));
-    }
+  if (role === "out-of-flow" || isAtomicInline(node.display)) {
+    pushBox(node, role !== "out-of-flow", ctx, run, opacity);
     return;
   }
   const { cs } = node;
   const cells = (value: string) => inlinePadCells(value, ctx.rootFontSizePx);
-  const blank = (count: number) => {
-    for (let i = 0; i < count; i++) pushChar(run, INLINE_PAD, 1, null, -1);
-  };
   const padLeft = cells(cs.paddingLeft);
   const padRight = cells(cs.paddingRight);
   const marginLeft = cells(cs.marginLeft);
   const marginRight = cells(cs.marginRight);
-  blank(marginLeft);
+  pushPads(run, marginLeft);
   const pseudo = { name: node.pseudo, marginLeft, marginRight, image: node.image };
   const entry = inlineEntry(node.parentElement, cs, padLeft, padRight, ctx, parent, pseudo);
   collectOwned(run, entry, () => {
-    blank(padLeft);
+    pushPads(run, padLeft);
     const text = generatedText(node, ctx);
     pushText(text, node, entry.tracking, casedContext(ctx, cs), run);
-    blank(padRight);
+    pushPads(run, padRight);
   });
-  blank(marginRight);
+  pushPads(run, marginRight);
+}
+
+/** A box beside the run's text: out of flow at its spot, or an atomic
+ * inline box on its U+FFFC marker. */
+function pushBox(
+  origin: BoxOrigin,
+  atomic: boolean,
+  ctx: RunContext,
+  run: LeafRun,
+  opacity: number,
+): void {
+  if (!atomic) run.spots.set(origin, run.chars.length);
+  const box = buildChild(origin, ctx);
+  if (!box) return;
+  fadedBy(box, opacity);
+  if (!atomic) {
+    run.positioned.push(box);
+    return;
+  }
+  box.inlineBox = zeroInsets();
+  pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
+  run.boxes.push(box);
+}
+
+/** `count` inline-padding cells. */
+function pushPads(run: LeafRun, count: number): void {
+  for (let i = 0; i < count; i++) pushChar(run, INLINE_PAD, 1, null, -1);
 }
 
 /** Collapse consecutive spaces (also across inline-element boundaries), trim

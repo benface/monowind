@@ -62,17 +62,18 @@ for (const story of stories) {
             }
           }
           if (transformed) continue;
-          // A relative offset — a half-leading lift, a sticky shift — is
-          // the engine's own, part of where it puts the box; the parent's
-          // own lift is undone, the cells counting from its engine box.
+          // The engine's own offsets — a sticky shift, the box's
+          // half-leading lift — are part of where it puts the box, a line's
+          // native leading its relative offset takes back aside
+          // (render.ts `inlineLift`); the parent's own lift is undone, the
+          // cells counting from its engine box.
           const style = getComputedStyle(box);
+          const lift = (of: CSSStyleDeclaration) =>
+            ((parseFloat(of.getPropertyValue("--mw-lh")) || 1) - 1) / 2;
           const offsetX = parseFloat(style.left) || 0;
-          const offsetY = parseFloat(style.top) || 0;
-          const parentLift =
-            parent === host
-              ? 0
-              : (parseFloat(getComputedStyle(parent).getPropertyValue("--mw-lhs")) || 0) *
-                cellHeight;
+          const shift = parseFloat(style.getPropertyValue("--mw-sy")) || 0;
+          const offsetY = (shift - lift(style)) * cellHeight;
+          const parentLift = parent === host ? 0 : -lift(getComputedStyle(parent)) * cellHeight;
           const origin = parent === host ? grid : parent.getBoundingClientRect();
           const scrollX = parent === host ? 0 : parent.scrollLeft;
           const scrollY = parent === host ? 0 : parent.scrollTop;

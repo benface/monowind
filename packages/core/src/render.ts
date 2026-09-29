@@ -3,7 +3,7 @@ import { placePainted } from "./paint-origin.ts";
 import { zIndexApplies } from "./stacking.ts";
 import { PSEUDOS } from "./generated.ts";
 import type { Pseudo } from "./generated.ts";
-import { clipsAxis, softWraps } from "./types.ts";
+import { clipsAxis, isElementBox, softWraps } from "./types.ts";
 import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
 /**
@@ -75,11 +75,11 @@ const PSEUDO_NAMES = { "::before": pseudoNames("before"), "::after": pseudoNames
 
 function pseudoNames(name: string) {
   const vars = (names: string) => names.split(" ").map((each) => `--mw-${name}-${each}`);
-  const text = vars("ls pl pr ml mr");
+  // An inline one's are a flow's first five.
   const flow = vars("ls pl pr ml mr pt pb mt mb");
   const box = vars("position x y w h mt mr mb ml z va contain");
   const flag = `data-mw-${name}`;
-  return { flag, text, flow, box, all: [flag, ...new Set([...flow, ...box])] };
+  return { flag, flow, box, all: [flag, ...new Set([...flow, ...box])] };
 }
 
 /** `names` cleared from each element under `root` a `selector` flag
@@ -103,17 +103,40 @@ function clearNames(el: HTMLElement, names: readonly string[]): void {
 }
 
 /** A custom property on an element's or a rule's style, removed when
- * null, written only on change. */
+ * null, written only on change: compared with the engine's last write
+ * there, no style read back — written where there is none. */
 export function setVar(
   target: { readonly style: CSSStyleDeclaration },
   property: string,
   value: string | number | null,
 ): void {
-  const { style } = target;
   const text = value === null ? "" : String(value);
-  if (style.getPropertyValue(property) === text) return;
-  if (value === null) style.removeProperty(property);
-  else style.setProperty(property, text);
+  let last = written.get(target);
+  if (!last) written.set(target, (last = new Map()));
+  if (last.get(property) === text) return;
+  last.set(property, text);
+  if (value === null) target.style.removeProperty(property);
+  else target.style.setProperty(property, text);
+}
+
+/** Each element's or rule's variables as the engine last wrote them. */
+const written = new WeakMap<object, Map<string, string>>();
+
+/** What the engine wrote forgotten where a page's mutations may have
+ * changed it: a `style` written, or an element taken out, whose style
+ * may change while it is. */
+export function forgetWrites(records: Iterable<MutationRecord>): void {
+  for (const record of records) {
+    if (record.type === "attributes") {
+      if (record.attributeName === "style") written.delete(record.target);
+      continue;
+    }
+    for (const node of record.removedNodes) {
+      if (!(node instanceof Element)) continue;
+      written.delete(node);
+      if (node.firstElementChild) for (const el of node.querySelectorAll("*")) written.delete(el);
+    }
+  }
 }
 
 /** A valued attribute, removed when null, written only on change. */
@@ -198,7 +221,7 @@ function walk(
   const own = node.style.visible
     ? (node.style.backgroundColor ?? (node.style.backgroundClear ? undefined : ground))
     : ground;
-  if (parent && !node.anonymous && !node.generated) {
+  if (parent && isElementBox(node)) {
     syncEditableColors(node.source as HTMLElement, node, own);
   }
   // A hidden table box (misparented content, <col>) hides its whole
@@ -208,7 +231,7 @@ function walk(
   for (const child of node.children) {
     // A run's element is its container, whose own value is already
     // written.
-    if (!child.anonymous && !child.generated) {
+    if (isElementBox(child)) {
       setVar(child.source as HTMLElement, "--mw-z", appliedZIndex(child, node));
     }
     walk(child, node, written, own, within);
@@ -229,14 +252,14 @@ function writePseudo(
   kind: "text" | "image" | "flow" | "box",
   values: readonly (number | string)[],
 ): void {
-  const { flag, all, ...names } = PSEUDO_NAMES[pseudo];
-  const was = el.getAttribute(flag);
+  const names = PSEUDO_NAMES[pseudo];
+  const was = el.getAttribute(names.flag);
   if (was !== kind) {
-    if (was !== null) clearNames(el, all);
-    el.setAttribute(flag, kind);
+    if (was !== null) clearNames(el, names.all);
+    el.setAttribute(names.flag, kind);
   }
-  const written = kind === "image" ? names.text : names[kind];
-  for (let i = 0; i < written.length; i++) setVar(el, written[i]!, values[i]!);
+  const variables = kind === "box" ? names.box : names.flow;
+  for (let i = 0; i < values.length; i++) setVar(el, variables[i]!, values[i]!);
 }
 
 /** A pseudo-element box on the engine's cells, drawing no text natively
@@ -270,7 +293,7 @@ function writePseudoBox(node: LayoutNode, parent: LayoutNode): void {
   // A run's box is its container's natively, where the run lies.
   const run = !margins && parent.anonymous ? parent.localRect : undefined;
   const x = margins ? 0 : rect.x + (run?.x ?? 0);
-  const y = margins ? 0 : rect.y + (run?.y ?? 0);
+  const y = inlineBox ? inlineLift(node, parent, 0) : margins ? 0 : rect.y + (run?.y ?? 0);
   // A middle-aligned box's baseline is its bottom margin edge, as it
   // draws no line (`positionElement`).
   const edge = (margins?.top ?? 0) + rect.height + (margins?.bottom ?? 0);
@@ -296,6 +319,17 @@ function writePseudoBox(node: LayoutNode, parent: LayoutNode): void {
     align,
     root ? "layout" : "none",
   ]);
+}
+
+/** The rows an atomic inline box moves from where its line's leading
+ * puts it natively, to hold half its own gap above its first line as a
+ * laid-out box's lift does: its line's half gap down from a top edge or
+ * up from a bottom one, none on a baseline, which its text holds. */
+function inlineLift(node: LayoutNode, parent: LayoutNode, ownGap: number): number {
+  const { verticalAlign } = node.style;
+  if (verticalAlign === "center" && node.inlineTextRow !== undefined) return 0;
+  const lineHalf = parent.style.lineGap / 2;
+  return -ownGap / 2 + (verticalAlign === "end" ? -lineHalf : lineHalf);
 }
 
 /** The elements whose text the browser renders and selects (the
@@ -499,7 +533,7 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   // per wrapped line, and the half-leading cancellation shift.
   setVar(el, "--mw-ls", tracking);
   setVar(el, "--mw-lh", lineGap + 1);
-  setVar(el, "--mw-lhs", -lineGap / 2);
+  setVar(el, "--mw-lhs", node.inlineBox ? inlineLift(node, parent, lineGap) : -lineGap / 2);
   setFlag(el, "data-mw-nowrap", !softWraps(whiteSpace));
   // A multicol TEXT LEAF or paragraph-flow container keeps native
   // columns, driven by the engine's used values so the browser
