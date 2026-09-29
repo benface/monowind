@@ -217,9 +217,16 @@ is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
 the window. A host whose width is its content's (`w-fit`,
 `inline-block`, a float, an absolute box, a flex row's item) takes it
-from a spacer, as its height does: the shadow viewport's `min-width`,
-the columns laid out, lifted while the engine reads so the content
-measures anew.
+from a spacer, as its height does: a shadow grid track,
+`minmax(<columns> − 1/32px, <columns>)`, lifted while the engine reads
+so the content measures anew. The columns laid out are its max-content
+width, the host's width where it has none of its own; its min-content
+width yields a thirty-second of a pixel, so a container sized off the
+host (a `flex-1` column the host fills to the pixel, which an aside
+beside it squeezes) still shrinks natively, and its resize lays the
+host out. A thirty-second is past a layout unit in every engine and
+within the resize tolerance, so a flex item held at that floor is laid
+out once.
 
 The height is CSS's too. The host keeps `height: auto`; its content
 lies out of its flow (the shadow's slot is positioned, outside the
@@ -1643,13 +1650,13 @@ For "Aspect ratio":
 For "Host sizing":
 
 - shadow.css: the slot out of the host's flow but under
-  `:host([measuring])`, and the viewport, whose `min-height` and
-  `min-width` are the spacer, the width lifted under
+  `:host([measuring])`, the viewport, whose `min-height` is the
+  spacer's height, and `#spacer`, its width's grid track, lifted under
   `:host([measuring])`.
 - element.ts: the height read before `measuring` (`sizedHeight`), the
   rows it gives the root where it is not the spacer's (`sizedRows`),
   the spacer written from the root's natural content rows
-  (`#spacerHeight`) and the columns laid out (the viewport's
-  `min-width`), and `#laidOutSize`, the height the resize
+  (`#spacerHeight`) and the columns laid out (`#spacerWidth`,
+  `SPACER_YIELD` under them), and `#laidOutSize`, the size the resize
   observer compares.
 - layout.ts: `layoutRoot`'s `rows`, the root's forced height.

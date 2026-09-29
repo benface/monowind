@@ -15,7 +15,7 @@
 /* Positioned, so the light DOM paints over the grid from its origin; a
  * block formatting context, so a flow child's top margin stays where
  * the engine put it (specs/cell-model.md "Inline content"). Out of the
- * host's flow, so the viewport's `min-height` and `min-width` alone give
+ * host's flow, so the viewport's `min-height` and the spacer alone give
  * it its size ("Host sizing"), except while the engine reads a
  * shrink-to-fit host's width off its content. */
 slot {
@@ -28,8 +28,14 @@ slot {
 :host([measuring]) slot {
   position: relative;
 }
-:host([measuring]) #viewport {
-  min-width: 0 !important;
+/* A track preferring the columns laid out and yielding a hair under
+ * them, so a container sized off the host still shrinks natively
+ * (specs/cell-model.md "Host sizing"). */
+#spacer {
+  display: grid;
+}
+:host([measuring]) #spacer {
+  display: none;
 }
 /* Sized to the ink extent, the host's background carried past the host
  * (specs/cell-model.md "Overflow"); the text fill undoes the host's

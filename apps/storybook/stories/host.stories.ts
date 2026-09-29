@@ -591,8 +591,8 @@ export const OwnHeight: StoryObj = {
  * its chrome (specs/cell-model.md "Host sizing"): `w-fit`,
  * `inline-block`, `float-left`, and a flex row's item, whose sibling
  * starts past its right edge, the row narrowed laying it out narrower;
- * and a host in a `flex-1` column narrows as the aside beside it
- * grows. */
+ * and a host filling its `flex-1` column to the pixel narrows as the
+ * aside beside it grows. */
 export const OwnWidth: StoryObj = {
   render: () => html`
     <div class="flex flex-col gap-4">
@@ -636,8 +636,15 @@ export const OwnWidth: StoryObj = {
       expect(box("sibling").right).toBeLessThanOrEqual(box("row").right + 0.5);
     });
     layouts.stop();
+    // Room for forty whole columns, which the host fills to the pixel,
+    // its layout settled before the aside grows.
+    const cell = cellSize(hooks("column")).width;
+    hooks("shell").style.width = `${60 * cell}px`;
+    hooks("aside").style.width = `${20 * cell}px`;
+    await waitFor(() => expect(box("column").width).toBeCloseTo(40 * cell, 1));
+    await frames(2);
     // An inline width: a new utility's stylesheet would lay every host out.
-    hooks("aside").style.width = "30rem";
+    hooks("aside").style.width = `${50 * cell}px`;
     await waitFor(() => {
       expect(box("column").right).toBeLessThanOrEqual(box("shell").right + 0.5);
       expect(rowsOf(hooks("column")).filter((row) => row.trim()).length).toBeGreaterThan(1);

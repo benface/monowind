@@ -255,12 +255,15 @@ export const GlyphProperties: StoryObj = {
       const style = getComputedStyle(paintedSpan(host, text)!);
       const smoothing = style.getPropertyValue("-webkit-font-smoothing");
       // Firefox's alias reads its own `grayscale`.
-      return `${style.fontWeight} ${style.fontStyle} ${smoothing === "grayscale" ? "antialiased" : smoothing}`;
+      return `${style.fontWeight} ${style.fontStyle} ${smoothing === "grayscale" ? "antialiased" : smoothing}`.trimEnd();
     };
-    expect(font(styledHost!, "host")).toBe("700 italic antialiased");
-    expect(font(styledHost!, "upright")).toBe("400 normal auto");
-    expect(font(plainHost!, "plain")).toBe("400 normal auto");
-    expect(font(plainHost!, "styled")).toBe("700 italic antialiased");
+    // Firefox smooths fonts on macOS only.
+    const smoothed = (face: string, smoothing: string) =>
+      CSS.supports("-webkit-font-smoothing", smoothing) ? `${face} ${smoothing}` : face;
+    expect(font(styledHost!, "host")).toBe(smoothed("700 italic", "antialiased"));
+    expect(font(styledHost!, "upright")).toBe(smoothed("400 normal", "auto"));
+    expect(font(plainHost!, "plain")).toBe(smoothed("400 normal", "auto"));
+    expect(font(plainHost!, "styled")).toBe(smoothed("700 italic", "antialiased"));
     const zero = getComputedStyle(paintedSpan(plainHost!, "zero")!);
     expect(zero.fontVariantNumeric).toBe("slashed-zero");
     expect(zero.textShadow).not.toBe("none");
@@ -602,19 +605,30 @@ const lineBreakCases = (u: Unit): NativeCase[] =>
     departs,
   }));
 
-/** Each case's rows as the browser breaks them, a CJK copy spaced to
- * the grid's two cells a character by its first (its fallback font
- * draws them narrower), its spaces kept a cell. */
+/** Each case's rows as the browser breaks them, each character of a
+ * CJK copy spaced to its cells on the grid, two a character and one a
+ * space, from its own advance (fallback fonts draw them narrower, and
+ * not all alike). */
 export const LineBreaks: StoryObj = {
   tags: ["!dev", "!golden"],
   ...besideNative(lineBreakCases, async (host, native, i) => {
     if (lineBreaks[i]!.cjk) {
-      const probe = native.appendChild(document.createElement("span"));
-      probe.textContent = native.textContent!.charAt(0);
-      const advance = probe.getBoundingClientRect().width;
-      probe.remove();
-      const spacing = 2 * cellSize(host).width - advance;
-      Object.assign(native.style, { letterSpacing: `${spacing}px`, wordSpacing: `${-spacing}px` });
+      const cell = cellSize(host).width;
+      const paragraph = native.firstElementChild as HTMLElement;
+      const chars = [...paragraph.textContent!].map((char) => {
+        const span = document.createElement("span");
+        span.textContent = char;
+        return span;
+      });
+      paragraph.replaceChildren(...chars);
+      paragraph.style.letterSpacing = "0px";
+      const advances = chars.map((span) => span.getBoundingClientRect().width);
+      // A hair under its cells, so a full line fits however the engine
+      // rounds the spacing.
+      chars.forEach((span, j) => {
+        const cells = span.textContent === " " ? 1 : 2;
+        span.style.letterSpacing = `${cells * cell - advances[j]! - 1 / 32}px`;
+      });
       await frames(1);
     }
     expectLinesAsNative(host, native);

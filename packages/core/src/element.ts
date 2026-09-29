@@ -88,6 +88,7 @@ const SHADE_RULES = [...SHADES]
 const SHADOW_TEMPLATE = `
 <style>${shadowCss}${SHADE_RULES}</style>
 <div id="viewport">
+  <div id="spacer"></div>
   <pre id="grid" class="grid" aria-hidden="true"></pre>
   <div id="layers"></div>
   <slot></slot>
@@ -262,6 +263,11 @@ const DYNAMIC_RELAYOUT_EVENTS = [
  * in px: the rounding of layout units (1/64 px in Chromium and WebKit,
  * 1/60 in Firefox). */
 const SIZE_TOLERANCE = 0.05;
+
+/** How far the width spacer yields under the columns laid out
+ * (specs/cell-model.md "Host sizing"), in px: past a layout unit in
+ * every engine, within SIZE_TOLERANCE. */
+const SPACER_YIELD = 1 / 32;
 
 /** Whether a lock's snap back could start a transition on an element:
  * a non-zero duration or delay in any entry of its lists. */
@@ -448,9 +454,11 @@ export class MonoWindElement extends HTMLElementBase {
   #grid: HTMLElement;
   #layers: HTMLElement;
   #viewport: HTMLElement;
-  /** The spacer's height in px, the content's rows at the last layout
-   * (specs/cell-model.md "Host sizing"). */
+  #spacer: HTMLElement;
+  /** The spacer's size in px, the content's rows and the columns at the
+   * last layout (specs/cell-model.md "Host sizing"). */
   #spacerHeight = 0;
+  #spacerWidth = 0;
   #probe: HTMLElement;
   /** Resolves colors where the grid's spans inherit them
    * (specs/cell-model.md "Opacity and translucency"): the ink, the
@@ -605,6 +613,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#grid = shadow.querySelector<HTMLElement>("#grid")!;
     this.#layers = shadow.querySelector<HTMLElement>("#layers")!;
     this.#viewport = shadow.querySelector<HTMLElement>("#viewport")!;
+    this.#spacer = shadow.querySelector<HTMLElement>("#spacer")!;
     this.#colorProbe = shadow.querySelector<HTMLElement>("#color-probe")!;
     this.#colorProbeStyle = getComputedStyle(this.#colorProbe);
     // The cell-metrics probe (measureCellMetrics), in the LIGHT DOM so it
@@ -2995,9 +3004,11 @@ export class MonoWindElement extends HTMLElementBase {
         this.#viewport.style.minHeight = `${spacerHeight}px`;
         this.#spacerHeight = spacerHeight;
       }
-      const spacerWidth = `${availableCols * metrics.width}px`;
-      if (this.#viewport.style.minWidth !== spacerWidth)
-        this.#viewport.style.minWidth = spacerWidth;
+      const spacerWidth = availableCols * metrics.width;
+      if (spacerWidth !== this.#spacerWidth) {
+        this.#spacer.style.gridTemplateColumns = `minmax(${spacerWidth - SPACER_YIELD}px, ${spacerWidth}px)`;
+        this.#spacerWidth = spacerWidth;
+      }
       // Cap the width to the columns laid out (specs/cell-model.md "Host
       // sizing"); the companion applies it outside measuring.
       setVar(this, "--mw-host-w", `${availableCols * metrics.width + chromeX}px`);
