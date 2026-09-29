@@ -18,6 +18,7 @@ import {
   lineGapRows,
   readAnchorNames,
   readAnchorScope,
+  markerOf,
   readCellStyle,
   readDecoration,
   readElementInsets,
@@ -32,17 +33,28 @@ import {
 import { animatedProperties } from "./animation.ts";
 import {
   countersOf,
+  isQuote,
   LIST_ITEM,
   pageCounterStyles,
   parseChanges,
   parseResets,
   partText,
-  counterNames,
-  readsValue,
+  readsCounter,
   withBullets,
 } from "./counters.ts";
-import type { CounterNode } from "./counters.ts";
-import { bulletGlyph, glyphSetFor } from "./glyphs.ts";
+import type { CounterNode, Counters, CounterStyles } from "./counters.ts";
+import {
+  GeneratedNode,
+  GeneratedText,
+  generatedElements,
+  nameOf,
+  PSEUDOS,
+  quotePairs,
+  quoteWriter,
+  readGenerated,
+} from "./generated.ts";
+import type { Pseudo } from "./generated.ts";
+import { bulletGlyph, glyphSetFor, glyphSetOf } from "./glyphs.ts";
 import { inlineMembersOf, inlineOwners } from "./stacking.ts";
 import { casedClusters, readTextCase } from "./text-transform.ts";
 import type { TextCase } from "./text-transform.ts";
@@ -52,6 +64,7 @@ import {
   decorationOf,
   defaultCellStyle,
   NO_DECORATION,
+  parentElementOf,
   preservedSpaces,
   zeroInsets,
 } from "./types.ts";
@@ -70,9 +83,12 @@ import type {
   CellLength,
   CellMetrics,
   CellStyle,
+  ContentPart,
   CharSourceRun,
+  InlineElement,
   LayoutNode,
   Marker,
+  MarkerStyle,
   TextDecoration,
 } from "./types.ts";
 
@@ -99,11 +115,11 @@ export function buildTree(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
 ): LayoutNode | null {
-  const context = { rootFontSizePx, cellMetrics, textareaWidths, items: [] };
+  const context = newContext(root, rootFontSizePx, cellMetrics, textareaWidths);
   const tree = buildNode(root, context);
   if (tree) {
     propagateDecorations(tree, NO_DECORATION);
-    attachMarkers(root, context);
+    attachMarkers(context);
   }
   return tree;
 }
@@ -115,17 +131,147 @@ interface BuildContext {
   cellMetrics: CellMetrics | undefined;
   textareaWidths: TextareaWidths | undefined;
   items: LayoutNode[];
+  /** The elements each pseudo-element may give content. */
+  generated: Record<Pseudo, ReadonlySet<Element>>;
+  /** What a build reads once: each element's pseudo-elements, their
+   * text, and each list item's marker. */
+  pseudoElements: Map<Element, PseudoElements>;
+  texts: Map<GeneratedNode, string>;
+  markers: Map<Element, MarkerStyle | null>;
+  /** The page's counter styles, which generated text and markers draw in. */
+  counterStyles: CounterStyles;
+  /** The counters in scope at each writer of one (specs/lists.md
+   * "Numbering"), walked once a build, where one is first read. */
+  counters: () => ReadonlyMap<Element | GeneratedNode, Counters>;
+  /** Each quote's text, written in the build's tree order. */
+  quote: ReturnType<typeof quoteWriter>;
+}
+
+function newContext(
+  root: Element,
+  rootFontSizePx: number,
+  cellMetrics: CellMetrics | undefined,
+  textareaWidths: TextareaWidths | undefined,
+): BuildContext {
+  // Held here, as each run's context copies this one.
+  let counters: ReadonlyMap<Element | GeneratedNode, Counters> | undefined;
+  const context: BuildContext = {
+    rootFontSizePx,
+    cellMetrics,
+    textareaWidths,
+    items: [],
+    generated: generatedElements(root),
+    pseudoElements: new Map(),
+    texts: new Map(),
+    markers: new Map(),
+    counterStyles: pageCounterStyles(root),
+    counters: () => {
+      if (!counters) {
+        const tree = counterTree(root, context);
+        counters = tree ? countersOf(tree) : new Map();
+      }
+      return counters;
+    },
+    quote: quoteWriter(),
+  };
+  return context;
+}
+
+/** A child node the builder takes: the DOM's, or a pseudo-element. */
+type BuildChild = ChildNode | GeneratedNode;
+
+/** A node a run collects: a child, or a pseudo-element box's text. */
+type RunNode = BuildChild | GeneratedText;
+
+/** A child that builds a box of its own, or rides a run as one. */
+type BoxOrigin = Element | GeneratedNode;
+
+const isBoxOrigin = (node: RunNode): node is BoxOrigin =>
+  node instanceof Element || node instanceof GeneratedNode;
+
+/** A box's origin: its pseudo-element, else its element. */
+const originOf = (box: LayoutNode): BoxOrigin => box.generated ?? box.source;
+
+/** A child's box: an element's, or a pseudo-element's. */
+function buildChild(node: BoxOrigin, context: BuildContext): LayoutNode | null {
+  return node instanceof GeneratedNode
+    ? buildGeneratedBox(node, context)
+    : buildNode(node, context);
+}
+
+/** A pseudo-element's box (specs/generated-content.md "Pseudo-element
+ * boxes"), built as a leaf over its generated text. */
+function buildGeneratedBox(node: GeneratedNode, context: BuildContext): LayoutNode | null {
+  const el = node.parentElement;
+  const style = readCellStyle(el, context.rootFontSizePx, context.cellMetrics, { generated: node });
+  if (style.display === "none") return null;
+  const text = new GeneratedText(node, generatedText(node, context, style.glyphSet));
+  const box = buildLeaf(el, style, [], [], context, [text]);
+  box.generated = node;
+  return box;
+}
+
+/** A pseudo-element's text, its parts written once a build: its quotes
+ * move the build's depth. */
+function generatedText(
+  node: GeneratedNode,
+  context: BuildContext,
+  glyphSet = glyphSetOf(node.cs),
+): string {
+  let text = context.texts.get(node);
+  if (text === undefined) {
+    const parts = withQuotes(node.parts, node.cs.quotes, node.parentElement, context);
+    text = contentText(node, parts, glyphSet, context);
+    context.texts.set(node, text);
+  }
+  return text;
+}
+
+/** A writer's parts with its quotes written, from the build's depth. */
+function withQuotes(
+  parts: readonly ContentPart[],
+  quotes: string,
+  element: Element,
+  context: BuildContext,
+): readonly ContentPart[] {
+  if (!parts.some(isQuote)) return parts;
+  const pairs = quotePairs(quotes, languageOf(element));
+  return parts.map((part) => (isQuote(part) ? context.quote(part, pairs) : part));
+}
+
+/** A writer's parts as text, in its glyph set's bullets, their counters
+ * the walk's where they read any. */
+function contentText(
+  source: Element | GeneratedNode,
+  parts: readonly ContentPart[],
+  glyphSet: string | null,
+  context: BuildContext,
+): string {
+  if (parts.every((part) => typeof part === "string")) return parts.join("");
+  const set = glyphSetFor(glyphSet);
+  const styles = withBullets(context.counterStyles, (bullet) => bulletGlyph(set, bullet));
+  const counters = parts.some(readsCounter) ? context.counters().get(source) : undefined;
+  return parts.map((part) => partText(part, counters ?? NO_COUNTERS, styles)).join("");
 }
 
 function buildNode(root: Element, context: BuildContext): LayoutNode | null {
   const node = buildElement(root, context);
-  if (node?.style.marker) context.items.push(node);
+  if (!node) return null;
+  if (node.style.marker) context.items.push(node);
+  const { read } = pseudoElementsOf(root, context);
+  if (read.length > 0) node.authoredPseudos = read.flatMap((each) => each?.pseudo ?? []);
   return node;
 }
 
 function buildElement(root: Element, context: BuildContext): LayoutNode | null {
-  const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics);
+  const { markers } = context;
+  const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics, { markers });
   if (style.display === "none") return null;
+  // A marker's quotes come before its item's contents'.
+  const { marker } = style;
+  if (marker?.quotes !== undefined) {
+    style.marker = { ...marker, parts: withQuotes(marker.parts, marker.quotes, root, context) };
+  }
   if (style.skipsContents) return buildLeaf(root, style, [], [], context, []);
 
   // Registered leaf renderers (specs/leaf-renderers.md) supply their
@@ -135,8 +281,8 @@ function buildElement(root: Element, context: BuildContext): LayoutNode | null {
   const leaf = leafRendererFor(root.tagName);
   if (leaf) return buildRendererLeaf(root, style, leaf);
 
-  const childNodes = shownChildNodes(root);
-  const elementChildren = childNodes.filter((node): node is Element => node instanceof Element);
+  const childNodes = shownChildNodes(root, context);
+  const elementChildren = childNodes.filter(isBoxOrigin);
   const roles = elementChildren.map(childRole);
 
   // Form controls are always leaves — descending into a <select>'s
@@ -146,32 +292,19 @@ function buildElement(root: Element, context: BuildContext): LayoutNode | null {
     isFormControlTag(root.tagName) ||
     (style.display !== "grid" &&
       !roles.includes("block") &&
-      !splitsForBlock(elementChildren, roles))
+      !splitsForBlock(elementChildren, roles, context))
   ) {
     return buildLeaf(root, style, elementChildren, roles, context);
   }
   return createNode(root, style, buildChildren(root, childNodes, context));
 }
 
-/** Each list item's marker (specs/lists.md), its text from the counter
- * walk, which runs only where a marker reads a value: on the item where
- * it sits outside, on the leaf holding its first line where inside. */
-function attachMarkers(root: Element, context: BuildContext): void {
-  const { items } = context;
-  if (items.length === 0) return;
-  const parts = items.flatMap((item) => item.style.marker!.parts);
-  let values = new Map<Element, Map<string, number[]>>();
-  if (parts.some(readsValue)) {
-    const counters = counterTree(root);
-    if (counters) values = countersOf(counters, counterNames(parts));
-  }
-  const page = pageCounterStyles(root);
-  for (const item of items) {
+/** Each list item's marker (specs/lists.md): on the item where it sits
+ * outside, on the leaf holding its first line where inside. */
+function attachMarkers(context: BuildContext): void {
+  for (const item of context.items) {
     const style = item.style.marker!;
-    const set = glyphSetFor(item.style.glyphSet);
-    const styles = withBullets(page, (bullet) => bulletGlyph(set, bullet));
-    const counters = values.get(item.source) ?? NO_COUNTERS;
-    const text = style.parts.map((part) => partText(part, counters, styles)).join("");
+    const text = contentText(item.source, style.parts, item.style.glyphSet, context);
     if (!text) continue;
     const advances = clusterAdvances(text, item.style.tracking);
     const marker: Marker = {
@@ -226,15 +359,17 @@ function holdInsideMarker(item: LayoutNode, marker: Marker, context: BuildContex
   holder.intrinsicHeight = Math.max(1, holder.intrinsicHeight);
 }
 
-/** The host's elements as the counter walk reads them (specs/lists.md
- * "Numbering"): all but a `display: none` one and a skipped box's
- * contents, HTML's list hints under the author's counters. */
-export function counterTree(root: Element): CounterNode | null {
+/** The host's elements and pseudo-elements as the counter walk reads
+ * them (specs/lists.md "Numbering"): all but a `display: none` one and a
+ * skipped box's contents, HTML's list hints under the author's counters. */
+export function counterTree(root: Element, context?: BuildContext): CounterNode | null {
   const cs = getComputedStyle(root);
   const display = computedDisplay(root, cs);
   if (display === "none") return null;
-  const resets = parseResets(cs.counterReset);
-  const sets = parseChanges(cs.counterSet, 0, false);
+  const listItem = display.includes(LIST_ITEM);
+  const parts = listItem ? (markerOf(root, cs, display, context?.markers)?.parts ?? []) : [];
+  const node = counterNode(root, cs, listItem, parts.some(readsCounter));
+  const { resets, sets } = node;
   const { localName } = root;
   if (LISTS.has(localName) && !resets.some(({ name }) => name === LIST_ITEM)) {
     const start = localName === "ol" ? htmlInteger(root.getAttribute("start")) : undefined;
@@ -244,21 +379,34 @@ export function counterTree(root: Element): CounterNode | null {
   }
   const value = localName === "li" ? htmlInteger(root.getAttribute("value")) : undefined;
   if (value !== undefined && !sets.has(LIST_ITEM)) sets.set(LIST_ITEM, value);
-  const listItem = display.includes(LIST_ITEM);
-  const children: CounterNode[] = [];
   if (!skipsContents(cs, display)) {
-    for (const child of shownChildNodes(root)) {
-      const node = child instanceof Element && counterTree(child);
-      if (node) children.push(node);
+    // Every pseudo-element read, an empty one's counters counting too.
+    for (const child of shownChildNodes(root, context, "read")) {
+      const counted =
+        child instanceof GeneratedNode
+          ? pseudoCounterNode(child)
+          : child instanceof Element && counterTree(child, context);
+      if (counted) node.children.push(counted);
     }
   }
+  return node;
+}
+
+/** A node's counter properties. */
+function counterNode(
+  source: Element | GeneratedNode,
+  cs: CSSStyleDeclaration,
+  listItem: boolean,
+  reads: boolean,
+): CounterNode {
   return {
-    element: root,
-    resets,
+    source,
+    resets: parseResets(cs.counterReset),
     increments: parseChanges(cs.counterIncrement, 1, true),
-    sets,
+    sets: parseChanges(cs.counterSet, 0, false),
     listItem,
-    children,
+    reads,
+    children: [],
   };
 }
 
@@ -275,11 +423,85 @@ function htmlInteger(text: string | null): number | undefined {
 /** An element's child nodes as the page renders them: a `details`
  * without `open` shows its first `summary` alone (HTML's rendering
  * rules, specs/visibility.md "Skipped contents"). */
-function shownChildNodes(el: Element): ChildNode[] {
-  if (el.tagName !== "DETAILS" || el.hasAttribute("open")) return Array.from(el.childNodes);
-  const summary = Array.from(el.children).find((child) => child.tagName === "SUMMARY");
-  return summary ? [summary] : [];
+function shownChildNodes(
+  el: Element,
+  context?: BuildContext,
+  pseudos: keyof PseudoElements = "shown",
+): BuildChild[] {
+  let nodes: BuildChild[] = Array.from(el.childNodes);
+  if (el.tagName === "DETAILS" && !el.hasAttribute("open")) {
+    const summary = Array.from(el.children).find((child) => child.tagName === "SUMMARY");
+    nodes = summary ? [summary] : [];
+  }
+  // Its pseudo-elements as its first and last children
+  // (specs/generated-content.md).
+  if (!context) return nodes;
+  const [before, after] = pseudoElementsOf(el, context)[pseudos];
+  if (before) nodes.unshift(before);
+  if (after) nodes.push(after);
+  return nodes;
 }
+
+/** An element's `::before` and `::after` with content — each one a rule
+ * may give it — and those it shows, an empty inline one drawing
+ * nothing. */
+interface PseudoElements {
+  read: readonly (GeneratedNode | null)[];
+  shown: readonly (GeneratedNode | null)[];
+}
+
+const NO_PSEUDOS: PseudoElements = { read: [], shown: [] };
+
+/** An element's pseudo-elements, read once a build. */
+function pseudoElementsOf(el: Element, context: BuildContext): PseudoElements {
+  const { generated } = context;
+  if (!generated["::before"].has(el) && !generated["::after"].has(el)) return NO_PSEUDOS;
+  let pseudos = context.pseudoElements.get(el);
+  if (pseudos) return pseudos;
+  if (NO_PSEUDO_ELEMENTS.has(el.tagName)) return NO_PSEUDOS;
+  const read = PSEUDOS.map((pseudo) =>
+    generated[pseudo].has(el) ? readGenerated(el, pseudo) : null,
+  );
+  pseudos = { read, shown: read.map((node) => (node && !emptyInline(node) ? node : null)) };
+  context.pseudoElements.set(el, pseudos);
+  return pseudos;
+}
+
+/** A pseudo-element as the counter walk reads it; none where it builds
+ * no box. */
+function pseudoCounterNode(node: GeneratedNode): CounterNode | null {
+  const { display } = node;
+  return display === "none"
+    ? null
+    : counterNode(node, node.cs, display.includes(LIST_ITEM), node.parts.some(readsCounter));
+}
+
+/** An inline pseudo-element that takes no cell — an empty `content`'s, as
+ * every `before:` utility sets but `content-[…]`, with no horizontal
+ * padding or margin — and no image to lock. */
+const emptyInline = (node: GeneratedNode): boolean =>
+  !node.image &&
+  node.parts.every((part) => part === "") &&
+  childRole(node) === "inline" &&
+  !isAtomicInline(node.display) &&
+  SPACING.every((side) => !(parseFloat(node.cs.getPropertyValue(side)) > 0));
+
+const SPACING = ["padding-left", "padding-right", "margin-left", "margin-right"];
+
+/** Form controls and replaced elements, whose pseudo-elements the grid
+ * leaves to the browser (specs/generated-content.md "Where"). */
+const NO_PSEUDO_ELEMENTS = new Set([
+  "INPUT",
+  "SELECT",
+  "TEXTAREA",
+  "IMG",
+  "VIDEO",
+  "AUDIO",
+  "IFRAME",
+  "CANVAS",
+  "EMBED",
+  "OBJECT",
+]);
 
 /** A container's children in document order (specs/cell-model.md
  * "Inline content"): each block-level element a node, and each maximal
@@ -292,21 +514,21 @@ function shownChildNodes(el: Element): ChildNode[] {
  * own positioned children. */
 function buildChildren(
   container: Element,
-  nodes: ChildNode[],
+  nodes: BuildChild[],
   context: BuildContext,
   runStyle?: CellStyle,
 ): LayoutNode[] {
   const children: LayoutNode[] = [];
-  const build = (el: Element): void => {
-    const node = buildNode(el, context);
-    if (node) children.push(fadedBy(node, splitOpacity(el, container)));
+  const build = (origin: BoxOrigin): void => {
+    const node = buildChild(origin, context);
+    if (node) children.push(fadedBy(node, splitOpacity(origin, container)));
   };
   let style = runStyle;
-  let run: ChildNode[] = [];
+  let run: BuildChild[] = [];
   let roles: ChildRole[] = [];
   let inline = false;
   const flush = (): void => {
-    const elements = run.filter((node): node is Element => node instanceof Element);
+    const elements = run.filter(isBoxOrigin);
     if (!inline) {
       for (const el of elements) build(el);
     } else {
@@ -327,7 +549,7 @@ function buildChildren(
   const queue = [...nodes];
   for (let index = 0; index < queue.length; index++) {
     const node = queue[index]!;
-    if (node instanceof Element) {
+    if (isBoxOrigin(node)) {
       const role = childRole(node);
       if (role === "none") continue;
       if (role === "block") {
@@ -339,8 +561,8 @@ function buildChildren(
       // there, and taking its children in its place splits it here —
       // the block reaches this loop, and the inline content each side
       // of it falls into the runs around it.
-      if (role === "inline" && hidesBlock(node)) {
-        queue.splice(index, 1, ...shownChildNodes(node));
+      if (role === "inline" && node instanceof Element && hidesBlock(node, context)) {
+        queue.splice(index, 1, ...shownChildNodes(node, context));
         index--;
         continue;
       }
@@ -372,7 +594,7 @@ export function buildRoot(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
 ): LayoutNode {
-  const context = { rootFontSizePx, cellMetrics, textareaWidths, items: [] };
+  const context = newContext(host, rootFontSizePx, cellMetrics, textareaWidths);
   const nodes = Array.from(host.childNodes).filter(
     (node) => !(node instanceof Element && node.hasAttribute("data-mw-probe")),
   );
@@ -381,13 +603,13 @@ export function buildRoot(
   const style = { ...leafStyleOf(host, context), tracking: 0, lineGap: 0, pointerEvents: true };
   const isLeaf =
     !roles.includes("block") &&
-    !splitsForBlock(elementChildren, roles) &&
+    !splitsForBlock(elementChildren, roles, context) &&
     (hasDirectText(host) || roles.includes("inline"));
   const tree = isLeaf
     ? buildLeaf(host, style, elementChildren, roles, context, nodes)
     : createNode(host, style, buildChildren(host, nodes, context, style));
   propagateDecorations(tree, NO_DECORATION);
-  attachMarkers(host, context);
+  attachMarkers(context);
   return tree;
 }
 
@@ -411,7 +633,7 @@ function propagateDecorations(node: LayoutNode, propagated: TextDecoration): voi
   for (const child of node.children) {
     if (!isFlowChild(child)) propagateDecorations(child, NO_DECORATION);
     else if (child.anonymous) propagateDecorations(child, style.textDecoration);
-    else propagateDecorations(child, through(child.source.parentElement));
+    else propagateDecorations(child, through(parentElementOf(child)));
   }
 }
 
@@ -454,10 +676,10 @@ function leafStyleOf(el: Element, { rootFontSizePx, cellMetrics }: BuildContext)
 function buildLeaf(
   root: Element,
   style: CellStyle,
-  elementChildren: Element[],
+  elementChildren: BoxOrigin[],
   roles: ChildRole[],
   context: BuildContext,
-  nodes?: ChildNode[],
+  nodes?: RunNode[],
 ): LayoutNode {
   const tag = root.tagName;
   const formControl = isFormControlTag(tag);
@@ -560,34 +782,29 @@ function buildLeaf(
   // What the loop below places, which is not always the root's own
   // children: an anonymous leaf takes the run's elements, and a split
   // inline puts its children among them.
-  const placed = new Set(elementChildren);
-  const directBoxes = new Map<Element, LayoutNode>();
+  // An out-of-flow box the run met below one the loop places never
+  // reaches that loop, so it joins the nested boxes and sorts into
+  // document order with them.
+  const placed = new Set<BoxOrigin>(elementChildren);
+  const directBoxes = new Map<BoxOrigin, LayoutNode>();
   const nestedBoxes: LayoutNode[] = [];
-  for (const box of run.boxes) {
-    if (placed.has(box.source)) directBoxes.set(box.source, box);
+  for (const box of [...run.boxes, ...run.positioned]) {
+    if (placed.has(originOf(box))) directBoxes.set(originOf(box), box);
     else nestedBoxes.push(box);
-  }
-  // An out-of-flow element the run met below one the loop places: it
-  // never reaches that loop, so it joins the nested boxes and sorts
-  // into document order with them.
-  for (const box of run.positioned) {
-    if (!placed.has(box.source)) nestedBoxes.push(box);
   }
   const children: LayoutNode[] = [];
   for (let i = 0; i < elementChildren.length; i++) {
-    const el = elementChildren[i]!;
-    const box = directBoxes.get(el);
+    const origin = elementChildren[i]!;
+    const box = directBoxes.get(origin);
     if (box) children.push(box);
     else if (roles[i] === "out-of-flow") {
-      const child = buildNode(el, context);
-      if (child) children.push(fadedBy(child, splitOpacity(el, root)));
+      const child = buildChild(origin, context);
+      if (child) children.push(fadedBy(child, splitOpacity(origin, root)));
     }
   }
   if (nestedBoxes.length > 0) {
     children.push(...nestedBoxes);
-    children.sort((a, b) =>
-      a.source.compareDocumentPosition(b.source) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
-    );
+    children.sort((a, b) => compareOrigins(originOf(a), originOf(b)));
   }
   const node = createNode(root, style, children, text, intrinsicWidth, intrinsicHeight);
   if (advances.some((a) => a !== 1) || run.boxes.length > 0) node.advances = advances;
@@ -604,35 +821,59 @@ function buildLeaf(
   if (charSource.length > 0) node.charSource = charSource;
   // Each spot's character as a code unit of the text, the spots in run
   // order.
-  const units = new Map<Element, number>();
+  const units = new Map<BoxOrigin, number>();
   let index = 0;
   let unit = 0;
-  for (const [element, at] of run.spots) {
+  for (const [origin, at] of run.spots) {
     while (index < at) unit += run.chars[index++]!.length;
-    units.set(element, unit);
+    units.set(origin, unit);
   }
   for (const child of children) {
-    const at = units.get(child.source);
+    const at = units.get(originOf(child));
     if (at !== undefined) child.runSpot = runSpotOf(child, at);
   }
   return node;
 }
 
+/** Two boxes' document order: an element's place before it, a
+ * pseudo-element's at its element's edge, a `::before` ahead of a first
+ * child. */
+function compareOrigins(a: BoxOrigin, b: BoxOrigin): number {
+  if (a instanceof Element && b instanceof Element) {
+    return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  }
+  const place = (origin: BoxOrigin) => {
+    const range = new Range();
+    if (origin instanceof GeneratedNode) range.setStart(origin.parentElement, origin.offset);
+    else range.setStartBefore(origin);
+    return range;
+  };
+  const rank = (origin: BoxOrigin) =>
+    origin instanceof GeneratedNode ? (origin.pseudo === "::before" ? -1 : 1) : 0;
+  return place(a).compareBoundaryPoints(Range.START_TO_START, place(b)) || rank(a) - rank(b);
+}
+
 /** Where an out-of-flow child sits in its leaf's run: before `char`,
  * and, where an axis lacks insets to place it, whether it was
  * inline-level — its display read with its position held static
- * (styles.css `data-mw-static-read`). */
+ * (styles.css `data-mw-static-read`, a pseudo-element's under its
+ * name). */
 function runSpotOf(child: LayoutNode, char: number): NonNullable<LayoutNode["runSpot"]> {
   const el = child.source;
   const { top, right, bottom, left } = child.style.insets;
   if ((left !== null || right !== null) && (top !== null || bottom !== null)) {
     return { char, inline: false };
   }
-  el.setAttribute("data-mw-static-read", "");
+  const { generated } = child;
+  const flag = generated
+    ? `data-mw-${nameOf(generated.pseudo)}-static-read`
+    : "data-mw-static-read";
+  el.setAttribute(flag, "");
   try {
-    return { char, inline: computedDisplay(el, getComputedStyle(el)).startsWith("inline") };
+    const display = generated ? generated.display : computedDisplay(el, getComputedStyle(el));
+    return { char, inline: display.startsWith("inline") };
   } finally {
-    el.removeAttribute("data-mw-static-read");
+    el.removeAttribute(flag);
   }
 }
 
@@ -733,26 +974,34 @@ type ChildRole = "none" | "out-of-flow" | "inline" | "block";
  * formatting context and keeps its blocks; an inline element with no
  * element children — nearly all of them — answers before reading a
  * style. */
-function hidesBlock(el: Element): boolean {
-  if (el.children.length === 0) return false;
+function hidesBlock(el: Element, context: BuildContext): boolean {
+  const blockPseudo = pseudoElementsOf(el, context).shown.some(
+    (node) => node !== null && childRole(node) === "block",
+  );
+  if (el.children.length === 0 && !blockPseudo) return false;
   if (!isRunInline(computedDisplay(el, getComputedStyle(el)))) return false;
+  if (blockPseudo) return true;
   for (const child of el.children) {
     const role = childRole(child);
     if (role === "block") return true;
-    if (role === "inline" && hidesBlock(child)) return true;
+    if (role === "inline" && hidesBlock(child, context)) return true;
   }
   return false;
 }
 
 /** Whether an element's children hold a block below an inline one,
  * which makes their parent a container rather than a leaf. */
-function splitsForBlock(children: Element[], roles: ChildRole[]): boolean {
-  return children.some((child, index) => roles[index] === "inline" && hidesBlock(child));
+function splitsForBlock(children: BoxOrigin[], roles: ChildRole[], context: BuildContext): boolean {
+  return children.some(
+    (child, index) =>
+      roles[index] === "inline" && child instanceof Element && hidesBlock(child, context),
+  );
 }
 
-function childRole(el: Element): ChildRole {
-  const cs = getComputedStyle(el);
-  const display = computedDisplay(el, cs);
+function childRole(node: BoxOrigin): ChildRole {
+  const generated = node instanceof GeneratedNode;
+  const cs = generated ? node.cs : getComputedStyle(node);
+  const display = generated ? node.display : computedDisplay(node, cs);
   const { position } = cs;
   if (display === "none") return "none";
   if (position === "absolute" || position === "fixed") return "out-of-flow";
@@ -762,7 +1011,7 @@ function childRole(el: Element): ChildRole {
   // Registered leaf renderers are always block participants — an
   // unstyled custom element computes to `inline`, which would fold
   // its semantic text into the parent's run instead of rendering.
-  if (leafRendererFor(el.tagName)) return "block";
+  if (!generated && leafRendererFor(node.tagName)) return "block";
   if (isRunInline(display) || isAtomicInline(display)) return "inline";
   return "block";
 }
@@ -771,9 +1020,10 @@ interface LeafRun {
   chars: string[];
   /** Cells each character occupies: `1 + tracking` of its innermost element. */
   advances: number[];
-  /** Per character: the source Text node and offset (`null`/-1 for
-   * `<br>` newlines and markers). Compacted into `charSource` runs. */
-  sourceNode: (Text | null)[];
+  /** Per character: its source, a Text node and its offset or a
+   * pseudo-element (`null`/-1 for `<br>` newlines and markers).
+   * Compacted into `charSource` runs. */
+  sourceNode: (Text | GeneratedNode | null)[];
   sourceOffset: number[];
   /** Per character: index into `inlineElements` (-1 = direct leaf text). */
   inlineIndex: number[];
@@ -788,7 +1038,7 @@ interface LeafRun {
   positioned: LayoutNode[];
   /** Each out-of-flow element met, direct ones included: the index of
    * the character it sits before. */
-  spots: Map<Element, number>;
+  spots: Map<BoxOrigin, number>;
 }
 
 interface RunContext extends BuildContext {
@@ -824,7 +1074,7 @@ function extractLeafRun(
   el: Element,
   tracking: number,
   ctx: RunContext,
-  nodes?: ChildNode[],
+  nodes?: RunNode[],
 ): LeafRun {
   const run: LeafRun = {
     chars: [],
@@ -853,7 +1103,7 @@ function extractLeafRun(
  * entry of that element's, so they keep its style. */
 function collectRunNodes(
   container: Element,
-  nodes: ChildNode[],
+  nodes: RunNode[],
   tracking: number,
   ctx: RunContext,
   run: LeafRun,
@@ -894,12 +1144,12 @@ function collectOwned(
   }
 }
 
-/** The opacity of the inline elements a block split left between an
- * element and its container (specs/cell-model.md "Inline content"),
+/** The opacity of the inline elements a block split left between a
+ * box and its container (specs/cell-model.md "Inline content"),
  * multiplied; 1 for the container's own child. */
-function splitOpacity(el: Element, container: Element): number {
+function splitOpacity(origin: BoxOrigin, container: Element): number {
   let opacity = 1;
-  for (let at = el.parentElement; at && at !== container; at = at.parentElement) {
+  for (let at = origin.parentElement; at && at !== container; at = at.parentElement) {
     opacity *= readOpacity(getComputedStyle(at).opacity);
   }
   return opacity;
@@ -913,7 +1163,8 @@ function fadedBy(node: LayoutNode, opacity: number): LayoutNode {
 }
 
 /** An inline element's entry in its run, from its computed style, under
- * the entry at `parent`. */
+ * the entry at `parent`; a `pseudo`-element's static and unanchored,
+ * from its computed style alone. */
 function inlineEntry(
   element: Element,
   cs: CSSStyleDeclaration,
@@ -921,9 +1172,11 @@ function inlineEntry(
   padRight: number,
   ctx: RunContext,
   parent: number,
-): LeafRun["inlineElements"][number] {
-  const { position, backgroundColor } = cs;
-  const anchorNames = readAnchorNames(element, cs);
+  pseudo?: InlineElement["pseudo"],
+): InlineElement {
+  const { backgroundColor } = cs;
+  const position = pseudo ? "static" : cs.position;
+  const anchorNames = pseudo ? [] : readAnchorNames(element, cs);
   const positioned = position === "relative" || position === "sticky";
   const zIndex =
     positioned && cs.zIndex !== "auto" && cs.zIndex !== "" ? Number(cs.zIndex) || 0 : null;
@@ -932,6 +1185,7 @@ function inlineEntry(
   const rootLetterSpacing = ctx.cellMetrics?.letterSpacing ?? 0;
   return {
     element,
+    pseudo,
     // The font size scales only a letter spacing past the root's.
     tracking:
       letterSpacing === "normal" && rootLetterSpacing >= 0
@@ -954,7 +1208,7 @@ function inlineEntry(
     backgroundColor: isTransparentColor(backgroundColor) ? undefined : backgroundColor,
     glyph: readGlyph(cs),
     textDecoration: readDecoration(cs),
-    visible: readVisible(cs, element),
+    visible: readVisible(cs, pseudo ? undefined : element),
     pointerEvents: cs.pointerEvents !== "none",
     opacity,
     parent,
@@ -965,7 +1219,7 @@ function inlineEntry(
       position === "sticky" ||
       zIndex !== null ||
       opacity < 1 ||
-      animatedProperties(element).has("opacity"),
+      (!pseudo && animatedProperties(element).has("opacity")),
   };
 }
 
@@ -983,70 +1237,23 @@ function collectRun(
   // leave the leaf empty so the grid doesn't double-render, and skip
   // descending into their internals (e.g. <select>'s <option>s).
   if (isFormControlTag(el.tagName)) return;
-  collectNodes(shownChildNodes(el), tracking, ctx, run, opacity, parent);
+  collectNodes(shownChildNodes(el, ctx), tracking, ctx, run, opacity, parent);
 }
 
 function collectNodes(
-  nodes: ChildNode[],
+  nodes: RunNode[],
   tracking: number,
   ctx: RunContext,
   run: LeafRun,
   opacity = 1,
   parent = -1,
 ): void {
-  // Cells since the current hard line began — the tab-stop basis.
-  const column = (): number => {
-    let cells = 0;
-    for (let i = run.chars.length - 1; i >= 0 && run.chars[i] !== "\n"; i--) {
-      cells += run.advances[i]!;
-    }
-    return cells;
-  };
   for (const node of nodes) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.textContent ?? "";
-      const clusters = graphemes(text);
-      const shown =
-        ctx.textCase === "none"
-          ? clusters
-          : casedClusters(text, clusters, ctx.textCase, contentLanguage(node), run.chars);
-      let offset = 0;
-      if (ctx.preserve) {
-        // Kept white space: spaces and newlines survive as authored;
-        // tabs expand to the next `tabSize` stop (spaces are pushed
-        // untracked — tab stops are grid columns, not glyphs).
-        for (let i = 0; i < clusters.length; i++) {
-          const ch = clusters[i]!;
-          const at = offset;
-          offset += ch.length;
-          if (ch === "\r\n" || ch === "\r" || ch === "\n") {
-            // CRLF is one cluster: the LF carries the break.
-            pushChar(run, "\n", 0, node as Text, at + ch.length - 1);
-          } else if (ch === "\t") {
-            const target = (Math.floor(column() / ctx.tabSize) + 1) * ctx.tabSize;
-            for (let cells = column(); cells < target; cells++) {
-              pushChar(run, " ", 1, node as Text, at);
-            }
-          } else {
-            pushShown(run, shown[i]!, ch, tracking, node as Text, at);
-          }
-        }
-      } else {
-        // Collapsible white space folds to one space that keeps the
-        // first collapsed character's offset.
-        let inSpace = false;
-        for (let i = 0; i < clusters.length; i++) {
-          const ch = clusters[i]!;
-          const newline = ch === "\r" || ch === "\n" || ch === "\r\n";
-          const collapsible = newline || ch === " " || ch === "\t" || ch === "\f";
-          if (ctx.breaks && newline) pushChar(run, "\n", 0, node as Text, offset + ch.length - 1);
-          else if (!collapsible) pushShown(run, shown[i]!, ch, tracking, node as Text, offset);
-          else if (!inSpace) pushChar(run, " ", 1 + tracking, node as Text, offset);
-          inSpace = collapsible;
-          offset += ch.length;
-        }
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
+    // A pseudo-element's nodes have no node type: DOM nodes first.
+    const type = (node as Node).nodeType;
+    if (type === Node.TEXT_NODE) {
+      pushText((node as Text).data, node as Text, tracking, ctx, run);
+    } else if (type === Node.ELEMENT_NODE) {
       const child = node as Element;
       if (child.tagName === "BR" || child.tagName === "WBR") {
         pushChar(run, child.tagName === "BR" ? "\n" : WBR_MARKER, 0, null, -1);
@@ -1108,6 +1315,10 @@ function collectNodes(
         );
         for (let i = 0; i < padRight; i++) pushChar(run, INLINE_PAD, 1, null, -1);
       });
+    } else if (node instanceof GeneratedText) {
+      pushText(node.text, node.source, tracking, ctx, run);
+    } else if (node instanceof GeneratedNode) {
+      collectGenerated(node, ctx, run, opacity, parent);
     }
   }
 }
@@ -1121,13 +1332,129 @@ function inlinePadCells(value: string, rootFontSizePx: number): number {
   return Number.isFinite(px) ? Math.max(0, pxToCells(px, rootFontSizePx)) : 0;
 }
 
+/** A text's characters into the run: a text node's at their offsets, a
+ * pseudo-element's at its element's edge (specs/generated-content.md
+ * "Paint, hit, selection and copy"), their white space kept or
+ * collapsed and their case transformed as the run says. */
+function pushText(
+  text: string,
+  source: Text | GeneratedNode,
+  tracking: number,
+  ctx: RunContext,
+  run: LeafRun,
+): void {
+  const clusters = graphemes(text);
+  const shown =
+    ctx.textCase === "none"
+      ? clusters
+      : casedClusters(text, clusters, ctx.textCase, languageOf(source.parentElement), run.chars);
+  let offset = 0;
+  if (ctx.preserve) {
+    // Kept white space: spaces and newlines survive as authored;
+    // tabs expand to the next `tabSize` stop (spaces are pushed
+    // untracked — tab stops are grid columns, not glyphs).
+    for (let i = 0; i < clusters.length; i++) {
+      const ch = clusters[i]!;
+      const start = offset;
+      offset += ch.length;
+      if (ch === "\r\n" || ch === "\r" || ch === "\n") {
+        // CRLF is one cluster: the LF carries the break.
+        pushChar(run, "\n", 0, source, start + ch.length - 1);
+      } else if (ch === "\t") {
+        const target = (Math.floor(runColumn(run) / ctx.tabSize) + 1) * ctx.tabSize;
+        for (let cells = runColumn(run); cells < target; cells++) {
+          pushChar(run, " ", 1, source, start);
+        }
+      } else {
+        pushShown(run, shown[i]!, ch, tracking, source, start);
+      }
+    }
+  } else {
+    // Collapsible white space folds to one space that keeps the
+    // first collapsed character's offset.
+    let inSpace = false;
+    for (let i = 0; i < clusters.length; i++) {
+      const ch = clusters[i]!;
+      const newline = ch === "\r" || ch === "\n" || ch === "\r\n";
+      const collapsible = newline || ch === " " || ch === "\t" || ch === "\f";
+      if (ctx.breaks && newline) pushChar(run, "\n", 0, source, offset + ch.length - 1);
+      else if (!collapsible) pushShown(run, shown[i]!, ch, tracking, source, offset);
+      else if (!inSpace) pushChar(run, " ", 1 + tracking, source, offset);
+      inSpace = collapsible;
+      offset += ch.length;
+    }
+  }
+}
+
+/** Cells since the run's current hard line began — the tab-stop basis. */
+function runColumn(run: LeafRun): number {
+  let cells = 0;
+  for (let i = run.chars.length - 1; i >= 0 && run.chars[i] !== "\n"; i--) {
+    cells += run.advances[i]!;
+  }
+  return cells;
+}
+
+/** A pseudo-element in its element's run (specs/generated-content.md):
+ * its box where it has one — out of flow, or an atomic inline box —
+ * else its text under an entry of its own, its padding and margins
+ * quantized to cells, the margins' cells its element's. */
+function collectGenerated(
+  node: GeneratedNode,
+  ctx: RunContext,
+  run: LeafRun,
+  opacity: number,
+  parent: number,
+): void {
+  const role = childRole(node);
+  if (role === "none") return;
+  if (role === "out-of-flow") {
+    run.spots.set(node, run.chars.length);
+    const box = buildGeneratedBox(node, ctx);
+    if (box) run.positioned.push(fadedBy(box, opacity));
+    return;
+  }
+  if (role === "block") {
+    warnSkippedRunContent(node.parentElement);
+    return;
+  }
+  if (isAtomicInline(node.display)) {
+    const box = buildGeneratedBox(node, ctx);
+    if (box) {
+      box.inlineBox = zeroInsets();
+      pushChar(run, OBJECT_REPLACEMENT, 1, null, -1);
+      run.boxes.push(fadedBy(box, opacity));
+    }
+    return;
+  }
+  const { cs } = node;
+  const cells = (value: string) => inlinePadCells(value, ctx.rootFontSizePx);
+  const blank = (count: number) => {
+    for (let i = 0; i < count; i++) pushChar(run, INLINE_PAD, 1, null, -1);
+  };
+  const padLeft = cells(cs.paddingLeft);
+  const padRight = cells(cs.paddingRight);
+  const marginLeft = cells(cs.marginLeft);
+  const marginRight = cells(cs.marginRight);
+  blank(marginLeft);
+  const pseudo = { name: node.pseudo, marginLeft, marginRight, image: node.image };
+  const entry = inlineEntry(node.parentElement, cs, padLeft, padRight, ctx, parent, pseudo);
+  collectOwned(run, entry, () => {
+    blank(padLeft);
+    const text = generatedText(node, ctx);
+    pushText(text, node, entry.tracking, casedContext(ctx, cs), run);
+    blank(padRight);
+  });
+  blank(marginRight);
+}
+
 /** Collapse consecutive spaces (also across inline-element boundaries), trim
  * spaces at hard-line edges, and drop leading/trailing blank lines — keeping
  * chars and advances in lockstep. */
 function normalizeRun(run: LeafRun): LeafRun {
   const chars: string[] = [];
   const advances: number[] = [];
-  const sourceNode: (Text | null)[] = [];
+  const sourceNode: (Text | GeneratedNode | null)[] = [];
   const sourceOffset: number[] = [];
   const inlineIndex: number[] = [];
   // Each kept character's index in the run, where the spots map from.
@@ -1175,7 +1502,7 @@ function normalizeRun(run: LeafRun): LeafRun {
   }
   trimLineEnd();
   // The spots come in run order.
-  const spots = new Map<Element, number>();
+  const spots = new Map<BoxOrigin, number>();
   let index = 0;
   for (const [element, at] of run.spots) {
     while (index < kept.length && kept[index]! < at) index++;
@@ -1187,7 +1514,13 @@ function normalizeRun(run: LeafRun): LeafRun {
   return { ...run, chars, advances, sourceNode, sourceOffset, inlineIndex, spots };
 }
 
-function pushChar(run: LeafRun, ch: string, advance: number, source: Text | null, offset: number) {
+function pushChar(
+  run: LeafRun,
+  ch: string,
+  advance: number,
+  source: Text | GeneratedNode | null,
+  offset: number,
+) {
   run.chars.push(ch);
   run.advances.push(advance);
   run.sourceNode.push(source);
@@ -1202,7 +1535,7 @@ function pushShown(
   shown: string,
   cluster: string,
   tracking: number,
-  source: Text,
+  source: Text | GeneratedNode | null,
   offset: number,
 ): void {
   if (shown.length === cluster.length) {
@@ -1220,9 +1553,9 @@ function casedContext(ctx: RunContext, cs: CSSStyleDeclaration): RunContext {
   return textCase === ctx.textCase ? ctx : { ...ctx, textCase };
 }
 
-/** A node's content language, its nearest `lang`. */
-function contentLanguage(node: Node): string {
-  return node.parentElement?.closest("[lang]")?.getAttribute("lang") ?? "";
+/** An element's content language, its nearest `lang`. */
+function languageOf(element: Element | null): string {
+  return element?.closest("[lang]")?.getAttribute("lang") ?? "";
 }
 
 /** The run's per-cluster advances and inline indices, expanded to one
@@ -1245,19 +1578,25 @@ function expandClusters(run: LeafRun): { advances: number[]; charInline: number[
 
 /** Compact the per-character source map into runs (`LayoutNode.charSource`):
  * a run grows while the next character continues the same Text node at
- * the next offset. */
+ * the next offset, or stands at the same pseudo-element edge. */
 function charSourceRuns(run: LeafRun): CharSourceRun[] {
   const runs: CharSourceRun[] = [];
   let index = 0;
   for (let i = 0; i < run.chars.length; i++) {
     const ch = run.chars[i]!;
-    const node = run.sourceNode[i];
-    const offset = run.sourceOffset[i]!;
-    const last = runs[runs.length - 1];
-    if (node) {
-      if (last && last.node === node && last.offset + last.length === offset)
+    const source = run.sourceNode[i];
+    const last = runs.at(-1);
+    const follows = last !== undefined && last.index + last.length === index;
+    if (source instanceof GeneratedNode) {
+      // A pseudo-element's characters stand at one point, its edge.
+      const { parentElement: node, pseudo } = source;
+      if (follows && last.node === node && last.pseudo === pseudo) last.length += ch.length;
+      else runs.push({ index, length: ch.length, node, offset: source.offset, pseudo });
+    } else if (source) {
+      const offset = run.sourceOffset[i]!;
+      if (follows && last.node === source && last.offset + last.length === offset) {
         last.length += ch.length;
-      else runs.push({ index, length: ch.length, node, offset });
+      } else runs.push({ index, length: ch.length, node: source, offset });
     }
     index += ch.length;
   }

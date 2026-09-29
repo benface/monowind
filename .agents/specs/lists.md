@@ -103,7 +103,8 @@ engines), which "The light DOM" answers:
   `counters()` with a style or without; an `attr()` computes to its
   string in all three — draws its text, even where `list-style-type`
   is `none` (all three draw it). An image in it draws nothing
-  (deviation 3), nor does a quote (deviation 8).
+  (deviation 3); a quote draws from the quote depth
+  (generated-content.md "Counters and quotes").
 - **`normal`** draws from `list-style-type`: a string as written, no
   suffix added (`list-['→']` is one cell, touching the text); a
   counter style's representation of the item's `list-item` value;
@@ -162,7 +163,7 @@ engines), which "The light DOM" answers:
   its document (a shadow root's rule winning), under the `@media` and
   `@supports` conditions that hold at the read (a disabled sheet, one
   whose media fails, and a container query's rules apply none), read
-  on the first name a rule may define (deviation 9), each rule's
+  on the first name a rule may define (deviation 7), each rule's
   system, symbols, range, negative, pad, prefix, suffix and fallback
   run by the same algorithm, an `extends` loop extending `decimal`. A name the engine does not carry — a
   cross-origin sheet's rule, a complex predefined style's, Firefox's
@@ -183,9 +184,11 @@ engines), which "The light DOM" answers:
 ## Numbering
 
 - **CSS Lists 3 counters, computed by the engine** in a walk of the
-  host's light DOM in tree order, after the read — where a marker reads
-  a value, none for strings and bullets, and twice for a `reversed()`
-  counter with no value. An element with
+  host's light DOM in tree order, its pseudo-elements among its
+  elements (generated-content.md "Counters and quotes") — once a
+  build, where a marker or generated text first reads a counter's
+  value, none for strings, quotes and bullets, and twice for a
+  `reversed()` counter with no value. An element with
   `display: none` counts nothing, its subtree with it, as natively;
   one the layout tree drops (`sr-only`) counts, as do floated,
   out-of-flow and `visibility: hidden` items (probed). The contents a
@@ -201,7 +204,7 @@ engines), which "The light DOM" answers:
 - **A list item increments `list-item`** by 1, −1 in a reversed
   counter's scope, unless its computed `counter-increment` names
   `list-item` (`summary`'s UA `list-item 0` keeps it out of the
-  count). The walk tracks every counter a marker's `content` names,
+  count). The walk gives each marker every counter in scope,
   `list-item` among them, by the same rules.
 - **HTML's lists**: `ol`, `ul` and `menu` reset `list-item`, an `ol`
   with `start` to `start − 1`. A `reversed` `ol` resets a reversed
@@ -434,16 +437,12 @@ engines), which "The light DOM" answers:
    apart.
 5. Counters begin at the host: one reset or incremented outside it
    reaches no marker inside.
-6. A `::before`'s or `::after`'s counter properties are not read, so
-   they count nothing: the engine reads elements, and markers.
-7. `display: inline list-item` lays out as an atomic inline box, as
+6. `display: inline list-item` lays out as an atomic inline box, as
    `inline-block` does, where CSS makes it an inline box its lines
    break across: the tree builder runs only `inline` and `contents`
    into a text run. Its marker sits inside, as CSS places an inline
    item's whatever its position (WebKit has no inline list item).
-8. `open-quote` and `close-quote` in a marker's `content` draw
-   nothing: the engine tracks no quote depth.
-9. An `@counter-style` rule the CSSOM inserts into a group rule
+7. An `@counter-style` rule the CSSOM inserts into a group rule
    (`@layer`, `@media`, `@supports`) or an imported sheet of a sheet
    the engine has read applies once that sheet's own rules next
    change: the engine reads a
@@ -554,16 +553,20 @@ none` under a string `content`; a name an object's prototype holds;
 - types.ts: `MarkerStyle` (`CellStyle.marker`: its parts, position,
   paint and image flag) and `Marker` (`LayoutNode.marker`: its text,
   advances, cells, spaces and an outside one's laid-out origin).
-- style.ts: `readMarker`, the `::marker` read once per list item;
+- style.ts: `readMarker`, the `::marker` read once per list item a
+  build (`markerOf`, the build's and the counter walk's);
   `skipsContents`, shared with the counter walk.
 - counters.ts: the counter-style algorithm over the simple predefined
   styles, the `@counter-style` reader (`pageCounterStyles`), the
   bullets' glyphs (`withBullets`), `content`'s parts, and the counter
   walk (`countersOf`) with its property parsers.
-- tree.ts: `counterTree`, the walk's view of the host's elements with
-  HTML's hints; `attachMarkers`, each item's marker — the items
-  gathered as `buildNode` builds them — an inside one on the leaf
-  holding its first line or a run of its own.
+- sheets.ts: the walk of the page's sheets that finds the
+  `@counter-style` rules (`sheetRules`, `pageSheets`).
+- tree.ts: `counterTree`, the walk's view of the host's elements and
+  pseudo-elements with HTML's hints, walked once a build
+  (`BuildContext.readings`); `attachMarkers`, each item's marker — the
+  items gathered as `buildNode` builds them — an inside one on the
+  leaf holding its first line or a run of its own.
 - layout.ts: `firstLineIndent` (an inside marker's cells in the first
   line's indent), a justified spread's marker gaps, `firstLineStart`
   (which the paint and `markerSpread` share), an outside marker's

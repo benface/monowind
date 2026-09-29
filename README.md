@@ -92,7 +92,10 @@ multi-column (`columns-*`, balancing, spanners, column rules), tables
 text wrap, gap decorations (`rule-*` separators with junction
 glyphs), and lists (`list-disc`, `list-decimal`, `list-inside`, any
 counter style or `@counter-style` rule, `marker:` styling, `start`,
-`reversed` and `value`, and a `summary`'s triangle).
+`reversed` and `value`, and a `summary`'s triangle), and generated
+content (`before:`/`after:` strings, `attr()`, counters and quotes as
+text of their elements, or a box of its own — a stretched link's
+`after:absolute after:inset-0` included).
 
 **Paint** — rounded corners (`rounded-*` picks a theme's corner
 glyphs), box shadows (`shadow-*` as shade glyphs), gradients

@@ -1615,9 +1615,12 @@ export function inlineElementRects(
   const entries = node.inlineElements;
   if (!entries || !node.charInline) return [];
   // Each entry's own index plus the indices of the entries containing
-  // it: a character belongs to its innermost element and every ancestor.
+  // it: a character belongs to its innermost element and every ancestor,
+  // a pseudo-element's to its element alone, whose rects hold it.
   const owners = entries.map((entry, i) =>
-    entries.flatMap((outer, j) => (j === i || outer.element.contains(entry.element) ? [j] : [])),
+    entries.flatMap((outer, j) =>
+      !outer.pseudo && (j === i || outer.element.contains(entry.element)) ? [j] : [],
+    ),
   );
   const rows = entries.map(() => new Map<number, { x0: number; x1: number }>());
   forEachLeafCell(

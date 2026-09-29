@@ -273,11 +273,18 @@ every editable box, the theme's spelled out (`var(--mw-bg)`) where no
 fill paints. cascade.test.ts sorts every variable render.ts writes
 into one of these four classes and checks the reads of each.
 
+A `::before` or `::after` has no inline style, so the engine writes
+its variables on its element under its name (`--mw-before-x`), and
+its kind in the element's flag (`data-mw-before`, generated-content.md
+"The light DOM"): each kind's variables whole, so none is reset,
+where the element's descendants inherit them.
+
 What an element carries is its last layout's: an element that layout
 wrote no box on — one now inline, or out of the tree — loses a box's
 flags and variables, found by the flags one of which marks every box;
-one it wrote no inline insets on loses those; and a box, an inline
-element's padding cells.
+one it wrote no inline insets on loses those; one whose pseudo-element
+it wrote nothing for, or another kind for, loses that pseudo-element's
+writes; and a box, an inline element's padding cells.
 
 ## Typography
 
@@ -1592,12 +1599,14 @@ For "Engine variables":
 
 - styles.css: the resets, plain, in the rule every light element
   matches (`mono-wind :not([data-mw-measuring])`, the lock layer);
-  cascade.test.ts sorts render.ts's variables into their classes.
+  cascade.test.ts sorts render.ts's variables into their classes, and
+  checks a pseudo-element's reads against its kind's writes.
 - render.ts: every write, `setVar` removing a variable (null) where
   the reset stands for it; `render` clears an earlier layout's box
   writes (`BOX_NAMES`) and inline insets from the elements this one
-  wrote none on (`clearUnwritten`), and `positionElement` an inline
-  element's padding cells from a box.
+  wrote none on (`clearUnwritten`), and a pseudo-element's
+  (`PSEUDO_NAMES`), and `positionElement` an inline element's padding
+  cells from a box.
 
 For "Aspect ratio":
 

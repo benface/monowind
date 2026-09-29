@@ -167,6 +167,27 @@ it("styles.css keeps the theme layer to locks and the engine variables' resets",
   expect(new Set(plain.map((d) => d.property))).toEqual(new Set(VARIABLES.reset));
 });
 
+it("styles.css reads on a pseudo-element the variables render.ts writes for its kind", () => {
+  const [text, flow, box] = [...render.matchAll(/vars\("([\w ]+)"\)/g)].map((match) =>
+    match[1]!.split(" "),
+  );
+  for (const pseudo of ["before", "after"]) {
+    const read = (flag: string) =>
+      all.flatMap((d) =>
+        d.selector.includes(flag)
+          ? [...d.value.matchAll(new RegExp(`var\\(--mw-${pseudo}-([\\w-]+)`, "g"))].map(
+              (match) => match[1],
+            )
+          : [],
+      );
+    expect(new Set(read(`[data-mw-${pseudo}]`)), pseudo).toEqual(new Set(text));
+    // A flow reads an inline one's too.
+    const flowReads = [...read(`[data-mw-${pseudo}]`), ...read(`[data-mw-${pseudo}="flow"]`)];
+    expect(new Set(flowReads), pseudo).toEqual(new Set(flow));
+    expect(new Set(read(`[data-mw-${pseudo}="box"]`)), pseudo).toEqual(new Set(box));
+  }
+});
+
 it("styles.css reads each reset variable, plainly", () => {
   for (const variable of VARIABLES.reset) {
     const reads = readers(variable);

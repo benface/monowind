@@ -142,11 +142,12 @@ export function animationPath(
 }
 
 /** The layout node of an element, found once per layout: the
- * element's own, an anonymous run of its text left to it. */
+ * element's own, an anonymous run of its text or a pseudo-element's box
+ * left to it. */
 export function nodeIndex(root: LayoutNode): Map<Element, LayoutNode> {
   const index = new Map<Element, LayoutNode>();
   const visit = (node: LayoutNode): void => {
-    if (!node.anonymous) index.set(node.source, node);
+    if (!node.anonymous && !node.generated) index.set(node.source, node);
     for (const child of node.children) visit(child);
   };
   visit(root);

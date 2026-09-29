@@ -17,7 +17,9 @@ truth.
   (content cells minus content box) and PINS the native range to it:
   browsers disagree on end-edge padding in scrollable overflow (the
   native ceiling can otherwise sit BELOW the engine's max, stranding
-  the last rows), so a 1px `::after` spacer ends at exactly
+  the last rows), so a 1px spacer — the `::after` the author leaves
+  free, else the `::before` (`data-mw-scroll="after"` or `"before"`,
+  generated-content.md "The light DOM") — ends at exactly
   `max + box` cells (`--mw-se-*`, written by render.ts) making
   `scrollHeight − clientHeight` equal the engine's max in every
   engine — with NO overhang: any native room past the engine's max

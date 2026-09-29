@@ -197,6 +197,12 @@
 mono-wind[select="grid"] *:not([data-mw-measuring]) {
   pointer-events: none !important;
 }
+/* A pseudo-element the engine reads takes its element's, whatever its
+ * own. */
+mono-wind[select="grid"] [data-mw-before]:not([data-mw-measuring])::before,
+mono-wind[select="grid"] [data-mw-after]:not([data-mw-measuring])::after {
+  pointer-events: inherit !important;
+}
 mono-wind[select="grid"]:not([data-mw-dragging])
   [data-mw-interactive]:not(
     [data-mw-covered],
@@ -299,8 +305,10 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
  * side of max, so the engine reads "at the ceiling" as "at max". An
  * axis without range parks the spacer in the first cell: at −1px,
  * outside the padding box, it would leave the overflow area on both
- * axes. */
-mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
+ * axes. It takes the pseudo-element the author leaves free
+ * (specs/generated-content.md "The light DOM"). */
+mono-wind [data-mw-scroll="after"]:not([data-mw-measuring])::after,
+mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   content: "";
   position: absolute;
   pointer-events: none;
@@ -411,7 +419,9 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   /* Lock the font on descendants so the grid metrics stay consistent —
    * `!important` because user classes (`.text-2xl` etc.) would otherwise beat
    * these element-selector rules on specificity. */
-  mono-wind * {
+  mono-wind *,
+  mono-wind [data-mw-before]::before,
+  mono-wind [data-mw-after]::after {
     font-family: inherit !important;
     font-size: inherit !important;
   }
@@ -437,8 +447,12 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
    * natively, are synthesized by the engine instead. */
   mono-wind[measuring],
   mono-wind [data-mw-measuring],
+  mono-wind [data-mw-before][data-mw-measuring]::before,
+  mono-wind [data-mw-after][data-mw-measuring]::after,
   mono-wind[settling],
-  mono-wind [data-mw-settling] {
+  mono-wind [data-mw-settling],
+  mono-wind [data-mw-before][data-mw-settling]::before,
+  mono-wind [data-mw-after][data-mw-settling]::after {
     transition-property:
       color, border-color, opacity, transform, translate, rotate, scale, filter !important;
   }
@@ -479,8 +493,20 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
   /* An out-of-flow element's display before its position blockified it
    * (specs/positioning.md "Static position"), read under this flag for
    * the one read. */
-  mono-wind [data-mw-static-read][data-mw-measuring] {
+  mono-wind [data-mw-static-read][data-mw-measuring],
+  mono-wind [data-mw-before-static-read][data-mw-measuring]::before,
+  mono-wind [data-mw-after-static-read][data-mw-measuring]::after {
     position: static !important;
+  }
+
+  /* A pseudo-element with no box for the one read of its lengths as
+   * computed (style.ts `declaredLengths`): `contents`, which keeps its
+   * animations running where `none` would end them. */
+  mono-wind [data-mw-before-declared][data-mw-measuring]::before,
+  mono-wind [data-mw-after-declared][data-mw-measuring]::after {
+    display: contents !important;
+    position: static !important;
+    float: none !important;
   }
 
   /* Grid-quantized typography and the wrap model (specs/cell-model.md). Gated
@@ -549,6 +575,105 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     list-style-image: none !important;
   }
 
+  /* A `::before` or `::after` the engine reads, its kind in its
+   * element's flag (render.ts), paints no ink of its own — its element's
+   * fill lock reaches its text by inheritance — and takes the grid's
+   * typography and the cells its run gave its padding and margins
+   * (specs/generated-content.md "The light DOM"). */
+  mono-wind [data-mw-before]:not([data-mw-measuring])::before,
+  mono-wind [data-mw-after]:not([data-mw-measuring])::after {
+    background-color: transparent !important;
+    background-image: none !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+    border-width: 0 !important;
+    text-decoration-color: transparent !important;
+    vertical-align: baseline !important;
+    white-space: inherit !important;
+    line-height: inherit !important;
+  }
+  mono-wind [data-mw-before]:not([data-mw-measuring])::before {
+    letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-before-ls) * var(--mw-cw, 1px)) !important;
+    padding: 0 calc(var(--mw-before-pr) * var(--mw-cw, 1px)) 0
+      calc(var(--mw-before-pl) * var(--mw-cw, 1px)) !important;
+    margin: 0 calc(var(--mw-before-mr) * var(--mw-cw, 1px)) 0
+      calc(var(--mw-before-ml) * var(--mw-cw, 1px)) !important;
+  }
+  mono-wind [data-mw-after]:not([data-mw-measuring])::after {
+    letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-after-ls) * var(--mw-cw, 1px)) !important;
+    padding: 0 calc(var(--mw-after-pr) * var(--mw-cw, 1px)) 0
+      calc(var(--mw-after-pl) * var(--mw-cw, 1px)) !important;
+    margin: 0 calc(var(--mw-after-mr) * var(--mw-cw, 1px)) 0
+      calc(var(--mw-after-ml) * var(--mw-cw, 1px)) !important;
+  }
+  /* A block one in a multi-column flow keeps its text, its native lines
+   * fragmenting as the grid's do (`data-mw-multicol-flow`), with its
+   * vertical margins, or the padding they ride as. */
+  mono-wind [data-mw-before="flow"]:not([data-mw-measuring])::before,
+  mono-wind [data-mw-after="flow"]:not([data-mw-measuring])::after {
+    position: static !important;
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+    column-span: none !important;
+  }
+  mono-wind [data-mw-before="flow"]:not([data-mw-measuring])::before {
+    padding-block: calc(var(--mw-before-pt) * var(--mw-ch, 1px))
+      calc(var(--mw-before-pb) * var(--mw-ch, 1px)) !important;
+    margin-block: calc(var(--mw-before-mt) * var(--mw-ch, 1px))
+      calc(var(--mw-before-mb) * var(--mw-ch, 1px)) !important;
+  }
+  mono-wind [data-mw-after="flow"]:not([data-mw-measuring])::after {
+    padding-block: calc(var(--mw-after-pt) * var(--mw-ch, 1px))
+      calc(var(--mw-after-pb) * var(--mw-ch, 1px)) !important;
+    margin-block: calc(var(--mw-after-mt) * var(--mw-ch, 1px))
+      calc(var(--mw-after-mb) * var(--mw-ch, 1px)) !important;
+  }
+  /* A box draws no text natively, its box the engine's cells: absolute
+   * where the engine places it, else in its line or flow, with its
+   * margins. */
+  mono-wind [data-mw-before="box"]:not([data-mw-measuring])::before,
+  mono-wind [data-mw-after="box"]:not([data-mw-measuring])::after {
+    content: "" !important;
+    padding: 0 !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+    position-area: none !important;
+    grid-area: auto !important;
+  }
+  mono-wind [data-mw-before="box"]:not([data-mw-measuring])::before {
+    position: var(--mw-before-position) !important;
+    inset: calc(var(--mw-before-y) * var(--mw-ch, 1px)) auto auto
+      calc(var(--mw-before-x) * var(--mw-cw, 1px)) !important;
+    width: calc(var(--mw-before-w) * var(--mw-cw, 1px)) !important;
+    height: calc(var(--mw-before-h) * var(--mw-ch, 1px)) !important;
+    margin: calc(var(--mw-before-mt) * var(--mw-ch, 1px))
+      calc(var(--mw-before-mr) * var(--mw-cw, 1px)) calc(var(--mw-before-mb) * var(--mw-ch, 1px))
+      calc(var(--mw-before-ml) * var(--mw-cw, 1px)) !important;
+    z-index: var(--mw-before-z) !important;
+    vertical-align: var(--mw-before-va) !important;
+    contain: var(--mw-before-contain) !important;
+  }
+  mono-wind [data-mw-after="box"]:not([data-mw-measuring])::after {
+    position: var(--mw-after-position) !important;
+    inset: calc(var(--mw-after-y) * var(--mw-ch, 1px)) auto auto
+      calc(var(--mw-after-x) * var(--mw-cw, 1px)) !important;
+    width: calc(var(--mw-after-w) * var(--mw-cw, 1px)) !important;
+    height: calc(var(--mw-after-h) * var(--mw-ch, 1px)) !important;
+    margin: calc(var(--mw-after-mt) * var(--mw-ch, 1px))
+      calc(var(--mw-after-mr) * var(--mw-cw, 1px)) calc(var(--mw-after-mb) * var(--mw-ch, 1px))
+      calc(var(--mw-after-ml) * var(--mw-cw, 1px)) !important;
+    z-index: var(--mw-after-z) !important;
+    vertical-align: var(--mw-after-va) !important;
+    contain: var(--mw-after-contain) !important;
+  }
+
   /* A native marker takes no ink, no hit — an outside one hangs past
    * its item's box, which the covered rule never guards — and no line
    * height, its zero-size box's baseline otherwise stretching the line
@@ -559,9 +684,11 @@ mono-wind [data-mw-scroll]:not([data-mw-measuring])::after {
     line-height: 0 !important;
   }
 
-  /* A marker whose `content` holds an image draws none (render.ts),
-   * gated so the engine reads the authored value. */
-  mono-wind [data-mw-marker-image]:not([data-mw-measuring])::marker {
+  /* A marker or pseudo-element whose `content` holds an image draws none
+   * (render.ts), gated so the engine reads the authored value. */
+  mono-wind [data-mw-marker-image]:not([data-mw-measuring])::marker,
+  mono-wind [data-mw-before="image"]:not([data-mw-measuring])::before,
+  mono-wind [data-mw-after="image"]:not([data-mw-measuring])::after {
     content: none !important;
   }
 

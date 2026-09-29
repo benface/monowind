@@ -12,6 +12,7 @@ import {
 } from "./plain-text.ts";
 import { paintIndex } from "./stacking.ts";
 import type { PaintEntry, PaintIndex } from "./stacking.ts";
+import { boxKey } from "./types.ts";
 import type { LayoutNode, Rect } from "./types.ts";
 
 /**
@@ -111,7 +112,7 @@ function lastTaking(
   row: number,
 ): Taking {
   const index = paintIndex(root);
-  const layer = through && sameElement(index, through);
+  const layer = through && sameBox(index, through);
   const span = layer ? index.spans.get(layer) : { start: 0, end: index.entries.length };
   if (!span) return NONE_TAKING;
   for (let i = span.end - 1; i >= span.start; i--) {
@@ -127,12 +128,11 @@ function lastTaking(
 }
 
 /** A layer root's node in this layout: itself, or for a layer painted
- * from an earlier layout (a held paint, element.ts), its element's. */
-function sameElement(index: PaintIndex, node: LayoutNode): LayoutNode {
+ * from an earlier layout (a held paint, element.ts), its box's. */
+function sameBox(index: PaintIndex, node: LayoutNode): LayoutNode {
   if (index.spans.has(node)) return node;
-  for (const candidate of index.spans.keys()) {
-    if (candidate.source === node.source) return candidate;
-  }
+  const key = boxKey(node);
+  for (const candidate of index.spans.keys()) if (boxKey(candidate) === key) return candidate;
   return node;
 }
 
@@ -229,7 +229,7 @@ export function cellAtPoint(
     if (!root) return layer;
     const index = paintIndex(root);
     const count = index.entries.length;
-    const end = index.spans.get(sameElement(index, layer.layerRoot))?.end ?? count;
+    const end = index.spans.get(sameBox(index, layer.layerRoot))?.end ?? count;
     if (end < count) {
       main ??= lastTaking(root, null, col, row);
       if (main.order >= end) continue;

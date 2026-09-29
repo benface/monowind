@@ -1,11 +1,13 @@
 import { trackBackground } from "./animate.ts";
-import { LIST_ITEM, markerParts } from "./counters.ts";
+import { holdsImage, isQuote, LIST_ITEM, markerParts } from "./counters.ts";
+import { nameOf } from "./generated.ts";
+import type { GeneratedNode, Pseudo } from "./generated.ts";
 import { EFFECTS, animatedProperties, animatesEffect } from "./animation.ts";
 import { isTopLayer } from "./top-layer.ts";
 import { colorAlpha, colorSpaceNamed, isLegacyColor, parseColor, splitTopLevel } from "./color.ts";
 import type { ColorSpace, HueMode } from "./color.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
-import { glyphSetFor, glyphSetNameFor, junctionWeight, weightBand } from "./glyphs.ts";
+import { glyphSetFor, glyphSetOf, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import {
@@ -88,21 +90,23 @@ export function readCellStyle(
   el: Element,
   rootFontSizePx: number,
   metrics?: CellMetrics,
+  { generated, markers }: BuildReads = {},
 ): CellStyle {
-  const cs = getComputedStyle(el);
+  const cs = generated?.cs ?? getComputedStyle(el);
   const fontSizePx = parseFloat(cs.fontSize) || rootFontSizePx;
-  const csm = supportsTypedOM(el) ? el.computedStyleMap() : null;
-  const classAttr = el.getAttribute("class") ?? "";
-  const inlineStyle = (el as HTMLElement).style;
+  // The element whose own attributes, animations and top-layer state
+  // the read takes: its pseudo-element's box has none (specs/generated-content.md).
+  const pseudo = generated?.pseudo;
+  const own = pseudo ? undefined : el;
+  const csm = own && supportsTypedOM(own) ? own.computedStyleMap() : null;
+  const classAttr = authoredClasses(el, pseudo);
+  const inlineStyle = pseudo ? declaredLengths(el, pseudo, cs) : (el as HTMLElement).style;
   warnAuthoredFontSize(el, classAttr, inlineStyle);
   // The glyph set decides a border's or rule's cells (its weight band),
   // so it is resolved before they are read.
   // A glyph the themed font has not got counts as unregistered, so the
   // set falls back per glyph to one the font draws (specs/theming.md).
-  const glyphSet = glyphSetNameFor(
-    cs.getPropertyValue("--mw-border-glyphs").trim() || null,
-    cs.getPropertyValue("--mw-missing-glyphs"),
-  );
+  const glyphSet = glyphSetOf(cs);
   const set = glyphSetFor(glyphSet);
   const source: ReadSource = { cs, csm, classAttr, inlineStyle, metrics, rootFontSizePx };
 
@@ -163,7 +167,7 @@ export function readCellStyle(
         rootFontSizePx,
       );
     } else {
-      el.setAttribute("data-mw-degrid", "");
+      own?.setAttribute("data-mw-degrid", "");
       try {
         gridTemplateColumns = parseTrackTemplate(
           cs.getPropertyValue("grid-template-columns"),
@@ -174,7 +178,7 @@ export function readCellStyle(
           rootFontSizePx,
         );
       } finally {
-        el.removeAttribute("data-mw-degrid");
+        own?.removeAttribute("data-mw-degrid");
       }
     }
     // No used-value trap for these: their computed values keep the
@@ -203,10 +207,10 @@ export function readCellStyle(
   // A top-layer box (specs/top-layer.md), and a displayed popover
   // through its exit, keeps the UA's geometry where the author sets
   // none.
-  const topLayer = isTopLayer(el);
-  const hoisted = topLayer || el.hasAttribute("popover");
+  const topLayer = own !== undefined && isTopLayer(own);
+  const hoisted = topLayer || own?.hasAttribute("popover") === true;
   const outOfFlow = hoisted || position === "absolute" || position === "fixed";
-  const anchoring = readAnchoring(el, cs, outOfFlow);
+  const anchoring = own ? readAnchoring(own, cs, outOfFlow) : NO_ANCHORING;
   const anchorSource: AnchorSource | null = outOfFlow
     ? { ...source, nativeDefault: anchoring.positionAnchor?.startsWith(IMPLICIT_ANCHOR) ?? false }
     : null;
@@ -227,8 +231,11 @@ export function readCellStyle(
   const alignSelf = readAlignment(el, "align-self", ALIGN_SELF, cs.alignSelf);
   const justifyItems = readAlignment(el, "justify-items", ALIGN, cs.justifyItems);
   const justifySelf = readAlignment(el, "justify-self", ALIGN_SELF, cs.justifySelf);
-  const effects = readLayer(el, cs);
-  const overflow = readOverflow(cs);
+  const effects = readLayer(own, cs);
+  // A pseudo-element's box never scrolls: its overflow clips
+  // (specs/generated-content.md deviation 8).
+  const read = readOverflow(cs);
+  const overflow = own ? read : { x: unscrolled(read.x), y: unscrolled(read.y) };
   // Table-internal boxes take none, as in CSS.
   const aspectRatio =
     tableRole === "none" || tableRole === "caption"
@@ -321,7 +328,7 @@ export function readCellStyle(
       br: readRadius(cs.borderBottomRightRadius, rootFontSizePx),
     },
     overflow,
-    scrollbarWidth: readScrollbarWidth(el, cs),
+    scrollbarWidth: own ? readScrollbarWidth(own, cs) : "auto",
     scrollPadding: readScrollPadding(cs, overflow, rootFontSizePx),
     scrollbarColor: readScrollbarColor(cs.scrollbarColor),
     overscroll: {
@@ -343,18 +350,18 @@ export function readCellStyle(
     tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     ...readPaintStyle(cs),
     glyph: readGlyph(cs),
-    backgroundColor: readAnimatedBackground(el, cs.backgroundColor, cs),
+    backgroundColor: readAnimatedBackground(own, cs.backgroundColor, cs),
     backgroundClear: cs.getPropertyValue("--mw-bg-clear").trim() === "1",
     backgroundImage: readBackgroundImage(cs.backgroundImage, cs.color, rootFontSizePx),
     backgroundClip: readBackgroundClip(cs.backgroundClip),
     layer: effects.layer,
-    stacking: effects.set || readStacking(el, cs),
-    visible: readVisible(cs, el),
+    stacking: effects.set || readStacking(own, cs),
+    visible: readVisible(cs, own),
     skipsContents: skipsContents(cs, rawDisplay),
-    marker: rawDisplay.includes(LIST_ITEM) ? readMarker(el, cs, rawDisplay) : null,
+    marker: own && rawDisplay.includes(LIST_ITEM) ? markerOf(own, cs, rawDisplay, markers) : null,
     pointerEvents: cs.pointerEvents !== "none",
     ...anchoring,
-    anchorScope: readAnchorScope(el, cs),
+    anchorScope: own ? readAnchorScope(own, cs) : null,
     anchorSizes,
     anchorInsets,
     topLayer,
@@ -679,6 +686,64 @@ const TRY_ORDER: Record<string, CellStyle["positionTryOrder"]> = {
   "most-block-size": "most-height",
 };
 
+/** A box that anchors nothing and is anchored to nothing. */
+const NO_ANCHORING: ReturnType<typeof readAnchoring> = {
+  anchorNames: [],
+  positionAnchor: null,
+  positionArea: null,
+  positionTryFallbacks: [],
+  positionTryOrder: "normal",
+  positionVisibility: { anchorValid: false, anchorVisible: false, noOverflow: false },
+  anchorCenter: { x: false, y: false },
+};
+
+const PSEUDO_VARIANT = /(?<=^|[\s:])(?:before|after):/u;
+
+/** The classes the authored-length scan reads: an element's but its
+ * pseudo-elements' (`before:w-4`), a pseudo-element's its variant's,
+ * the variant dropped. */
+function authoredClasses(el: Element, pseudo?: Pseudo): string {
+  const classes = el.getAttribute("class") ?? "";
+  if (!PSEUDO_VARIANT.test(classes)) return pseudo ? "" : classes;
+  const variant = pseudo === "::before" ? "before:" : "after:";
+  return classes
+    .split(/\s+/u)
+    .flatMap((name) => {
+      const match = PSEUDO_VARIANT.exec(name);
+      if (!pseudo) return match ? [] : [name];
+      return match?.[0] === variant ? [name.replace(variant, "")] : [];
+    })
+    .join(" ");
+}
+
+/** A pseudo-element's sizes, insets and margins as computed, where Typed
+ * OM gives an element's: read with its box off (styles.css
+ * `data-mw-before-declared`), which leaves no used value to resolve
+ * them, and read as its inline style is. */
+function declaredLengths(
+  el: Element,
+  pseudo: Pseudo,
+  cs: CSSStyleDeclaration,
+): CSSStyleDeclaration {
+  const flag = `data-mw-${nameOf(pseudo)}-declared`;
+  const declared = document.createElement("span").style;
+  el.setAttribute(flag, "");
+  try {
+    for (const property of DECLARED) {
+      const value = cs.getPropertyValue(property);
+      if (value) declared.setProperty(property, value);
+    }
+  } finally {
+    el.removeAttribute(flag);
+  }
+  return declared;
+}
+
+const DECLARED = [
+  ...["width", "height"].flatMap((size) => [size, `min-${size}`, `max-${size}`]),
+  ...["top", "right", "bottom", "left"].flatMap((side) => [side, `margin-${side}`]),
+];
+
 /** The anchor positioning properties (specs/anchor-positioning.md):
  * any element's names, and the anchoring of an out-of-flow box. */
 function readAnchoring(
@@ -696,17 +761,7 @@ function readAnchoring(
   | "anchorCenter"
 > {
   const anchorNames = readAnchorNames(el, cs);
-  if (!outOfFlow) {
-    return {
-      anchorNames,
-      positionAnchor: null,
-      positionArea: null,
-      positionTryFallbacks: [],
-      positionTryOrder: "normal",
-      positionVisibility: { anchorValid: false, anchorVisible: false, noOverflow: false },
-      anchorCenter: { x: false, y: false },
-    };
-  }
+  if (!outOfFlow) return { ...NO_ANCHORING, anchorNames };
   const positionArea = parsePositionArea(cs.getPropertyValue("position-area"));
   const tryOrder = cs.getPropertyValue("position-try-order").trim();
   return {
@@ -971,11 +1026,12 @@ export function isTransparentColor(value: string): boolean {
  * — including near-transparent frames of a fade to/from unset, which
  * must paint rather than read as "no background". */
 function readAnimatedBackground(
-  el: Element,
+  el: Element | undefined,
   raw: string,
   cs: CSSStyleDeclaration,
 ): string | undefined {
-  const tracked = trackBackground(el, isTransparentColor(raw) ? "" : raw, cs);
+  const value = isTransparentColor(raw) ? "" : raw;
+  const tracked = el ? trackBackground(el, value, cs) : value;
   return tracked === "" ? undefined : tracked;
 }
 
@@ -1040,6 +1096,9 @@ function overflowAxis(value: string): OverflowAxis {
 /** An axis beside a scroll container's, as CSS computes it. */
 const COERCED: Partial<Record<OverflowAxis, OverflowAxis>> = { visible: "auto", clip: "hidden" };
 
+/** An axis that would scroll, clipped. */
+const unscrolled = (axis: OverflowAxis): OverflowAxis => (scrollsAxis(axis) ? "hidden" : axis);
+
 /** Per-axis overflow (specs/scrolling.md). Longhands read first (the
  * shorthand sets both in real browsers; happy-dom may leave them "",
  * hence the fallback), then the CSS coercion: beside a scroll
@@ -1093,13 +1152,35 @@ const TABLE_DISPLAY_FALLBACK: Record<string, string> = {
   COLGROUP: "table-column-group",
 };
 
+/** What a build hands a read (tree.ts): the pseudo-element whose box it
+ * reads, and the markers read so far, which the counter walk shares. */
+export interface BuildReads {
+  generated?: GeneratedNode;
+  markers?: Map<Element, MarkerStyle | null>;
+}
+
+/** A list item's marker, read once where a build keeps `markers`. */
+export function markerOf(
+  el: Element,
+  cs: CSSStyleDeclaration,
+  display: string,
+  markers?: Map<Element, MarkerStyle | null>,
+): MarkerStyle | null {
+  let marker = markers?.get(el);
+  if (marker === undefined) {
+    marker = readMarker(el, cs, display);
+    markers?.set(el, marker);
+  }
+  return marker;
+}
+
 /** A list item's marker (specs/lists.md "What the engine reads"), inside
  * an inline item whatever its position, as CSS places it. */
 function readMarker(el: Element, cs: CSSStyleDeclaration, display: string): MarkerStyle | null {
   const marker = getComputedStyle(el, "::marker");
   const { content } = marker;
   const parts = markerParts(content, cs.listStyleType);
-  const image = /url\(|image(?:-set)?\(|gradient\(/.test(content);
+  const image = holdsImage(content);
   if (parts.length === 0 && !image) return null;
   return {
     parts,
@@ -1107,6 +1188,7 @@ function readMarker(el: Element, cs: CSSStyleDeclaration, display: string): Mark
     color: marker.color && marker.color !== cs.color ? marker.color : null,
     glyph: readGlyph(marker),
     image,
+    ...(parts.some(isQuote) && { quotes: marker.quotes }),
   };
 }
 
@@ -1496,7 +1578,7 @@ export function readElementInsets(
   const insets = readInsets({
     cs,
     csm,
-    classAttr: el.getAttribute("class") ?? "",
+    classAttr: authoredClasses(el),
     inlineStyle: (el as HTMLElement).style,
     metrics: undefined,
     rootFontSizePx,
@@ -1924,7 +2006,10 @@ const IDENTITY = new Set([
   "0px 0px 0px",
 ]);
 
-function readLayer(el: Element, cs: CSSStyleDeclaration): { layer: Layer | null; set: boolean } {
+function readLayer(
+  el: Element | undefined,
+  cs: CSSStyleDeclaration,
+): { layer: Layer | null; set: boolean } {
   // Any value but `none`, an identity included, forms a stacking context.
   let set = false;
   const effect = (property: string): string => {
@@ -1935,7 +2020,7 @@ function readLayer(el: Element, cs: CSSStyleDeclaration): { layer: Layer | null;
   const backdropFilter = effect("backdrop-filter");
   let layered = backdropFilter !== "none";
   for (const property of EFFECTS) layered ||= effect(property) !== "none";
-  layered ||= animatesEffect(el);
+  layered ||= el !== undefined && animatesEffect(el);
   return { layer: layered ? { backdropFilter, resampled: resamples(effect) } : null, set };
 }
 
@@ -1956,7 +2041,7 @@ const CONTEXT_PROPERTIES = new Set([
 /** Whether an element forms a stacking context by what the paint reads
  * nowhere else (specs/positioning.md "Paint order"): position, `z-index`,
  * a resting opacity and the layer effects are read already. */
-function readStacking(el: Element, cs: CSSStyleDeclaration): boolean {
+function readStacking(el: Element | undefined, cs: CSSStyleDeclaration): boolean {
   const other = (property: string, initial: string): boolean => {
     const value = cs.getPropertyValue(property).trim();
     return value !== "" && value !== initial;
@@ -1973,7 +2058,7 @@ function readStacking(el: Element, cs: CSSStyleDeclaration): boolean {
   ) {
     return true;
   }
-  return animatedProperties(el).has("opacity");
+  return el !== undefined && animatedProperties(el).has("opacity");
 }
 
 /** Whether the effects draw the layer's cells at another size or angle

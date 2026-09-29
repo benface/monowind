@@ -66,7 +66,7 @@ import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
 import { gridOffsetAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics, sameMetrics } from "./metrics.ts";
 import { edges, layoutRoot } from "./layout.ts";
-import { render, renderScroll, setVar } from "./render.ts";
+import { render, renderScroll, setVar, wrotePseudoElements } from "./render.ts";
 import { namedAnchors } from "./positioning.ts";
 import { TopLayer, isTopLayer } from "./top-layer.ts";
 import { buildRoot } from "./tree.ts";
@@ -2925,7 +2925,19 @@ export class MonoWindElement extends HTMLElementBase {
       }
       // Found while the reads leave the style clean.
       settling = { host: mayTransition(hostStyle), elements: new Set() };
-      for (const el of gated) if (mayTransition(getComputedStyle(el))) settling.elements.add(el);
+      // A pseudo-element the engine wrote takes its element's locks too.
+      const pseudos = wrotePseudoElements(this);
+      for (const el of gated) {
+        if (
+          mayTransition(getComputedStyle(el)) ||
+          (pseudos &&
+            ((el.hasAttribute("data-mw-before") &&
+              mayTransition(getComputedStyle(el, "::before"))) ||
+              (el.hasAttribute("data-mw-after") && mayTransition(getComputedStyle(el, "::after")))))
+        ) {
+          settling.elements.add(el);
+        }
+      }
 
       // (4) Compute integer layout, and the top-layer stack over it: the
       // root against the rows the host's own height gives it, its content

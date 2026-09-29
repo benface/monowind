@@ -19,7 +19,7 @@ import type {
 } from "./plain-text.ts";
 import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
 import { readOpacity } from "./style.ts";
-import { decorationKey } from "./types.ts";
+import { boxKey, decorationKey } from "./types.ts";
 import type { LayoutNode, Backdrop } from "./types.ts";
 
 /**
@@ -120,9 +120,9 @@ interface LayerNodes {
   /** The last placement written, to skip an unchanged one. */
   placed: string;
 }
-/** A container's layers: by root element, and in paint order. */
+/** A container's layers: by root box (`boxKey`), and in paint order. */
 interface LayerSet {
-  nodes: Map<Element, LayerNodes>;
+  nodes: Map<object, LayerNodes>;
   order: LayerNodes[];
   cell: CellSize;
 }
@@ -227,7 +227,7 @@ function paintLayers(
   const last = new Map<HTMLElement, HTMLElement>();
   let held = false;
   for (const { layer, segments, resampled } of layers) {
-    const source = layer.node.source;
+    const source = boxKey(layer.node);
     let nodes = set.nodes.get(source);
     if (!nodes) {
       const box = document.createElement("div");
@@ -254,7 +254,7 @@ function paintLayers(
       set.nodes.set(source, nodes);
     }
     nodes.layer = layer;
-    nodes.parent = layer.parent ? set.nodes.get(layer.parent.node.source)! : null;
+    nodes.parent = layer.parent ? set.nodes.get(boxKey(layer.parent.node))! : null;
     set.order.push(nodes);
     // A clipping box around a clipped layer, the box moved in or out
     // as the clip comes and goes.
@@ -329,7 +329,7 @@ function placeBackdrop(
  * box inside it. */
 function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   const { layer } = nodes;
-  const cs = getComputedStyle(layer.node.source);
+  const cs = getComputedStyle(layer.node.source, layer.node.generated?.pseudo);
   const [ox = "0", oy = "0"] = cs.transformOrigin.split(" ");
   const originX = (parseFloat(ox) || 0) + (layer.box.x - layer.x) * cell.width;
   const originY = (parseFloat(oy) || 0) + (layer.box.y - layer.y) * cell.height;

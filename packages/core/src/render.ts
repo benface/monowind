@@ -1,6 +1,8 @@
 import { baselineRow, isFlowChild, isFormattingContextRoot, markerSpread } from "./layout.ts";
 import { placePainted } from "./paint-origin.ts";
 import { zIndexApplies } from "./stacking.ts";
+import { PSEUDOS } from "./generated.ts";
+import type { Pseudo } from "./generated.ts";
 import { clipsAxis, softWraps } from "./types.ts";
 import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
@@ -11,14 +13,37 @@ import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from 
  * picker stays up (element.ts `#openSelectPicker`).
  */
 export function render(root: LayoutNode): void {
-  const boxes = new Set<Element>();
-  const insets = new Set<Element>();
-  walk(root, null, boxes, insets);
-  // Where this layout wrote no box, or no inline insets, on an element
-  // an earlier one did, that one's writes go: found by their flags.
-  clearUnwritten(root.source, BOX_MARKS, boxes, BOX_NAMES);
-  clearUnwritten(root.source, "[data-mw-inline-inset]", insets, INSET_NAMES);
+  const written: Written = {
+    boxes: new Set(),
+    insets: new Set(),
+    "::before": new Set(),
+    "::after": new Set(),
+  };
+  walk(root, null, written);
+  // Where this layout wrote no box, no inline insets, or no
+  // pseudo-element, on an element an earlier one did, that one's
+  // writes go: found by their flags.
+  clearUnwritten(root.source, BOX_MARKS, written.boxes, BOX_NAMES);
+  clearUnwritten(root.source, "[data-mw-inline-inset]", written.insets, INSET_NAMES);
+  const wrote = written["::before"].size + written["::after"].size > 0;
+  if (!wrote && !writtenPseudoElements.has(root.source)) return;
+  for (const pseudo of PSEUDOS) {
+    const { flag, all } = PSEUDO_NAMES[pseudo];
+    clearUnwritten(root.source, `[${flag}]`, written[pseudo], all);
+  }
+  if (wrote) writtenPseudoElements.add(root.source);
+  else writtenPseudoElements.delete(root.source);
 }
+
+/** The elements this layout wrote boxes, inline insets and each
+ * pseudo-element on. */
+type Written = Record<"boxes" | "insets" | Pseudo, Set<Element>>;
+
+/** The roots whose last layout wrote a pseudo-element. */
+const writtenPseudoElements = new WeakSet<Element>();
+
+/** Whether a root's last layout wrote a pseudo-element. */
+export const wrotePseudoElements = (root: Element): boolean => writtenPseudoElements.has(root);
 
 /** The flags one of which marks every box's element (`positionElement`). */
 const BOX_MARKS =
@@ -42,6 +67,21 @@ const BOX_NAMES = (
 /** An inline element's insets' flag and variables. */
 const INSET_NAMES = ["data-mw-inline-inset", "--mw-it", "--mw-ir", "--mw-ib", "--mw-il"];
 
+/** Each pseudo-element's flag on its element, holding its kind, and its
+ * variables there (`--mw-before-x`), which styles.css reads on it: an
+ * inline one's, a multi-column flow's, and a box's — each written
+ * whole, as its element's descendants inherit them. */
+const PSEUDO_NAMES = { "::before": pseudoNames("before"), "::after": pseudoNames("after") };
+
+function pseudoNames(name: string) {
+  const vars = (names: string) => names.split(" ").map((each) => `--mw-${name}-${each}`);
+  const text = vars("ls pl pr ml mr");
+  const flow = vars("ls pl pr ml mr pt pb mt mb");
+  const box = vars("position x y w h mt mr mb ml z va contain");
+  const flag = `data-mw-${name}`;
+  return { flag, text, flow, box, all: [flag, ...new Set([...flow, ...box])] };
+}
+
 /** `names` cleared from each element under `root` a `selector` flag
  * marks and this layout did not write. */
 function clearUnwritten(
@@ -51,11 +91,14 @@ function clearUnwritten(
   names: readonly string[],
 ): void {
   for (const el of root.querySelectorAll<HTMLElement>(selector)) {
-    if (written.has(el)) continue;
-    for (const name of names) {
-      if (name.startsWith("--")) setVar(el, name, null);
-      else el.removeAttribute(name);
-    }
+    if (!written.has(el)) clearNames(el, names);
+  }
+}
+
+function clearNames(el: HTMLElement, names: readonly string[]): void {
+  for (const name of names) {
+    if (name.startsWith("--")) setVar(el, name, null);
+    else el.removeAttribute(name);
   }
 }
 
@@ -107,15 +150,22 @@ function setFlag(el: Element, name: string, on: boolean): void {
 function walk(
   node: LayoutNode,
   parent: LayoutNode | null,
-  boxes: Set<Element>,
-  insets: Set<Element>,
+  written: Written,
   ground?: string,
   inside = false,
 ): void {
   if (node.inlineElements) {
     for (const entry of node.inlineElements) {
-      const { element, tracking, padLeft, padRight, sticky } = entry;
+      const { element, pseudo, tracking, padLeft, padRight, sticky } = entry;
       const el = element as HTMLElement;
+      if (pseudo) {
+        const { name, marginLeft, marginRight, image } = pseudo;
+        // An image draws none (styles.css), as a marker's.
+        const values = [tracking, padLeft, padRight, marginLeft, marginRight];
+        writePseudo(el, name, image ? "image" : "text", values);
+        written[name].add(element);
+        continue;
+      }
       setVar(el, "--mw-ls", tracking);
       setFlag(el, "data-mw-pointer-none", !entry.pointerEvents);
       // Quantized horizontal padding (specs/cell-model.md): the companion
@@ -125,15 +175,18 @@ function walk(
       setVar(el, "--mw-ipl", padLeft > 0 ? padLeft : null);
       setVar(el, "--mw-ipr", padRight > 0 ? padRight : null);
       if (entry.insets || sticky) {
-        insets.add(element);
+        written.insets.add(element);
         applyInlineInsets(el, entry.insets ?? stuckInsets(entry));
       }
     }
   }
 
   if (!parent) markRoot(node);
-  else if (!node.anonymous) {
-    boxes.add(node.source);
+  else if (node.generated) {
+    writePseudoBox(node, parent);
+    written[node.generated.pseudo].add(node.source);
+  } else if (!node.anonymous) {
+    written.boxes.add(node.source);
     positionElement(node, parent, inside);
   }
   // Below a box whose white-space is restored, every box writes its own.
@@ -145,22 +198,104 @@ function walk(
   const own = node.style.visible
     ? (node.style.backgroundColor ?? (node.style.backgroundClear ? undefined : ground))
     : ground;
-  if (parent && !node.anonymous) syncEditableColors(node.source as HTMLElement, node, own);
+  if (parent && !node.anonymous && !node.generated) {
+    syncEditableColors(node.source as HTMLElement, node, own);
+  }
   // A hidden table box (misparented content, <col>) hides its whole
   // subtree browser-side; nothing to recurse into.
   if (node.tableHidden) return;
 
   for (const child of node.children) {
-    // Absolutization would otherwise activate z-index on static block
-    // children too (CSS keeps it inert there): the companion reads
-    // `--mw-z`, written only where CSS applies it. A run's element is
-    // its container, whose own value is already written.
-    if (!child.anonymous) {
-      const applies = zIndexApplies(child, node) && !child.inlineBox;
-      setVar(child.source as HTMLElement, "--mw-z", applies ? child.style.zIndex : null);
+    // A run's element is its container, whose own value is already
+    // written.
+    if (!child.anonymous && !child.generated) {
+      setVar(child.source as HTMLElement, "--mw-z", appliedZIndex(child, node));
     }
-    walk(child, node, boxes, insets, own, within);
+    walk(child, node, written, own, within);
   }
+}
+
+/** A box's z-index where CSS applies it, which the companion reads:
+ * absolutization would otherwise activate it on static block children
+ * too, where CSS keeps it inert. */
+const appliedZIndex = (node: LayoutNode, parent: LayoutNode): number | null =>
+  zIndexApplies(node, parent) && !node.inlineBox ? node.style.zIndex : null;
+
+/** A pseudo-element's kind in its element's flag and its variables
+ * there, another kind's cleared. */
+function writePseudo(
+  el: HTMLElement,
+  pseudo: Pseudo,
+  kind: "text" | "image" | "flow" | "box",
+  values: readonly (number | string)[],
+): void {
+  const { flag, all, ...names } = PSEUDO_NAMES[pseudo];
+  const was = el.getAttribute(flag);
+  if (was !== kind) {
+    if (was !== null) clearNames(el, all);
+    el.setAttribute(flag, kind);
+  }
+  const written = kind === "image" ? names.text : names[kind];
+  for (let i = 0; i < written.length; i++) setVar(el, written[i]!, values[i]!);
+}
+
+/** A pseudo-element box on the engine's cells, drawing no text natively
+ * (styles.css): absolute where the engine places a box, else in the
+ * native line or flow its element's box would take, with its margins —
+ * but in a multi-column flow, whose native lines fragment as the grid's
+ * do (`data-mw-multicol-flow`). */
+function writePseudoBox(node: LayoutNode, parent: LayoutNode): void {
+  const el = node.source as HTMLElement;
+  const { pseudo } = node.generated!;
+  const { multicolFlow: flow, resolvedPadding: padding } = node;
+  if (flow) {
+    // Its gaps as padding where the native balancer fills the flow.
+    const balanced = parent.multicolGeometry?.nativeBalance === true;
+    const [top, bottom] = [flow.top ?? 0, flow.bottom ?? 0];
+    return writePseudo(el, pseudo, "flow", [
+      node.style.tracking,
+      padding.left,
+      padding.right,
+      flow.left ?? 0,
+      flow.right ?? 0,
+      balanced ? top : 0,
+      balanced ? bottom : 0,
+      balanced ? 0 : top,
+      balanced ? 0 : bottom,
+    ]);
+  }
+  const { localRect: rect, inlineBox, inlineTextRow } = node;
+  const { verticalAlign } = node.style;
+  const margins = node.multicolFlowSpan ?? node.flow ?? inlineBox;
+  // A run's box is its container's natively, where the run lies.
+  const run = !margins && parent.anonymous ? parent.localRect : undefined;
+  const x = margins ? 0 : rect.x + (run?.x ?? 0);
+  const y = margins ? 0 : rect.y + (run?.y ?? 0);
+  // A middle-aligned box's baseline is its bottom margin edge, as it
+  // draws no line (`positionElement`).
+  const edge = (margins?.top ?? 0) + rect.height + (margins?.bottom ?? 0);
+  const align = !inlineBox
+    ? "top"
+    : verticalAlign === "end"
+      ? "bottom"
+      : verticalAlign === "center" && inlineTextRow !== undefined
+        ? `calc(${inlineTextRow - edge} * var(--mw-ch, 1px) + var(--mw-base, 0px))`
+        : "top";
+  const root = node.flow && node.style.float === "none" && isFormattingContextRoot(node);
+  writePseudo(el, pseudo, "box", [
+    margins ? "relative" : "absolute",
+    x + shift(node, parent, "x"),
+    y + shift(node, parent, "y"),
+    rect.width,
+    rect.height,
+    margins?.top ?? 0,
+    margins?.right ?? 0,
+    margins?.bottom ?? 0,
+    margins?.left ?? 0,
+    appliedZIndex(node, parent) ?? "auto",
+    align,
+    root ? "layout" : "none",
+  ]);
 }
 
 /** The elements whose text the browser renders and selects (the
@@ -229,13 +364,17 @@ function stuckInsets({ stickyShift }: InlineElement): PerSide<number | null> {
  * painted cells: its shift is zero. */
 function writeShift(node: LayoutNode, parent: LayoutNode): void {
   const el = node.source as HTMLElement;
-  const top = node.topLayerRank !== undefined;
-  const { paintOrigin: at, scroll } = parent;
-  const x = top ? 0 : node.paintOrigin.x - (at.x - (scroll?.x ?? 0) + node.localRect.x);
-  const y = top ? 0 : node.paintOrigin.y - (at.y - (scroll?.y ?? 0) + node.localRect.y);
+  const x = shift(node, parent, "x");
+  const y = shift(node, parent, "y");
   setVar(el, "--mw-sx", x === 0 ? null : x);
   setVar(el, "--mw-sy", y === 0 ? null : y);
 }
+
+const shift = (node: LayoutNode, parent: LayoutNode, axis: "x" | "y"): number =>
+  node.topLayerRank === undefined
+    ? node.paintOrigin[axis] -
+      (parent.paintOrigin[axis] - (parent.scroll?.[axis] ?? 0) + node.localRect[axis])
+    : 0;
 
 /** A scroll repaint: the offsets `sync` writes, every box placed where
  * they paint it (paint-origin.ts), and the light elements the scroll
@@ -245,7 +384,8 @@ export function renderScroll(root: LayoutNode, sync: (root: LayoutNode) => void)
   sync(root);
   for (const { node, parent } of placePainted(root)) {
     // A run's element is its container, a box of its own.
-    if (!node.anonymous) writeShift(node, parent);
+    if (node.generated) writePseudoBox(node, parent);
+    else if (!node.anonymous) writeShift(node, parent);
     for (const entry of node.inlineElements ?? []) {
       if (entry.sticky !== undefined) {
         applyInlineInsets(entry.element as HTMLElement, stuckInsets(entry));
@@ -375,8 +515,10 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   setVar(el, "--mw-colc", multicol?.columnCount ?? null);
   setVar(el, "--mw-colg", multicol?.gap ?? null);
   restoreWhiteSpace(el, whiteSpace, inside);
-  setVar(el, "--mw-x", rect.x);
-  setVar(el, "--mw-y", rect.y);
+  // A run's box is its container's natively, where the run lies.
+  const run = !top && parent.anonymous ? parent.localRect : undefined;
+  setVar(el, "--mw-x", rect.x + (run?.x ?? 0));
+  setVar(el, "--mw-y", rect.y + (run?.y ?? 0));
   setVar(el, "--mw-w", rect.width);
   setVar(el, "--mw-h", rect.height);
   // The clip lock, on a box clipping both axes: a lone clipping axis is
@@ -401,7 +543,15 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
     setVar(el, "--mw-spb", range ? scrollPadding.bottom : null);
     setVar(el, "--mw-spl", range ? scrollPadding.left : null);
   }
-  setFlag(el, "data-mw-scroll", range !== undefined);
+  // The scroll spacer's pseudo-element, one its author leaves free
+  // (styles.css), none where both are the author's.
+  const taken = node.authoredPseudos;
+  const spacer = !taken?.includes("::after")
+    ? "after"
+    : !taken.includes("::before")
+      ? "before"
+      : "";
+  setAttr(el, "data-mw-scroll", range ? spacer : null);
   // Border and padding cells apart: styles.css sums them as native
   // padding and reads the border cells alone for scroll-padding.
   setVar(el, "--mw-pt", padding.top);

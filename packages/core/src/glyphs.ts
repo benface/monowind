@@ -150,6 +150,14 @@ export function missingGlyphs(value: string | null | undefined): Set<string> {
   return new Set(Array.from(text).filter((cluster) => !/[\s,]/.test(cluster)));
 }
 
+/** The glyph set a computed style names (`--mw-border-glyphs`), for its
+ * font (`--mw-missing-glyphs`, `glyphSetNameFor`). */
+export const glyphSetOf = (cs: CSSStyleDeclaration): string | null =>
+  glyphSetNameFor(
+    cs.getPropertyValue("--mw-border-glyphs").trim() || null,
+    cs.getPropertyValue("--mw-missing-glyphs"),
+  );
+
 /** The set name a node carries for `name` on a font whose
  * `--mw-missing-glyphs` reads `declared` (specs/theming.md): the name
  * itself where the set draws none of them, else a derived registration

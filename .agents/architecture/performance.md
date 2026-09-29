@@ -20,7 +20,10 @@ with a `z-10` badge, every fifth `opacity-90`, every twentieth after a
 `sticky z-20` heading — the stacking, specs/positioning.md "Paint
 order"), `lists` (numbered list items, every tenth holding two
 bullets — the counter walk over every element and a `::marker` read
-per item, specs/lists.md).
+per item, specs/lists.md), `labels` (paragraphs each numbered by a
+counter `::before` and its link marked by an `::after` — the rule
+scan, two pseudo-element reads an item and the walk,
+specs/generated-content.md).
 
 A plain desktop client: 1280×720 at one device pixel per CSS pixel,
 Chromium, no throttling. `--count`, `--runs` and `--rate` (CPU
@@ -1177,3 +1180,38 @@ ASCII (width.test.ts checks every code point against the segmenter),
 which takes 3–9 ms off the blocks page too. The bundle is 590.2 KB
 (176.1 KB gzipped), 16.3 KB (6.8 KB) more: the predefined counter
 styles as data, the `@counter-style` reader and the walk.
+
+### Generated content (2026-09-28)
+
+The last commit's bundle against the working tree's: Chromium's own
+script, task and style counters, medians of twelve alternated loads
+each:
+
+| page      | script, ms  | task, ms      | style, ms   |
+| --------- | ----------- | ------------- | ----------- |
+| one `<p>` | 10.9 → 11.6 | 51.9 → 52.8   | 1.1 → 1.2   |
+| prose     | 74.5 → 75.6 | 193.8 → 195.3 | 56.3 → 56.7 |
+| boxes     | 57.4 → 58.1 | 185.8 → 186.1 | 27.1 → 27.1 |
+| lists     | 55.0 → 56.3 | 125.9 → 127.4 | 18.6 → 18.8 |
+| labels    | 45.6 → 62.3 | 126.2 → 151.1 | 28.3 → 34.2 |
+
+A relayout (twenty a round, eight rounds) of prose, boxes and lists
+costs what the last commit's does, within noise: a CPU profile of
+prose's gives 88.45 → 88.65 ms, the same `getComputedStyle` calls;
+`labels`' script 17.3 → 26.4 ms. A page without generated content
+pays about 1 ms a load, at its first layout: the one walk of the
+page's sheets (about 0.4 ms, cached per sheet), now on every page
+where lists took it only with a marker to number, and the new code's
+first run; the bundle's 15.4 KB more (605.7 KB, 180.3 KB gzipped)
+loads within noise. `labels`
+draws what the last commit left out: a pseudo-element read an item,
+the walk, and a run entry each. The rounds found the walk running
+once a run, not once a build (639 ms on `labels`); a `q` walking every
+element's counters; a leaf's positioned child built twice; a
+pseudo-element or marker read twice; and trimmed the rest: a selector
+read only from a rule that sets `content` or nests others, the
+engine's own spacer rule out of the scan, no DOM read per character
+in the source map's compaction; and a pseudo-element's light DOM
+written as its own variables for its own compact rules, not renamed
+onto every element rule and mapped back — half the CSS, whose parse
+had cost every load about 1 ms, and 2 ms a relayout of `labels`.

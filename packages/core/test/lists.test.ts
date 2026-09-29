@@ -368,10 +368,10 @@ describe("the page's counter styles", () => {
 
 describe("numbering", () => {
   /** The host's counters, as the walk reads them. */
-  const countersIn = (html: string, reads: readonly string[] = []) => {
+  const countersIn = (html: string) => {
     document.body.innerHTML = `<div data-test="host">${html}</div>`;
     const host = document.querySelector('[data-test="host"]')!;
-    const values = countersOf(counterTree(host)!, reads);
+    const values = countersOf(counterTree(host)!);
     const items = Array.from(host.querySelectorAll("*")).filter((el) => values.has(el));
     return { host, values, items };
   };
@@ -477,15 +477,13 @@ describe("numbering", () => {
     expect(numbers(html)).toEqual(expected);
   });
 
-  it("reads each counter a marker names, the outermost first", () => {
+  it("reads each counter in scope, the outermost first", () => {
     const { values, items } = countersIn(
       `<ol><li><ol><li><li data-test="deep"></ol></ol>
        <div style="counter-reset: section 2"><li style="counter-increment: section"></div>`,
-      ["section"],
     );
     const deep = document.querySelector('[data-test="deep"]')!;
-    expect(values.get(deep)!.get("list-item")).toEqual([1, 2]);
-    expect(values.get(deep)!.get("section")).toEqual([0]);
+    expect(values.get(deep)).toEqual(new Map([["list-item", [1, 2]]]));
     expect(values.get(items.at(-1)!)!.get("section")).toEqual([3]);
   });
 
@@ -522,17 +520,19 @@ describe("marker reads", () => {
     expect(markerParts('"→"', "none")).toEqual(["→"]);
   });
 
-  it("read content's strings and counters, and nothing of an image, a quote or alternative text", () => {
+  it("read content's strings, counters and quotes, and nothing of an image or alternative text", () => {
     expect(
       contentParts(
-        `"§" counter(section) "." counters(list-item, ", (", upper-roman) url("a.png") open-quote "\\2022" / "alt"`,
+        `"§" counter(section) "." counters(list-item, ", (", upper-roman) url("a.png") open-quote "\\2022" no-close-quote / "alt"`,
       ),
     ).toEqual([
       "§",
       { counter: "section", style: "decimal" },
       ".",
       { counter: "list-item", style: "upper-roman", separator: ", (" },
+      { quote: "open" },
       "•",
+      { quote: "no-close" },
     ]);
     expect(contentParts("counter(x,lower-alpha)")).toEqual([
       { counter: "x", style: "lower-alpha" },

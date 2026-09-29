@@ -1,14 +1,17 @@
 /**
- * Counters (css-lists-3, specs/lists.md "Numbering") and counter styles
+ * Counters (css-lists-3, specs/lists.md "Numbering"), quotes
+ * (specs/generated-content.md "Counters and quotes") and counter styles
  * (css-counter-styles-3, "Counter styles"): each element's counter
- * values from the walk of its tree, and how a value reads as text — a
- * style's system over its symbols, its range, pad and negative sign,
- * and its fallback — over the simple predefined styles and the page's
- * `@counter-style` rules.
+ * values and quotes from the walk of its tree, and how a value reads
+ * as text — a style's system over its symbols, its range, pad and
+ * negative sign, and its fallback — over the simple predefined styles
+ * and the page's `@counter-style` rules.
  */
 
 import { BULLET_GLYPHS } from "./glyphs.ts";
-import type { ContentPart } from "./types.ts";
+import { holds, pageSheets, sheetRules } from "./sheets.ts";
+import type { GeneratedNode } from "./generated.ts";
+import type { ContentPart, QuotePart } from "./types.ts";
 import { graphemes } from "./width.ts";
 
 type System = "cyclic" | "numeric" | "alphabetic" | "symbolic" | "additive" | "fixed";
@@ -318,7 +321,7 @@ export interface CounterStyleDescriptors {
 /** A descriptor's symbols: CSS strings (their escapes decoded) and
  * identifiers, split at white space and commas; an image, a function,
  * is no symbol the grid draws, an empty one (specs/lists.md deviation 3). */
-function symbolsOf(text: string): string[] {
+export function symbolsOf(text: string): string[] {
   return Array.from(text.matchAll(SYMBOL_TOKEN), ([match, quoted]) =>
     quoted !== undefined
       ? decodeEscapes(quoted.slice(1, -1))
@@ -411,65 +414,6 @@ export function styleOfRule(
   return style(system, symbols, { first, additive: additiveSymbols, ...own });
 }
 
-/** A `@counter-style` rule and the condition rules it sits under. */
-interface SheetRule {
-  rule: CounterStyleDescriptors & { name: string };
-  conditions: readonly CSSRule[];
-}
-
-/** Each sheet's rules, read again when its top-level rules change — a
- * count, or a first rule that `replaceSync` makes anew; one inserted
- * deeper waits for that (specs/lists.md deviation 9). */
-const rulesBySheet = new WeakMap<
-  CSSStyleSheet,
-  { count: number; first: CSSRule | undefined; rules: SheetRule[] }
->();
-
-function rulesOf(sheet: CSSStyleSheet): SheetRule[] {
-  const list = cssRulesOf(sheet);
-  const cached = rulesBySheet.get(sheet);
-  if (cached?.count === list.length && cached.first === list[0]) return cached.rules;
-  const rules: SheetRule[] = [];
-  const visit = (group: ArrayLike<CSSRule>, conditions: readonly CSSRule[]) => {
-    for (const rule of Array.from(group)) {
-      if ("additiveSymbols" in rule) {
-        rules.push({ rule: rule as unknown as SheetRule["rule"], conditions });
-      } else if ("styleSheet" in rule) {
-        const imported = (rule as CSSImportRule).styleSheet;
-        if (imported) visit(cssRulesOf(imported), [...conditions, rule]);
-      } else if ("cssRules" in rule && !("containerName" in rule)) {
-        // A container's condition is no page's: its rules never apply.
-        const within = "conditionText" in rule ? [...conditions, rule] : conditions;
-        visit((rule as CSSGroupingRule).cssRules, within);
-      }
-    }
-  };
-  visit(list, []);
-  rulesBySheet.set(sheet, { count: list.length, first: list[0], rules });
-  return rules;
-}
-
-/** A sheet's rules; none for a cross-origin one, which hides them
- * (specs/lists.md deviation 1). */
-function cssRulesOf(sheet: CSSStyleSheet): ArrayLike<CSSRule> {
-  try {
-    return sheet.cssRules;
-  } catch {
-    return [];
-  }
-}
-
-/** Whether a media list matches, an empty one always. */
-const matches = (media: MediaList | undefined): boolean =>
-  !media?.mediaText || matchMedia(media.mediaText).matches;
-
-/** Whether a condition rule holds now: an `@media`'s or `@import`'s
- * media, an `@supports`'s condition. */
-function holds(rule: CSSRule): boolean {
-  if ("media" in rule) return matches((rule as CSSMediaRule).media);
-  return CSS.supports((rule as CSSSupportsRule).conditionText);
-}
-
 /** The counter styles a node's markers read in: the `@counter-style`
  * rules of its root and the document that apply now, a later sheet's
  * winning, over the predefined styles — the sheets read on the first
@@ -477,15 +421,10 @@ function holds(rule: CSSRule): boolean {
 export function pageCounterStyles(node: Node): CounterStyles {
   let named: Map<string, CounterStyleDescriptors> | undefined;
   const read = () => {
-    const roots = [node.getRootNode() as Document | ShadowRoot];
-    if (roots[0] !== node.ownerDocument && node.ownerDocument) roots.push(node.ownerDocument);
     const rules = new Map<string, CounterStyleDescriptors>();
-    for (const root of roots.reverse()) {
-      for (const sheet of [...Array.from(root.styleSheets), ...(root.adoptedStyleSheets ?? [])]) {
-        if (sheet.disabled || !matches(sheet.media)) continue;
-        for (const { rule, conditions } of rulesOf(sheet)) {
-          if (conditions.every(holds)) rules.set(rule.name, rule);
-        }
+    for (const sheet of pageSheets(node)) {
+      for (const { rule, conditions } of sheetRules(sheet).counterStyles) {
+        if (conditions.every(holds)) rules.set(rule.name, rule);
       }
     }
     return rules;
@@ -526,9 +465,9 @@ export function markerParts(content: string, listStyleType: string): ContentPart
     : [{ listStyle: listStyleType }];
 }
 
-/** A `content` value's strings and counters; an image, a quote and
- * alternative text (after `/`) draw nothing (specs/lists.md deviations
- * 3 and 8). */
+/** A `content` value's strings, counters and quotes; an image and
+ * alternative text (after `/`) draw nothing (specs/lists.md deviation
+ * 3). */
 export function contentParts(content: string): ContentPart[] {
   const parts: ContentPart[] = [];
   for (const [token, name, args = ""] of content.matchAll(CONTENT_TOKEN)) {
@@ -541,21 +480,31 @@ export function contentParts(content: string): ContentPart[] {
     } else if (name === "counters") {
       const [counter = "", separator = "", style = "decimal"] = symbolsOf(args);
       parts.push({ counter, style, separator });
+    } else if (QUOTES.has(token)) {
+      parts.push({ quote: token.slice(0, -"-quote".length) as QuotePart["quote"] });
     }
   }
   return parts;
 }
 
+const QUOTES = new Set(["open-quote", "close-quote", "no-open-quote", "no-close-quote"]);
+
+/** Whether a `content` holds an image, which the grid draws as nothing
+ * (specs/lists.md deviation 3, specs/generated-content.md deviation 1). */
+export const holdsImage = (content: string): boolean =>
+  /url\(|image(?:-set)?\(|gradient\(/.test(content);
+
+export const isQuote = (part: ContentPart): part is QuotePart =>
+  typeof part === "object" && "quote" in part;
+
 const CONTENT_TOKEN = new RegExp(String.raw`${STRING}|([\w-]+)${ARGUMENTS}|/|[^\s"'/]+`, "gsu");
 
-/** The counters `counter()` and `counters()` parts name. */
-export const counterNames = (parts: readonly ContentPart[]): string[] =>
-  parts.flatMap((part) => (typeof part === "object" && "counter" in part ? [part.counter] : []));
-
-/** Whether a part reads a counter's value: all but a string and a
- * bullet. */
-export const readsValue = (part: ContentPart): boolean =>
-  typeof part !== "string" && !("listStyle" in part && BULLETS.has(part.listStyle));
+/** Whether a part reads a counter's value: all but a string, a quote
+ * and a bullet. */
+export const readsCounter = (part: ContentPart): boolean =>
+  typeof part !== "string" &&
+  !isQuote(part) &&
+  !("listStyle" in part && BULLETS.has(part.listStyle));
 
 /** Each bullet's symbols, which a rule extending it shares. */
 const BULLET_OF = new Map([...BULLETS].map((name) => [PREDEFINED[name]!.symbols, name]));
@@ -574,13 +523,16 @@ export function withBullets(
   };
 }
 
-/** A part's text, from the counter values the walk gave its item. */
+/** A part's text, from the counter values the walk gave its writer; a
+ * quote's the build writes (tree.ts `withQuotes`). */
 export function partText(
   part: ContentPart,
   values: ReadonlyMap<string, readonly number[]>,
   styles: CounterStyles,
 ): string {
   if (typeof part === "string") return part;
+  if ("quote" in part) return "";
+  // A counter read out of scope is the reader's own, at 0.
   const counters = values.get("listStyle" in part ? LIST_ITEM : part.counter) ?? [0];
   if ("listStyle" in part) return markerText(counters.at(-1)!, part.listStyle, styles);
   // `none` writes nothing, where an unknown name writes `decimal`.
@@ -589,17 +541,22 @@ export function partText(
   return counters.map((value) => counterText(value, part.style, styles)).join(part.separator);
 }
 
-/** An element as the counter walk reads it: its counter properties,
- * HTML's list hints folded in. */
+/** An element or pseudo-element as the counter walk reads it: its
+ * counter properties, HTML's list hints folded in. */
 export interface CounterNode {
-  element: Element;
-  resets: readonly CounterReset[];
+  source: Element | GeneratedNode;
+  resets: CounterReset[];
   increments: ReadonlyMap<string, number>;
-  sets: ReadonlyMap<string, number>;
+  sets: Map<string, number>;
   /** Increments `list-item` unless `increments` names it. */
   listItem: boolean;
-  children: readonly CounterNode[];
+  /** Writes a counter's value: its content, or its marker's. */
+  reads: boolean;
+  children: CounterNode[];
 }
+
+/** The value of each counter in scope, the outermost first. */
+export type Counters = ReadonlyMap<string, readonly number[]>;
 
 export interface CounterReset {
   name: string;
@@ -663,25 +620,19 @@ interface Change {
 }
 
 /**
- * Each list item's counters: per name its marker may read — `list-item`
- * and `reads` — the value of each counter of that name in scope, the
- * outermost first (css-lists-3 "Counters"). A `reversed()` counter with
- * no value starts from the changes a first walk records, hence a
- * second walk.
+ * The counters in scope at each node that reads one (css-lists-3
+ * "Counters"). A `reversed()` counter with no value starts from the
+ * changes a first walk records, hence a second walk.
  */
-export function countersOf(
-  root: CounterNode,
-  reads: readonly string[] = [],
-): Map<Element, Map<string, number[]>> {
-  const names = [LIST_ITEM, ...reads];
-  const first = walk(root, names, undefined);
+export function countersOf(root: CounterNode): Map<Element | GeneratedNode, Counters> {
+  const first = walk(root, undefined);
   return first.reversed.length
-    ? walk(root, names, first.reversed.map(reversedStart)).values
+    ? walk(root, first.reversed.map(reversedStart)).values
     : first.values;
 }
 
-function walk(root: CounterNode, names: readonly string[], starts: readonly number[] | undefined) {
-  const values = new Map<Element, Map<string, number[]>>();
+function walk(root: CounterNode, starts: readonly number[] | undefined) {
+  const values = new Map<Element | GeneratedNode, Counters>();
   const reversed: Change[][] = [];
   const stacks = new Map<string, Instance[]>();
   const visit = (nodes: readonly CounterNode[]): void => {
@@ -733,13 +684,16 @@ function walk(root: CounterNode, names: readonly string[], starts: readonly numb
         entry.set = to;
       }
       for (const [instance, entry] of changed) instance.changes?.push(entry);
-      if (node.listItem) {
-        const read = (name: string) => {
-          const stack = stacks.get(name);
-          // A marker reading a counter out of scope makes its own, at 0.
-          return stack?.length ? stack.map((instance) => instance.value) : [0];
-        };
-        values.set(node.element, new Map(names.map((name) => [name, read(name)])));
+      if (node.reads) {
+        const counters = new Map<string, number[]>();
+        for (const [name, stack] of stacks) {
+          if (stack.length === 0) continue;
+          counters.set(
+            name,
+            stack.map((instance) => instance.value),
+          );
+        }
+        values.set(node.source, counters);
       }
       visit(node.children);
     }

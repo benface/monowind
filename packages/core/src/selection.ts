@@ -1,7 +1,7 @@
 import { isFlowChild } from "./layout.ts";
 import { leafRendererFor } from "./leaf.ts";
 import { markerShows } from "./plain-text.ts";
-import { inlineBoxesOf } from "./types.ts";
+import { domLength, inlineBoxesOf } from "./types.ts";
 import type { CharSourceRun, LayoutNode } from "./types.ts";
 import { hardLineSpans, INLINE_PAD, OBJECT_REPLACEMENT, WBR_MARKER } from "./wrap.ts";
 
@@ -77,8 +77,10 @@ export function charIndexAt(leaf: LayoutNode, container: Node, offset: number): 
     const transcript = transcriptOf(leaf);
     return (transcript && textOffsetOf(transcript, container, offset)) ?? 0;
   }
+  // An element's points lie in its own atomic box; a pseudo-element's
+  // box stands at its element's edge.
   const boxes = inlineBoxesOf(leaf);
-  const boxIndex = boxes.findIndex((box) => box.source.contains(container));
+  const boxIndex = boxes.findIndex((box) => !box.generated && box.source.contains(container));
   if (boxIndex >= 0) {
     let marker = -1;
     for (let i = 0; i <= boxIndex; i++) marker = leaf.text.indexOf(OBJECT_REPLACEMENT, marker + 1);
@@ -100,19 +102,22 @@ export function charIndexAt(leaf: LayoutNode, container: Node, offset: number): 
   let found = low - 1;
   while (found > 0 && holds(runs[found - 1]!, container, offset)) found--;
   const run = runs[found]!;
-  if (container === run.node && offset < run.offset + run.length) {
-    return run.index + (offset - run.offset);
-  }
-  return run.index + run.length;
+  // A `::before` stands just after its point, an `::after` just before.
+  if (!holds(run, container, offset) || run.pseudo === "::after") return run.index + run.length;
+  return run.index + (offset - run.offset);
 }
 
+/** Whether a run holds a point: a text run each offset of its
+ * characters, a pseudo-element's its one point. */
 const holds = (run: CharSourceRun, container: Node, offset: number): boolean =>
-  run.node === container && run.offset <= offset && offset < run.offset + run.length;
+  run.node === container &&
+  run.offset <= offset &&
+  offset < run.offset + Math.max(1, domLength(run));
 
 /** The DOM position of `leaf.text[index]` (or of the end of the run
  * ending there) — in a custom leaf's transcript when it has one; null
  * for a character with no source position. */
-export function positionOf(leaf: LayoutNode, index: number): { node: Text; offset: number } | null {
+export function positionOf(leaf: LayoutNode, index: number): { node: Node; offset: number } | null {
   if (!leaf.charSource) {
     const transcript = transcriptOf(leaf);
     const at = transcript && textPositionAt(transcript, index);
@@ -129,7 +134,9 @@ export function positionOf(leaf: LayoutNode, index: number): { node: Text; offse
   const run = runs[low - 1];
   if (!run) return null;
   const delta = index - run.index;
-  return delta <= run.length ? { node: run.node, offset: run.offset + delta } : null;
+  return delta <= run.length
+    ? { node: run.node, offset: run.offset + Math.min(delta, domLength(run)) }
+    : null;
 }
 
 /* === Selection location ============================================= */
@@ -434,7 +441,7 @@ function requiredBreaks(node: LayoutNode): number {
   const role = node.style.tableRole;
   if (role === "row" || role === "cell" || isRowGroup(node)) return 0;
   if (role === "column" || role === "column-group") return 0;
-  return node.source.tagName === "P" ? 2 : 1;
+  return node.source.tagName === "P" && !node.generated ? 2 : 1;
 }
 
 interface Point {
@@ -452,13 +459,20 @@ export function leafExtent(leaf: LayoutNode): { start: Point; end: Point } | nul
     const last = runs[runs.length - 1]!;
     points.push({
       start: { node: first.node, offset: first.offset },
-      end: { node: last.node, offset: last.offset + last.length },
+      end: { node: last.node, offset: last.offset + domLength(last) },
     });
   }
   for (const box of inlineBoxesOf(leaf)) {
-    const parent = box.source.parentNode;
+    // A pseudo-element's box stands at its element's edge.
+    const { generated, source } = box;
+    if (generated) {
+      const { offset } = generated;
+      points.push({ start: { node: source, offset }, end: { node: source, offset } });
+      continue;
+    }
+    const parent = source.parentNode;
     if (!parent) continue;
-    const index = Array.prototype.indexOf.call(parent.childNodes, box.source);
+    const index = Array.prototype.indexOf.call(parent.childNodes, source);
     points.push({
       start: { node: parent, offset: index },
       end: { node: parent, offset: index + 1 },

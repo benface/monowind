@@ -37,6 +37,7 @@ import type { TopLayer } from "./top-layer.ts";
 import {
   hasScrollport,
   inlineBoxesOf,
+  parentElementOf,
   scrollGutter,
   scrollGutterBands,
   preservedSpaces,
@@ -588,7 +589,7 @@ function layoutTextLeaf(
   const { x, y } = contentOrigin(node);
   for (const child of node.children) {
     if (child.inlineBox) continue;
-    if (style.display === "flex" && child.source.parentElement === node.source) {
+    if (style.display === "flex" && parentElementOf(child) === node.source) {
       const height = Math.max(contentHeight, Number.isFinite(innerHeight) ? innerHeight : 0);
       child.staticSlot = flexStaticSlot(node, contentBox.x, contentBox.y, innerWidth, height);
       continue;

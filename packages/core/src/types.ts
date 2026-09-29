@@ -1,3 +1,4 @@
+import type { GeneratedNode, Pseudo } from "./generated.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type { ColorSpace, HueMode, Rgba } from "./color.ts";
 import type { TextCase } from "./text-transform.ts";
@@ -33,12 +34,17 @@ export const INITIAL_GLYPH: GlyphValues = {
 /** A marker's text, part by part: a string, a `counter()` or
  * `counters()` (joined by its separator), or `list-style-type`'s counter
  * style over the item's `list-item`, prefix and suffix included. */
-export type ContentPart = string | CounterPart | { listStyle: string };
+export type ContentPart = string | CounterPart | QuotePart | { listStyle: string };
 
 export interface CounterPart {
   counter: string;
   style: string;
   separator?: string;
+}
+
+/** `open-quote`, `close-quote`, `no-open-quote` or `no-close-quote`. */
+export interface QuotePart {
+  quote: "open" | "close" | "no-open" | "no-close";
 }
 
 /** A list item's marker, its text written (specs/lists.md). */
@@ -70,6 +76,8 @@ export interface MarkerStyle {
   /** Its `content` holds an image, which the grid draws as nothing and
    * its native marker must not draw (specs/lists.md deviation 3). */
   image: boolean;
+  /** Its `quotes`, where its parts write one (tree.ts `withQuotes`). */
+  quotes?: string;
 }
 
 /** A rect by its edges, the far ones exclusive: as a clip, the cells
@@ -411,13 +419,36 @@ export interface GridAutoFlow {
   dense: boolean;
 }
 
-/** One run of a leaf's character → source map (see `LayoutNode.charSource`). */
+/** One run of a leaf's character → source map (see `LayoutNode.charSource`):
+ * a Text node's characters at their offsets, or a `pseudo`-element's all
+ * at one point, its element's edge. */
 export interface CharSourceRun {
   index: number;
   length: number;
-  node: Text;
+  node: Node;
   offset: number;
+  pseudo?: Pseudo;
 }
+
+const pseudoKeys = new WeakMap<Element, Record<Pseudo, object>>();
+
+/** A box's identity across layouts: its element, or a key of its
+ * pseudo-element's under its element. */
+export function boxKey(node: LayoutNode): object {
+  const { generated, source } = node;
+  if (!generated) return source;
+  let keys = pseudoKeys.get(source);
+  if (!keys) pseudoKeys.set(source, (keys = { "::before": {}, "::after": {} }));
+  return keys[generated.pseudo];
+}
+
+/** The element a box sits in: an element's parent, a pseudo-element's
+ * own element. */
+export const parentElementOf = (node: LayoutNode): Element | null =>
+  (node.generated ?? node.source).parentElement;
+
+/** The DOM offsets a run spans: none for a pseudo-element's point. */
+export const domLength = (run: CharSourceRun): number => (run.pseudo ? 0 : run.length);
 
 /** Tracks a subgrid inherits from its parent grid in a subgridded axis
  * (specs/grid.md), projected into the subgrid's CONTENT-box coordinates:
@@ -885,6 +916,9 @@ export interface TopLayerEntry {
 /** An inline descendant of a leaf (`LayoutNode.inlineElements`). */
 export interface InlineElement {
   element: Element;
+  /** The pseudo-element it is of its element, its margins in cells
+   * (specs/generated-content.md "Generated text"). */
+  pseudo?: { name: Pseudo; marginLeft: number; marginRight: number; image: boolean } | undefined;
   tracking: number;
   padLeft: number;
   padRight: number;
@@ -1078,6 +1112,12 @@ export interface LayoutNode {
   /** A list item's marker (specs/lists.md): on the item where it sits
    * outside, on the leaf holding the item's first line where inside. */
   marker?: Marker;
+  /** A pseudo-element's box (specs/generated-content.md): the
+   * pseudo-element, its element the node's `source`. */
+  generated?: GeneratedNode;
+  /** The pseudo-elements its element's author gives content, which the
+   * scroll spacer leaves be. */
+  authoredPseudos?: readonly Pseudo[];
   /** Scroll geometry (specs/scrolling.md), written by layoutNode on
    * containers with a scroll axis: content extent and the derived
    * max offset, both in cells. Absent elsewhere. */

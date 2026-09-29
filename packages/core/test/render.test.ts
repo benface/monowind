@@ -154,6 +154,15 @@ it("clears every name render.ts writes from an element that is no box, but an in
   expect(engineNames(em)).toEqual(["--mw-ls"]);
 });
 
+it("places an absolute box in a container's text run against the container, its native block", () => {
+  const host = mount(
+    `<div><div style="position: relative; width: 80px"><p>t</p>a <b><i data-test="abs" style="position: absolute; left: 4px; top: 0">x</i></b></div></div>`,
+  );
+  layoutPass(host, 40, 0);
+  const abs = host.querySelector('[data-test="abs"]')!;
+  expect([cells(abs, "--mw-x"), cells(abs, "--mw-y")]).toEqual([1, 0]);
+});
+
 it("takes back the scroll an absolute box escapes, through a scroll repaint", () => {
   const rows = Array.from({ length: 12 }, (_, i) => `<p>Row ${i + 1}</p>`).join("");
   const host = mount(

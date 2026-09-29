@@ -96,7 +96,10 @@ export function focusableRects(root: LayoutNode): Focusable[] {
     const { x, y } = node.paintOrigin;
     // A hidden box takes no focus; a visible descendant still does
     // (specs/visibility.md).
-    if (!hidden && !isRoot && !node.anonymous && node.style.visible && isFocusable(node.source)) {
+    // An element's own box takes its focus; a pseudo-element's is its
+    // element's decoration (specs/generated-content.md).
+    const own = !isRoot && !node.anonymous && !node.generated;
+    if (!hidden && own && node.style.visible && isFocusable(node.source)) {
       out.push({
         element: node.source,
         rect: { x, y, width: node.localRect.width, height: node.localRect.height },
@@ -104,7 +107,9 @@ export function focusableRects(root: LayoutNode): Focusable[] {
     }
     if (!hidden && node.inlineElements) {
       const hidden = new Set(
-        node.inlineElements.flatMap((entry) => (entry.visible ? [] : [entry.element])),
+        node.inlineElements.flatMap((entry) =>
+          entry.visible || entry.pseudo ? [] : [entry.element],
+        ),
       );
       for (const inline of inlineElementRects(node, x, y)) {
         if (!hidden.has(inline.element) && isFocusable(inline.element)) out.push(inline);

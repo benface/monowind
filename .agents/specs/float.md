@@ -85,7 +85,7 @@ it as an anonymous run.
   that can hold no content. That is the ONLY case a line moves: the
   companion locks `overflow-wrap: anywhere` natively, so one free cell
   already holds a character, and both models break a long word at the
-  band's edge instead. An unbreakable line (`nowrap`, `pre`) wider than
+  band's edge instead — but Firefox's (deviation 5). An unbreakable line (`nowrap`, `pre`) wider than
   its band stays on its row and overflows, as browsers keep it (probed).
 
 - **Placement, per CSS §9.5.1, in document order.** A float's top is the
@@ -241,6 +241,14 @@ float's own top margin on top.
    box occupies whole cells, so text clears it by a whole cell), and a
    float being a native flow child, its `position: relative` insets
    moving it on the grid only.
+5. Firefox moves a line whose first word is wider than the room floats
+   leave it below them, taking no `overflow-wrap: anywhere` break there
+   ([bug 1382471](https://bugzilla.mozilla.org/show_bug.cgi?id=1382471),
+   probed 2026-09-28), where the grid breaks the word at the band's
+   edge, as Chromium and WebKit do: in Firefox the native text, which
+   selection and copy follow, sits off the grid's from that line on.
+   `word-break: break-all` would take the break, but at every line's
+   end too.
 
 ## Testing
 

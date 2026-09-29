@@ -1,5 +1,5 @@
 /**
- * Time to interactive on a page the grid finds hard, in one of six
+ * Time to interactive on a page the grid finds hard, in one of seven
  * shapes (`SHAPES` below). Reports the median of several runs so a
  * number is comparable across commits; record what it gives in
  * .agents/architecture/performance.md when it moves.
@@ -10,6 +10,7 @@
  *   pnpm bench --shape faded   filled boxes, every other at half opacity
  *   pnpm bench --shape positioned  cards with badges over the next, in a scroller
  *   pnpm bench --shape lists   numbered list items, every tenth holding bullets
+ *   pnpm bench --shape labels  paragraphs numbered and marked by pseudo-elements
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
@@ -100,6 +101,17 @@ const SHAPES = {
             i % 10 === 9 ? `<ul class="list-disc pl-2"><li>nested</li><li>nested</li></ul>` : ""
           }</li>`,
       )}</ol>`,
+  },
+  // Generated content (specs/generated-content.md): the rule scan, two
+  // pseudo-element reads per item, and the counter walk.
+  labels: {
+    label: "labelled items",
+    body: () =>
+      `<div class="[counter-reset:item]">${repeat(
+        (i) =>
+          `<p class="before:text-cyan-400 before:content-[counter(item)_'._'] before:[counter-increment:item]">` +
+          `<a class="underline after:content-['_↗']" href="#">item ${i}</a></p>`,
+      )}</div>`,
   },
 };
 if (!Object.hasOwn(SHAPES, shape)) {
