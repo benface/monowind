@@ -4,6 +4,8 @@
  * the same machines, so a page may mix them.
  */
 export * from "./composables.ts";
+export * from "./components/accordion.ts";
+export * from "./components/collapsible.ts";
 export * from "./components/combobox.ts";
 export * from "./components/dialog.ts";
 export * from "./components/menu.ts";

@@ -2,14 +2,14 @@
 
 Accessible components on the [monowind](https://github.com/benface/monowind)
 grid: a menu, a listbox, a select, a combobox, a dialog, a popover,
-and a tooltip,
+a tooltip, a collapsible, and an accordion,
 each a
 [Zag.js](https://zagjs.com) state machine wired to the engine. Zag runs
 the roles and states, the keyboard, typeahead, focus trapping and
 restore, dismissal, and submenus; the engine places each floating part
 against its trigger in cells, in the top layer, above everything and
-outside any scroller it opened from, and lays a listbox out in the flow
-like any other box. Headless: no classes, no
+outside any scroller it opened from, and lays a listbox or a section
+that folds out in the flow like any other box. Headless: no classes, no
 stylesheet — you style the parts with Tailwind and monowind classes, and
 a component styled through the theme's tokens wears whatever theme its
 host does.
@@ -64,7 +64,8 @@ defineMonoUi();
 with `data-part` and mount the component on their root: `menu(root,
 props)`, `listbox(root, props)`, `select(root, props)`,
 `combobox(root, props)`, `dialog(root, props)`, `popover(root,
-props)`, `tooltip(root, props)`. `props` are Zag's machine props
+props)`, `tooltip(root, props)`, `collapsible(root, props)`,
+`accordion(root, props)`. `props` are Zag's machine props
 (`id` required; a list's `collection` optional, the marked items
 making one). Each returns the live `api`, an `updateProps(partial)`
 that merges into them, and a `destroy()`. The parts are found once,
@@ -214,6 +215,25 @@ render (React's `dangerouslySetInnerHTML`, Vue's `innerHTML`, Svelte's
 `{@html}`), so a form sent before the page's script runs posts the
 initial value; `syncHiddenSelect` owns the options from then on.
 
+A collapsible and an accordion have no floating part either. A
+collapsible's `root` holds a `trigger`, the `content` and an optional
+`indicator`; an accordion's holds its `item`s, each carrying its
+`data-value` with an `item-trigger`, an `item-content` and an optional
+`item-indicator` inside it, `data-disabled` on an item disabling it.
+One nested in another's content keeps its parts to itself. Closed, a
+content is `hidden`, so it leaves the grid. The items marked
+`data-state="open"` are open at the mount where the props name no
+`value` or `defaultValue` — the first alone unless the accordion is
+`multiple` — and Zag writes that state on every item after, so a mount
+again reads the reader's. The arrows, `Home` and `End` walk an
+accordion's triggers, left to it under `focus="arrows"`. A
+collapsible's content drops Zag's `--height` and `--width`, its size in
+the page's px, which the grid would read on its spacing scale;
+`collapsedHeight` and `collapsedWidth` are yours and stay. Its exit is
+a keyframe animation on `data-state=closed`, which the machine holds
+the content open through; a transition shows the enter alone, and an
+accordion hides a closed item at once.
+
 States are attributes Zag sets — `data-state`, `data-highlighted`,
 `data-disabled`, `data-placement` — so `data-highlighted:bg-(--mw-fg)`
 styles a highlighted item, and an enter or exit is a transition on
@@ -226,7 +246,8 @@ sampling it. The engine writes the area a floating part took as
 
 `defineMonoUi()` registers `<mono-menu>`, `<mono-submenu>`,
 `<mono-listbox>`, `<mono-select>`, `<mono-combobox>`,
-`<mono-dialog>`, `<mono-popover>` and `<mono-tooltip>`. An element is the root the mount would take, the
+`<mono-dialog>`, `<mono-popover>`, `<mono-tooltip>`,
+`<mono-collapsible>` and `<mono-accordion>`. An element is the root the mount would take, the
 parts marked inside it as ever:
 
 ```html
@@ -275,7 +296,7 @@ machine writes it back as the reader opens or dismisses it.
 
 **A prop no attribute carries** — `ids`, `translations`, a menu's
 `navigate` and `anchorPoint`, a list's `collection`, `value` and
-`defaultValue`, a dialog's `initialFocusEl` — is a property on the
+`defaultValue`, an accordion's `value` and `defaultValue`, a dialog's `initialFocusEl` — is a property on the
 element: `element.ids = {…}`, `element.defaultValue = ["main"]`,
 or `element.setProp(name, value)` by name, set before or after
 `defineMonoUi()`. `getRootNode` takes the
@@ -380,6 +401,11 @@ One entry per component. Each exports the mount, `machine`, `connect`,
 - `@monowind/ui/popover` — Zag's popover.
 - `@monowind/ui/tooltip` — Zag's tooltip; `openDelay` and `closeDelay`
   are its.
+- `@monowind/ui/collapsible` — Zag's collapsible: a section that folds,
+  in the flow.
+- `@monowind/ui/accordion` — Zag's accordion: one item open at a time
+  or several (`multiple`), closable to none (`collapsible`), its
+  triggers walked by the arrows.
 
 `@monowind/ui/elements` exports `defineMonoUi()` and the classes it
 registers, plus `defineElement()` and the `MonoElement` base, for an

@@ -144,13 +144,22 @@ export async function frames(count = 1): Promise<number> {
   return time;
 }
 
-/** A transition duration of `count` of this runner's frames, 500 ms at
- * least: a loaded runner's long frames would end a fixed one before a
- * frame-counting check could see it run. */
-export async function framesLong(count: number): Promise<string> {
-  const start = performance.now();
-  const end = await frames(5);
-  return `${Math.max(500, Math.round(((end - start) / 5) * count))}ms`;
+/** A duration no runner's frames reach, which `transitionLayouts`
+ * steps a transition through a twelfth a frame and a test finishes a
+ * held keyframe exit itself: a loaded runner's long frames would end
+ * either in wall time before a check saw it run. */
+export const STEPPED_DURATION = "60s";
+
+/** The frames a stepped transition runs past its change's. */
+const STEPS = 12;
+
+/** Every running CSS transition a step further along. */
+function stepTransitions(): void {
+  for (const animation of document.getAnimations()) {
+    if (!(animation instanceof CSSTransition) || animation.playState !== "running") continue;
+    const duration = Number(animation.effect!.getTiming().duration);
+    animation.currentTime = Math.min(duration, Number(animation.currentTime) + duration / STEPS);
+  }
 }
 
 /** A tally of a host's layouts, each of which sets its `measuring` flag
@@ -196,9 +205,9 @@ const CHANGE_FRAMES = 3;
 /** The most frames a transition runs before `transitionLayouts` fails. */
 const TRANSITION_FRAME_LIMIT = 120;
 
-/** A change's transition, frame by frame to `ended`: the layouts past
- * the change's own frames to `settle` frames past the end, and the
- * frames it ran, `sample` read at each. An end not reached in
+/** A change's transition, stepped frame by frame to `ended`: the
+ * layouts past the change's own frames to `settle` frames past the end,
+ * and the frames it ran, `sample` read at each. An end not reached in
  * `TRANSITION_FRAME_LIMIT` frames fails. */
 export async function transitionLayouts(
   layouts: LayoutCount,
@@ -213,6 +222,7 @@ export async function transitionLayouts(
   while (!ended() && ran < TRANSITION_FRAME_LIMIT) {
     ran++;
     sample?.();
+    stepTransitions();
     await frames();
   }
   expect(ended(), `the transition's end within ${TRANSITION_FRAME_LIMIT} frames`).toBe(true);

@@ -13,6 +13,8 @@ export default defineConfig({
         dialog: resolve(import.meta.dirname, "src/dialog.ts"),
         popover: resolve(import.meta.dirname, "src/popover.ts"),
         tooltip: resolve(import.meta.dirname, "src/tooltip.ts"),
+        collapsible: resolve(import.meta.dirname, "src/collapsible.ts"),
+        accordion: resolve(import.meta.dirname, "src/accordion.ts"),
         "top-layer": resolve(import.meta.dirname, "src/top-layer.ts"),
         framework: resolve(import.meta.dirname, "src/framework.ts"),
         elements: resolve(import.meta.dirname, "src/elements/index.ts"),

@@ -4,7 +4,8 @@
 for Vue, two ways over the same machines: a **component** per part —
 `MenuRoot`, `MenuTrigger`, `DialogRoot`, … — and a **composable** per
 component — `useMenu`, `useListbox`, `useSelect`, `useCombobox`,
-`useDialog`, `usePopover`, `useTooltip`. Style the parts with Tailwind and monowind
+`useDialog`, `usePopover`, `useTooltip`, `useCollapsible`,
+`useAccordion`. Style the parts with Tailwind and monowind
 classes; the engine places each floating part against its trigger in
 cells, in the top layer.
 
@@ -62,6 +63,12 @@ is a listener, so `onSelect` is `@select` and `onOpenChange` is
   list anchors to the control, so it lines up under the input;
   filtering is yours, and the items your collection leaves out are
   hidden.
+- Collapsible — `CollapsibleRoot` (an element of its own),
+  `CollapsibleTrigger`, `CollapsibleContent`, `CollapsibleIndicator`.
+- Accordion — `AccordionRoot` (an element of its own),
+  `AccordionItem`, `AccordionItemTrigger`, `AccordionItemContent`,
+  `AccordionItemIndicator`; an item holds its `value` and `disabled`
+  for the parts inside, which `useAccordionItemContext()` reads.
 
 A root emits `update:open`, `update:value`,
 `update:highlighted-value` and `update:trigger-value` where its
@@ -75,8 +82,9 @@ A menu's, a dialog's, a popover's and a tooltip's root renders
 nothing — Zag gives those four no root part, and a wrapper invented
 for one would put a box in the grid's layout — so an attribute on
 one goes nowhere, and a development build warns and names it. A
-listbox's, a select's and a combobox's root renders its part and takes
-attributes as any part does.
+listbox's, a select's, a combobox's, a collapsible's and an
+accordion's root renders its part and takes attributes as any part
+does.
 
 An item names one of the collection's items, by `item` or by the
 `value` that finds it there, and holds it for the text and the
@@ -108,9 +116,9 @@ the node:
 
 **`…RootProvider`** takes an API you hold, for reaching it from
 outside the tree: run the composable yourself and hand it over on
-`value`. `useMenuContext()`, `useDialogContext()`,
-`usePopoverContext()` and `useTooltipContext()` give a part the
-component it is in, exactly as its composable returns it.
+`value`. A context composable per component — `useMenuContext()`,
+`useAccordionContext()` and the rest — gives a part the component it
+is in, exactly as its composable returns it.
 
 ## The composables
 
@@ -120,7 +128,9 @@ state — and returns `api`, Zag's API with the grid's props on the
 trigger, the positioner, and the content, as a computed; `positioner`,
 the ref for the positioner element that keeps its place in the top
 layer with the machine; and `service`, the machine's, for linking two.
-A listbox stands in the flow, so `useListbox` returns no positioner.
+A listbox, a collapsible and an accordion stand in the flow, so
+`useListbox`, `useCollapsible` and `useAccordion` return no
+positioner.
 
 ```vue
 <script setup lang="ts">

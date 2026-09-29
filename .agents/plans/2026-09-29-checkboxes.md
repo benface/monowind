@@ -1,6 +1,6 @@
 # Checkboxes and radio buttons
 
-Status: **plan, 2026-09-29**, not started. D1 decided with the user
+Status: **implemented** (`f1393d9`). D1 decided with the user
 the same day: (a), guarded against drift. The spec is
 `.agents/specs/checkboxes.md` (normative: rules, probes, decisions,
 tests); this plan orders the work onto the code as it stands at v0.3.4

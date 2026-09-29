@@ -6,6 +6,7 @@ import Bound from "./Bound.svelte";
 import Hidden from "./Hidden.svelte";
 import Triggered from "./Triggered.svelte";
 import Mixed from "./Mixed.svelte";
+import Disclosed from "./Disclosed.svelte";
 import { ListboxItem, type createSelect } from "../src/index.svelte.ts";
 import { by, popoverApi, posted, resetByClick, settle } from "../../ui/test/helpers.ts";
 
@@ -339,5 +340,43 @@ describe("a select's hidden control", () => {
     expect(select.change.api().value).toEqual(["main", "next"]);
     expect(select.posted()).toEqual(["main", "next"]);
     await select.unmount();
+  });
+});
+
+describe("a collapsible and an accordion", () => {
+  it("follow their machines both ways, as bind: asks, each root an element of its own", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    let state = { open: false, value: [] as string[] };
+    const tree = mount(Disclosed, {
+      target: container,
+      props: { read: (next: { open: boolean; value: string[] }) => (state = next) },
+    });
+    await tick();
+    const collapsible = container.querySelector<HTMLElement>("[data-test='collapsible']")!;
+    expect(collapsible.getAttribute("data-part")).toBe("root");
+    const content = by(collapsible, "content");
+    expect(content.hidden).toBe(true);
+    by(collapsible, "trigger").click();
+    await tick();
+    expect(state.open).toBe(true);
+    expect(content.hidden).toBe(false);
+    // Svelte's style is a string, which the size variables leave too.
+    expect(content.getAttribute("style") ?? "").not.toContain("--height");
+    const accordion = container.querySelector<HTMLElement>("[data-test='accordion']")!;
+    expect(accordion.getAttribute("data-part")).toBe("root");
+    const [, second] = Array.from(accordion.querySelectorAll("button"));
+    expect(second!.querySelector("[data-part='item-indicator']")).not.toBeNull();
+    // A browser focuses a pressed button, where Zag's click lands.
+    second!.focus();
+    second!.click();
+    await tick();
+    expect(state.value).toEqual(["two"]);
+    const contents = Array.from(
+      accordion.querySelectorAll<HTMLElement>("[data-part='item-content']"),
+    );
+    expect(contents.map((element) => element.hidden)).toEqual([true, false]);
+    await unmount(tree);
+    container.remove();
   });
 });

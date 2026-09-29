@@ -1,6 +1,11 @@
 <script lang="ts">
   import { collection } from "@monowind/ui/listbox";
   import {
+    AccordionItem,
+    AccordionItemContent,
+    AccordionRootProvider,
+    CollapsibleContent,
+    CollapsibleRootProvider,
     ComboboxContent,
     ComboboxControl,
     ComboboxInput,
@@ -32,6 +37,8 @@
     TooltipPositioner,
     TooltipRootProvider,
     TooltipTrigger,
+    createAccordion,
+    createCollapsible,
     createCombobox,
     createDialog,
     createListbox,
@@ -56,6 +63,8 @@
   const tooltip = createTooltip({ id: "held-tooltip" });
   const listbox = createListbox({ id: "held-listbox", collection: items });
   const combobox = createCombobox({ id: "held-combobox", collection: items });
+  const collapsible = createCollapsible({ id: "held-collapsible" });
+  const accordion = createAccordion({ id: "held-accordion" });
   $effect(() => ready(select));
 </script>
 
@@ -99,3 +108,9 @@
   <ComboboxControl><ComboboxInput /></ComboboxControl>
   <ComboboxContent />
 </ComboboxRootProvider>
+
+<CollapsibleRootProvider value={collapsible}><CollapsibleContent /></CollapsibleRootProvider>
+
+<AccordionRootProvider value={accordion}>
+  <AccordionItem value="one"><AccordionItemContent /></AccordionItem>
+</AccordionRootProvider>

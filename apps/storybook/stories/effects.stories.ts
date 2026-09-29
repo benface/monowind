@@ -10,7 +10,6 @@ import {
   expectRow,
   faded,
   frames,
-  framesLong,
   gridOf,
   layerBox,
   moveTo,
@@ -22,6 +21,7 @@ import {
   release,
   rowsOf,
   shown,
+  STEPPED_DURATION,
   testHooks,
   transitionLayouts,
 } from "./helpers.ts";
@@ -911,8 +911,9 @@ export const OpacityTransitions: StoryObj = {
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
     const by = testHooks(canvasElement);
-    const duration = await framesLong(20);
-    for (const name of ["fade", "moving", "colored"]) by(name).style.transitionDuration = duration;
+    for (const name of ["fade", "moving", "colored"]) {
+      by(name).style.transitionDuration = STEPPED_DURATION;
+    }
     const layouts = countLayouts(host);
     /** A class change's fade to half: the layouts over its frames to
      * its end, their count, and what they showed. */

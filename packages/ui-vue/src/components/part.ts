@@ -56,6 +56,7 @@ export const BOOLEANS = {
   closeOnPointerDown: BOOLEAN,
   closeOnScroll: BOOLEAN,
   closeOnSelect: BOOLEAN,
+  collapsible: BOOLEAN,
   composite: BOOLEAN,
   defaultOpen: BOOLEAN,
   deselectable: BOOLEAN,

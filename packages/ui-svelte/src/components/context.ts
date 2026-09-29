@@ -2,6 +2,8 @@ import { getContext, setContext } from "svelte";
 import type { Snippet } from "svelte";
 import { BOUND, type ItemApi } from "@monowind/ui/framework";
 export { defined, itemOf, itemProps, splitProps, warnStray } from "@monowind/ui/framework";
+import type * as accordion from "@monowind/ui/accordion";
+import type * as collapsible from "@monowind/ui/collapsible";
 import type * as combobox from "@monowind/ui/combobox";
 import type * as dialog from "@monowind/ui/dialog";
 import type * as listbox from "@monowind/ui/listbox";
@@ -58,6 +60,8 @@ export type TooltipApi = Created<tooltip.Api<PropTypes>, tooltip.Service>;
 export type ListboxApi = InFlow<listbox.Api<PropTypes>, listbox.Service>;
 export type SelectApi = Created<select.Api<PropTypes>, select.Service>;
 export type ComboboxApi = Created<combobox.Api<PropTypes>, combobox.Service>;
+export type CollapsibleApi = InFlow<collapsible.Api<PropTypes>, collapsible.Service>;
+export type AccordionApi = InFlow<accordion.Api<PropTypes>, accordion.Service>;
 
 /** What a menu's parts read: its own create, the menu it is nested
  * in, and the props it was given, which its own submenus take the
@@ -76,6 +80,8 @@ export const comboboxContext = defineContext<ComboboxApi>("Combobox");
 export const dialogContext = defineContext<DialogApi>("Dialog");
 export const popoverContext = defineContext<PopoverApi>("Popover");
 export const tooltipContext = defineContext<TooltipApi>("Tooltip");
+export const collapsibleContext = defineContext<CollapsibleApi>("Collapsible");
+export const accordionContext = defineContext<AccordionApi>("Accordion");
 /** What the item parts read: the nearest listbox, select or combobox,
  * whose item getters take the same props. */
 export const listContext = defineContext<{ readonly api: ItemApi }>(
@@ -97,6 +103,10 @@ export const useListboxContext = (): ListboxApi => listboxContext.use();
 export const useSelectContext = (): SelectApi => selectContext.use();
 /** The combobox a part is in, as `createCombobox()` returns it. */
 export const useComboboxContext = (): ComboboxApi => comboboxContext.use();
+/** The collapsible a part is in, as `createCollapsible()` returns it. */
+export const useCollapsibleContext = (): CollapsibleApi => collapsibleContext.use();
+/** The accordion a part is in, as `createAccordion()` returns it. */
+export const useAccordionContext = (): AccordionApi => accordionContext.use();
 
 /** The item an `Item` holds, for the text and the indicator inside
  * it: whatever the collection holds, which is the author's shape. A
@@ -108,6 +118,16 @@ export const itemContext = defineContext<() => unknown>(
 
 /** The collection's item the part is inside. */
 export const useItemContext = (): unknown => itemContext.use()();
+
+/** The item an `AccordionItem` holds, for the parts inside it: its
+ * value, and whether it is disabled. A getter, as the item's own. */
+export const accordionItemContext = defineContext<() => accordion.ItemProps>(
+  "AccordionItem",
+  "an accordion item's parts must be inside its AccordionItem",
+);
+
+/** The accordion item the part is inside. */
+export const useAccordionItemContext = (): accordion.ItemProps => accordionItemContext.use()();
 
 /** A created component held live: a prop read outside a closure
  * captures only its first value, so the parts read the caller's

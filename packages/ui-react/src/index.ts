@@ -4,6 +4,8 @@
  * the same machines, so a page may mix them.
  */
 export {
+  useAccordion,
+  useCollapsible,
   useCombobox,
   useDialog,
   useListbox,
@@ -26,3 +28,5 @@ export * as Menu from "./components/menu.tsx";
 export * as Popover from "./components/popover.tsx";
 export * as Select from "./components/select.tsx";
 export * as Tooltip from "./components/tooltip.tsx";
+export * as Collapsible from "./components/collapsible.tsx";
+export * as Accordion from "./components/accordion.tsx";

@@ -5,6 +5,8 @@ import { collection } from "@monowind/ui/listbox";
 import { renderToStaticMarkup, renderToString } from "react-dom/server";
 import { by, posted, resetByClick as resetFormByClick } from "../../ui/test/helpers.ts";
 import {
+  Accordion,
+  Collapsible,
   Combobox,
   Dialog,
   Listbox,
@@ -805,4 +807,55 @@ it("keeps the reader's caret when a keystroke opens a combobox whose open state 
   expect(tree.by("content").getAttribute("data-state")).toBe("open");
   expect(input.selectionStart).toBe(2);
   await tree.unmount();
+});
+
+it("drops a collapsible's size variables, its content hidden till its trigger opens it", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      <Collapsible.Root id="more">
+        <Collapsible.Trigger>More</Collapsible.Trigger>
+        <Collapsible.Content>Folded</Collapsible.Content>
+      </Collapsible.Root>,
+    );
+  });
+  const content = container.querySelector<HTMLElement>("[data-part='content']")!;
+  expect(content.hidden).toBe(true);
+  await act(async () => container.querySelector("button")!.click());
+  expect(content.hidden).toBe(false);
+  expect(content.style.getPropertyValue("--height")).toBe("");
+  await act(async () => root.unmount());
+  container.remove();
+});
+
+it("opens an accordion's item from its trigger, the value reaching the page", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const changes: string[][] = [];
+  await act(async () => {
+    root.render(
+      <Accordion.Root id="faq" onValueChange={({ value }) => changes.push(value)}>
+        {["one", "two"].map((value) => (
+          <Accordion.Item key={value} value={value}>
+            <Accordion.ItemTrigger>{value}</Accordion.ItemTrigger>
+            <Accordion.ItemContent>{value} body</Accordion.ItemContent>
+          </Accordion.Item>
+        ))}
+      </Accordion.Root>,
+    );
+  });
+  const trigger = container.querySelectorAll("button")[1]!;
+  // A browser focuses a pressed button, where Zag's click lands.
+  await act(async () => {
+    trigger.focus();
+    trigger.click();
+  });
+  expect(changes).toEqual([["two"]]);
+  const contents = container.querySelectorAll<HTMLElement>("[data-part='item-content']");
+  expect([contents[0]!.hidden, contents[1]!.hidden]).toEqual([true, false]);
+  await act(async () => root.unmount());
+  container.remove();
 });

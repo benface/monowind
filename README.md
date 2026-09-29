@@ -148,12 +148,13 @@ build a theme — it's one CSS file against the core theming contract.
 ## Components
 
 `@monowind/ui` adds accessible components — a menu, a listbox, a
-select, a combobox, a dialog, a popover, a tooltip — as
-[Zag.js](https://zagjs.com) state machines wired to the grid: Zag runs
-the roles, the keyboard, typeahead, focus, and dismissal; the engine
-places each floating part against its trigger in cells, in the top
-layer above everything, flipped where the host leaves no room, and a
-listbox in the flow like any other box. Headless, so a component styled
+select, a combobox, a dialog, a popover, a tooltip, a collapsible, an
+accordion — as [Zag.js](https://zagjs.com) state machines wired to the
+grid: Zag runs the roles, the keyboard, typeahead, focus, and
+dismissal; the engine places each floating part against its trigger in
+cells, in the top layer above everything, flipped where the host
+leaves no room, and a listbox or a section that folds in the flow like
+any other box. Headless, so a component styled
 through the theme's tokens wears whatever theme its host does.
 
 Write one as markup — `<mono-menu>` and its kin, attributes for props

@@ -10,13 +10,13 @@ import {
   expectGridOnItsCells,
   expectOnItsCells,
   frames,
-  framesLong,
   gridOf,
   hoverOver,
   pressAt,
   readyHost,
   release,
   rowsOf,
+  STEPPED_DURATION,
   testHooks,
   transitionLayouts,
 } from "./helpers.ts";
@@ -398,7 +398,7 @@ export const Transitioned: StoryObj = {
   `,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
-    host.style.transitionDuration = await framesLong(20);
+    host.style.transitionDuration = STEPPED_DURATION;
     const layouts = countLayouts(host);
     /** The layouts a class change's transition makes after the change's
      * own, to three frames past its end, and the frames it ran. */

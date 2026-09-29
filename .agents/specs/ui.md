@@ -2,15 +2,16 @@
 
 Status: **implemented** (2026-09-13, the framework packages and
 examples 2026-09-18, the listbox and the select 2026-09-21, the
-component layer and the combobox 2026-09-22; `packages/ui`, one entry
-per component, plan `2026-09-13-ui.md`). The engine features it needs
+component layer and the combobox 2026-09-22, the collapsible and the
+accordion 2026-09-29; `packages/ui`, one entry per component, plans
+`2026-09-13-ui.md` and `2026-09-29-collapsible-accordion.md`). The engine features it needs
 are `top-layer.md` and `anchor-positioning.md`; motion is
 `animations.md`, and a list's scroll is `scrolling.md`.
 
 ## Motivation
 
 A menu, a list to choose from, a combobox, a dialog, a popover, a
-tooltip: every
+tooltip, a section that folds, an accordion: every
 application needs them, and doing them accessibly — roles and states,
 roving focus, typeahead,
 focus trapping and restore, dismissal, nested menus — is where most
@@ -27,8 +28,9 @@ the engine places and layers the parts, Zag runs them.
 - **One package, a subpath per component**: `@monowind/ui/menu`,
   `@monowind/ui/listbox`, `@monowind/ui/select`,
   `@monowind/ui/combobox`, `@monowind/ui/dialog`,
-  `@monowind/ui/popover`, and `@monowind/ui/tooltip`, in that order
-  wherever they are listed; `tabs` and the rest follow the same
+  `@monowind/ui/popover`, `@monowind/ui/tooltip`,
+  `@monowind/ui/collapsible`, and `@monowind/ui/accordion`, in that
+  order wherever they are listed; `tabs` and the rest follow the same
   shape. A combobox anchors to its `control` rather than its trigger,
   so its list lines up under the input, and it hides the items its
   collection leaves out, filtering being what a collection narrows.
@@ -167,6 +169,45 @@ props)` is the core plus `VanillaMachine` and `spreadProps`: parts
   control Zag's id and its `form`, as Zag's own props name them,
   before the machine starts, which looks it up then to follow a reset
   of its form and a disabled fieldset around it.
+- **A disclosure stands in the flow, its closed content hidden.** A
+  collapsible and an accordion have no floating part: like a listbox,
+  they take the mount without the anchored parts, and the framework
+  packages return their API alone. Closed, a content carries the
+  `hidden` Zag gives it, so it leaves the layout and the grid; a
+  trigger is a button, with the focus invert of any control. Beside
+  a native `<details>`, which the grid already draws and toggles
+  (`visibility.md`, `lists.md`), a collapsible brings a controlled
+  `open` and the framework components, and an accordion Zag's
+  keyboard model — the arrows, `Home` and `End` between its triggers,
+  handled and so left to it under `focus="arrows"` — and its single,
+  multiple and `collapsible` modes.
+- **A collapsible's size variables are dropped.** Zag's machine
+  measures the content at each open and close to write its `--height`
+  and `--width`, the content's size in the page's px. The grid reads a
+  px length on its spacing scale (a cell a quarter rem), so a height
+  from those variables would not be the content's rows; its API's
+  content drops the two. The machine is Zag's, unchanged: its read
+  lifts the content's `hidden` and stops its animation a frame on, and
+  the host lays out once a toggle all the same (probed in Chromium,
+  Firefox and WebKit, 2026-09-29). `collapsedHeight` and
+  `collapsedWidth` stay: the author's own lengths, which the grid reads
+  as it reads any. The exit is Zag's: its `closing` state holds the
+  content until a keyframe animation on it ends (`animationName`, as
+  Zag's presence waits), so a keyframe exit on `data-state=closed`
+  runs on the grid, while a transition shows the enter alone, the
+  content hidden a frame after it closes (probed: a 400ms exit held
+  410–435ms in all three engines).
+- **An accordion's markup marks its open items.** Its items are
+  `item` parts carrying their `data-value`, each with an
+  `item-trigger`, an `item-content` and an optional `item-indicator`
+  inside it, and `data-disabled` on an item disables it. Where the
+  props name no `value` or `defaultValue`, the items marked
+  `data-state="open"` are open at the mount, the first alone unless
+  the accordion is `multiple`; the attribute is the one Zag writes on
+  every item after, so a later mount reads the reader's value, as a
+  listbox's reads `data-selected` ("The markup is a listbox's
+  collection"). Zag's accordion holds no exit: a closed item's content
+  hides at once, whatever its animation.
 - **States are attributes**: `data-state`, `data-highlighted`,
   `data-disabled`, `data-placement`, as Zag sets them, so an author
   styles them with Tailwind's data variants
@@ -260,7 +301,8 @@ to, and additively.
 
 - **Elements for markup**: `<mono-menu>`, `<mono-submenu>`,
   `<mono-listbox>`, `<mono-select>`, `<mono-combobox>`,
-  `<mono-dialog>`, `<mono-popover>`, `<mono-tooltip>`, from
+  `<mono-dialog>`, `<mono-popover>`, `<mono-tooltip>`,
+  `<mono-collapsible>`, `<mono-accordion>`, from
   `@monowind/ui/elements`, registered by `defineMonoUi()` as core's
   are by `defineMonoWind()` — the entry registers nothing on import,
   so the package's `sideEffects: false` holds; the CDN bundle calls it.
@@ -313,7 +355,11 @@ to, and additively.
   mount reaches the running machine (Zag's `updateProps`, through a
   `Mounted.updateProps` the vanilla mount gains) and the grid's props
   alike, the mount reading its props per render rather than once, and
-  one removed drops its prop, the machine back at its default; a
+  one removed drops its prop, the machine back at its default. An
+  accordion's `value` and `defaultValue` are properties as a list's
+  are, its items marked `data-state="open"` in markup; a collapsible's
+  `open` is the reflected state ("`open` is the state, reflected"),
+  its `collapsed-height` and `collapsed-width` numbers; a
   menu hands the behavior props it shares down to its submenus, a
   removal included. Every
   element covers its machine's whole prop list, which a test checks
@@ -333,7 +379,9 @@ to, and additively.
   change of the reader's. The element clears the markers its mount
   wrote as it stops, so items that arrive marked are the page's: they
   become the default and the selection, as an inserted
-  `<option selected>` does.
+  `<option selected>` does. Its items are its mount's alone: a nested
+  element's — a listbox in an accordion's item, an accordion in
+  another's — keep their states, and their marks are not its own.
 - **`open` is the state, reflected.** The machine stays uncontrolled:
   the attribute at the mount is the initial state, a later change
   opens or closes through `api.setOpen`, and the element writes the
@@ -369,7 +417,10 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   `TriggerItem`; `Title`, `Description`, `CloseTrigger`; the popover's
   `Indicator`; the listbox's and the select's `Label`, `ItemText`,
   `ItemIndicator`, and the select's `Control`, `ValueText`,
-  `Indicator`, `ClearTrigger`, `List` and `HiddenSelect`. React groups
+  `Indicator`, `ClearTrigger`, `List` and `HiddenSelect`; the
+  collapsible's `Root`, `Trigger`, `Content` and `Indicator`, and the
+  accordion's `Root`, `Item`, `ItemTrigger`, `ItemContent` and
+  `ItemIndicator`. React groups
   them as namespaces (`Menu.Root`), Vue and Svelte name them flat
   (`MenuRoot`), each framework's idiom. Ark's other parts (arrows, a
   backdrop, checkbox and radio items) are left for a later need.
@@ -385,11 +436,15 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   class on `<mono-menu>` styles the element, while
   `<Menu.Root className>` can only go nowhere, so the same-looking
   line means opposite things one layer apart. A
-  listbox's and a select's `Root` renders its root part, and takes
-  attributes as any part does: a root's own props are the ones Zag's `propNames` lists, and
-  the rest are its element's. An `Item` names one of the collection's
+  listbox's, a select's, a collapsible's and an accordion's `Root`
+  renders its root part, and takes attributes as any part does: a
+  root's own props are the ones Zag's `propNames` lists, and the rest
+  are its element's. An `Item` names one of the collection's
   items, by `item` or by the `value` that finds it there, and holds it
-  for the `ItemText` and `ItemIndicator` inside; the select's
+  for the `ItemText` and `ItemIndicator` inside; an accordion's
+  `Item` takes its item's `value` and `disabled` and holds them for
+  the `ItemTrigger`, `ItemContent` and `ItemIndicator` inside; the
+  select's
   `HiddenSelect` renders its control with its first options as markup,
   once, for `syncHiddenSelect` to own after each render ("A select is
   a listbox on a trigger"), and
@@ -467,7 +522,14 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   grid drag over the popover's text selecting it; a select's list as
   wide as its trigger through `anchor-size()`, following the trigger
   as its values widen it (`SelectMultiple`); a combobox's "nothing
-  matches" line beside its list. The
+  matches" line beside its list; a collapsible opened and closed by
+  its trigger and by `open`, its content out of the grid closed, a
+  keyframe exit running before it hides, and the content's style
+  holding no size variable; an accordion's triggers walked by the
+  arrows, `Home` and `End` under `focus="arrows"`, a single one
+  closing the open item, a `multiple` one keeping both, one not
+  `collapsible` keeping its last, its markup's `data-state="open"`
+  items open at the mount. The
   flip at the host's edge and the escape from a scroller are the
   engine's, tested in the positioning stories, one of them on a box the
   browser would have flipped itself.
@@ -508,6 +570,10 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
 - packages/ui/src/dialog.ts: the dialog's.
 - packages/ui/src/popover.ts: the popover's.
 - packages/ui/src/tooltip.ts: the tooltip's.
+- packages/ui/src/collapsible.ts: the collapsible's `props`, `api`
+  (the size variables dropped) and mount.
+- packages/ui/src/accordion.ts: the accordion's, its markup's open
+  items read at the mount.
 - packages/ui/src/framework.ts: what the framework packages share —
   the item API's shape, the trigger options, the props bound both
   ways, the item, split and defined-prop helpers, the stray-prop and

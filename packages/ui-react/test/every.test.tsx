@@ -3,6 +3,8 @@ import { expect, it } from "vitest";
 import { createRoot } from "react-dom/client";
 import { collection } from "@monowind/ui/listbox";
 import {
+  Accordion,
+  Collapsible,
   Combobox,
   Dialog,
   Listbox,
@@ -10,6 +12,8 @@ import {
   Popover,
   Select,
   Tooltip,
+  useAccordion,
+  useCollapsible,
   useCombobox,
   useDialog,
   useListbox,
@@ -149,6 +153,26 @@ function All() {
           </Combobox.Content>
         </Combobox.Positioner>
       </Combobox.Root>
+
+      <Collapsible.Root id="c">
+        <Collapsible.Trigger>
+          More <Collapsible.Indicator>+</Collapsible.Indicator>
+        </Collapsible.Trigger>
+        <Collapsible.Content>Folded</Collapsible.Content>
+      </Collapsible.Root>
+
+      <Accordion.Root id="a" defaultValue={["one"]}>
+        <Accordion.Item value="one">
+          <Accordion.ItemTrigger>
+            One <Accordion.ItemIndicator>+</Accordion.ItemIndicator>
+          </Accordion.ItemTrigger>
+          <Accordion.ItemContent>First</Accordion.ItemContent>
+        </Accordion.Item>
+        <Accordion.Item value="two" disabled>
+          <Accordion.ItemTrigger>Two</Accordion.ItemTrigger>
+          <Accordion.ItemContent>Second</Accordion.ItemContent>
+        </Accordion.Item>
+      </Accordion.Root>
     </div>
   );
 }
@@ -191,19 +215,29 @@ function AllProvided() {
           <Combobox.Content />
         </Combobox.Positioner>
       </Combobox.RootProvider>
+      <Collapsible.RootProvider value={useCollapsible({ id: "pco" })}>
+        <Collapsible.Content />
+      </Collapsible.RootProvider>
+      <Accordion.RootProvider value={useAccordion({ id: "pa" })}>
+        <Accordion.Item value="x">
+          <Accordion.ItemContent />
+        </Accordion.Item>
+      </Accordion.RootProvider>
     </div>
   );
 }
 
 it("renders every part of every component", async () => {
   const tree = await render(<All />);
-  expect(tree.container.querySelectorAll("[data-part='content']")).toHaveLength(7);
-  expect(tree.container.querySelectorAll("[data-part='item']")).toHaveLength(4);
+  expect(tree.container.querySelectorAll("[data-part='content']")).toHaveLength(8);
+  expect(tree.container.querySelectorAll("[data-part='item']")).toHaveLength(6);
+  expect(tree.container.querySelectorAll("[data-part='item-content']")).toHaveLength(2);
   await tree.unmount();
 });
 
 it("renders every component over an API held outside the tree", async () => {
   const tree = await render(<AllProvided />);
-  expect(tree.container.querySelectorAll("[data-part='content']")).toHaveLength(7);
+  expect(tree.container.querySelectorAll("[data-part='content']")).toHaveLength(8);
+  expect(tree.container.querySelectorAll("[data-part='item-content']")).toHaveLength(1);
   await tree.unmount();
 });

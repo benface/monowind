@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { props as accordionProps } from "@zag-js/accordion";
+import { props as collapsibleProps } from "@zag-js/collapsible";
 import { props as comboboxProps } from "@zag-js/combobox";
 import { props as dialogProps } from "@zag-js/dialog";
 import { props as listboxProps } from "@zag-js/listbox";
@@ -6,6 +8,8 @@ import { props as menuProps } from "@zag-js/menu";
 import { props as popoverProps } from "@zag-js/popover";
 import { props as selectProps } from "@zag-js/select";
 import { props as tooltipProps } from "@zag-js/tooltip";
+import type { Api as AccordionApi } from "../src/accordion.ts";
+import type { Api as CollapsibleApi } from "../src/collapsible.ts";
 import type { MonoElement } from "../src/elements/element.ts";
 import { defineElement, defineMonoUi, MonoListbox } from "../src/elements/index.ts";
 import { collection as listboxCollection } from "../src/listbox.ts";
@@ -567,6 +571,139 @@ describe("a combobox", () => {
   });
 });
 
+describe("a collapsible", () => {
+  const COLLAPSIBLE = `
+    <mono-collapsible id="more" collapsed-height="8">
+      <button data-part="trigger">More</button>
+      <div data-part="content"><p>Folded text</p></div>
+    </mono-collapsible>`;
+
+  it("mounts on its markup, its `open` reflected and its callbacks events", async () => {
+    const element = render<HTMLElement & { api: CollapsibleApi }>(COLLAPSIBLE);
+    const changes = vi.fn();
+    element.addEventListener("openchange", changes);
+    await settle();
+    expect(by(element, "content").style.maxHeight, "`collapsed-height` a number").toBe("8px");
+    (by(element, "trigger") as HTMLButtonElement).click();
+    await settle();
+    expect(element.api.open).toBe(true);
+    expect(element.hasAttribute("open")).toBe(true);
+    expect(changes).toHaveBeenCalledTimes(1);
+    element.removeAttribute("open");
+    await settle();
+    expect(element.api.open).toBe(false);
+    element.remove();
+  });
+});
+
+describe("an accordion", () => {
+  const item = (value: string, marks = "") => `
+    <div data-part="item" data-value="${value}" ${marks}>
+      <button data-part="item-trigger">${value}</button>
+      <div data-part="item-content">${value} body</div>
+    </div>`;
+
+  it("starts at the items its markup marks open, a mount again keeping the reader's", async () => {
+    const element = render<HTMLElement & { api: AccordionApi }>(
+      `<mono-accordion id="faq" multiple>${item("a")}${item("b", 'data-state="open"')}</mono-accordion>`,
+    );
+    const changes = vi.fn();
+    element.addEventListener("valuechange", changes);
+    await settle();
+    expect(element.api.value).toEqual(["b"]);
+    element.api.setValue(["a", "b"]);
+    await settle();
+    expect(changes).toHaveBeenCalledTimes(1);
+    element.insertAdjacentHTML("beforeend", item("c"));
+    await settle();
+    expect(element.api.value, "the reader's, through the mount again").toEqual(["a", "b"]);
+    element.remove();
+  });
+
+  it("takes items that arrive marked open as its value, as a page loading them sends", async () => {
+    const element = render<HTMLElement & { api: AccordionApi }>(
+      `<mono-accordion id="late">${item("a")}</mono-accordion>`,
+    );
+    await settle();
+    element.insertAdjacentHTML("beforeend", item("b", 'data-state="open"'));
+    await settle();
+    expect(element.api.value).toEqual(["b"]);
+    element.remove();
+  });
+
+  it("takes a value set as a property, whole", async () => {
+    const element = render<HTMLElement & { api: AccordionApi; value?: string[] }>(
+      `<mono-accordion id="set" multiple>${item("a")}${item("b")}</mono-accordion>`,
+    );
+    element.value = ["a", "b"];
+    await settle();
+    expect(element.api.value).toEqual(["a", "b"]);
+    element.remove();
+  });
+});
+
+describe("an element around another", () => {
+  const LIST = `
+    <mono-listbox id="nested-list">
+      <div data-part="content">
+        <div data-part="item" data-value="x" data-selected><span data-part="item-text">x</span></div>
+      </div>
+    </mono-listbox>`;
+  const FAQ = `
+    <mono-accordion id="nested-faq">
+      <div data-part="item" data-value="y" data-state="open">
+        <button data-part="item-trigger">y</button>
+        <div data-part="item-content">y body</div>
+      </div>
+    </mono-accordion>`;
+  const around = {
+    collapsible: (inner: string) => `
+      <mono-collapsible id="outer" open>
+        <button data-part="trigger">t</button>
+        <div data-part="content">${inner}</div>
+      </mono-collapsible>`,
+    accordion: (inner: string) => `
+      <mono-accordion id="outer">
+        <div data-part="item" data-value="a" data-state="open">
+          <button data-part="item-trigger">a</button>
+          <div data-part="item-content">${inner}</div>
+        </div>
+        <div data-part="item" data-value="b">
+          <button data-part="item-trigger">b</button>
+          <div data-part="item-content">b body</div>
+        </div>
+      </mono-accordion>`,
+  };
+
+  it("leaves the nested one's items their states as it mounts again", async () => {
+    for (const [name, wrap] of Object.entries(around)) {
+      const element = render(wrap(LIST + FAQ));
+      await settle();
+      const states = () =>
+        ["x", "y"].map((value) => {
+          const item = element.querySelector(`[data-value="${value}"]`)!;
+          return [item.getAttribute("data-state"), item.hasAttribute("data-selected")];
+        });
+      const before = states();
+      element.id = "outer-again";
+      await settle();
+      expect(states(), name).toEqual(before);
+      element.remove();
+    }
+  });
+
+  it("keeps the reader's value as it mounts again, a nested one's open items not its own", async () => {
+    const element = render<HTMLElement & { api: AccordionApi }>(around.accordion(FAQ));
+    await settle();
+    element.api.setValue(["b"]);
+    await settle();
+    element.id = "outer-again";
+    await settle();
+    expect(element.api.value).toEqual(["b"]);
+    element.remove();
+  });
+});
+
 describe("every element", () => {
   /** Handled off the definition: the id and `open` attributes, the
    * flattened `positioning`, and `getRootNode`, which the DOM owns. */
@@ -587,6 +724,8 @@ describe("every element", () => {
     ["mono-dialog", dialogProps],
     ["mono-popover", popoverProps],
     ["mono-tooltip", tooltipProps],
+    ["mono-collapsible", collapsibleProps],
+    ["mono-accordion", accordionProps],
   ];
 
   const elementOf = (tag: string) => customElements.get(tag) as unknown as typeof MonoElement;

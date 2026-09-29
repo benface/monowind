@@ -1,4 +1,6 @@
 import { expect, expectTypeOf, it } from "vitest";
+import type * as accordion from "@monowind/ui/accordion";
+import type * as collapsible from "@monowind/ui/collapsible";
 import type * as combobox from "@monowind/ui/combobox";
 import type * as dialog from "@monowind/ui/dialog";
 import type * as listbox from "@monowind/ui/listbox";
@@ -69,6 +71,8 @@ type BooleanProps<P> = P extends unknown
 
 it("declares every machine's boolean props as booleans, which a bare attribute sets", () => {
   type Machines =
+    | accordion.Props
+    | collapsible.Props
     | combobox.Props
     | dialog.Props
     | listbox.Props
@@ -82,6 +86,17 @@ it("declares every machine's boolean props as booleans, which a bare attribute s
 it("exports its public names", () => {
   expect(Object.keys(index).sort()).toMatchInlineSnapshot(`
     [
+      "AccordionItem",
+      "AccordionItemContent",
+      "AccordionItemIndicator",
+      "AccordionItemTrigger",
+      "AccordionRoot",
+      "AccordionRootProvider",
+      "CollapsibleContent",
+      "CollapsibleIndicator",
+      "CollapsibleRoot",
+      "CollapsibleRootProvider",
+      "CollapsibleTrigger",
       "ComboboxClearTrigger",
       "ComboboxContent",
       "ComboboxControl",
@@ -157,6 +172,11 @@ it("exports its public names", () => {
       "TooltipTrigger",
       "collection",
       "gridCollection",
+      "useAccordion",
+      "useAccordionContext",
+      "useAccordionItemContext",
+      "useCollapsible",
+      "useCollapsibleContext",
       "useCombobox",
       "useComboboxContext",
       "useComboboxItemContext",

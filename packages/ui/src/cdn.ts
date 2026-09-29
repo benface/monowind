@@ -7,6 +7,8 @@
  * Mounts components on markup through `monowind.ui`, Zag bundled in,
  * and registers the elements so markup alone is enough.
  */
+import { accordion } from "./accordion.ts";
+import { collapsible } from "./collapsible.ts";
 import { combobox } from "./combobox.ts";
 import { dialog } from "./dialog.ts";
 import { listbox } from "./listbox.ts";
@@ -35,6 +37,8 @@ Object.assign(globalThis, {
       dialog,
       popover,
       tooltip,
+      collapsible,
+      accordion,
       defineMonoUi,
       version: __MONOWIND_UI_VERSION__,
     },

@@ -81,6 +81,15 @@ export function parts(root: Element, name: string): HTMLElement[] {
   );
 }
 
+/** The root's own elements of a part, less those inside a `content`
+ * part under the root: a nested disclosure's. */
+export function partsOutside(root: Element, name: string, content: string): HTMLElement[] {
+  return parts(root, name).filter((element) => {
+    const around = element.parentElement?.closest(`[data-part="${content}"]`);
+    return !around || !root.contains(around);
+  });
+}
+
 /** The root's one element of a part, if marked. */
 export function part(root: Element, name: string): HTMLElement | undefined {
   return parts(root, name)[0];

@@ -1,5 +1,7 @@
 import type { MachineSchema, Service } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/vue";
+import * as accordion from "@monowind/ui/accordion";
+import * as collapsible from "@monowind/ui/collapsible";
 import * as combobox from "@monowind/ui/combobox";
 import * as dialog from "@monowind/ui/dialog";
 import * as listbox from "@monowind/ui/listbox";
@@ -104,3 +106,11 @@ export const usePopover: (
 export const useTooltip: (
   props: MaybeRefOrGetter<tooltip.Props>,
 ) => Composed<tooltip.Api<PropTypes>, tooltip.Service> = anchoredComposable(tooltip);
+/** Zag's collapsible on the grid, in a component. */
+export const useCollapsible: (
+  props: MaybeRefOrGetter<collapsible.Props>,
+) => InFlow<collapsible.Api<PropTypes>, collapsible.Service> = composable(collapsible);
+/** Zag's accordion on the grid, in a component. */
+export const useAccordion: (
+  props: MaybeRefOrGetter<accordion.Props>,
+) => InFlow<accordion.Api<PropTypes>, accordion.Service> = composable(accordion);

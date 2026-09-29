@@ -4,6 +4,8 @@
   "description": "Accessible components on the monowind grid: Zag.js machines placed and layered by the engine",
   "keywords": [
     "accessibility",
+    "accordion",
+    "collapsible",
     "combobox",
     "components",
     "dialog",
@@ -57,6 +59,14 @@
       "typecheck": "./dist/tooltip.d.ts",
       "default": "./src/tooltip.ts"
     },
+    "./collapsible": {
+      "typecheck": "./dist/collapsible.d.ts",
+      "default": "./src/collapsible.ts"
+    },
+    "./accordion": {
+      "typecheck": "./dist/accordion.d.ts",
+      "default": "./src/accordion.ts"
+    },
     "./top-layer": {
       "typecheck": "./dist/top-layer.d.ts",
       "default": "./src/top-layer.ts"
@@ -101,6 +111,14 @@
         "types": "./dist/tooltip.d.ts",
         "default": "./dist/tooltip.js"
       },
+      "./collapsible": {
+        "types": "./dist/collapsible.d.ts",
+        "default": "./dist/collapsible.js"
+      },
+      "./accordion": {
+        "types": "./dist/accordion.d.ts",
+        "default": "./dist/accordion.js"
+      },
       "./top-layer": {
         "types": "./dist/top-layer.d.ts",
         "default": "./dist/top-layer.js"
@@ -125,6 +143,8 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
+    "@zag-js/accordion": "^1.44.0",
+    "@zag-js/collapsible": "^1.44.0",
     "@zag-js/collection": "^1.44.0",
     "@zag-js/combobox": "^1.44.0",
     "@zag-js/core": "^1.44.0",

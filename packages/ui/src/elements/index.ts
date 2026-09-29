@@ -1,3 +1,5 @@
+import { accordion, type Props as AccordionProps } from "../accordion.ts";
+import { collapsible, type Props as CollapsibleProps } from "../collapsible.ts";
 import { combobox, type MountProps as ComboboxProps } from "../combobox.ts";
 import { dialog, type Props as DialogProps } from "../dialog.ts";
 import { listbox, type MountProps as ListboxProps } from "../listbox.ts";
@@ -247,6 +249,32 @@ export const MonoTooltip = defineElement({
   callbacks: ["onOpenChange", "onTriggerValueChange"],
 });
 
+export const MonoCollapsible = defineElement({
+  properties: [...PROPERTIES],
+  mount: (root, props) => collapsible(root, props as unknown as CollapsibleProps),
+  attributes: {
+    ...DIRECTION,
+    disabled: "boolean",
+    "collapsed-height": "number",
+    "collapsed-width": "number",
+  },
+  callbacks: ["onOpenChange", "onExitComplete"],
+});
+
+export const MonoAccordion = defineElement({
+  properties: [...PROPERTIES, ...SELECTION],
+  mount: (root, props) => accordion(root, props as unknown as AccordionProps),
+  marker: { attribute: "data-state", value: "open" },
+  attributes: {
+    ...DIRECTION,
+    disabled: "boolean",
+    multiple: "boolean",
+    collapsible: "boolean",
+    orientation: "string",
+  },
+  callbacks: ["onValueChange", "onFocusChange"],
+});
+
 const ELEMENTS: Record<string, CustomElementConstructor> = {
   "mono-menu": MonoMenu,
   "mono-submenu": MonoSubmenu,
@@ -256,6 +284,8 @@ const ELEMENTS: Record<string, CustomElementConstructor> = {
   "mono-dialog": MonoDialog,
   "mono-popover": MonoPopover,
   "mono-tooltip": MonoTooltip,
+  "mono-collapsible": MonoCollapsible,
+  "mono-accordion": MonoAccordion,
 };
 
 /** Register every element, as `defineMonoWind()` registers core's.

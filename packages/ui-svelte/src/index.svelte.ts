@@ -1,5 +1,7 @@
 import type { MachineSchema, Service } from "@zag-js/core";
 import { normalizeProps, useMachine, type PropTypes } from "@zag-js/svelte";
+import * as accordion from "@monowind/ui/accordion";
+import * as collapsible from "@monowind/ui/collapsible";
 import * as combobox from "@monowind/ui/combobox";
 import * as dialog from "@monowind/ui/dialog";
 import * as listbox from "@monowind/ui/listbox";
@@ -19,6 +21,9 @@ import type { Action } from "svelte/action";
 /** The three lists' collections, `@monowind/ui/listbox`'s. */
 export { collection, gridCollection } from "@monowind/ui/listbox";
 export {
+  useAccordionContext,
+  useAccordionItemContext,
+  useCollapsibleContext,
   useComboboxContext,
   useDialogContext,
   useItemContext,
@@ -28,6 +33,17 @@ export {
   useSelectContext,
   useTooltipContext,
 } from "./components/context.ts";
+export { default as AccordionItem } from "./components/AccordionItem.svelte";
+export { default as AccordionItemContent } from "./components/AccordionItemContent.svelte";
+export { default as AccordionItemIndicator } from "./components/AccordionItemIndicator.svelte";
+export { default as AccordionItemTrigger } from "./components/AccordionItemTrigger.svelte";
+export { default as AccordionRoot } from "./components/AccordionRoot.svelte";
+export { default as AccordionRootProvider } from "./components/AccordionRootProvider.svelte";
+export { default as CollapsibleContent } from "./components/CollapsibleContent.svelte";
+export { default as CollapsibleIndicator } from "./components/CollapsibleIndicator.svelte";
+export { default as CollapsibleRoot } from "./components/CollapsibleRoot.svelte";
+export { default as CollapsibleRootProvider } from "./components/CollapsibleRootProvider.svelte";
+export { default as CollapsibleTrigger } from "./components/CollapsibleTrigger.svelte";
 export { default as ComboboxClearTrigger } from "./components/ComboboxClearTrigger.svelte";
 export { default as ComboboxContent } from "./components/ComboboxContent.svelte";
 export { default as ComboboxControl } from "./components/ComboboxControl.svelte";
@@ -211,3 +227,11 @@ export const createPopover: (
 export const createTooltip: (
   props: tooltip.Props | (() => tooltip.Props),
 ) => Created<tooltip.Api<PropTypes>, tooltip.Service> = anchoredCreate(tooltip);
+/** Zag's collapsible on the grid, in a component. */
+export const createCollapsible: (
+  props: collapsible.Props | (() => collapsible.Props),
+) => InFlow<collapsible.Api<PropTypes>, collapsible.Service> = create(collapsible);
+/** Zag's accordion on the grid, in a component. */
+export const createAccordion: (
+  props: accordion.Props | (() => accordion.Props),
+) => InFlow<accordion.Api<PropTypes>, accordion.Service> = create(accordion);

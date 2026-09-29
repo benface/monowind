@@ -28,6 +28,8 @@ it("names every part for React's devtools, in its type as well", () => {
   expectTypeOf<Parts<typeof index.Popover>>().toExtend<Named>();
   expectTypeOf<Parts<typeof index.Select>>().toExtend<Named>();
   expectTypeOf<Parts<typeof index.Tooltip>>().toExtend<Named>();
+  expectTypeOf<Parts<typeof index.Collapsible>>().toExtend<Named>();
+  expectTypeOf<Parts<typeof index.Accordion>>().toExtend<Named>();
   const misnamed = Object.entries(index).flatMap(([namespace, parts]) =>
     /^[A-Z]/.test(namespace)
       ? Object.entries(parts as Record<string, { displayName?: string }>)
@@ -47,6 +49,20 @@ it("exports its public names, each namespace's parts among them", () => {
   );
   expect(names.sort()).toMatchInlineSnapshot(`
     [
+      "Accordion.Item",
+      "Accordion.ItemContent",
+      "Accordion.ItemIndicator",
+      "Accordion.ItemTrigger",
+      "Accordion.Root",
+      "Accordion.RootProvider",
+      "Accordion.useAccordionContext",
+      "Accordion.useAccordionItemContext",
+      "Collapsible.Content",
+      "Collapsible.Indicator",
+      "Collapsible.Root",
+      "Collapsible.RootProvider",
+      "Collapsible.Trigger",
+      "Collapsible.useCollapsibleContext",
       "Combobox.ClearTrigger",
       "Combobox.Content",
       "Combobox.Control",
@@ -132,6 +148,8 @@ it("exports its public names, each namespace's parts among them", () => {
       "Tooltip.useTooltipContext",
       "collection",
       "gridCollection",
+      "useAccordion",
+      "useCollapsible",
       "useCombobox",
       "useDialog",
       "useListbox",

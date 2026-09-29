@@ -4,6 +4,13 @@ import { renderToString } from "vue/server-renderer";
 import { collection } from "@monowind/ui/listbox";
 import { by, posted, resetByClick } from "../../ui/test/helpers.ts";
 import {
+  AccordionItem,
+  AccordionItemContent,
+  AccordionItemTrigger,
+  AccordionRoot,
+  CollapsibleContent,
+  CollapsibleRoot,
+  CollapsibleTrigger,
   ComboboxContent,
   ComboboxControl,
   ComboboxInput,
@@ -648,5 +655,51 @@ it("renders a combobox, its list anchored under the control it types into", asyn
   expect(anchor).toMatch(/^--mw-ui-/);
   expect(tree.by("positioner").style.getPropertyValue("position-anchor")).toBe(anchor);
   expect(tree.by("trigger").style.getPropertyValue("anchor-name")).toBe("");
+  tree.unmount();
+});
+
+it("opens a collapsible from its trigger, a v-model following, its size variables dropped", async () => {
+  const state = reactive({ open: false });
+  const tree = mount(() =>
+    h(
+      CollapsibleRoot,
+      { open: state.open, "onUpdate:open": (open: boolean) => (state.open = open) },
+      () => [h(CollapsibleTrigger, () => "More"), h(CollapsibleContent, () => "Folded")],
+    ),
+  );
+  await nextTick();
+  expect(tree.by("content").hidden).toBe(true);
+  tree.by("trigger").click();
+  await nextTick();
+  expect(state.open).toBe(true);
+  expect(tree.by("content").hidden).toBe(false);
+  expect(tree.by("content").style.getPropertyValue("--height")).toBe("");
+  tree.unmount();
+});
+
+it("opens an accordion's item from its trigger, a v-model following", async () => {
+  const state = reactive({ value: ["one"] });
+  const tree = mount(() =>
+    h(
+      AccordionRoot,
+      { value: state.value, "onUpdate:value": (value: string[]) => (state.value = value) },
+      () =>
+        ["one", "two"].map((value) =>
+          h(AccordionItem, { value, key: value }, () => [
+            h(AccordionItemTrigger, () => value),
+            h(AccordionItemContent, () => `${value} body`),
+          ]),
+        ),
+    ),
+  );
+  await nextTick();
+  const trigger = tree.container.querySelectorAll("button")[1]!;
+  // A browser focuses a pressed button, where Zag's click lands.
+  trigger.focus();
+  trigger.click();
+  await nextTick();
+  expect(state.value).toEqual(["two"]);
+  const contents = tree.container.querySelectorAll<HTMLElement>("[data-part='item-content']");
+  expect([contents[0]!.hidden, contents[1]!.hidden]).toEqual([true, false]);
   tree.unmount();
 });

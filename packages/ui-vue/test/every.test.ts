@@ -3,6 +3,8 @@ import { createApp, h, nextTick } from "vue";
 import { collection } from "@monowind/ui/listbox";
 import * as ui from "../src/index.ts";
 import {
+  useAccordion,
+  useCollapsible,
   useCombobox,
   useDialog,
   useListbox,
@@ -114,12 +116,27 @@ it("mounts every part of every component", async () => {
         h(ui.ComboboxContent, () => [h(ui.ComboboxList, () => [comboboxItems()])]),
       ]),
     ]),
+    h(ui.CollapsibleRoot, { id: "co" }, () => [
+      h(ui.CollapsibleTrigger, () => ["More ", h(ui.CollapsibleIndicator, () => "+")]),
+      h(ui.CollapsibleContent, () => "Folded"),
+    ]),
+    h(ui.AccordionRoot, { id: "a", defaultValue: ["one"] }, () => [
+      h(ui.AccordionItem, { value: "one" }, () => [
+        h(ui.AccordionItemTrigger, () => ["One ", h(ui.AccordionItemIndicator, () => "+")]),
+        h(ui.AccordionItemContent, () => "First"),
+      ]),
+      h(ui.AccordionItem, { value: "two", disabled: true }, () => [
+        h(ui.AccordionItemTrigger, () => "Two"),
+        h(ui.AccordionItemContent, () => "Second"),
+      ]),
+    ]),
   ]);
   await nextTick();
   // Every root reached its parts: one trigger per component that has
   // one, and a content for each.
-  expect(tree.container.querySelectorAll('[data-part="content"]').length).toBe(7);
-  expect(tree.container.querySelectorAll('[data-part="item"]').length).toBe(4);
+  expect(tree.container.querySelectorAll('[data-part="content"]').length).toBe(8);
+  expect(tree.container.querySelectorAll('[data-part="item"]').length).toBe(6);
+  expect(tree.container.querySelectorAll('[data-part="item-content"]').length).toBe(2);
   tree.unmount();
 });
 
@@ -137,6 +154,8 @@ it("mounts every component over an API held outside the tree", async () => {
       const listbox = useListbox({ id: "pl", collection: items });
       const select = useSelect({ id: "ps", collection: items });
       const combobox = useCombobox({ id: "pc", collection: items });
+      const collapsible = useCollapsible({ id: "pco" });
+      const accordion = useAccordion({ id: "pa" });
       return () => [
         h(ui.MenuRootProvider, { value: menu }, () => [
           h(ui.MenuPositioner, () => [h(ui.MenuContent)]),
@@ -157,12 +176,17 @@ it("mounts every component over an API held outside the tree", async () => {
         h(ui.ComboboxRootProvider, { value: combobox }, () => [
           h(ui.ComboboxPositioner, () => [h(ui.ComboboxContent)]),
         ]),
+        h(ui.CollapsibleRootProvider, { value: collapsible }, () => [h(ui.CollapsibleContent)]),
+        h(ui.AccordionRootProvider, { value: accordion }, () => [
+          h(ui.AccordionItem, { value: "x" }, () => [h(ui.AccordionItemContent)]),
+        ]),
       ];
     },
   });
   app.mount(container);
   await nextTick();
-  expect(container.querySelectorAll('[data-part="content"]').length).toBe(7);
+  expect(container.querySelectorAll('[data-part="content"]').length).toBe(8);
+  expect(container.querySelectorAll('[data-part="item-content"]').length).toBe(1);
   app.unmount();
   container.remove();
 });

@@ -1,4 +1,4 @@
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { collection } from "@monowind/ui/combobox";
@@ -18,6 +18,7 @@ import {
   readyHost,
   release,
   showsRow,
+  STEPPED_DURATION,
   testHooks,
   type Point,
 } from "./helpers.ts";
@@ -1044,6 +1045,194 @@ export const TooltipOpened: StoryObj = {
     by("trigger").focus();
     await waitFor(() => expect(state("content")).toBe("open"));
     await expectRow(host, "Saves the");
+  },
+};
+
+/** A trigger that shows what it opens: its indicator drawn by generated
+ * content, a triangle that turns down while the section is open. */
+const DISCLOSURE_TRIGGER = "px-1 disabled:text-neutral-500";
+const DISCLOSURE_INDICATOR = "before:content-['▶'] data-[state=open]:before:content-['▼']";
+
+/** Two sections that fold, the second open, each content fading out
+ * through a keyframe exit before it hides (specs/ui.md). */
+export const Collapsible: StoryObj = {
+  render: () => html`
+    <style>
+      @keyframes story-fold {
+        to {
+          opacity: 0;
+        }
+      }
+    </style>
+    <mono-wind>
+      <div class="p-1">
+        <p>A page with sections that fold.</p>
+        ${[
+          { id: "details", title: "Details", body: "The details, folded until asked for." },
+          { id: "notes", title: "Notes", body: "Notes the reader opened.", open: true },
+        ].map(
+          ({ id, title, body, open }) => html`
+            <mono-collapsible id=${id} ?open=${open} class="mt-1 block" data-test=${id}>
+              <button data-part="trigger" data-test="${id}-trigger" class=${DISCLOSURE_TRIGGER}>
+                <span data-part="indicator" class=${DISCLOSURE_INDICATOR}></span> ${title}
+              </button>
+              <div
+                data-part="content"
+                data-test="${id}-content"
+                class="ml-3 w-40 border px-1 data-[state=closed]:animate-[story-fold_300ms_ease-in]"
+              >
+                ${body}
+              </div>
+            </mono-collapsible>
+          `,
+        )}
+        <p class="mt-1">More of the page under the sections.</p>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    // Closed, a content leaves the grid; open, it stands in the flow.
+    expect(by("details-trigger").getAttribute("aria-expanded")).toBe("false");
+    expect(by("details-content").hidden).toBe(true);
+    expect(by("notes-trigger").getAttribute("aria-expanded")).toBe("true");
+    await expectRow(host, "▼ Notes");
+    await expectRow(host, "Notes the reader opened.");
+    expect(showsRow(host, "The details")).toBe(false);
+    expect(showsRow(host, "▶ Details")).toBe(true);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Collapsible` opened by its
+ * trigger, closed by its `open` attribute through its keyframe exit,
+ * its content out of the grid once hidden. */
+export const CollapsibleToggled: StoryObj = {
+  tags: ["!dev"],
+  render: Collapsible.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    // Opened by its trigger: the state reflected on the element, the
+    // content on the grid, its style free of Zag's px size (specs/ui.md).
+    await userEvent.click(by("details-trigger"));
+    await waitFor(() => expect(by("details")).toHaveAttribute("open"));
+    expect(by("details-content").hidden).toBe(false);
+    await expectRow(host, "▼ Details");
+    await expectRow(host, "The details, folded");
+    expect(by("details-content").style.getPropertyValue("--height")).toBe("");
+    expect(by("details-content").style.getPropertyValue("--width")).toBe("");
+    // Closed by its attribute: the keyframe exit holds the content, and
+    // its text on the grid, until it ends; then it hides.
+    const content = by("notes-content");
+    content.style.animationDuration = STEPPED_DURATION;
+    by("notes").removeAttribute("open");
+    await waitFor(() => expect(content.getAttribute("data-state")).toBe("closed"));
+    await expectRow(host, "▶ Notes");
+    expect(content.hidden).toBe(false);
+    expect(showsRow(host, "Notes the reader opened.")).toBe(true);
+    for (const animation of content.getAnimations()) animation.finish();
+    await waitFor(() => expect(content.hidden).toBe(true));
+    await waitFor(() => expect(showsRow(host, "Notes the reader opened.")).toBe(false));
+  },
+};
+
+/** An accordion's item: its trigger across the width, the indicator
+ * turning as it opens, the content indented under it. */
+const accordionItem = (
+  value: string,
+  title: string,
+  body: string,
+  { open, disabled }: { open?: boolean; disabled?: boolean } = {},
+) => html`
+  <div
+    data-part="item"
+    data-value=${value}
+    data-test=${value}
+    data-state=${open ? "open" : nothing}
+    ?data-disabled=${disabled}
+  >
+    <button
+      data-part="item-trigger"
+      data-test="${value}-trigger"
+      class="${DISCLOSURE_TRIGGER} w-full text-left"
+    >
+      <span data-part="item-indicator" class=${DISCLOSURE_INDICATOR}></span> ${title}
+    </button>
+    <div data-part="item-content" data-test="${value}-content" class="pl-3">${body}</div>
+  </div>
+`;
+
+/** An accordion of questions, one open at a time: the first open from
+ * its markup, the last disabled. */
+export const Accordion: StoryObj = {
+  render: () => html`
+    <mono-wind focus="arrows">
+      <div class="p-1">
+        <p>A page with questions and their answers.</p>
+        <mono-accordion id="faq" class="mt-1 block w-48 border" data-test="faq">
+          ${accordionItem("what", "What is it?", "HTML drawn as text.", { open: true })}
+          ${accordionItem("why", "Why a grid?", "Every box on whole cells.")}
+          ${accordionItem("how", "How is it styled?", "With Tailwind's utilities.")}
+          ${accordionItem("old", "Is it old?", "Only in looks.", { disabled: true })}
+        </mono-accordion>
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    // The markup's open item open at the mount, the others hidden.
+    expect(by("what-trigger").getAttribute("aria-expanded")).toBe("true");
+    expect(by("why-content").hidden).toBe(true);
+    expect(by("old-trigger")).toBeDisabled();
+    await expectRow(host, "▼ What is it?");
+    await expectRow(host, "HTML drawn as text.");
+    expect(showsRow(host, "Every box")).toBe(false);
+  },
+};
+
+/** Test-only (hidden from the sidebar): `Accordion` walked by the
+ * arrows, `Home` and `End` under `focus="arrows"`, a single one's open
+ * item closed by the next, kept when pressed again, and two open once
+ * it is `multiple`. */
+export const AccordionToggled: StoryObj = {
+  tags: ["!dev"],
+  render: Accordion.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const focused = (name: string) =>
+      waitFor(() => expect(document.activeElement).toBe(by(`${name}-trigger`)));
+    const value = () => (by("faq") as HTMLElement & { api: { value: string[] } }).api.value;
+    // The arrows are the accordion's: it handles them, so the page's
+    // spatial focus leaves them to it (specs/focus-navigation.md), and
+    // the disabled item is passed over.
+    by("what-trigger").focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await focused("why");
+    await userEvent.keyboard("{End}");
+    await focused("how");
+    await userEvent.keyboard("{Home}");
+    await focused("what");
+    await userEvent.keyboard("{ArrowUp}");
+    await focused("how");
+    // One open at a time: the next closes the first; pressed again, it
+    // stays open, the accordion not `collapsible`.
+    await userEvent.click(by("why-trigger"));
+    await waitFor(() => expect(by("why")).toHaveAttribute("data-state", "open"));
+    expect(by("what")).toHaveAttribute("data-state", "closed");
+    await expectRow(host, "Every box on whole cells.");
+    await waitFor(() => expect(showsRow(host, "HTML drawn as text.")).toBe(false));
+    await userEvent.click(by("why-trigger"));
+    expect(value()).toEqual(["why"]);
+    // `multiple`: a second item opens beside the first.
+    by("faq").setAttribute("multiple", "");
+    await userEvent.click(by("how-trigger"));
+    await waitFor(() => expect(by("how")).toHaveAttribute("data-state", "open"));
+    expect(value()).toEqual(["why", "how"]);
+    await expectRow(host, "With Tailwind's utilities.");
+    await expectRow(host, "Every box on whole cells.");
   },
 };
 

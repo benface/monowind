@@ -3,8 +3,9 @@
 [`@monowind/ui`](https://github.com/benface/monowind/tree/main/packages/ui)
 for React, two ways over the same machines: a **component** per
 piece — `Menu`, `Listbox`, `Select`, `Combobox`, `Dialog`, `Popover`,
-`Tooltip` — and a **hook** per component — `useMenu`, `useListbox`,
-`useSelect`, `useCombobox`, `useDialog`, `usePopover`, `useTooltip`. Style the parts with Tailwind and monowind
+`Tooltip`, `Collapsible`, `Accordion` — and a **hook** per component —
+`useMenu`, `useListbox`, `useSelect`, `useCombobox`, `useDialog`,
+`usePopover`, `useTooltip`, `useCollapsible`, `useAccordion`. Style the parts with Tailwind and monowind
 classes; the engine places each floating part against its trigger in
 cells, in the top layer.
 
@@ -65,13 +66,20 @@ in — and holds the API for the parts under it. The parts:
   so it lines up under the input; filtering is yours — give `Root` the
   collection your input value narrows, and the items it leaves out are
   hidden.
+- `Collapsible` — `Root` (an element of its own), `Trigger`, `Content`,
+  `Indicator`.
+- `Accordion` — `Root` (an element of its own), `Item`, `ItemTrigger`,
+  `ItemContent`, `ItemIndicator`; an `Item` holds its `value` and
+  `disabled` for the parts inside, which
+  `Accordion.useAccordionItemContext()` reads.
 
 A menu's, a dialog's, a popover's and a tooltip's `Root` render
 nothing — Zag gives those four no root part, and a wrapper invented
 for one would put a box in the grid's layout — so they take no
 attributes, and a `className` on one is a type error and, in a
-development build, a warning naming it. A listbox's, a select's and a
-combobox's root renders its part and takes attributes as any part does.
+development build, a warning naming it. A listbox's, a select's, a
+combobox's, a collapsible's and an accordion's root renders its part
+and takes attributes as any part does.
 
 An `Item` names one of the collection's items, by `item` or by the
 `value` that finds it there, and holds it for the `ItemText` and
@@ -116,9 +124,9 @@ function FileMenu() {
 }
 ```
 
-`useMenuContext()`, `useDialogContext()`, `usePopoverContext()` and
-`useTooltipContext()` give a part the component it is in, exactly as
-its hook returns it.
+A context hook per component — `Menu.useMenuContext()`,
+`Accordion.useAccordionContext()` and the rest — gives a part the
+component it is in, exactly as its hook returns it.
 
 ## The hooks
 
@@ -126,8 +134,9 @@ Each takes Zag's machine props (`id` required) and returns Zag's API
 with the grid's props on the trigger, the positioner, and the content,
 the positioner's `ref` inside `getPositionerProps()` so its place in
 the top layer follows the machine, and the machine's `service` beside
-the API for linking two machines. A listbox stands in the flow, so
-`useListbox` returns no positioner. Spread the props as Zag's docs
+the API for linking two machines. A listbox, a collapsible and an
+accordion stand in the flow, so `useListbox`, `useCollapsible` and
+`useAccordion` return no positioner. Spread the props as Zag's docs
 show.
 
 ```tsx

@@ -76,7 +76,14 @@ interface Declared {
   properties?: readonly string[];
   /** Whether the positioning attributes apply. */
   anchored?: boolean;
+  /** The attribute, and the value where one, that marks an item chosen
+   * in markup: a list's `data-selected` by default, an accordion's
+   * `data-state="open"`. */
+  marker?: { attribute: string; value?: string };
 }
+
+/** A list's marker, where a definition names none. */
+const SELECTED: { attribute: string; value?: string } = { attribute: "data-selected" };
 
 /** What an element is: either the mount it roots, or the `data-part`
  * it marks for the mount above it to read — a submenu, which is its
@@ -311,16 +318,32 @@ export class MonoElement extends HTMLElementBase {
     this.#observer.observe(this, { childList: true, subtree: true });
   }
 
+  /** The attribute marking an item chosen, and its selector. */
+  get #markerOf(): { attribute: string; selector: string } {
+    const { attribute, value } =
+      (this.constructor as typeof MonoElement).definition.marker ?? SELECTED;
+    return { attribute, selector: value ? `[${attribute}="${value}"]` : `[${attribute}]` };
+  }
+
+  /** Whether a part is this element's mount's rather than a nested
+   * element's, whose items carry their own states. */
+  #owns(part: Element): boolean {
+    return MonoElement.#mountAbove(part) === this;
+  }
+
   /** Stop the mount, keeping the reader's selection and clearing the
-   * `data-selected` markers it wrote, so a later mount reads only the
-   * markers of items the page brings. */
+   * markers it wrote, so a later mount reads only the markers of items
+   * the page brings. */
   #unmount(): void {
     const value = (this.#mounted?.api as Partial<Selecting> | undefined)?.value;
     if (Array.isArray(value)) this.#selection = [...value];
     this.#mounted?.destroy();
     this.#mounted = null;
+    const { attribute } = this.#markerOf;
     for (const part of this.#parts) {
-      if (part.getAttribute("data-part") === "item") part.removeAttribute("data-selected");
+      if (part.getAttribute("data-part") === "item" && this.#owns(part)) {
+        part.removeAttribute(attribute);
+      }
     }
     this.#parts = [];
   }
@@ -337,7 +360,9 @@ export class MonoElement extends HTMLElementBase {
     const marked =
       later &&
       props["defaultValue"] === undefined &&
-      this.querySelector("[data-part='item'][data-selected]") !== null;
+      Array.from(this.querySelectorAll(`[data-part='item']${this.#markerOf.selector}`)).some(
+        (item) => this.#owns(item),
+      );
     if (later && !marked) props["defaultValue"] = this.#initialValue;
     this.#mounted = mount(this, props);
     this.#parts = Array.from(this.querySelectorAll("[data-part]"));
@@ -363,8 +388,13 @@ export class MonoElement extends HTMLElementBase {
 
   /** The mount above this element, which roots the markup it marks. */
   #owner(): MonoElement | null {
-    for (let node = this.parentElement; node; node = node.parentElement) {
-      if (node instanceof MonoElement && !node.#marker) return node;
+    return MonoElement.#mountAbove(this);
+  }
+
+  /** The nearest element above a node that mounts its own markup. */
+  static #mountAbove(node: Element): MonoElement | null {
+    for (let above = node.parentElement; above; above = above.parentElement) {
+      if (above instanceof MonoElement && !above.#marker) return above;
     }
     return null;
   }

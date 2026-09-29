@@ -201,7 +201,8 @@ All three share one core. Concretely, the packages:
   Tailwind palettes, period fonts (int10h pack, CC BY-SA), ANSI tokens,
   and border glyph sets via the core theming contract (specs/theming.md).
 - **`@monowind/ui`** (`packages/ui`) — accessible components (menu,
-  listbox, select, combobox, dialog, popover, tooltip) as Zag.js
+  listbox, select, combobox, dialog, popover, tooltip, collapsible,
+  accordion) as Zag.js
   machines placed and layered by the engine (specs/ui.md), one entry
   per component, a vanilla mount, the `<mono-*>` elements, and a CDN
   bundle; **`@monowind/ui-react`**, **`@monowind/ui-vue`**,
