@@ -40,12 +40,18 @@ jobs:
       - run: pnpm -r --filter "./packages/*" build && node scripts/check-workspace.mjs --built
 
   visual:
-    name: Visual regression
+    name: Visual regression (${{ matrix.shard }}/3)
     # Runs in Docker for identical screenshots; arm64/amd64 proved
     # byte-identical (see scripts/test-visual.mjs). The host install is
     # needed — the script builds Storybook before entering Docker.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # A third of the suite each: whole, on one runner, it nears the timeout.
+    strategy:
+      # Every shard's diffs, not only the first failure's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -54,11 +60,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/test-visual.mjs
+      - run: node scripts/test-visual.mjs --shard=${{ matrix.shard }}/3
       - name: Upload diffs on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: visual-diffs
+          name: visual-diffs-${{ matrix.shard }}
           path: apps/storybook/test-results
           retention-days: 7
