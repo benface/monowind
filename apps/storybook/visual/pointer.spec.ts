@@ -127,6 +127,24 @@ test("a key's activation and a label's click reach the element they address", as
   ).toEqual([true, true]);
 });
 
+test("a press on a checkbox's glyphs toggles it, the grid following", async ({ page }) => {
+  await openStory(page, "features-interactive--checkboxes");
+  await engineQuiet(page);
+  const box = await rectOf(page, "remember");
+  const shown = async () => {
+    await engineQuiet(page);
+    return page.evaluate((selector) => {
+      const input = document.querySelector<HTMLInputElement>(selector)!;
+      const host = input.closest("mono-wind") as HTMLElement & { toPlainText(): string };
+      return [input.checked, host.toPlainText().split("\n")[0]!.trimEnd()];
+    }, hook("remember"));
+  };
+  await page.mouse.click(box.left + box.width / 2, box.top + box.height / 2);
+  expect(await shown(), "a press on its glyphs").toEqual([true, "[x] Remember me"]);
+  await page.mouse.click(box.left + box.width / 2, box.top + box.height / 2);
+  expect(await shown(), "and another").toEqual([false, "[ ] Remember me"]);
+});
+
 test("a press passes through what takes no pointer events", async ({ page }) => {
   await openStory(page, "features-interactive--click-through");
   await engineQuiet(page);

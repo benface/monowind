@@ -128,7 +128,10 @@ light DOM stays the browser's own, so everything above is native
 behavior rather than a reimplementation. Drag-select the grid, or set
 `<mono-wind select="text">` for a semantic text mirror; `:hover` and
 `:active` work on any element without breaking selection (see
-[Pointer states](#pointer-states-in-grid-mode)).
+[Pointer states](#pointer-states-in-grid-mode)). Form controls are the
+browser's own: fields type natively, and checkboxes and radios draw
+`[x]` and `(•)` in the theme's glyphs and their `accent-*`, however a
+click, a key or a script flips them.
 
 ## Themes
 

@@ -40,6 +40,13 @@ export interface GlyphTable {
   square?: string;
   disclosureOpen?: string;
   disclosureClosed?: string;
+  /** Checkboxes' and radios' states (specs/checkboxes.md), a cell or
+   * more each; defaults `[ ] [x] [-]` and `( ) (•)`. */
+  checkboxOff?: string;
+  checkboxOn?: string;
+  checkboxMixed?: string;
+  radioOff?: string;
+  radioOn?: string;
   /** QR modules (specs/qr-code.md): a full cell, its upper half, its
    * lower half — `█ ▀ ▄` by default. A set naming `qrFull` without
    * both halves has no half blocks: its modules are full cells, two
@@ -204,7 +211,7 @@ function withoutGlyphs(set: BorderGlyphSet, missing: Set<string>): BorderGlyphSe
     const table = set[style];
     const next: GlyphTable = { ...table };
     for (const [role, glyph] of Object.entries(next)) {
-      if (typeof glyph === "string" && missing.has(glyph)) {
+      if (typeof glyph === "string" && Array.from(glyph).some((cluster) => missing.has(cluster))) {
         delete next[role as keyof GlyphTable];
         changed = true;
       }
@@ -509,6 +516,7 @@ registerBorderGlyphs("ascii", {
     square: "#",
     disclosureOpen: "v",
     disclosureClosed: ">",
+    radioOn: "(*)",
     shadow: ["#", "+", ":", "."],
     weights: rings,
   },
@@ -569,6 +577,22 @@ export function scrollGlyphs(set: BorderGlyphSet | undefined): { track: string; 
 export function bulletGlyph(set: BorderGlyphSet | undefined, bullet: string): string {
   const [role, glyph] = BULLET_GLYPHS[bullet as keyof typeof BULLET_GLYPHS];
   return set?.solid?.[role] ?? glyph;
+}
+
+/** A checkbox's or a radio's glyphs by state through its set —
+ * solid-table roles (specs/checkboxes.md); a radio has no mixed state. */
+export function controlGlyphs(
+  set: BorderGlyphSet | undefined,
+  type: "checkbox" | "radio",
+): { off: string; on: string; mixed?: string } {
+  const solid = set?.solid;
+  return type === "checkbox"
+    ? {
+        off: solid?.checkboxOff ?? "[ ]",
+        on: solid?.checkboxOn ?? "[x]",
+        mixed: solid?.checkboxMixed ?? "[-]",
+      }
+    : { off: solid?.radioOff ?? "( )", on: solid?.radioOn ?? "(\u2022)" };
 }
 
 /** Each bullet's role and default glyph, by its counter style's name. */

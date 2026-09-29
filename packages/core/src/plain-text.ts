@@ -1398,13 +1398,15 @@ function forEachLeafCell(
     for (let k = span.start; k < truncated.end;) {
       const advance = k === hyphen ? 1 : advanceOf(k, k + 1, advances);
       let length = 1;
-      // A cluster's later units ride its first; a `<wbr>` is none of them.
+      // A cluster's later units ride its first; a `<wbr>` and a box of
+      // no width are none of them.
       if (advances) {
         while (
           k + length < truncated.end &&
           advances[k + length] === 0 &&
           k + length !== hyphen &&
-          node.text[k + length] !== WBR_MARKER
+          node.text[k + length] !== WBR_MARKER &&
+          node.text[k + length] !== OBJECT_REPLACEMENT
         )
           length++;
       }

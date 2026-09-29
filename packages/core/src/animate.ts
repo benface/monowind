@@ -93,11 +93,14 @@ export function trackBackground(el: Element, value: string, cs: CSSStyleDeclarat
 }
 
 /** Arm this host's pending fades, once its pass has unmasked
- * (styles.css "Lock toggles must never…"). A change no authored
- * transition covers snaps, painted stale this pass: true asks the
- * caller for one more layout. Another host's changes wait for its own
- * layout. */
-export function resolvePendingTransitions(host: Element): boolean {
+ * (styles.css "Lock toggles must never…"), a control's from its `own`
+ * lists. A change no authored transition covers snaps, painted stale
+ * this pass: true asks the caller for one more layout. Another host's
+ * changes wait for its own layout. */
+export function resolvePendingTransitions(
+  host: Element,
+  own: ReadonlyMap<Element, TransitionLists> = new Map(),
+): boolean {
   let hadPending = false;
   for (const [el, { from, to }] of pending) {
     // A removed element's change is nobody's to arm.
@@ -108,7 +111,10 @@ export function resolvePendingTransitions(host: Element): boolean {
     if (!host.contains(el)) continue;
     pending.delete(el);
     hadPending = true;
-    const config = transitionConfigFor(getComputedStyle(el), "background-color");
+    const config = transitionConfigFor(
+      own.get(el) ?? transitionListsOf(getComputedStyle(el)),
+      "background-color",
+    );
     const fromColor = readColor(from);
     const toColor = readColor(to);
     if (!config || !fromColor || !toColor) continue;
@@ -147,8 +153,43 @@ function sampleColor(transition: SynthesizedTransition): string {
 
 /* === Transition config ================================================ */
 
-function transitionConfigFor(cs: CSSStyleDeclaration, property: string): EffectTiming | null {
-  const properties = cs.transitionProperty.split(",").map((p) => p.trim());
+/** A checkbox's and a radio's lock (specs/checkboxes.md "The light
+ * DOM"): the state's property, and the variables its own lists ride. */
+export const CONTROL_STATE = "--mw-checked";
+export const OWN_TRANSITION_VARS = {
+  transitionProperty: "--mw-tp",
+  transitionDuration: "--mw-td",
+  transitionTimingFunction: "--mw-tf",
+  transitionDelay: "--mw-tl",
+  transitionBehavior: "--mw-tb",
+} as const;
+
+/** An element's transition longhands, as its computed style lists them. */
+export type TransitionLists = Record<keyof typeof OWN_TRANSITION_VARS, string>;
+
+const LONGHANDS = Object.keys(OWN_TRANSITION_VARS) as (keyof TransitionLists)[];
+
+const transitionListsOf = (cs: CSSStyleDeclaration): TransitionLists =>
+  Object.fromEntries(
+    LONGHANDS.map((longhand) => [longhand, cs[longhand] ?? ""]),
+  ) as TransitionLists;
+
+/** A control's own lists, each padded to the property list's length,
+ * so the entry the lock appends keeps its own values; one the browser
+ * lacks stays empty, for the lock's fallback. */
+export function ownTransitionLists(cs: CSSStyleDeclaration): TransitionLists {
+  const lists = transitionListsOf(cs);
+  const length = splitTopLevel(lists.transitionProperty, ",").length;
+  for (const longhand of LONGHANDS) {
+    if (!lists[longhand]) continue;
+    const values = splitTopLevel(lists[longhand], ",").map((value) => value.trim());
+    lists[longhand] = Array.from({ length }, (_, i) => values[i % values.length]).join(", ");
+  }
+  return lists;
+}
+
+function transitionConfigFor(lists: TransitionLists, property: string): EffectTiming | null {
+  const properties = lists.transitionProperty.split(",").map((p) => p.trim());
   // Per css-transitions, the LAST matching entry wins; shorter value
   // lists repeat to the property list's length.
   let index = -1;
@@ -160,12 +201,12 @@ function transitionConfigFor(cs: CSSStyleDeclaration, property: string): EffectT
     const values = splitTopLevel(list, ",").map((v) => v.trim());
     return values[index % values.length] ?? "";
   };
-  const duration = parseSeconds(nth(cs.transitionDuration));
+  const duration = parseSeconds(nth(lists.transitionDuration));
   if (duration <= 0) return null;
   return {
     duration: duration * 1000,
-    delay: parseSeconds(nth(cs.transitionDelay)) * 1000,
-    easing: nth(cs.transitionTimingFunction),
+    delay: parseSeconds(nth(lists.transitionDelay)) * 1000,
+    easing: nth(lists.transitionTimingFunction),
   };
 }
 

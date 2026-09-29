@@ -1269,3 +1269,29 @@ the most of it, is "Where it stands". The host's height read before
 the reads, 0.4–0.5 ms, stays: kept from the last layout, it goes stale
 where the host's height follows what lies in it (`:has()`,
 `:focus-within`), which only a read as the layout starts sees.
+
+### Checkboxes and radios (2026-09-29)
+
+v0.3.4's bundle, twice for the noise, against the working tree's: six
+rounds of five loads alternated, medians, one sitting on a loaded
+machine (load 10–35):
+
+| page (300)                    | v0.3.4, ms | now, ms |
+| ----------------------------- | ---------- | ------- |
+| prose                         | 197, 198   | 196     |
+| boxes                         | 177, 181   | 179     |
+| blocks (40)                   | 83, 84     | 86      |
+| faded                         | 205, 208   | 211     |
+| positioned                    | 180, 180   | 185     |
+| labeled checkboxes            | 215, 204   | 228     |
+| prose relayout, CPU           | 57.5, 57.4 | 57.0    |
+| boxes relayout, CPU           | 27.1, 27.3 | 27.4    |
+| prose hover, CPU              | 65.9, 65.9 | 66.2    |
+| 150 boxes fading, CPU a frame | 50.4, 50.2 | 49.0    |
+
+A page without a control pays a `querySelectorAll` a layout; its
+rounds overlap v0.3.4's copies' on every shape. The checkbox page
+(`pnpm bench --shape checkboxes`) draws what v0.3.4 left blank: a
+batched read of each control's appearance and transitions under its
+flag, one forced style recalculation a layout, and a glyph leaf each.
+The bundle is 603.3 KB (181.0 KB gzipped), 3.1 KB (0.9 KB) more.

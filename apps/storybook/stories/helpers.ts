@@ -176,6 +176,19 @@ export function countLayouts(host: Element): LayoutCount {
   };
 }
 
+/** Resolves once `host` lays nothing out for `quiet` frames running, so
+ * a count begun after holds only what follows; a host still laying out
+ * after a second's rounds fails. */
+export async function layoutsQuiet(host: Element, quiet = 3): Promise<void> {
+  for (let round = 0; round < 20; round++) {
+    const layouts = countLayouts(host);
+    await frames(quiet);
+    layouts.stop();
+    if (layouts.count === 0) return;
+  }
+  throw new Error("the host kept laying out");
+}
+
 /** The frames after a change where its own layout and a transition's
  * start land, left out of the transition's layouts. */
 const CHANGE_FRAMES = 3;

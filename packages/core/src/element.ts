@@ -1,5 +1,11 @@
 /// <reference types="vite/client" />
-import { hasSynthesizedTransitions, resolvePendingTransitions } from "./animate.ts";
+import {
+  CONTROL_STATE,
+  OWN_TRANSITION_VARS,
+  hasSynthesizedTransitions,
+  resolvePendingTransitions,
+} from "./animate.ts";
+import type { TransitionLists } from "./animate.ts";
 import { compositeColors, parseColor, serializeColor } from "./color.ts";
 import type { Rgba } from "./color.ts";
 import {
@@ -70,7 +76,7 @@ import { forgetWrites, render, renderScroll, setVar, wrotePseudoElements } from 
 import { nameOf, PSEUDOS } from "./generated.ts";
 import { namedAnchors } from "./positioning.ts";
 import { TopLayer, isTopLayer } from "./top-layer.ts";
-import { buildRoot } from "./tree.ts";
+import { buildRoot, readControls } from "./tree.ts";
 import type { TextareaWidths } from "./tree.ts";
 import { warnOnce, warnSubject } from "./warn.ts";
 import type { CellMetrics, LayoutNode, Rect } from "./types.ts";
@@ -269,10 +275,17 @@ const SIZE_TOLERANCE = 0.05;
  * every engine, within SIZE_TOLERANCE. */
 const SPACER_YIELD = 1 / 32;
 
+/** A checkbox's and a radio's lock variables, by longhand. */
+const OWN_TRANSITION_ENTRIES = Object.entries(OWN_TRANSITION_VARS) as [
+  keyof TransitionLists,
+  string,
+][];
+
 /** Whether a lock's snap back could start a transition on an element:
  * a non-zero duration or delay in any entry of its lists. */
-const mayTransition = (style: CSSStyleDeclaration): boolean =>
-  /[1-9]/u.test(style.transitionDuration) || /[1-9]/u.test(style.transitionDelay);
+const mayTransition = (
+  style: Pick<CSSStyleDeclaration, "transitionDuration" | "transitionDelay">,
+): boolean => /[1-9]/u.test(style.transitionDuration) || /[1-9]/u.test(style.transitionDelay);
 
 /** css-color-4's system colors, the deprecated ones after the rest. */
 const SYSTEM_COLORS =
@@ -2519,6 +2532,11 @@ export class MonoWindElement extends HTMLElementBase {
   #onTransitionRun = ({ propertyName, pseudoElement, target: el }: TransitionEvent): void => {
     this.#animations = null;
     if (!(el instanceof Element)) return;
+    // A checkbox's or a radio's flip (specs/checkboxes.md "State changes").
+    if (propertyName === CONTROL_STATE) {
+      this.#scheduleLayout();
+      return;
+    }
     if (!transitionSampling(propertyName, el, pseudoElement !== "", this)) return;
     // The layer an effect's frames copy onto: opened by a layout for an
     // element not yet one (an effect a rule outside the host set).
@@ -2789,6 +2807,15 @@ export class MonoWindElement extends HTMLElementBase {
     // width.
     const textareaWidths: TextareaWidths = new Map();
     const textareas = this.querySelectorAll<HTMLTextAreaElement>("textarea");
+    // Each checkbox's and radio's own appearance and transitions
+    // (tree.ts readControls), the transitions into its lock.
+    const { appearances, transitions } = readControls(this);
+    for (const [el, lists] of transitions) {
+      const own = mayTransition(lists);
+      for (const [longhand, name] of OWN_TRANSITION_ENTRIES) {
+        setVar(el as HTMLElement, name, own ? lists[longhand] || null : null);
+      }
+    }
     const hostStyle = getComputedStyle(this);
     // The height CSS gives the host, its content still the last layout's
     // spacer (specs/cell-model.md "Host sizing").
@@ -2932,9 +2959,9 @@ export class MonoWindElement extends HTMLElementBase {
       // content is the root leaf (specs/host-leaf.md); with a block-level
       // child the root is a virtual container over its child nodes, the
       // host's own text as anonymous runs.
-      let virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths);
+      let virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
       if (this.#scopeAnchors(virtualRoot)) {
-        virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths);
+        virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
       }
       // Found while the reads leave the style clean.
       settling = { host: mayTransition(hostStyle), elements: new Set() };
@@ -3054,7 +3081,7 @@ export class MonoWindElement extends HTMLElementBase {
       // `transition-property` list is readable — then the sampling loop
       // drives the fade. A pending change that did NOT arm was painted
       // stale this pass; one more relayout paints its target.
-      if (resolvePendingTransitions(this)) {
+      if (resolvePendingTransitions(this, transitions)) {
         if (hasSynthesizedTransitions()) this.#startSamplingLoop();
         else this.#scheduleLayout();
       }

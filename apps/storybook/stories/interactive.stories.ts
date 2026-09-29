@@ -1,14 +1,23 @@
 import { html } from "lit";
-import { expect, waitFor } from "storybook/test";
+import { expect, userEvent, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import {
   cellSize,
+  channels,
+  countLayouts,
+  expectColor,
+  expectRow,
+  frames,
   gridOf,
   hoverOver,
+  layoutsQuiet,
   pressAt,
   readyGrid,
   readyHost,
+  readyHosts,
   release,
+  rowsOf,
+  shown,
   testHooks,
 } from "./helpers.ts";
 
@@ -568,6 +577,193 @@ export const DetailsToggled: StoryObj = {
     toggle("open");
     await shows("Drawn on the grid.", false);
     await shows("Press to fold it.", true);
+  },
+};
+
+/** Checkboxes and radio buttons (specs/checkboxes.md): each state's
+ * glyphs from the glyph set, a checked one in its `accent-*`, a
+ * disabled one dimmed, a custom `appearance-none` one a box its
+ * `checked:` fill paints, and a label a `peer-checked:` style follows;
+ * each native control under its glyphs. */
+export const Checkboxes: StoryObj = {
+  render: () => html`
+    <mono-wind>
+      <form data-test="form" class="flex max-w-80 flex-col">
+        <label><input data-test="remember" type="checkbox" /> Remember me</label>
+        <label>
+          <input data-test="accent" type="checkbox" checked class="accent-green-400" /> In its
+          accent
+        </label>
+        <label
+          ><input data-test="mixed" type="checkbox" .indeterminate=${true} /> Some of them</label
+        >
+        <label><input data-test="disabled" type="checkbox" checked disabled /> Disabled</label>
+        <div class="flex gap-2">
+          <label><input data-test="small" type="radio" name="size" /> Small</label>
+          <label>
+            <input data-test="medium" type="radio" name="size" checked class="accent-cyan-400" />
+            Medium
+          </label>
+        </div>
+        <label class="flex gap-2">
+          <input
+            data-test="custom"
+            type="checkbox"
+            class="h-1 w-2 appearance-none bg-slate-600 transition-colors duration-300 checked:bg-blue-500"
+          />
+          Custom
+        </label>
+        <div>
+          <input data-test="peer" id="peer" type="checkbox" class="peer" />
+          <label data-test="peer-label" for="peer" class="peer-checked:text-green-400">
+            Its label follows
+          </label>
+        </div>
+      </form>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const hook = testHooks(canvasElement);
+    const rows = rowsOf(host).map((row) => row.trimEnd());
+    for (const row of [
+      "[ ] Remember me",
+      "[x] In its accent",
+      "[-] Some of them",
+      "[x] Disabled",
+    ]) {
+      expect(rows).toContain(row);
+    }
+    expect(rows.some((row) => /^\( \) Small +\(\u2022\) Medium$/.test(row))).toBe(true);
+    // The custom control is its authored box, three cells, no glyph.
+    expect(rows).toContain("    Custom");
+    expect(rows).toContain("[ ] Its label follows");
+    // Checked, in its accent; disabled, at half the controls' color.
+    const glyphs = (text: string) =>
+      Array.from(gridOf(host).querySelectorAll("span")).filter((span) => span.textContent === text);
+    const [accented, disabled] = glyphs("[x]");
+    expectColor(shown(accented)!, getComputedStyle(hook("accent")).accentColor, "accent");
+    expect(channels(shown(disabled)!)[3]).toBeCloseTo(128, -1);
+    // Each native control lies on its glyphs' cells.
+    const glyphUnder = (name: string): string => {
+      const { width, height } = cellSize(host);
+      const grid = gridOf(host).getBoundingClientRect();
+      const box = hook(name).getBoundingClientRect();
+      const [x, y] = [(box.left - grid.left) / width, (box.top - grid.top) / height];
+      expect(Math.abs(x - Math.round(x)), name).toBeLessThan(0.05);
+      expect(Math.abs(y - Math.round(y)), name).toBeLessThan(0.05);
+      const cells = Math.round(box.width / width);
+      return rowsOf(host)[Math.round(y)]!.slice(Math.round(x), Math.round(x) + cells);
+    };
+    await waitFor(() =>
+      expect(
+        ["remember", "accent", "mixed", "disabled", "small", "medium", "custom", "peer"].map(
+          glyphUnder,
+        ),
+      ).toEqual(["[ ]", "[x]", "[-]", "[x]", "( )", "(\u2022)", "  ", "[ ]"]),
+    );
+  },
+};
+
+/** `Checkboxes` toggled every way a page or a user flips a control —
+ * a click, its label, Space, an arrow in the radio group, a script, a
+ * "select all" in one task, a form reset — the grid following each; a
+ * script's flip of the custom control fades its fill. */
+export const CheckboxesToggled: StoryObj = {
+  tags: ["!dev"],
+  render: Checkboxes.render!,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const hook = testHooks(canvasElement);
+    const input = (name: string) => hook(name) as HTMLInputElement;
+    input("remember").click();
+    await expectRow(host, "[x] Remember me");
+    hook("remember").closest("label")!.click();
+    await expectRow(host, "[ ] Remember me");
+    input("remember").focus();
+    await userEvent.keyboard(" ");
+    await expectRow(host, "[x] Remember me");
+    input("medium").focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(input("small").checked).toBe(true));
+    await expectRow(host, "(\u2022) Small");
+    // A script's flips, which fire no event.
+    input("accent").checked = false;
+    input("mixed").indeterminate = false;
+    await expectRow(host, "[ ] In its accent");
+    await expectRow(host, "[ ] Some of them");
+    // A "select all" in one task lays out once, counted from a host at
+    // rest: the custom control's color transition from the load, and
+    // the layout a step's own leaves to come, done.
+    await layoutsQuiet(host);
+    const layouts = countLayouts(host);
+    for (const name of ["remember", "accent", "mixed", "peer"]) input(name).checked = true;
+    await expectRow(host, "[x] Its label follows");
+    await frames(3);
+    expect(layouts.count).toBe(1);
+    layouts.stop();
+    for (const row of ["[x] In its accent", "[x] Some of them"]) await expectRow(host, row);
+    // The label a `peer-checked:` style follows.
+    expectColor(
+      getComputedStyle(hook("peer-label")).color,
+      shown(
+        Array.from(gridOf(host).querySelectorAll("span")).find((span) =>
+          span.textContent!.includes("Its label"),
+        ),
+      )!,
+      "the peer's label",
+    );
+    // The custom control's fill fades, flipped by a script.
+    const fills = () =>
+      new Set(
+        Array.from(gridOf(host).querySelectorAll<HTMLElement>("span"))
+          .map((span) => span.style.backgroundColor)
+          .filter(Boolean),
+      );
+    const [from] = fills();
+    input("custom").checked = true;
+    const seen: string[] = [];
+    for (let frame = 0; frame < 60; frame++) {
+      await frames(1);
+      seen.push(...fills());
+      // The grid's fade alone: the native background stays locked.
+      expect(channels(getComputedStyle(hook("custom")).backgroundColor)[3]).toBe(0);
+    }
+    const to = seen.at(-1)!;
+    expect(to).not.toBe(from);
+    expect(seen.some((fill) => fill !== from && fill !== to)).toBe(true);
+    // A form reset flips each control back to its default.
+    (hook("form") as HTMLFormElement).reset();
+    for (const row of [
+      "[ ] Remember me",
+      "[x] In its accent",
+      "[ ] Some of them",
+      "[ ] Its label follows",
+    ]) {
+      await expectRow(host, row);
+    }
+    await expectRow(host, "(\u2022) Medium");
+    (document.activeElement as HTMLElement | null)?.blur();
+  },
+};
+
+/** A host whose width is its content's holds a checkbox and its label
+ * on one row, and a radio beside its own: the glyphs' cells count in
+ * the width the host measures (specs/checkboxes.md "Sizing"). */
+export const CheckboxFit: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind class="w-fit">
+      <label><input type="checkbox" /> Remember me</label>
+    </mono-wind>
+    <mono-wind class="inline-block">
+      <label><input type="radio" checked /> Only</label>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const [fit, inline] = await readyHosts(canvasElement);
+    expect(rowsOf(fit!)).toEqual(["[ ] Remember me"]);
+    expect(rowsOf(inline!)).toEqual(["(\u2022) Only"]);
   },
 };
 

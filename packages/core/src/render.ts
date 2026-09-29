@@ -3,7 +3,7 @@ import { placePainted } from "./paint-origin.ts";
 import { zIndexApplies } from "./stacking.ts";
 import { PSEUDOS } from "./generated.ts";
 import type { Pseudo } from "./generated.ts";
-import { clipsAxis, isElementBox, softWraps } from "./types.ts";
+import { clipsAxis, isElementBox, isToggle, softWraps } from "./types.ts";
 import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
 
 /**
@@ -61,7 +61,7 @@ const BOX_NAMES = (
   "--mw-mr --mw-mb --mw-ml --mw-va --mw-vb --mw-lh --mw-lhs --mw-colc --mw-colg --mw-x --mw-y " +
   "--mw-w --mw-h --mw-se-x --mw-se-y --mw-gr --mw-gb --mw-spt --mw-spr --mw-spb --mw-spl " +
   "--mw-pt --mw-pr --mw-pb --mw-pl --mw-bt --mw-br --mw-bb --mw-bl --mw-ti --mw-ws --mw-ink " +
-  "--mw-ground"
+  "--mw-ground --mw-tc"
 ).split(" ");
 
 /** An inline element's insets' flag and variables. */
@@ -555,6 +555,9 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   setVar(el, "--mw-y", rect.y + (run?.y ?? 0));
   setVar(el, "--mw-w", rect.width);
   setVar(el, "--mw-h", rect.height);
+  // A checkbox's or a radio's cells, its width while the engine reads
+  // (styles.css, specs/checkboxes.md "Sizing").
+  if (isToggle(el)) setVar(el, "--mw-tc", rect.width);
   // The clip lock, on a box clipping both axes: a lone clipping axis is
   // an authored `clip`, and a scroller keeps its `hidden` axis.
   setFlag(el, "data-mw-clip", clipsAxis(overflow.x) && clipsAxis(overflow.y));

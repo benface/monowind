@@ -201,6 +201,17 @@ export function softWraps(whiteSpace: WhiteSpace): boolean {
   return whiteSpace !== "nowrap" && whiteSpace !== "pre";
 }
 
+/** A checkbox or a radio, whose box is its glyphs or, under
+ * `appearance: none`, the author's (specs/checkboxes.md). */
+export const isToggle = (el: Element): boolean =>
+  el.tagName === "INPUT" && TOGGLE_INPUTS.has((el as HTMLInputElement).type);
+
+const TOGGLE_INPUTS = new Set(["checkbox", "radio"]);
+
+/** The flag a checkbox's or a radio's own appearance and transitions
+ * read under, its locks lifted (styles.css). */
+export const CONTROL_READ_FLAG = "data-mw-control-read";
+
 /** How a wrapping `white-space` keeps its spaces (wrap.ts `preserve`). */
 export function preservedSpaces(whiteSpace: WhiteSpace): "hang" | "break" | undefined {
   return whiteSpace === "pre-wrap" ? "hang" : whiteSpace === "break-spaces" ? "break" : undefined;

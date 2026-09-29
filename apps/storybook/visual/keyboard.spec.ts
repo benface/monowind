@@ -330,3 +330,37 @@ test("a keystroke that opens a combobox's list leaves the caret where it was", a
   );
   expect(caret).toBe(2);
 });
+
+/** A checkbox's keyboard focus shows as any control's, the invert over
+ * its glyphs, checked in its accent or not (specs/checkboxes.md
+ * "Paint"): a real Tab, so `:focus-visible` matches in every engine. */
+test("a checkbox's focus inverts its glyphs, whatever its accent", async ({ page }) => {
+  await openStory(page, "features-interactive--checkboxes");
+  await engineQuiet(page);
+  for (const [name, glyphs] of [
+    ["remember", "[ ]"],
+    ["accent", "[x]"],
+  ] as const) {
+    await page.keyboard.press("Tab");
+    await engineQuiet(page);
+    const painted = await page.evaluate(
+      ([selector, text]) => {
+        const input = document.querySelector<HTMLInputElement>(selector)!;
+        const grid = input.closest("mono-wind")!.shadowRoot!.getElementById("grid")!;
+        const span = [...grid.querySelectorAll<HTMLElement>("span")].find(
+          (el) => el.textContent === text && el.style.backgroundColor !== "",
+        );
+        return {
+          focused: document.activeElement === input,
+          ground: span?.style.backgroundColor ?? "",
+          ink: span?.style.color ?? "",
+          accent: getComputedStyle(input).accentColor,
+        };
+      },
+      [`[data-test="${name}"]`, glyphs] as const,
+    );
+    expect(painted.focused, name).toBe(true);
+    expect(painted.ground, `${name}'s inverted ground`).not.toBe("");
+    expect(painted.ink, `${name}'s inverted ink`).not.toBe(painted.accent);
+  }
+});

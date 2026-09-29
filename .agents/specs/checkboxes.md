@@ -1,7 +1,8 @@
 # Spec: checkboxes and radio buttons
 
-Status: **spec, 2026-09-28** — not implemented; its decisions taken
-with the user the same day ("Decisions").
+Status: **implemented 2026-09-29**; its decisions taken with the user
+on 2026-09-28 and 2026-09-29 ("Decisions"). The plan is
+`.agents/plans/2026-09-29-checkboxes.md`.
 
 `<input type="checkbox">` and `<input type="radio">` on the grid: the
 engine draws each control's state as a glyph string from its glyph
@@ -41,8 +42,8 @@ a border, and a checkmark or dot as an SVG `background-image` under
   its `checked` and `indeterminate` properties (`indeterminate` has no
   attribute; `:indeterminate` matches it, probed) and `:disabled`.
 - **Its computed `appearance`**, the UA's `auto` in all three engines
-  or the author's `none` ("Custom controls"), read under the measuring
-  flag (see "The light DOM").
+  or the author's `none` ("Custom controls"), read under a flag of its
+  own (see "The light DOM").
 - **Its `color` and `accent-color`** (`auto` unless an `accent-*`
   utility sets it).
 - **The `switch` attribute** (WebKit's native switch) and
@@ -58,8 +59,11 @@ a border, and a checkmark or dot as an SVG `background-image` under
   one or more cells, honoring `--mw-missing-glyphs` per glyph as the
   other roles do.
 - **The defaults**: `[ ]`, `[x]`, `[-]`, `( )` and `(•)`;
-  `ascii` draws the radio's dot as `*`. Every monospace font draws
-  them.
+  `ascii` draws the radio's dot as `*`. All but `•` are ASCII; `•` is
+  the list bullet's default too, and a font without it (WenQuanYi Zen
+  Hei Mono, `monospace` in the Playwright Linux image, probed
+  2026-09-29) draws it in a fallback font, boxed onto its cell
+  (wide-characters.md).
 - **A control's width is its widest role**, over the roles of its
   type, so toggling never reflows the line: three cells under the
   defaults.
@@ -74,6 +78,17 @@ a border, and a checkmark or dot as an SVG `background-image` under
 - **Border, padding and background do not draw** on a control whose
   `appearance` is `auto`, as no engine draws them around its widget
   (probed): the grid draws the glyphs alone.
+- **While the engine reads, the native box is the cells its last
+  layout gave it** (three before any), so a host whose width is its
+  content's (`w-fit`, `inline-block`) measures them: an intrinsic
+  width (`contain: inline-size` and `contain-intrinsic-inline-size`,
+  in the grid's cell, never under the text's advance), which an
+  authored width overrides and the engine's read of the author's width
+  leaves `auto`. Probed 2026-09-29: a `width` there reads as the
+  author's through Typed OM; containment sizes a native widget in
+  Chromium alone, a widget-less box in all three, which the lock
+  keeps it; and a width in the text's advance (`1ch`), which WebKit
+  rounds down to its layout unit, measured a line a cell short.
 
 ## Paint
 
@@ -81,11 +96,13 @@ a border, and a checkmark or dot as an SVG `background-image` under
   indeterminate control's in its `accent-color` where that is not
   `auto`.
 - **A disabled control** draws its glyphs in its `color`, which a
-  base-layer rule of the companion sets to half the inherited color's
-  strength, as the placeholder's is (cell-model.md "Form controls"):
-  a `disabled:` utility overrides it, as it overrides any base style.
+  base-layer rule of the companion sets to the controls' color
+  (`--mw-fg`) at half strength, as the placeholder's is (cell-model.md
+  "Form controls"). Any color utility on the control overrides it,
+  `disabled:` or not, as it overrides any base style.
 - **Focus, hover and press** are any control's: the focus invert over
-  its cells, `hover:` and `active:` through the synthesized states,
+  its cells, its ink and ground drawn over the accent and the cleared
+  background, `hover:` and `active:` through the synthesized states,
   `focus-visible:outline-*` natively ("Outlines").
 - **Paint order and clips** are an atomic inline box's, or a block's
   where the control is block-level.
@@ -104,6 +121,13 @@ a border, and a checkmark or dot as an SVG `background-image` under
   subtree fires nothing, and draws nothing either. WebKit starts a
   transition only on an element painted once, as every control is by
   the host's first layout, which reads its state.
+- **A flip under a layout already under way starts no transition, and
+  needs none.** The lock is off while the engine reads, so a flip whose
+  style is first computed inside a layout pass commits without the
+  state's entry; that pass reads `checked` itself. Probed 2026-09-29,
+  40 flips beside a pending layout in each engine: Chromium fired all
+  40, Firefox 27 and WebKit 33, and a layout followed every flip that
+  fired nothing.
 - **A user's toggle** — a click, a click on its `<label>`, Space, an
   arrow key in a radio group, `.click()` — also fires `input` and
   `change` (probed), which lay the host out already; a form reset
@@ -125,14 +149,31 @@ a border, and a checkmark or dot as an SVG `background-image` under
 ## The light DOM
 
 - **The base rule's `appearance: none` leaves checkboxes and radios
-  out**; the lock gives them `appearance: none` gated on the
-  measuring flag, so the read sees the UA's `auto` or the author's
-  `none`, and the native widget never paints.
-- **The state's transition joins the author's own**: the lock's
-  `transition-*` lists are the author's, which the engine reads under
-  the measuring flag (each padded to the property list's length, as
-  CSS pairs them) and writes back in variables, with the state's entry
-  after them, so a `transition-colors` on a custom control still runs.
+  out**; the lock gives them `appearance: none`, so the native widget
+  never paints nor sizes the box. A widget's own box would otherwise
+  reach the measuring pass (WebKit's Typed OM reads its width as a
+  length, probed), and an author's `appearance-none`, a utility or
+  `@tailwindcss/forms`' rule, could not be told from the lock's.
+- **The engine reads a control's own styles under a flag of its own**
+  (`data-mw-control-read`), which lifts its locks: set on every
+  checkbox and radio at once, at a layout's start, before its masks
+  and its first geometry read. The read sees the UA's `auto` or the
+  author's `none`, and the author's transitions (below), uncached, as
+  a rule outside the control (`group-hover:`, `dark:`) can change
+  either.
+- **The state's transition joins the author's own**: the lock appends
+  the state's entry to the author's `transition-*` lists, which the
+  engine writes back in variables where a duration or delay is not
+  zero. The measuring mask gives every light element the sampled
+  `transition-property` list, so only the control's own read sees the
+  author's. Each of the five lists (property, duration, timing
+  function, delay, behavior) is padded to the property list's length,
+  as CSS pairs them: unpadded, CSS repeats a shorter list, and the
+  state's entry takes one of the author's durations (probed: a 0.3s
+  state transition, which a second flip within it reversed without a
+  `transitionrun` in Chromium and Firefox). The synthesized background
+  fades take a control's lists from the same read, so a
+  `transition-colors` on a custom control still runs.
 - **The native box is the control's cells**, positioned and sized by
   the engine as every control's, so a press on the glyphs is the
   control's, and a `<label>`'s text toggles it natively.
@@ -155,6 +196,11 @@ a border, and a checkmark or dot as an SVG `background-image` under
    every input on the page.
 3. **A disabled control dims by default**, by a base-layer rule a
    `disabled:` utility overrides.
+4. **The author's transitions are read under a flag of the control's
+   own** (2026-09-29), as above, with its appearance. The alternative,
+   an animation keyed on the state (`animationstart`), would replace an
+   author's animation on the control and start one on every control's
+   first style.
 
 ## Deviations from CSS
 
@@ -170,37 +216,58 @@ deviation 3.
 
 ## Testing
 
-- **Node**: tree.test.ts, a control's cells under each glyph set and
-  a set size; style.test.ts, the reads (`appearance`, `accent-color`,
-  `indeterminate`); plain-text.test.ts, each state's glyphs, accent,
-  disabled, a custom control's box and `checked:` fill;
-  glyphs.test.ts, the roles, their fallbacks and `--mw-missing-glyphs`.
+- **Node**: plain-text.test.ts, each state's glyphs, a radio group's
+  `:indeterminate`, the widest role's width, the chrome left undrawn,
+  the accent (none where disabled), a set size and an
+  `appearance: none` box; glyphs.test.ts, the roles, their fallbacks
+  and `--mw-missing-glyphs`; element.test.ts, the appearance read
+  under its flag, the state's transition laying the host out, and a
+  transitioning control's lists, read under the flag, written into its
+  lock and taken back; animation.test.ts, the lists padded, and a
+  control's fade armed from them; render.test.ts, the cells a control
+  takes while the engine reads; cascade.test.ts, the lock's names and
+  `--mw-checked` held to the engine's constants, and the appearance
+  lock to its flag.
 - **Storybook**, `interactive.stories.ts` "Checkboxes" (visible, a
   golden): checkboxes and a radio group, checked, indeterminate,
   disabled, `accent-*`, a custom `appearance-none` one with
   `transition-colors`, and a `peer-checked:` label. Its play reads the
-  glyph cells and the native box under them, in three engines. A
+  glyph cells and the native box under each, in three engines. A
   test-only twin (`CheckboxesToggled`, a golden) toggles by click,
-  label, Space and arrow keys, by script (`checked`, `indeterminate`),
-  and resets the form, asserting the glyph cells after each and the
-  custom control's fill transitioning.
-- **Visual**: the golden, and a press on the glyph cells toggling the
-  control (`visual/pointer.spec.ts`, a trusted click).
+  label, Space and an arrow key, by script (`checked`,
+  `indeterminate`, a "select all" laid out once), and resets the form,
+  asserting the glyph cells after each and, flipped by script, the
+  custom control's fill fading on the grid, its native background
+  locked. `CheckboxFit` (test-only): a `w-fit` and an `inline-block`
+  host hold a control and its label on one row.
+- **Visual**: the goldens; a trusted press on the glyph cells
+  toggling the control, the grid following (`visual/pointer.spec.ts`);
+  and a real Tab's focus inverting a control's glyphs, checked in its
+  accent or not (`visual/keyboard.spec.ts`).
 
 ## Touch points on implementation
 
-- types.ts: will hold the control's state on its node (type, checked,
-  indeterminate, disabled, appearance, accent).
-- style.ts: will read `appearance` and `accent-color`, and the state
-  properties.
-- tree.ts: will size a checkbox or radio by its roles, not `size`.
-- glyphs.ts: will carry the five roles and their defaults.
-- plain-text.ts: will paint the glyphs in the control's leaf.
-- element.ts: `#onTransitionRun` will lay the host out for the state's
+- tree.ts: `readControls` reads each checkbox's and radio's own
+  appearance and transitions under its flag; `buildToggleLeaf` builds an
+  `appearance: auto` one as a leaf whose text is its state's glyphs,
+  padded to its type's widest, in its accent where checked and
+  enabled, its chrome cleared; `inputWidth` and the form-control
+  height floor leave an `appearance: none` one 0 by 0.
+- types.ts: `isToggle` and `CONTROL_READ_FLAG`.
+- glyphs.ts: `GlyphTable` carries the five roles, `controlGlyphs`
+  resolves a type's glyphs by state, and `withoutGlyphs` drops a role
+  holding any glyph a font lacks.
+- animate.ts: `CONTROL_STATE` and `OWN_TRANSITION_VARS` name the
+  lock's parts; `ownTransitionLists` is the one reader of a control's
+  own lists, which the lock's variables and `resolvePendingTransitions`
+  both take.
+- element.ts: the pass's start reads the controls and writes a
+  transitioning one's lists with `setVar`, and its end arms the fades
+  from them; `#onTransitionRun` lays the host out for the state's
   property.
-- render.ts: will write a control's own transition lists back as
-  variables for the lock.
-- styles.css: will register `--mw-checked`, set it by `:checked` and
-  `:indeterminate`, lock `appearance: none` and the merged transition
-  on checkboxes and radios, gated, and dim a disabled one in the base
-  layer.
+- render.ts: `--mw-tc`, a control's cells, with a box's names.
+- styles.css: `@property --mw-checked`, set by `:checked` and
+  `:indeterminate`; the appearance lock, off under
+  `data-mw-control-read`; the merged transition lock, off under the
+  measuring, settling and read flags; the measuring pass's intrinsic
+  width; and a disabled control's dim, in the base layer.

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  controlGlyphs,
   glyphSetFor,
   glyphSetNameFor,
   missingGlyphs,
@@ -421,6 +422,36 @@ describe("a font's gaps (specs/theming.md)", () => {
         "\u2514\u2500\u2500\u2500\u2500\u2500\u2518",
       ].join("\n"),
     );
+  });
+});
+
+describe("checkbox and radio roles (specs/checkboxes.md)", () => {
+  it("draws the TUI defaults, ascii's radio dot as `*`", () => {
+    expect(controlGlyphs(undefined, "checkbox")).toEqual({ off: "[ ]", on: "[x]", mixed: "[-]" });
+    expect(controlGlyphs(undefined, "radio")).toEqual({ off: "( )", on: "(\u2022)" });
+    expect(controlGlyphs(glyphSetFor("ascii"), "checkbox")).toEqual({
+      off: "[ ]",
+      on: "[x]",
+      mixed: "[-]",
+    });
+    expect(controlGlyphs(glyphSetFor("ascii"), "radio")).toEqual({ off: "( )", on: "(*)" });
+  });
+
+  it("takes a set's own roles, each falling back alone", () => {
+    registerBorderGlyphs("checkbox-boxes", {
+      solid: { checkboxOff: "\u2610", checkboxOn: "\u2612" },
+    });
+    expect(controlGlyphs(glyphSetFor("checkbox-boxes"), "checkbox")).toEqual({
+      off: "\u2610",
+      on: "\u2612",
+      mixed: "[-]",
+    });
+  });
+
+  it("drops a role holding a glyph the font has not got, whole", () => {
+    registerBorderGlyphs("radio-rings", { solid: { radioOff: "(\u25CB)", radioOn: "(\u25C9)" } });
+    const set = glyphSetFor(glyphSetNameFor("radio-rings", '"\u25C9"'));
+    expect(controlGlyphs(set, "radio")).toEqual({ off: "(\u25CB)", on: "(\u2022)" });
   });
 });
 

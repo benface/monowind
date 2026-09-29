@@ -1,4 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { OWN_TRANSITION_VARS } from "../src/animate.ts";
+import { CONTROL_READ_FLAG } from "../src/types.ts";
 import { CONTEXTUAL_COLOR, defineMonoWind } from "../src/element.ts";
 import type { MonoWindElement } from "../src/element.ts";
 import { SHADES } from "../src/glyph-box.ts";
@@ -421,5 +423,56 @@ describe("the ground (specs/cell-model.md)", () => {
       "rgb(0, 0, 0)",
       "0.4",
     ]);
+  });
+});
+
+describe("a checkbox's appearance (specs/checkboxes.md)", () => {
+  it("reads as its own under its flag, which the lock hiding its widget spares", async () => {
+    const lock = document.createElement("style");
+    lock.textContent = `input:not([${CONTROL_READ_FLAG}]) { appearance: none !important }`;
+    document.head.append(lock);
+    connect(`<input type="checkbox">|<input type="checkbox" style="appearance: none">|`);
+    await layOut();
+    lock.remove();
+    // The author's `appearance: none` draws no glyph, an empty box.
+    expect((host as MonoWindElement).toPlainText().split("\n")[0]!.trimEnd()).toBe("[ ]||");
+  });
+});
+
+describe("a checkbox's state (specs/checkboxes.md)", () => {
+  it("lays the host out at its lock's transition, whatever flipped it", async () => {
+    connect(`<input type="checkbox"> ok`);
+    await layOut();
+    const text = () => (host as MonoWindElement).toPlainText().split("\n")[0]!.trimEnd();
+    expect(text()).toBe("[ ] ok");
+    // A script's flip, which fires no input event: the lock's transition
+    // is what the browser tells.
+    const input = host.querySelector("input")!;
+    input.checked = true;
+    // happy-dom's TransitionEvent drops its init's propertyName.
+    const run = new Event("transitionrun", { bubbles: true });
+    input.dispatchEvent(Object.assign(run, { propertyName: "--mw-checked", pseudoElement: "" }));
+    await layOut();
+    expect(text()).toBe("[x] ok");
+  });
+});
+
+describe("a checkbox's own transitions (specs/checkboxes.md)", () => {
+  it("ride the lock's variables, read under its flag and padded, till its transition goes", async () => {
+    const lock = document.createElement("style");
+    lock.textContent = `input:not([${CONTROL_READ_FLAG}]) { transition-property: --mw-checked !important }`;
+    document.head.append(lock);
+    connect(
+      `<input type="checkbox" style="transition-property: color, background-color; transition-duration: 1s">`,
+    );
+    await layOut();
+    lock.remove();
+    const input = host.querySelector("input")!;
+    const written = () =>
+      Object.values(OWN_TRANSITION_VARS).map((name) => input.style.getPropertyValue(name));
+    expect(written().slice(0, 2)).toEqual(["color, background-color", "1s, 1s"]);
+    input.style.transitionDuration = "0s";
+    await layOut();
+    expect(written().every((value) => value === "")).toBe(true);
   });
 });

@@ -16,6 +16,7 @@ import type { BorderRun } from "../src/borders.ts";
 import { parseColor } from "../src/color.ts";
 import { layoutRoot } from "../src/layout.ts";
 import { placePainted } from "../src/paint-origin.ts";
+import { registerBorderGlyphs } from "../src/glyphs.ts";
 import { buildTree } from "../src/tree.ts";
 import { clusterAdvances } from "../src/width.ts";
 import { INLINE_PAD, wrapLines } from "../src/wrap.ts";
@@ -626,6 +627,121 @@ describe("inline padding rendering", () => {
     const root = makeNode({ children: [leaf] });
     layoutRoot(root, 3);
     expect(renderPlainText(root)).toBe("a b");
+  });
+});
+
+describe("an atomic inline box of no width", () => {
+  const drawn = (markup: string, width = 20): string => {
+    const host = document.createElement("div");
+    host.innerHTML = markup;
+    document.body.appendChild(host);
+    return plainText(buildTree(host.firstElementChild!, 16)!, width);
+  };
+
+  it("takes no cell of its line, as CSS gives it none", () => {
+    expect(drawn(`<div>a<span style="display: inline-block"></span>b</div>`)).toBe("ab");
+    expect(drawn(`<div>a <span style="display: inline-block"></span>b</div>`)).toBe("a b");
+    // Its margins are its cells.
+    expect(
+      drawn(`<div>a<span style="display: inline-block; margin-left: 8px"></span>b</div>`),
+    ).toBe("a  b");
+  });
+
+  it("wraps as the break opportunities beside it have it", () => {
+    expect(drawn(`<div>aaaa<span style="display: inline-block"></span> bbbb</div>`, 6)).toBe(
+      ["aaaa", "bbbb"].join("\n"),
+    );
+  });
+});
+
+describe("checkboxes and radios (specs/checkboxes.md)", () => {
+  /** A control's element in a host, `setup` run on it before the build. */
+  const built = (markup: string, setup?: (input: HTMLInputElement) => void): LayoutNode => {
+    const host = document.createElement("div");
+    host.innerHTML = markup;
+    document.body.appendChild(host);
+    const input = host.querySelector("input")!;
+    setup?.(input);
+    return buildTree(host.firstElementChild!, 16)!;
+  };
+  const drawn = (markup: string, setup?: (input: HTMLInputElement) => void) =>
+    plainText(built(markup, setup), 20).split("\n")[0]!.trimEnd();
+
+  it("draws each state's glyphs", () => {
+    expect(drawn(`<div><input type="checkbox"> a</div>`)).toBe("[ ] a");
+    expect(drawn(`<div><input type="checkbox" checked> a</div>`)).toBe("[x] a");
+    expect(
+      drawn(`<div><input type="checkbox" checked> a</div>`, (el) => (el.indeterminate = true)),
+    ).toBe("[-] a");
+    expect(drawn(`<div><input type="radio"> b</div>`)).toBe("( ) b");
+    expect(drawn(`<div><input type="radio" checked> b</div>`)).toBe("(\u2022) b");
+    // A radio group none of which is checked matches `:indeterminate`;
+    // its radios draw unchecked, as the widget does.
+    expect(drawn(`<div><input type="radio"> b</div>`, (el) => (el.indeterminate = true))).toBe(
+      "( ) b",
+    );
+  });
+
+  it("is as wide as its type's widest role and one row tall, whatever its state", () => {
+    const off = built(`<div><input type="checkbox"></div>`).children[0]!;
+    expect([off.intrinsicWidth, off.intrinsicHeight]).toEqual([3, 1]);
+    registerBorderGlyphs("checkbox-narrow-on", { solid: { checkboxOn: "\u2612" } });
+    const narrow = `<div><input type="checkbox" checked style="--mw-border-glyphs: checkbox-narrow-on">|</div>`;
+    expect(drawn(narrow)).toBe("\u2612  |");
+  });
+
+  it("draws its glyphs alone: no border, padding or background around the widget", () => {
+    const node = built(
+      `<div><input type="checkbox" style="border: 1px solid; padding: 0 16px; background: red"></div>`,
+    );
+    expect(plainText(node, 20).split("\n")).toEqual(["[ ]"]);
+    expect(node.children[0]!.style.backgroundColor).toBeUndefined();
+  });
+
+  it("draws checked in its accent, unchecked or disabled in its color", () => {
+    const color = (markup: string) => {
+      const node = built(markup);
+      layoutRoot(node, 20);
+      return renderCellSegments(node)[0]![0]!.color;
+    };
+    expect(
+      color(`<div style="color: blue"><input type="checkbox" style="accent-color: red"></div>`),
+    ).toBe("blue");
+    expect(
+      color(
+        `<div style="color: blue"><input type="checkbox" checked style="accent-color: red"></div>`,
+      ),
+    ).toBe("red");
+    expect(color(`<div style="color: blue"><input type="checkbox" checked></div>`)).toBe("blue");
+    expect(
+      color(
+        `<div style="color: blue"><input type="checkbox" checked disabled style="accent-color: red"></div>`,
+      ),
+    ).toBe("blue");
+  });
+
+  it("takes a set size, its glyphs at its content-box origin", () => {
+    expect(
+      drawn(
+        `<div style="text-align: center"><input type="checkbox" style="display: block; width: 24px">|</div>`,
+      ),
+    ).toBe("[ ]");
+    const node = built(`<div><input type="checkbox" style="width: 24px"></div>`).children[0]!;
+    layoutRoot(node, 20);
+    expect(node.localRect.width).toBe(6);
+  });
+
+  it("is a box like any other under `appearance: none`, 0 by 0 unsized", () => {
+    const bare = built(`<div><input type="checkbox" style="appearance: none"></div>`).children[0]!;
+    expect([bare.intrinsicWidth, bare.intrinsicHeight]).toEqual([0, 0]);
+    expect(
+      plainText(
+        built(
+          `<div><input type="checkbox" checked style="appearance: none; width: 16px; height: 12px; border: 1px solid"></div>`,
+        ),
+        20,
+      ),
+    ).toBe(["\u250C\u2500\u2500\u2510", "\u2502  \u2502", "\u2514\u2500\u2500\u2518"].join("\n"));
   });
 });
 

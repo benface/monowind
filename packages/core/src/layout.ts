@@ -511,7 +511,7 @@ function layoutTextLeaf(
       const marginX = margin.left + margin.right;
       const fill = Math.max(0, innerWidth - marginX);
       layoutNode(box, innerWidth, undefined, 0, 0, "shrink", cache, { fill });
-      node.advances![charIndex] = Math.max(1, box.localRect.width + marginX);
+      node.advances![charIndex] = Math.max(0, box.localRect.width + marginX);
     });
     let geometry: {
       spans: LineSpan[];

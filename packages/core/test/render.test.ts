@@ -234,3 +234,19 @@ it("takes back the scroll a fixed box escapes, once: a fixed box inside it sits 
   expect(cells(fixed, "--mw-sy")).toBe(5);
   expect(cells(inner, "--mw-sy")).toBe(0);
 });
+
+it("writes a checkbox's and a radio's cells, which they take while the engine reads (specs/checkboxes.md)", () => {
+  const host = document.createElement("div");
+  host.innerHTML = `<div style="width: 80px">
+    <input data-test="box" type="checkbox"> <input data-test="radio" type="radio">
+    <input data-test="bare" type="checkbox" style="appearance: none">
+    <input data-test="text">
+  </div>`;
+  document.body.appendChild(host);
+  const node = buildTree(host.firstElementChild!, 16)!;
+  layoutRoot(node, 20);
+  render(node);
+  const cells = (name: string) =>
+    host.querySelector<HTMLElement>(`[data-test="${name}"]`)!.style.getPropertyValue("--mw-tc");
+  expect([cells("box"), cells("radio"), cells("bare"), cells("text")]).toEqual(["3", "3", "0", ""]);
+});

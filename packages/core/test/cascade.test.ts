@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { CONTROL_STATE, OWN_TRANSITION_VARS } from "../src/animate.ts";
 import { EFFECTS, PAINT_ONLY } from "../src/animation.ts";
+import { CONTROL_READ_FLAG } from "../src/types.ts";
 import { OWN_HIGHLIGHT } from "../src/element.ts";
 
 /** The companion's layering (styles.css, the header): every
@@ -136,6 +138,7 @@ const VARIABLES = {
     "--mw-spb": ["data-mw-scroll"],
     "--mw-spl": ["data-mw-scroll"],
     "--mw-ws": ["data-mw-pre"],
+    "--mw-tc": ["data-mw-measuring"],
   } as Record<string, string[]>,
   /** The parent's by design: an inline element takes its block's. */
   inherited: ["--mw-ls", "--mw-ink", "--mw-ground"],
@@ -201,7 +204,7 @@ it("styles.css reads each reset variable, plainly", () => {
 
 /** Whether every part of a selector list matches `flag`. */
 const keysOn = (selector: string, flag: RegExp): boolean =>
-  selector.split(",").every((part) => flag.test(part));
+  selectorList(selector).every((part) => flag.test(part));
 
 it("styles.css reads a box's variable under an engine flag, a flag's under that flag", () => {
   const engineFlag = /\[data-mw-(?!measuring|settling)[\w-]+/;
@@ -233,7 +236,13 @@ const selectorList = (list: string): string[] => {
 it("styles.css masks the transitions a frame samples, and those alone", () => {
   const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
   const sampled = new Set([...EFFECTS, ...PAINT_ONLY].map(kebab));
-  const masks = all.filter((d) => d.property === "transition-property" && d.important);
+  // A checkbox's or a radio's lock merges its own lists, tested below.
+  const masks = all.filter(
+    (d) =>
+      d.property === "transition-property" &&
+      d.important &&
+      !d.selector.includes('[type="checkbox"]'),
+  );
   expect(masks).toHaveLength(2);
   for (const mask of masks) {
     const kept = new Set(selectorList(mask.value.replace("!important", "")));
@@ -262,4 +271,54 @@ it("styles.css exempts from the selection lock the elements element.ts does", ()
   // Alike but for their quotes, the formatter's in CSS.
   const exempt = (list: string) => new Set(selectorList(list.replaceAll("'", '"')));
   expect(exempt(lock.selector.slice(start, end - 1))).toEqual(exempt(OWN_HIGHLIGHT));
+});
+
+it("styles.css merges a checkbox's and a radio's own transitions through the engine's names (specs/checkboxes.md)", () => {
+  const toggle = (d: Declaration) =>
+    d.selector.includes('[type="checkbox"]') && d.selector.includes('[type="radio"]');
+  const kebab = (name: string) => name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+  /** The state's own entry, last in each list. */
+  const state = {
+    transitionProperty: CONTROL_STATE,
+    transitionDuration: "1ms",
+    transitionTimingFunction: "linear",
+    transitionDelay: "0s",
+    transitionBehavior: "normal",
+  };
+  const locks = all.filter((d) => toggle(d) && d.property.startsWith("transition-"));
+  expect(new Set(locks.map((d) => d.property))).toEqual(
+    new Set(Object.keys(OWN_TRANSITION_VARS).map(kebab)),
+  );
+  for (const [longhand, variable] of Object.entries(OWN_TRANSITION_VARS)) {
+    const [lock] = locks.filter((d) => d.property === kebab(longhand));
+    expect(lock!.value, longhand).toMatch(
+      new RegExp(
+        `^\\s*var\\(${variable}, [^)]+\\), ${state[longhand as keyof typeof state]} !important$`,
+      ),
+    );
+    for (const flag of [CONTROL_READ_FLAG, "data-mw-measuring", "data-mw-settling"]) {
+      expect(lock!.selector, longhand).toContain(`[${flag}]`);
+    }
+    expect(readers(variable).every(toggle), variable).toBe(true);
+  }
+  expect(css).toContain(`@property ${CONTROL_STATE} {`);
+  const values = all.filter((d) => d.property === CONTROL_STATE && toggle(d));
+  expect(
+    values.map((d) => [d.selector.match(/:(checked|indeterminate)/)?.[1], d.value.trim()]),
+  ).toEqual([
+    ["checked", "1"],
+    ["indeterminate", "2"],
+  ]);
+});
+
+it("styles.css hides a checkbox's and a radio's widget but under the engine's read of their appearance (specs/checkboxes.md)", () => {
+  const locks = all.filter(
+    (d) => d.property === "appearance" && d.important && d.selector.includes('[type="checkbox"]'),
+  );
+  expect(
+    locks.map((d) => [
+      d.value.replace("!important", "").trim(),
+      d.selector.includes(`:not([${CONTROL_READ_FLAG}])`),
+    ]),
+  ).toEqual([["none", true]]);
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import {
   hasSynthesizedTransitions,
+  ownTransitionLists,
   resolvePendingTransitions,
   trackBackground,
 } from "../src/animate.ts";
@@ -408,5 +409,52 @@ describe("node index", () => {
     const index = nodeIndex(root);
     expect(index.get(a)).toBe(root);
     expect(index.get(b)).toBe(child);
+  });
+});
+
+describe("a control's own transitions (specs/checkboxes.md)", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+  });
+  afterEach(() => host.remove());
+  const control = (style: string): HTMLInputElement => {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.setAttribute("style", style);
+    host.append(input);
+    return input;
+  };
+
+  it("pads each list to the property list's length, as CSS pairs them", () => {
+    const input = control(
+      "transition-property: color, background-color, border-color; transition-duration: 1s, 2s; transition-timing-function: linear; transition-delay: 0s",
+    );
+    const lists = ownTransitionLists(getComputedStyle(input));
+    expect(lists.transitionProperty).toBe("color, background-color, border-color");
+    expect(lists.transitionDuration).toBe("1s, 2s, 1s");
+    expect(lists.transitionTimingFunction).toBe("linear, linear, linear");
+  });
+
+  it("arms a control's fade from its own lists, which its lock hides", () => {
+    const timing = vi
+      .spyOn(KeyframeEffect.prototype, "getComputedTiming")
+      .mockReturnValue({ progress: 0 });
+    // Its computed style is the lock's; its own lists, the read's.
+    const input = control("transition-property: --mw-checked; transition-duration: 1ms");
+    const own = {
+      transitionProperty: "background-color",
+      transitionDuration: "1s",
+      transitionTimingFunction: "ease",
+      transitionDelay: "0s",
+      transitionBehavior: "normal",
+    };
+    const cs = getComputedStyle(input);
+    trackBackground(input, "rgb(255, 0, 0)", cs);
+    trackBackground(input, "rgb(0, 0, 255)", cs);
+    resolvePendingTransitions(host, new Map([[input, own]]));
+    expect(hasSynthesizedTransitions()).toBe(true);
+    timing.mockRestore();
   });
 });

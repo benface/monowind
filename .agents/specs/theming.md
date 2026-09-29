@@ -149,7 +149,12 @@ tr?, bl?, br? }` in cells: a corner draws the registration nearest
   specs/box-shadow.md — and the list bullets `disc`, `circle`,
   `square`, `disclosureOpen` and `disclosureClosed` (defaults
   `• ◦ ▪ ▼ ▶`; `ascii` `* o # v >`; `cp437` `• ○ ■ ▼ ►`), which a
-  list item's marker draws through its own set — specs/lists.md.
+  list item's marker draws through its own set — specs/lists.md — and
+  the controls' `checkboxOff`, `checkboxOn`, `checkboxMixed`,
+  `radioOff` and `radioOn`, a cell or more each (defaults
+  `[ ] [x] [-]` and `( ) (•)`; `ascii`'s `radioOn` `(*)`) —
+  specs/checkboxes.md. A font gap (`--mw-missing-glyphs`) drops a
+  role holding any glyph it names, whole.
 - ANSI defaults live in core's companion alone (`mono-wind` base
   block).
 - Authoring sugar shipped: `borders-default/rounded/ascii/single/blocks/cp437`

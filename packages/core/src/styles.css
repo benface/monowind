@@ -79,6 +79,10 @@
     font: inherit;
     line-height: inherit;
     text-align: inherit;
+  }
+  /* A checkbox's or a radio's appearance is the author's to read: the
+   * grid draws the widget's glyphs (specs/checkboxes.md). */
+  mono-wind :is(button, input:not([type="checkbox"], [type="radio"]), select, textarea) {
     appearance: none;
   }
 
@@ -124,11 +128,31 @@
     color: color-mix(in srgb, var(--mw-bg) 50%, transparent);
   }
 
+  /* A disabled checkbox or radio at half strength, as a placeholder;
+   * its state, whose transition tells the host of a flip
+   * (specs/checkboxes.md). */
+  mono-wind input:is([type="checkbox"], [type="radio"]):disabled {
+    color: color-mix(in srgb, var(--mw-fg) 50%, transparent);
+  }
+  mono-wind input:is([type="checkbox"], [type="radio"]):checked {
+    --mw-checked: 1;
+  }
+  mono-wind input:is([type="checkbox"], [type="radio"]):indeterminate {
+    --mw-checked: 2;
+  }
+  /* While the engine reads, a checkbox or radio is its last layout's
+   * cells wide, an intrinsic width, which the engine's read of the
+   * author's leaves `auto` (specs/checkboxes.md "Sizing"). */
+  mono-wind input:is([type="checkbox"], [type="radio"])[data-mw-measuring] {
+    contain: inline-size;
+    contain-intrinsic-inline-size: calc(var(--mw-tc, 3) * var(--mw-cw, 1ch));
+  }
+
   /* Single-line controls: never wrap, clip overflow. The one-row
    * floor lives in the tree builder (a CSS min-height on the outer
    * box gives no content-area guarantee once border + padding exceed
    * it). */
-  mono-wind :is(input, select) {
+  mono-wind :is(input:not([type="checkbox"], [type="radio"]), select) {
     white-space: nowrap;
     overflow: hidden;
   }
@@ -326,6 +350,14 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   inherits: false;
 }
 
+/* A checkbox's or a radio's state, which its lock transitions
+ * (specs/checkboxes.md): an integer, so a flip is a change to run. */
+@property --mw-checked {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
 /* The host's used width is a whole number of cells (specs/cell-model.md
  * "Host sizing"): the engine measures the natural CSS width with this
  * rule lifted, then caps the box to the columns that fit — so borders,
@@ -455,6 +487,26 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   mono-wind [data-mw-after][data-mw-settling]::after {
     transition-property:
       color, border-color, opacity, transform, translate, rotate, scale, filter !important;
+  }
+
+  /* A checkbox's or a radio's widget never paints nor sizes its box,
+   * and its state's 1ms transition, after the author's own, tells the
+   * host of a flip; the engine's read of its own styles lifts both
+   * (specs/checkboxes.md "The light DOM"). */
+  mono-wind input:is([type="checkbox"], [type="radio"]):not([data-mw-control-read]) {
+    appearance: none !important;
+  }
+  mono-wind
+    input:is([type="checkbox"], [type="radio"]):not(
+      [data-mw-measuring],
+      [data-mw-settling],
+      [data-mw-control-read]
+    ) {
+    transition-property: var(--mw-tp, --mw-checked), --mw-checked !important;
+    transition-duration: var(--mw-td, 0s), 1ms !important;
+    transition-timing-function: var(--mw-tf, linear), linear !important;
+    transition-delay: var(--mw-tl, 0s), 0s !important;
+    transition-behavior: var(--mw-tb, normal), normal !important;
   }
 
   /* Anchor names scoped to their own subtree while the engine reads: an

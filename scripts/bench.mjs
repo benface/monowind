@@ -1,5 +1,5 @@
 /**
- * Time to interactive on a page the grid finds hard, in one of seven
+ * Time to interactive on a page the grid finds hard, in one of eight
  * shapes (`SHAPES` below). Reports the median of several runs so a
  * number is comparable across commits; record what it gives in
  * .agents/architecture/performance.md when it moves.
@@ -11,6 +11,7 @@
  *   pnpm bench --shape positioned  cards with badges over the next, in a scroller
  *   pnpm bench --shape lists   numbered list items, every tenth holding bullets
  *   pnpm bench --shape labels  paragraphs numbered and marked by pseudo-elements
+ *   pnpm bench --shape checkboxes  labeled checkboxes, every tenth with a transition
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
@@ -111,6 +112,19 @@ const SHAPES = {
         (i) =>
           `<p class="before:text-cyan-400 before:content-[counter(item)_'._'] before:[counter-increment:item]">` +
           `<a class="underline after:content-['_↗']" href="#">item ${i}</a></p>`,
+      )}</div>`,
+  },
+  // Checkboxes (specs/checkboxes.md): the appearance read and a glyph
+  // leaf per control, and every tenth's own transitions read at the
+  // pass's end.
+  checkboxes: {
+    label: "labeled checkboxes",
+    body: () =>
+      `<div class="flex flex-col">${repeat(
+        (i) =>
+          `<label><input type="checkbox"${i % 3 ? "" : " checked"}${
+            i % 10 ? "" : ' class="transition-colors"'
+          }> item ${i}</label>`,
       )}</div>`,
   },
 };

@@ -1387,14 +1387,17 @@ colors, as the grid swaps a selected cell's, by a rule of their own
 reading the ink and ground the engine writes on them
 (`wide-characters.md` "The grid paints the selection"). Placeholders
 (`::placeholder`, and `select:invalid` for a required select on its
-empty option) paint at half the themed color.
+empty option) paint at half the themed color. A checkbox or a radio
+draws its state instead, as glyphs from its glyph set, the native
+control under them (specs/checkboxes.md).
 
 Intrinsic sizes mirror the native ones:
 
 - `<input>`: the `size` attribute (default 20) in content cells; a
   `submit`, `reset` or `button` input, its label's: its `value`, else
   the browser's own ("Submit" in Chromium and WebKit, "Submit Query"
-  in Firefox), read off its native box where nothing sizes it.
+  in Firefox), read off its native box where nothing sizes it; a
+  checkbox or radio, its type's widest glyphs (specs/checkboxes.md).
 - `<textarea>`: `cols` (default 20) wide; tall enough for
   `max(rows, wrapped value lines)` — the value is wrapped by the engine
   against the content width from the PREVIOUS layout (snapshotted by

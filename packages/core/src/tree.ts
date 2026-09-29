@@ -30,6 +30,8 @@ import {
   skipsContents,
   trackingCells,
 } from "./style.ts";
+import { ownTransitionLists } from "./animate.ts";
+import type { TransitionLists } from "./animate.ts";
 import { animatedProperties } from "./animation.ts";
 import {
   countersOf,
@@ -54,15 +56,17 @@ import {
   readGenerated,
 } from "./generated.ts";
 import type { Pseudo } from "./generated.ts";
-import { bulletGlyph, glyphSetFor, glyphSetOf } from "./glyphs.ts";
+import { bulletGlyph, controlGlyphs, glyphSetFor, glyphSetOf } from "./glyphs.ts";
 import { inlineMembersOf, inlineOwners } from "./stacking.ts";
 import { casedClusters, readTextCase } from "./text-transform.ts";
 import type { TextCase } from "./text-transform.ts";
 import {
   clipsAxis,
+  CONTROL_READ_FLAG,
   createNode,
   decorationOf,
   defaultCellStyle,
+  isToggle,
   NO_DECORATION,
   parentElementOf,
   preservedSpaces,
@@ -130,6 +134,8 @@ interface BuildContext {
   rootFontSizePx: number;
   cellMetrics: CellMetrics | undefined;
   textareaWidths: TextareaWidths | undefined;
+  /** Each checkbox's and radio's own `appearance` (readControls). */
+  appearances: ReadonlyMap<Element, string> | undefined;
   items: LayoutNode[];
   /** The elements each pseudo-element may give content. */
   generated: Record<Pseudo, ReadonlySet<Element>>;
@@ -152,6 +158,7 @@ function newContext(
   rootFontSizePx: number,
   cellMetrics: CellMetrics | undefined,
   textareaWidths: TextareaWidths | undefined,
+  appearances?: ReadonlyMap<Element, string>,
 ): BuildContext {
   // Held here, as each run's context copies this one.
   let counters: ReadonlyMap<Element | GeneratedNode, Counters> | undefined;
@@ -159,6 +166,7 @@ function newContext(
     rootFontSizePx,
     cellMetrics,
     textareaWidths,
+    appearances,
     items: [],
     generated: generatedElements(root),
     pseudoElements: new Map(),
@@ -280,6 +288,12 @@ function buildElement(root: Element, context: BuildContext): LayoutNode | null {
   // semantics while the grid shows the rendered content.
   const leaf = leafRendererFor(root.tagName);
   if (leaf) return buildRendererLeaf(root, style, leaf);
+  if (isToggle(root)) {
+    const { appearance, accentColor } = getComputedStyle(root);
+    if ((context.appearances?.get(root) ?? appearance) !== "none") {
+      return buildToggleLeaf(root as HTMLInputElement, style, accentColor);
+    }
+  }
 
   const childNodes = shownChildNodes(root, context);
   const elementChildren = childNodes.filter(isBoxOrigin);
@@ -593,8 +607,9 @@ export function buildRoot(
   rootFontSizePx: number,
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
+  appearances?: ReadonlyMap<Element, string>,
 ): LayoutNode {
-  const context = newContext(host, rootFontSizePx, cellMetrics, textareaWidths);
+  const context = newContext(host, rootFontSizePx, cellMetrics, textareaWidths, appearances);
   const nodes = Array.from(host.childNodes).filter(
     (node) => !(node instanceof Element && node.hasAttribute("data-mw-probe")),
   );
@@ -709,7 +724,7 @@ function buildLeaf(
     eachObjectMarker(text, (charIndex, boxIndex) => {
       const box = run.boxes[boxIndex]!;
       const margins = fixedMargins(resolveMargin(box.style.margin, 0), "x");
-      advances[charIndex] = Math.max(1, widthContribution(box, "max", cache) + margins);
+      advances[charIndex] = Math.max(0, widthContribution(box, "max", cache) + margins);
     });
   }
   // Form controls with no explicit width would otherwise be 0 cells
@@ -769,7 +784,7 @@ function buildLeaf(
     // Leading: N lines occupy N + (N − 1) × gap rows, same as any
     // laid-out leaf (specs/cell-model.md "Line height on the grid").
     intrinsicHeight = lines + Math.max(0, lines - 1) * style.lineGap;
-  } else if (formControl) {
+  } else if (formControl && !isToggle(root)) {
     intrinsicHeight = Math.max(1, contentHeight);
   } else {
     intrinsicHeight = contentHeight;
@@ -945,6 +960,66 @@ function buildRendererLeaf(
     });
     node.charInline = charInline;
   }
+  return node;
+}
+
+/** Each checkbox's and radio's own appearance and transitions, read in
+ * one batch under the flag that lifts their locks: before a layout's
+ * masks and first geometry read (specs/checkboxes.md "The light DOM"). */
+export function readControls(root: Element): {
+  appearances: Map<Element, string>;
+  transitions: Map<Element, TransitionLists>;
+} {
+  const toggles = root.querySelectorAll('input[type="checkbox"], input[type="radio"]');
+  const appearances = new Map<Element, string>();
+  const transitions = new Map<Element, TransitionLists>();
+  for (const el of toggles) el.setAttribute(CONTROL_READ_FLAG, "");
+  for (const el of toggles) {
+    const cs = getComputedStyle(el);
+    appearances.set(el, cs.appearance);
+    transitions.set(el, ownTransitionLists(cs));
+  }
+  for (const el of toggles) el.removeAttribute(CONTROL_READ_FLAG);
+  return { appearances, transitions };
+}
+
+/** A checkbox or radio drawn as its widget: its state's glyphs,
+ * padded to its type's widest so a flip never reflows the line, in its
+ * accent where checked, enabled and unfocused, without the chrome no
+ * engine draws around a widget (specs/checkboxes.md). A radio group
+ * none of which is checked is `:indeterminate`, its radios drawn
+ * unchecked. */
+function buildToggleLeaf(
+  input: HTMLInputElement,
+  style: ReturnType<typeof readCellStyle>,
+  accentColor: string,
+): LayoutNode {
+  const glyphs = controlGlyphs(glyphSetFor(style.glyphSet), input.type as "checkbox" | "radio");
+  const shown = (input.indeterminate && glyphs.mixed) || (input.checked ? glyphs.on : glyphs.off);
+  const cells = Math.max(...Object.values(glyphs).map((glyph) => textCells(glyph)));
+  const text = shown + " ".repeat(cells - textCells(shown));
+  // The focus invert is any control's: its ink and ground stay.
+  const focused = input.matches(":focus-visible");
+  if (!focused) style.backgroundColor = undefined;
+  if (
+    !focused &&
+    shown !== glyphs.off &&
+    !input.matches(":disabled") &&
+    accentColor &&
+    accentColor !== "auto"
+  ) {
+    style.color = accentColor;
+  }
+  style.whiteSpace = "pre";
+  style.textAlign = "start";
+  style.width ??= { kind: "max-content" };
+  style.border = zeroInsets();
+  style.padding = zeroInsets();
+  style.backgroundImage = [];
+  const advances = clusterAdvances(text, style.tracking);
+  const intrinsicWidth = longestLineAdvance(text, advances, style.tracking, style.textIndent);
+  const node = createNode(input, style, [], text, intrinsicWidth, 1);
+  if (advances.some((a) => a !== 1)) node.advances = advances;
   return node;
 }
 
@@ -1663,12 +1738,14 @@ const LABELED_INPUTS = new Set(["submit", "reset", "button"]);
 /** An input's intrinsic width in cells: a field's `size` (20 by
  * default), a button's label — its value, else the browser's own
  * ("Submit" in Chromium and WebKit, "Submit Query" in Firefox), read
- * off its native box where nothing sizes it. */
+ * off its native box where nothing sizes it — and none for a checkbox
+ * or radio under `appearance: none`, as in the engines. */
 function inputWidth(
   input: HTMLInputElement,
   style: CellStyle,
   { cellMetrics: metrics }: BuildContext,
 ): number {
+  if (isToggle(input)) return 0;
   if (!LABELED_INPUTS.has(input.type)) return Number(input.size) || 20;
   if (input.value) return textCells(input.value);
   if (!metrics || style.width !== undefined) return 0;
