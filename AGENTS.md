@@ -51,6 +51,11 @@ day it is done.
   `render: Menu.render!`), tagged `["!dev"]` where its end state
   differs from the story's, else `["!dev", "!golden"]` — each story's
   tags in its own literal, which the indexer reads statically.
+- A `Packages / ui` story's component options are Storybook controls
+  read off its element's attribute table (`stories/controls.ts`):
+  `controlsOf(MonoX, defaults)` spread into the story and its twins,
+  `${controlled(args)}` on the element in place of literal option
+  attributes, `defaults` being the options the markup would have set.
 - Tailwind classes in `class` and `className` attributes take their
   canonical form (`scrollbar-gutter-stable`, not `[scrollbar-gutter:stable]`):
   `pnpm check` reports any other form and `pnpm check:fix` rewrites it,

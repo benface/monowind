@@ -60,22 +60,24 @@ import { defineMonoUi } from "@monowind/ui/elements";
 defineMonoUi();
 ```
 
-**Vanilla, or a framework without a Zag adapter** — mark the parts
-with `data-part` and mount the component on their root: `menu(root,
-props)`, `listbox(root, props)`, `select(root, props)`,
-`combobox(root, props)`, `dialog(root, props)`, `popover(root,
-props)`, `tooltip(root, props)`, `collapsible(root, props)`,
-`accordion(root, props)`. `props` are Zag's machine props
-(`id` required; a list's `collection` optional, the marked items
-making one). Each returns the live `api`, an `updateProps(partial)`
-that merges into them, and a `destroy()`. The parts are found once,
-at the mount: for markup that changes, destroy and mount again — a
-template that fills the root after handing it over leaves a mount
-with nothing to wire, and a development build says so where a list's
-collection holds items its markup never marked. Give the positioner
-`popover="manual"` in the markup, as above: the mount sets it, but a
-page parsed before the script runs would show the content in flow
-until then.
+**Vanilla, or a framework without a Zag adapter** — mark the parts with
+`data-part` and mount the component on their root: `menu(root, props)`,
+`listbox(root, props)`, `select(root, props)`, `combobox(root, props)`,
+`dialog(root, props)`, `popover(root, props)`, `tooltip(root, props)`,
+`collapsible(root, props)`, `accordion(root, props)`. `props` are Zag's
+machine props (`id` required; a list's `collection` optional, the marked
+items making one). Each returns the live `api`, an
+`updateProps(partial)` that merges into them, and a `destroy()` that
+stops it and puts the markup back as it was written — but for what the
+reader chose (an item's `data-selected`, an accordion item's
+`data-state`, what they typed), which a mount again reads, and for what
+your page changed since. The parts are found once, at the mount: for
+markup that changes, destroy and mount again — a template that fills the
+root after handing it over leaves a mount with nothing to wire, and a
+development build says so where a list's collection holds items its
+markup never marked. Give the positioner `popover="manual"` in the
+markup, as above: the mount sets it, but a page parsed before the script
+runs would show the content in flow until then.
 
 **React, Vue, or Svelte** — `@monowind/ui-react`, `@monowind/ui-vue`,
 and `@monowind/ui-svelte` fold Zag's adapter in: one hook, composable,
@@ -150,6 +152,12 @@ mounted as a menu of its own on the parent's behavior props —
 `title`, `description`, and `close-trigger`. A `data-disabled` on an
 item disables it.
 
+A part is its nearest root's, so a component nested in another's
+markup — a select in a dialog's form, a tooltip on a button in a
+popover — keeps its parts to itself. Elements need nothing for it;
+mounting by script, mark a nested component's root
+`data-part="root"`, as a submenu's is marked `data-part="submenu"`.
+
 A listbox has no floating part: the element you mount it on is its
 `root`, and under it go a `label` and a `content` holding the `item`s,
 each with an `item-text` and an `item-indicator` inside it, in
@@ -220,8 +228,7 @@ collapsible's `root` holds a `trigger`, the `content` and an optional
 `indicator`; an accordion's holds its `item`s, each carrying its
 `data-value` with an `item-trigger`, an `item-content` and an optional
 `item-indicator` inside it, `data-disabled` on an item disabling it.
-One nested in another's content keeps its parts to itself. Closed, a
-content is `hidden`, so it leaves the grid. The items marked
+Closed, a content is `hidden`, so it leaves the grid. The items marked
 `data-state="open"` are open at the mount where the props name no
 `value` or `defaultValue` — the first alone unless the accordion is
 `multiple` — and Zag writes that state on every item after, so a mount
@@ -274,7 +281,8 @@ parts marked inside it as ever:
 **Attributes are the props**, kebab-cased: a boolean by presence
 (`false` written out turns one off), a number parsed, a string as
 written; `placement`, `gutter`, `offset-main-axis` and
-`offset-cross-axis` fold into `positioning`, the dialog's
+`offset-cross-axis` fold into `positioning` where a floating part is
+placed against its trigger (a dialog's is centered), the dialog's
 `content-role` is the machine's `role`, the element's own being the
 element's, and `aria-label` — which names the content — is written as
 Zag spells it. An attribute absent at the mount says nothing, so the
@@ -295,26 +303,28 @@ state, set or removed after it opens and closes the component, and the
 machine writes it back as the reader opens or dismisses it.
 
 **A prop no attribute carries** — `ids`, `translations`, a menu's
-`navigate` and `anchorPoint`, a list's `collection`, `value` and
-`defaultValue`, an accordion's `value` and `defaultValue`, a dialog's `initialFocusEl` — is a property on the
-element: `element.ids = {…}`, `element.defaultValue = ["main"]`,
-or `element.setProp(name, value)` by name, set before or after
-`defineMonoUi()`. `getRootNode` takes the
-second form only, the DOM owning that name on every node. React sets a property it finds, so `<mono-select collection={…}
-/>` hands the value over whole rather than stringified, and setting
-the same value again does nothing, which matters because React sets
-one on every render. `value` controls the selection, as Zag's does: a
-press changes it only where a `valuechange` listener sets it back
+`navigate`, a list's `collection`, `value` and `defaultValue`, an
+accordion's `value` and `defaultValue`, a dialog's `initialFocusEl` — is
+a property on the element: `element.ids = {…}`,
+`element.defaultValue = ["main"]`, or `element.setProp(name, value)` by
+name, set before or after `defineMonoUi()`. `getRootNode` takes the
+second form only, the DOM owning that name on every node. React sets a
+property it finds, so `<mono-select collection={…} />` hands the value
+over whole rather than stringified, and setting the same value again
+does nothing, which matters because React sets one on every render.
+`value` controls the selection, as Zag's does: a press changes it only
+where a `valuechange` listener sets it back
 (`element.value = event.detail.value`). `defaultValue` — or the items
 marked `data-selected` where none is set — is the element's first
 mount's, as a form control's default is its page load's: a later mount
-(items added, the element moved) keeps it for a form's reset, even for
-a value whose item arrives after it, and puts the reader's own
-selection back, dispatching no `valuechange` for it. Items that arrive
-marked become the default and the selection, as an inserted
-`<option selected>` does.
+(items added, the element moved) keeps it for a form's reset, even for a
+value whose item arrives after it, and puts the reader's own selection
+back, dispatching no `valuechange` for it. Items that arrive marked
+become the default and the selection, as an inserted `<option selected>`
+does.
 
-`element.api` is the live API and `element.destroy()` stops the mount.
+`element.api` is the live API and `element.destroy()` stops the mount,
+the markup put back as it was written.
 The element mounts when its parts are there — at the end of the parse
 for markup the browser is still reading, and as they arrive for markup
 a framework fills in — and mounts again as they are replaced. Leaving

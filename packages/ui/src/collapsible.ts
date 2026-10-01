@@ -2,7 +2,7 @@ import * as Collapsible from "@zag-js/collapsible";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, type MachineProps } from "./anchor.ts";
-import { liveProps, mount, partsOutside, start, type Mounted } from "./vanilla.ts";
+import { liveProps, mount, part, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Collapsible.Props;
 export type Api<T extends PropTypes = PropTypes> = Collapsible.Api<T>;
@@ -70,13 +70,12 @@ export function api<T extends PropTypes>(
 
 /** A collapsible on markup marked with `data-part` (the parts in the
  * README): the mount's own element is the `root`, and under it a
- * `trigger`, the `content`, and an optional `indicator` — a
- * collapsible inside its content keeping its own. */
+ * `trigger`, the `content`, and an optional `indicator`. */
 export function collapsible(root: Element, machineProps: Props): Mounted<Api> {
   const live = liveProps(machineProps, props);
-  const [trigger] = partsOutside(root, "trigger", "content");
-  const [content] = partsOutside(root, "content", "content");
-  const [indicator] = partsOutside(root, "indicator", "content");
+  const trigger = part(root, "trigger");
+  const content = part(root, "content");
+  const indicator = part(root, "indicator");
   return mount(
     start(Collapsible.machine, () => live.machine),
     (service) => connect(service, normalizeProps, live.machine),

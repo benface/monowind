@@ -81,19 +81,29 @@ the engine places and layers the parts, Zag runs them.
   classes. The parts are Zag's anatomy — `trigger`, `positioner`,
   `content`, `item`, `item-group`, `separator`, and so on per
   component — marked `data-part` on ordinary elements.
-- **A vanilla path for markup without a framework**: `menu(root,
-props)` is the core plus `VanillaMachine` and `spreadProps`: parts
-  found by `data-part` under the root, items and groups by their
-  `data-value`, attributes and handlers applied a microtask after the
-  mount — once the sends a mount makes (a submenu's link to its
-  parent) have landed — and re-applied on every state change, a
-  submenu's included. A submenu is a menu of its own on the parent's
-  behavior props — `onSelect`, `closeOnSelect`, `loopFocus`,
-  `typeahead`, `composite`, `navigate`, `dir`, `getRootNode` — since
-  Zag calls a menu's `onSelect` for its own items; its open state,
-  highlight, and ids are its own. It returns the API and a `destroy`
-  that stops the machine and takes its handlers off the parts, after
-  which a mount on the same markup wires it again.
+- **A vanilla path for markup without a framework**: `menu(root, props)`
+  is the core plus `VanillaMachine` and `spreadProps`: parts found by
+  `data-part` under the root, items and groups by their `data-value`,
+  attributes and handlers applied a microtask after the mount — once the
+  sends a mount makes (a submenu's link to its parent) have landed — and
+  re-applied on every state change, a submenu's included. A part is its
+  nearest root's, so a component nested in another's markup keeps its
+  own: a root is a submenu's, an element's (any `defineElement` makes,
+  whatever order they mount in), or one a page nesting components by
+  script marks `data-part="root"`, the anatomy's name for it. A submenu
+  is a menu of its own on the parent's behavior props — `onSelect`,
+  `closeOnSelect`, `loopFocus`, `typeahead`, `composite`, `navigate`,
+  `dir`, `getRootNode` — since Zag calls a menu's `onSelect` for its own
+  items; its open state, highlight, and ids are its own. It returns the
+  API and a `destroy` that stops the machine, takes its handlers off the
+  parts and puts back what it wrote on them — each attribute and inline
+  style property as the markup held it before the mount — but for what
+  the reader chose, which a mount again reads (an item's
+  `data-selected`, an accordion item's `data-state`, a control's value),
+  and for an attribute the page changed since the mount's last write,
+  which is the page's. A mount on the same markup then starts as the
+  first did, on other props too: nothing the last one wrote and the next
+  one would not stays behind.
 - **A component with no floating part stands in the flow.** A listbox
   is roles, selection, and keyboard alone, so the engine lays its parts
   out as it lays out any box and the entry adds no props to Zag's. It
@@ -319,8 +329,9 @@ to, and additively.
   framework's render, an upgrade after parsing), else — a document
   still parsing, the parser having connected the element before its
   children — at `DOMContentLoaded`; a `MutationObserver` on its
-  subtree mounts again, a microtask after, when the marked parts come
-  or go — the parts the mount was given, by identity, so a mount that
+  subtree mounts again, a microtask after, when its own marked parts
+  come or go — a nested element's are that element's — the parts the
+  mount was given, by identity, so a mount that
   writes into its own markup (a select filling the hidden control a
   form posts) changes none of them and starts no loop; a
   disconnection destroys the mount (hiding the popover), a
@@ -328,60 +339,60 @@ to, and additively.
   positioner, `popover="manual"` in the markup keeps a page parsed
   before the script from showing the content in flow.
 - **Attributes are the props, by type.** Each element lists its props
-  with their types; each is the kebab-cased attribute (`close-on-select`,
-  `loop-focus`, `open-delay`), the positioning flattened (`placement`,
-  `gutter`, `offset-cross-axis`, `offset-main-axis`, in cells), and
-  the dialog's `role` prop `content-role`, the element's own `role`
-  being its own, and `aria-label` — which names the content, and
-  which Zag spells with the hyphen — written as it is. A boolean is true by presence and false as `"false"`
-  (React 19 removes an attribute it sets to `false`; `"false"` comes
-  from string templating alone, and reads as it means); a number
-  parses, a string stays a string (so a `highlighted-value` matches
-  its item's `data-value` as written). Props without an attribute form
-  — `ids`, `translations`, a menu's `navigate` and `anchorPoint`, a
-  list's (a listbox's, a select's, a combobox's) `collection`, `value`
-  and `defaultValue`, a dialog's `initialFocusEl` — are accessors
-  on the class, so a framework that sets a property it finds (React
-  does) hands the value over whole; setting the same value again —
-  or an array or plain object whose entries are the same — does
-  nothing, React setting one on every render, often fresh. One set before the
-  element is defined is the instance's own and hides the accessor, so
-  the element hands it over at its connection, the custom-element
-  upgrade idiom. A name the DOM already
-  carries is left alone and takes `setProp` instead — `getRootNode`
-  is a method on every node, and an accessor would shadow it. `id`
-  is the element's own, generated when it has none, and bound at the
-  mount: a change to it mounts again. An attribute changed after the
-  mount reaches the running machine (Zag's `updateProps`, through a
-  `Mounted.updateProps` the vanilla mount gains) and the grid's props
-  alike, the mount reading its props per render rather than once, and
-  one removed drops its prop, the machine back at its default. An
-  accordion's `value` and `defaultValue` are properties as a list's
+  with their types; each is the kebab-cased attribute
+  (`close-on-select`, `loop-focus`, `open-delay`), the positioning
+  flattened (`placement`, `gutter`, `offset-cross-axis`,
+  `offset-main-axis`, in cells) where a floating part is placed against
+  its trigger — not a dialog's, which the UA centers — and the dialog's
+  `role` prop `content-role`, the element's own `role` being its own,
+  and `aria-label` — which names the content, and which Zag spells with
+  the hyphen — written as it is. A boolean is true by presence and false
+  as `"false"` (React 19 removes an attribute it sets to `false`;
+  `"false"` comes from string templating alone, and reads as it means);
+  a number parses, a string stays a string (so a `highlighted-value`
+  matches its item's `data-value` as written). Props without an
+  attribute form — `ids`, `translations`, a menu's `navigate`, a list's
+  (a listbox's, a select's, a combobox's) `collection`, `value` and
+  `defaultValue`, a dialog's `initialFocusEl` — are accessors on the
+  class, so a framework that sets a property it finds (React does) hands
+  the value over whole; setting the same value again — or an array or
+  plain object whose entries are the same — does nothing, React setting
+  one on every render, often fresh. One set before the element is
+  defined is the instance's own and hides the accessor, so the element
+  hands it over at its connection, the custom-element upgrade idiom. A
+  name the DOM already carries is left alone and takes `setProp` instead
+  — `getRootNode` is a method on every node, and an accessor would
+  shadow it. `id` is the element's own, generated when it has none, and
+  bound at the mount: a change to it mounts again. An attribute changed
+  after the mount reaches the running machine (Zag's `updateProps`,
+  through a `Mounted.updateProps` the vanilla mount gains) and the
+  grid's props alike, the mount reading its props per render rather than
+  once, and one removed drops its prop, the machine back at its default.
+  An accordion's `value` and `defaultValue` are properties as a list's
   are, its items marked `data-state="open"` in markup; a collapsible's
-  `open` is the reflected state ("`open` is the state, reflected"),
-  its `collapsed-height` and `collapsed-width` numbers; a
-  menu hands the behavior props it shares down to its submenus, a
-  removal included. Every
-  element covers its machine's whole prop list, which a test checks
-  against Zag's own `props`. A list's `value` and `defaultValue`,
-  which Zag types `string[]`, are properties: markup selects an item
-  by marking it (`data-selected`, "The markup is a listbox's
-  collection"). `value` controls the selection as Zag's does — a press
-  changes it only where a `valuechange` listener writes it back —
-  and the default — `defaultValue`, or the marked items where it is
-  unset — is the element's first mount's, as a form control's default
-  is its page load's. A later mount (items added, a move, a new id)
-  starts at that value, which a value whose item arrives only then
-  keeps, and which Zag, reading its reset target off a machine's
-  start, puts back at a form's reset; the element then sets the
-  reader's selection the last mount left (`api.setValue`), and the
-  callbacks Zag fires for it, a microtask on, dispatch nothing — no
-  change of the reader's. The element clears the markers its mount
-  wrote as it stops, so items that arrive marked are the page's: they
-  become the default and the selection, as an inserted
-  `<option selected>` does. Its items are its mount's alone: a nested
-  element's — a listbox in an accordion's item, an accordion in
-  another's — keep their states, and their marks are not its own.
+  `open` is the reflected state ("`open` is the state, reflected"), its
+  `collapsed-height` and `collapsed-width` numbers; a menu hands the
+  behavior props it shares down to its submenus, a removal included.
+  Every element covers its machine's whole prop list, which a test
+  checks against Zag's own `props`. A list's `value` and `defaultValue`,
+  which Zag types `string[]`, are properties: markup selects an item by
+  marking it (`data-selected`, "The markup is a listbox's collection").
+  `value` controls the selection as Zag's does — a press changes it only
+  where a `valuechange` listener writes it back — and the default —
+  `defaultValue`, or the marked items where it is unset — is the
+  element's first mount's, as a form control's default is its page
+  load's. A later mount (items added, a move, a new id) starts at that
+  value, which a value whose item arrives only then keeps, and which
+  Zag, reading its reset target off a machine's start, puts back at a
+  form's reset; the element then sets the reader's selection the last
+  mount left (`api.setValue`), and the callbacks Zag fires for it, a
+  microtask on, dispatch nothing — no change of the reader's. The
+  element clears the markers its mount wrote as it stops, so items that
+  arrive marked are the page's: they become the default and the
+  selection, as an inserted `<option selected>` does. Its items are its
+  mount's alone: a nested element's — a listbox in an accordion's item,
+  an accordion in another's — keep their states, and their marks are not
+  its own.
 - **`open` is the state, reflected.** The machine stays uncontrolled:
   the attribute at the mount is the initial state, a later change
   opens or closes through `api.setOpen`, and the element writes the
@@ -501,42 +512,47 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   composables rendered through their frameworks (`hooks.test.tsx`,
   `composables.test.ts`), a component with no floating part
   included.
-- Storybook, per component on its `<mono-*>` element — the menu's on
-  the vanilla mount — in every engine: the listbox's roles, its
-  value selected by press and by Enter with the indicator following it
-  on the grid, the pointer highlight its root asks for
-  (`ListboxHighlightOnHover`), and the list
-  scrolled to the item the keyboard highlights; the select's list
-  anchored under its trigger, the value it puts on the trigger and in
-  its form control, and that control left out of the layout; per
-  anchored component, open and close by pointer and keyboard; the
-  floating part's cells directly under (or beside, above) the trigger
-  and the light element's box on them, over
+- Storybook, per component on its `<mono-*>` element — the menu's on the
+  vanilla mount — in every engine: the listbox's roles, its value
+  selected by press and by Enter with the indicator following it on the
+  grid, the pointer highlight its root asks for
+  (`ListboxHighlightOnHover`), and the list scrolled to the item the
+  keyboard highlights; the select's list anchored under its trigger, the
+  value it puts on the trigger and in its form control, and that control
+  left out of the layout; per anchored component, open and close by
+  pointer and keyboard; the floating part's cells directly under (or
+  beside, above) the trigger and the light element's box on them, over
   the page's later text; Escape and focus restore (an outside press
   dismisses through Zag's document listener on a deferred animation
-  frame, which WebKit suspends in a backgrounded window, so the
-  stories leave it unasserted); the highlight moved by the arrows,
-  typeahead, and a submenu for the menu; the focus trap
-  and the tinted page for the dialog; an exit transition on
-  `data-state` holding the positioner in the top layer to its end; a
-  grid drag over the popover's text selecting it; a select's list as
-  wide as its trigger through `anchor-size()`, following the trigger
-  as its values widen it (`SelectMultiple`); a combobox's "nothing
-  matches" line beside its list; a collapsible opened and closed by
-  its trigger and by `open`, its content out of the grid closed, a
-  keyframe exit running before it hides, and the content's style
-  holding no size variable; an accordion's triggers walked by the
-  arrows, `Home` and `End` under `focus="arrows"`, a single one
-  closing the open item, a `multiple` one keeping both, one not
-  `collapsible` keeping its last, its markup's `data-state="open"`
-  items open at the mount. The
-  flip at the host's edge and the escape from a scroller are the
-  engine's, tested in the positioning stories, one of them on a box the
-  browser would have flipped itself.
+  frame, which WebKit suspends in a backgrounded window, so the stories
+  leave it unasserted); the highlight moved by the arrows, typeahead,
+  and a submenu for the menu; the focus trap and the tinted page for the
+  dialog; an exit transition on `data-state` holding the positioner in
+  the top layer to its end; a grid drag over the popover's text
+  selecting it; a select's list as wide as its trigger through
+  `anchor-size()`, following the trigger as its values widen it
+  (`SelectMultiple`); a combobox's "nothing matches" line beside its
+  list; a collapsible opened and closed by its trigger and by `open`,
+  its content out of the grid closed, a keyframe exit running before it
+  hides, and the content's style holding no size variable; an
+  accordion's triggers walked by the arrows, `Home` and `End` under
+  `focus="arrows"`, a single one closing the open item, a `multiple` one
+  keeping both, one not `collapsible` keeping its last, its markup's
+  `data-state="open"` items open at the mount. Each story's options are
+  its element's attributes as controls (`stories/controls.ts`), their
+  defaults the markup's; `ControlsApplied` checks that they reach the
+  machine, through an element's attributes and through the vanilla
+  mount's props, and `visual/controls.spec.ts` that a control changed in
+  Storybook reaches the Menu story's running mount, past the detached
+  copy the Code panel renders. The flip at the host's edge and the
+  escape from a scroller are the engine's, tested in the positioning
+  stories, one of them on a box the browser would have flipped itself.
 - Visual: a golden of each component open.
 - Node, the elements (`elements.test.ts`): an element's attributes
   read as props, a change reaching the machine, `open` reflected both
-  ways, an event per callback, a submenu's own attributes; the
+  ways, an event per callback, a submenu's own attributes, a
+  component nested in another's keeping its parts (a select and a
+  tooltip in a dialog, and `ElementsNested` in every engine); the
   components rendered in node — React's (`every.test.tsx`), Vue's
   (`every.test.ts`, `components.test.ts`), Svelte's through harness
   components (`components.test.ts`) — and Svelte's besides through
@@ -556,8 +572,9 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   props and their merge, `anchoredApi`.
 - packages/ui/src/top-layer.ts: `syncTopLayer`, its own `./top-layer`
   subpath for the framework packages.
-- packages/ui/src/vanilla.ts: the parts, the mount, and the anchored
-  mount over it.
+- packages/ui/src/vanilla.ts: the parts, each its nearest root's
+  (`ROOT` on every element's class), the mount — what it wrote on them
+  put back at its destroy — and the anchored mount over it.
 - packages/ui/src/items.ts: the markup's collection and the item parts
   a listbox, a select and a combobox share.
 - packages/ui/src/scroll.ts: the highlight scrolled into the content
@@ -579,8 +596,9 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   ways, the item, split and defined-prop helpers, the stray-prop and
   unmarked-item warnings.
 - packages/ui/src/elements/element.ts: the base element over the
-  vanilla mount — attribute parsing, `open` reflection, events, the
-  lifecycle.
+  vanilla mount — attribute parsing (`propOf`, which the stories'
+  controls share), `open` reflection, events, the lifecycle, and the
+  parts its own mount takes.
 - packages/ui/src/elements/index.ts: one subclass per component and
   `defineMonoUi`, the `./elements` subpath.
 - packages/ui/src/cdn.ts: the CDN bundle for classic scripts,
@@ -600,6 +618,10 @@ false`), the menu, dialog, popover and tooltip with Ark UI's
   other packages' elements, a story per component on its element, the
   menu's on the vanilla mount (`menu(root, props)`), each with a
   test-only twin that drives it (`MenuOpened`).
+- apps/storybook/stories/controls.ts: the stories' controls, read off
+  each element's attribute table — `controlsOf`, the `controlled`
+  directive that writes them onto an element and logs its events, and
+  `propsOf` for the vanilla mount's.
 - apps/example-react/src/App.tsx: a menu and a dialog through
   `@monowind/ui-react`.
 - apps/example-vue/src/App.vue: the same through `@monowind/ui-vue`.

@@ -168,7 +168,7 @@ const preview: Preview = {
     options: { storySort: { order: ["Features", "Packages", "Test"] } },
     // Read-only story source (our lit templates are the plain markup) in
     // an addon panel beside the canvas. Controls/Actions panels are
-    // hidden: no story uses args.
+    // hidden where stories take no args; the UI stories turn them on.
     docs: { codePanel: true },
     controls: { disable: true },
     actions: { disable: true },

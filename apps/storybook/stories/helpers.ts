@@ -103,23 +103,42 @@ export function dragTo(target: Element, at: Point): void {
   moveTo(target, at, 1);
 }
 
-/** A component mounted on the directive's element and destroyed when
- * Lit drops the element or the story ends (Storybook remounts by wiping
- * the canvas, past Lit's ref) — called from a story's render, whose
- * re-renders share the one mount. */
-export function mountedOn(mount: (root: Element) => { destroy(): void }): ReturnType<typeof ref> {
-  const current = useRef<{ root: Element; mounted: { destroy(): void } } | null>(null);
+/** What `mountedOn` keeps: the vanilla mount's `Mounted`. */
+interface Mount {
+  destroy(): void;
+  updateProps(partial: object): void;
+}
+
+/** A component mounted on the directive's element once it is in the
+ * document, and destroyed when another element takes its place or the
+ * story ends (Storybook remounts by wiping the canvas, past Lit's ref)
+ * — called from a story's render, whose re-renders share the one
+ * mount, each after the first handing it `update` (a control changed). */
+export function mountedOn(
+  mount: (root: Element) => Mount,
+  update?: object,
+): ReturnType<typeof ref> {
+  const current = useRef<{ root: Element; mounted: Mount } | null>(null);
+  const renders = useRef(0);
+  useEffect(() => {
+    if (renders.current++ > 0 && update) current.current?.mounted.updateProps(update);
+  });
   const destroy = () => {
     current.current?.mounted.destroy();
     current.current = null;
   };
   useEffect(() => destroy, []);
-  // One callback for the story's life: Lit calls a new one with
-  // `undefined` first, which would remount on every re-render.
+  // One callback for the story's life, which Lit hands every element
+  // the template renders, each after an `undefined` — the Code panel's
+  // detached copy of the story among them, never in the document. A
+  // microtask on, the live one is.
   const onElement = useCallback((element?: Element) => {
-    if (element === current.current?.root) return;
-    destroy();
-    if (element) current.current = { root: element, mounted: mount(element) };
+    if (!element) return;
+    queueMicrotask(() => {
+      if (!element.isConnected || element === current.current?.root) return;
+      destroy();
+      current.current = { root: element, mounted: mount(element) };
+    });
   }, []);
   return ref(onElement);
 }

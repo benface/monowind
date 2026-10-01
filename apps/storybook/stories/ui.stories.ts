@@ -1,9 +1,20 @@
-import { html, nothing } from "lit";
+import { html, nothing, render } from "lit";
 import { expect, userEvent, waitFor } from "storybook/test";
-import type { Meta, StoryObj } from "@storybook/web-components-vite";
+import type { Args, Meta, StoryObj } from "@storybook/web-components-vite";
 import { collection } from "@monowind/ui/combobox";
-import { defineMonoUi } from "@monowind/ui/elements";
-import { menu } from "@monowind/ui/menu";
+import {
+  defineMonoUi,
+  MonoAccordion,
+  MonoCollapsible,
+  MonoCombobox,
+  MonoDialog,
+  MonoListbox,
+  MonoMenu,
+  MonoPopover,
+  MonoSelect,
+  MonoTooltip,
+} from "@monowind/ui/elements";
+import { menu, type MountProps as MenuProps } from "@monowind/ui/menu";
 import {
   cellSize,
   dragTo,
@@ -22,6 +33,7 @@ import {
   testHooks,
   type Point,
 } from "./helpers.ts";
+import { controlled, controlsOf, propsOf } from "./controls.ts";
 
 /**
  * `@monowind/ui` (specs/ui.md): Zag's machines on the grid — the engine
@@ -35,6 +47,9 @@ import {
 defineMonoUi();
 const meta: Meta = {
   title: "Packages / ui",
+  // The panels the preview hides: these stories' options are controls,
+  // their events actions (`controls.ts`).
+  parameters: { controls: { disable: false }, actions: { disable: false } },
 };
 export default meta;
 
@@ -105,15 +120,24 @@ const rightOf = (el: Element): Point => {
   return { x: rect.right - 2, y: rect.top + rect.height / 2 };
 };
 
+const MENU_CONTROLS = controlsOf(MonoMenu);
+
 /** A menu with a group, a disabled item, a separator, and a submenu
  * shifted a row up along its item — mounted by script, the vanilla
  * path under every element. Every part is written out: the mount reads
  * them when lit hands it the root, before a nested template (a `map`,
  * a helper) has committed its own. */
 export const Menu: StoryObj = {
-  render: () => html`
+  ...MENU_CONTROLS,
+  render: (args) => html`
     <mono-wind>
-      <div class="p-1" ${mountedOn((root) => menu(root, { id: "file" }))}>
+      <div
+        class="p-1"
+        ${mountedOn(
+          (root) => menu(root, { ...propsOf(MonoMenu, args), id: "file" } as MenuProps),
+          propsOf(MonoMenu, args, true),
+        )}
+      >
         <p>A page with a menu bar and text below it.</p>
         <p class="mt-1">
           <button data-part="trigger" data-test="trigger" class="border px-1">File</button>
@@ -165,6 +189,7 @@ export const Menu: StoryObj = {
  * cells, typeahead, Escape — then its submenu, left open. */
 export const MenuOpened: StoryObj = {
   tags: ["!dev"],
+  ...MENU_CONTROLS,
   render: Menu.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -293,14 +318,17 @@ export const MenuOpened: StoryObj = {
   },
 };
 
+const LISTBOX_CONTROLS = controlsOf(MonoListbox);
+
 /** A listbox of branches: a value selected, groups with their labels,
  * an item disabled, and more items than the box shows. */
 export const Listbox: StoryObj = {
-  render: () => html`
+  ...LISTBOX_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <div class="p-1">
         <p>A page with a list to choose from.</p>
-        <mono-listbox id="branch" class="mt-1 block">
+        <mono-listbox id="branch" class="mt-1 block" ${controlled(args)}>
           <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
           <div data-part="content" data-test="content" class="max-h-8 w-20 overflow-y-auto border">
             <div data-part="item-group" data-value="local">
@@ -345,6 +373,7 @@ export const Listbox: StoryObj = {
  * last item selected and scrolled to. */
 export const ListboxSelected: StoryObj = {
   tags: ["!dev"],
+  ...LISTBOX_CONTROLS,
   render: Listbox.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -423,14 +452,17 @@ export const ListboxHighlightOnHover: StoryObj = {
   },
 };
 
+const LISTBOX_MULTIPLE_CONTROLS = controlsOf(MonoListbox, { "selection-mode": "multiple" });
+
 /** A listbox taking several values at once: every chosen item keeps
  * its check, and the machine's `selectionMode` is all it takes. */
 export const ListboxMultiple: StoryObj = {
-  render: () => html`
+  ...LISTBOX_MULTIPLE_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <div class="p-1">
         <p>A page with a list to choose from, several at a time.</p>
-        <mono-listbox id="scopes" selection-mode="multiple" class="mt-1 block">
+        <mono-listbox id="scopes" class="mt-1 block" ${controlled(args)}>
           <span data-part="label" data-test="label" class="text-neutral-500">Scopes</span>
           <div data-part="content" data-test="content" class="w-16 border">
             ${checkItem("read", "read", { selected: true })} ${checkItem("write")}
@@ -452,6 +484,7 @@ export const ListboxMultiple: StoryObj = {
  * pressed into the selection and out of it, two left chosen. */
 export const ListboxMultipleSelected: StoryObj = {
   tags: ["!dev"],
+  ...LISTBOX_MULTIPLE_CONTROLS,
   render: ListboxMultiple.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -474,15 +507,18 @@ export const ListboxMultipleSelected: StoryObj = {
   },
 };
 
+const SELECT_CONTROLS = controlsOf(MonoSelect);
+
 /** A select: the value on its trigger, its list anchored under it in
  * the top layer, and a hidden native select carrying the value into a
  * form, off the grid. */
 export const Select: StoryObj = {
-  render: () => html`
+  ...SELECT_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <form class="p-1">
         <p>A page with a select.</p>
-        <mono-select id="branch" name="branch">
+        <mono-select id="branch" name="branch" ${controlled(args)}>
           <div class="mt-1 flex items-center gap-1">
             <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
             <span data-part="control">
@@ -539,6 +575,7 @@ export const Select: StoryObj = {
  * item. */
 export const SelectPicked: StoryObj = {
   tags: ["!dev"],
+  ...SELECT_CONTROLS,
   render: Select.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -599,14 +636,17 @@ export const SelectPicked: StoryObj = {
     await expectRow(host, "release");
   },
 };
+const SELECT_MULTIPLE_CONTROLS = controlsOf(MonoSelect, { multiple: true });
+
 /** A select taking several values at once: the trigger names them
  * together and the form control carries them all. */
 export const SelectMultiple: StoryObj = {
-  render: () => html`
+  ...SELECT_MULTIPLE_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <form class="p-1">
         <p>A page with a select taking several values.</p>
-        <mono-select id="formats" multiple name="formats">
+        <mono-select id="formats" name="formats" ${controlled(args)}>
           <div class="mt-1 flex items-center gap-1">
             <span data-part="label" class="text-neutral-500">Export</span>
             <span data-part="control">
@@ -638,6 +678,7 @@ export const SelectMultiple: StoryObj = {
  * its items pressed in and out, the trigger naming them, left open. */
 export const SelectMultiplePicked: StoryObj = {
   tags: ["!dev"],
+  ...SELECT_MULTIPLE_CONTROLS,
   render: SelectMultiple.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -690,13 +731,16 @@ function filterBranches(event: Event): void {
   });
 }
 
+const COMBOBOX_CONTROLS = controlsOf(MonoCombobox);
+
 /** A combobox: a listbox under the input the reader types into, its
  * list anchored to the control rather than the button laid over its
  * end, and filtering the page's own — it hands back a narrowed
  * collection, and the items left out go. A status line beside the
  * listbox says when nothing matches. */
 export const Combobox: StoryObj = {
-  render: () => html`
+  ...COMBOBOX_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <div class="p-1">
         <p>A page with a combobox over ${BRANCHES.length} branches.</p>
@@ -705,6 +749,7 @@ export const Combobox: StoryObj = {
           .ids=${BRANCH_IDS}
           .collection=${ALL_BRANCHES}
           @inputvaluechange=${filterBranches}
+          ${controlled(args)}
         >
           <div class="mt-1 flex items-center gap-1">
             <span data-part="label" data-test="label" class="text-neutral-500">Branch</span>
@@ -768,6 +813,7 @@ export const Combobox: StoryObj = {
  * control, filtered to nothing and back, a branch picked, left open. */
 export const ComboboxFiltered: StoryObj = {
   tags: ["!dev"],
+  ...COMBOBOX_CONTROLS,
   render: Combobox.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -816,13 +862,16 @@ export const ComboboxFiltered: StoryObj = {
   },
 };
 
+const DIALOG_CONTROLS = controlsOf(MonoDialog);
+
 /** A dialog with a title, a description, and a close button. */
 export const Dialog: StoryObj = {
-  render: () => html`
+  ...DIALOG_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <div class="p-1">
         <p>A page with a button that opens a dialog.</p>
-        <mono-dialog id="confirm">
+        <mono-dialog id="confirm" ${controlled(args)}>
           <p class="mt-1">
             <button data-part="trigger" data-test="trigger" class="border px-1">Delete</button>
           </p>
@@ -860,6 +909,7 @@ export const Dialog: StoryObj = {
  * backdrop, its focus trapped, closed on Escape and opened again. */
 export const DialogOpened: StoryObj = {
   tags: ["!dev"],
+  ...DIALOG_CONTROLS,
   render: Dialog.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -895,14 +945,17 @@ export const DialogOpened: StoryObj = {
   },
 };
 
+const POPOVER_CONTROLS = controlsOf(MonoPopover, { placement: "bottom-start" });
+
 /** A popover with a title, a description, and a close button, its
  * content fading in and out. */
 export const Popover: StoryObj = {
-  render: () => html`
+  ...POPOVER_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <div class="p-1">
         <p>A page with a button that opens a popover.</p>
-        <mono-popover id="info" placement="bottom-start">
+        <mono-popover id="info" ${controlled(args)}>
           <p class="mt-1">
             <button data-part="trigger" data-test="trigger" class="border px-1">Details</button>
           </p>
@@ -937,6 +990,7 @@ export const Popover: StoryObj = {
  * button through its fade, and opened again. */
 export const PopoverOpened: StoryObj = {
   tags: ["!dev"],
+  ...POPOVER_CONTROLS,
   render: Popover.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -987,12 +1041,19 @@ export const PopoverOpened: StoryObj = {
   },
 };
 
+const TOOLTIP_CONTROLS = controlsOf(MonoTooltip, {
+  "open-delay": 0,
+  "close-delay": 0,
+  placement: "top",
+});
+
 /** A tooltip above its button, opened by hover and by focus. */
 export const Tooltip: StoryObj = {
-  render: () => html`
+  ...TOOLTIP_CONTROLS,
+  render: (args) => html`
     <mono-wind>
       <div class="p-1 pt-4">
-        <mono-tooltip id="hint" open-delay="0" close-delay="0" placement="top">
+        <mono-tooltip id="hint" ${controlled(args)}>
           <p>
             A page with a
             <button data-part="trigger" data-test="trigger" class="border px-1 align-middle">
@@ -1020,6 +1081,7 @@ export const Tooltip: StoryObj = {
  * and after Escape by focus. */
 export const TooltipOpened: StoryObj = {
   tags: ["!dev"],
+  ...TOOLTIP_CONTROLS,
   render: Tooltip.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -1053,10 +1115,13 @@ export const TooltipOpened: StoryObj = {
 const DISCLOSURE_TRIGGER = "px-1 disabled:text-neutral-500";
 const DISCLOSURE_INDICATOR = "before:content-['▶'] data-[state=open]:before:content-['▼']";
 
+const COLLAPSIBLE_CONTROLS = controlsOf(MonoCollapsible);
+
 /** Two sections that fold, the second open, each content fading out
  * through a keyframe exit before it hides (specs/ui.md). */
 export const Collapsible: StoryObj = {
-  render: () => html`
+  ...COLLAPSIBLE_CONTROLS,
+  render: (args) => html`
     <style>
       @keyframes story-fold {
         to {
@@ -1072,7 +1137,13 @@ export const Collapsible: StoryObj = {
           { id: "notes", title: "Notes", body: "Notes the reader opened.", open: true },
         ].map(
           ({ id, title, body, open }) => html`
-            <mono-collapsible id=${id} ?open=${open} class="mt-1 block" data-test=${id}>
+            <mono-collapsible
+              id=${id}
+              ?open=${open}
+              class="mt-1 block"
+              data-test=${id}
+              ${controlled(args)}
+            >
               <button data-part="trigger" data-test="${id}-trigger" class=${DISCLOSURE_TRIGGER}>
                 <span data-part="indicator" class=${DISCLOSURE_INDICATOR}></span> ${title}
               </button>
@@ -1109,6 +1180,7 @@ export const Collapsible: StoryObj = {
  * its content out of the grid once hidden. */
 export const CollapsibleToggled: StoryObj = {
   tags: ["!dev"],
+  ...COLLAPSIBLE_CONTROLS,
   render: Collapsible.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -1163,14 +1235,17 @@ const accordionItem = (
   </div>
 `;
 
+const ACCORDION_CONTROLS = controlsOf(MonoAccordion);
+
 /** An accordion of questions, one open at a time: the first open from
  * its markup, the last disabled. */
 export const Accordion: StoryObj = {
-  render: () => html`
+  ...ACCORDION_CONTROLS,
+  render: (args) => html`
     <mono-wind focus="arrows">
       <div class="p-1">
         <p>A page with questions and their answers.</p>
-        <mono-accordion id="faq" class="mt-1 block w-48 border" data-test="faq">
+        <mono-accordion id="faq" class="mt-1 block w-48 border" data-test="faq" ${controlled(args)}>
           ${accordionItem("what", "What is it?", "HTML drawn as text.", { open: true })}
           ${accordionItem("why", "Why a grid?", "Every box on whole cells.")}
           ${accordionItem("how", "How is it styled?", "With Tailwind's utilities.")}
@@ -1198,6 +1273,7 @@ export const Accordion: StoryObj = {
  * it is `multiple`. */
 export const AccordionToggled: StoryObj = {
   tags: ["!dev"],
+  ...ACCORDION_CONTROLS,
   render: Accordion.render!,
   play: async ({ canvasElement }) => {
     const host = await readyHost(canvasElement);
@@ -1413,5 +1489,141 @@ export const ElementsWired: StoryObj = {
       expect(by("hint-positioner").getAttribute("data-mw-area")).toBe("span-all top"),
     );
     await expectRow(host, "Asks first");
+  },
+};
+
+/** Test-only (hidden from the sidebar): components nested in another's
+ * markup keep their parts — a dialog holding a select and a button
+ * with a tooltip, each an element of its own. The select opens and
+ * takes a value with the dialog open around it, and the tooltip shows. */
+export const ElementsNested: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`
+    <mono-wind>
+      <div class="p-1">
+        <p>A page with a button that opens its settings.</p>
+        <mono-dialog id="settings">
+          <p class="mt-1">
+            <button data-part="trigger" data-test="open" class="border px-1">Settings</button>
+          </p>
+          <div data-part="positioner" popover="manual">
+            <div data-part="content" data-test="dialog-content" class="border bg-clear p-1">
+              <p data-part="title" class="font-bold">Settings</p>
+              <mono-select id="theme" name="theme" class="mt-1 block">
+                <button data-part="trigger" data-test="pick" class="border px-1">
+                  <span data-part="value-text">theme…</span>
+                </button>
+                <div data-part="positioner" popover="manual">
+                  <div data-part="content" data-test="options" class=${MENU_CONTENT}>
+                    ${textItem("dark")} ${textItem("light")}
+                  </div>
+                </div>
+              </mono-select>
+              <mono-tooltip id="save-hint" open-delay="0" close-delay="0" placement="top">
+                <button data-part="trigger" data-test="save" class="mt-1 border px-1">Save</button>
+                <div data-part="positioner" popover="manual">
+                  <div data-part="content" data-test="tip" class="border bg-clear px-1">
+                    Saves the settings
+                  </div>
+                </div>
+              </mono-tooltip>
+            </div>
+          </div>
+        </mono-dialog>
+        ${Array.from({ length: 12 }, (_, i) => html`<p>Line ${i + 1} of the page.</p>`)}
+      </div>
+    </mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const state = (name: string) => by(name).getAttribute("data-state");
+    await userEvent.click(by("open"));
+    await waitFor(() => expect(state("dialog-content")).toBe("open"));
+    // The select's trigger is the select's: a dialog's would say so.
+    expect(by("pick").getAttribute("aria-haspopup")).toBe("listbox");
+    expect(by("save").getAttribute("aria-haspopup")).toBe(null);
+    await userEvent.click(by("pick"));
+    await waitFor(() => expect(state("options")).toBe("open"));
+    expect(state("dialog-content")).toBe("open");
+    await expectRow(host, "light");
+    await userEvent.click(by("light"));
+    await waitFor(() => expect(by("pick").textContent).toContain("light"));
+    expect(state("dialog-content")).toBe("open");
+    hoverOver(by("save"));
+    await waitFor(() => expect(state("tip")).toBe("open"));
+    await expectRow(host, "Saves the settings");
+  },
+};
+
+/** Test-only (hidden from the sidebar): the controls' directive writes
+ * its args onto an element as the attributes they name, by the kinds
+ * its class's table gives — a boolean by presence or `"false"`, a
+ * number and a string as written — and removes one left unset, each
+ * reaching the machine; `propsOf` gives the vanilla mount the same. */
+export const ControlsApplied: StoryObj = {
+  tags: ["!dev", "!golden"],
+  render: () => html`<mono-wind><div data-test="stage"></div></mono-wind>`,
+  play: async ({ canvasElement }) => {
+    await readyHost(canvasElement);
+    const by = testHooks(canvasElement);
+    const draw = (args: Args) =>
+      render(
+        html`
+          <mono-accordion id="controlled" data-test="accordion" ${controlled(args)}>
+            <div data-part="item" data-value="a">
+              <button data-part="item-trigger">a</button>
+              <div data-part="item-content">a body</div>
+            </div>
+          </mono-accordion>
+          <mono-collapsible id="folded" data-test="collapsible" ${controlled(args)}>
+            <button data-part="trigger">t</button>
+            <div data-part="content" data-test="folded-content">folded body</div>
+          </mono-collapsible>
+        `,
+        by("stage"),
+      );
+    draw({ multiple: true, orientation: "horizontal", "collapsed-height": 8 });
+    await waitFor(() => expect(by("accordion")).toHaveAttribute("data-orientation", "horizontal"));
+    expect(by("accordion")).toHaveAttribute("multiple", "");
+    await waitFor(() => expect(by("folded-content").style.maxHeight).toBe("8px"));
+    draw({ multiple: false, orientation: undefined, "collapsed-height": undefined });
+    await waitFor(() => expect(by("accordion")).toHaveAttribute("data-orientation", "vertical"));
+    expect(by("accordion")).toHaveAttribute("multiple", "false");
+    await waitFor(() => expect(by("folded-content").hidden).toBe(true));
+    draw({});
+    expect(by("accordion")).not.toHaveAttribute("multiple");
+    // The vanilla mount's props, folded as the element folds its
+    // attributes: the positioning under `positioning`, the offsets
+    // under its `offset`; on an update, every key, an unset one
+    // dropping its prop.
+    render(
+      html`
+        <div data-test="vanilla">
+          <button data-part="trigger">m</button>
+          <div data-part="positioner" data-test="vanilla-positioner" popover="manual">
+            <div data-part="content"><div data-part="item" data-value="a">a</div></div>
+          </div>
+        </div>
+      `,
+      by("stage"),
+    );
+    const mounted = menu(by("vanilla"), {
+      ...propsOf(MonoMenu, { placement: "top-start", "offset-main-axis": 1 }),
+      id: "vanilla",
+    } as MenuProps);
+    const positioner = by("vanilla-positioner");
+    // The area's side, in whichever order the engine serializes it.
+    const side = () =>
+      positioner.style
+        .getPropertyValue("position-area")
+        .split(" ")
+        .find((keyword) => !keyword.startsWith("span"));
+    await waitFor(() => expect(side()).toBe("top"));
+    expect(positioner.style.marginBottom).toBe("0.25rem");
+    mounted.updateProps(propsOf(MonoMenu, {}, true));
+    await waitFor(() => expect(side()).toBe("bottom"));
+    expect(positioner.style.marginBottom).toBe("");
+    mounted.destroy();
   },
 };

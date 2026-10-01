@@ -2,7 +2,7 @@ import * as Accordion from "@zag-js/accordion";
 import { normalizeProps } from "@zag-js/vanilla";
 import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, type MachineProps } from "./anchor.ts";
-import { liveProps, mount, part, partsOutside, start, type Mounted } from "./vanilla.ts";
+import { liveProps, mount, part, parts, start, type Mounted } from "./vanilla.ts";
 
 export type Props = Accordion.Props;
 /** An item's props: its value, and whether it is disabled. */
@@ -48,16 +48,16 @@ export function api<T extends PropTypes>(
  * by which Zag finds the triggers the keys walk; under it an `item` per
  * value, carrying its `data-value` and `data-disabled`, with an
  * `item-trigger`, an `item-content` and an optional `item-indicator`
- * inside — an accordion inside an item's content keeping its own.
+ * inside.
  * Where the props name no value, the items marked `data-state="open"`
  * are open, the first alone unless `multiple`. */
 export function accordion(root: Element, machineProps: Props): Mounted<Api> {
-  const items = partsOutside(root, "item", "item-content").map((item) => ({
+  const items = parts(root, "item").map((item) => ({
     props: { value: item.dataset["value"] ?? "", disabled: item.hasAttribute("data-disabled") },
     item,
-    trigger: partsOutside(item, "item-trigger", "item-content")[0],
+    trigger: part(item, "item-trigger"),
     content: part(item, "item-content"),
-    indicator: partsOutside(item, "item-indicator", "item-content")[0],
+    indicator: part(item, "item-indicator"),
   }));
   const open = items
     .filter(({ item }) => item.dataset["state"] === "open")

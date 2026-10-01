@@ -692,6 +692,70 @@ describe("an element around another", () => {
     }
   });
 
+  const DIALOG = (inner: string, before = "") => `
+    <mono-dialog id="d">
+      ${before}
+      <button data-part="trigger" data-test="open">Open</button>
+      <div data-part="positioner" data-test="dialog-positioner">
+        <div data-part="content">${inner}</div>
+      </div>
+    </mono-dialog>`;
+  const SELECT = `
+    <mono-select id="s">
+      <button data-part="trigger" data-test="pick">Pick</button>
+      <div data-part="positioner"><div data-part="content" data-test="options">
+        <div data-part="item" data-value="a"><span data-part="item-text">a</span></div>
+      </div></div>
+    </mono-select>`;
+  const TOOLTIP = `
+    <mono-tooltip id="t">
+      <button data-part="trigger" data-test="hint">?</button>
+      <div data-part="positioner" data-test="tip-positioner"><div data-part="content">Tip</div></div>
+    </mono-tooltip>`;
+  type Opening = HTMLElement & { api: { open: boolean } };
+
+  it("leaves a nested one its own trigger: a select in a dialog opens alone", async () => {
+    const element = render<Opening>(DIALOG(SELECT));
+    await settle();
+    const pick = element.querySelector<HTMLElement>('[data-test="pick"]')!;
+    expect(pick.getAttribute("aria-haspopup")).toBe("listbox");
+    pick.click();
+    await settle();
+    expect(element.api.open).toBe(false);
+    element.remove();
+  });
+
+  it("leaves a nested one before its own parts its parts, the outer its own", async () => {
+    const element = render<Opening>(DIALOG("", TOOLTIP));
+    await settle();
+    const hint = element.querySelector<HTMLElement>('[data-test="hint"]')!;
+    expect(hint.getAttribute("aria-haspopup")).toBe(null);
+    const positioner = element.querySelector<HTMLElement>('[data-test="dialog-positioner"]')!;
+    expect(positioner.id).toBe("dialog:d:positioner");
+    const tip = element.querySelector<HTMLElement>('[data-test="tip-positioner"]')!;
+    expect(tip.id).toBe("tooltip:t:popper");
+    element.remove();
+  });
+
+  it("mounts a nested one alone again as its markup changes", async () => {
+    const element = render<Opening>(DIALOG(SELECT));
+    await settle();
+    const api = element.api;
+    element
+      .querySelector('[data-test="options"]')!
+      .insertAdjacentHTML(
+        "beforeend",
+        '<div data-part="item" data-value="b"><span data-part="item-text">b</span></div>',
+      );
+    await settle();
+    expect(element.api, "the dialog's own mount").toBe(api);
+    const select = element.querySelector("mono-select") as HTMLElement & {
+      api: { collection: { size: number } };
+    };
+    expect(select.api.collection.size).toBe(2);
+    element.remove();
+  });
+
   it("keeps the reader's value as it mounts again, a nested one's open items not its own", async () => {
     const element = render<HTMLElement & { api: AccordionApi }>(around.accordion(FAQ));
     await settle();
@@ -761,9 +825,13 @@ describe("every element", () => {
 
   it.each(ELEMENTS)("declares no prop its machine lacks: %s", (tag, machineProps) => {
     // A name an element declares that its machine has never heard of
-    // is a prop that goes nowhere.
+    // is a prop that goes nowhere; the positioning four are a machine's
+    // that places a floating part.
+    const places = machineProps.includes("positioning");
     expect(
-      declaredBy(tag).filter((prop) => !machineProps.includes(prop) && !POSITIONING.includes(prop)),
+      declaredBy(tag).filter(
+        (prop) => !machineProps.includes(prop) && !(places && POSITIONING.includes(prop)),
+      ),
     ).toEqual([]);
   });
 });

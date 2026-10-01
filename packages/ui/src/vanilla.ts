@@ -4,8 +4,8 @@ import type { TriggerApi } from "./framework.ts";
 import { syncTopLayer, type Anchored } from "./top-layer.ts";
 
 /** A component mounted on markup: its API, live, a way to change the
- * props it was mounted on, and a `destroy` that stops its machine and
- * takes its handlers off the parts. */
+ * props it was mounted on, and a `destroy` that stops its machine,
+ * takes its handlers off the parts and puts back what it wrote. */
 export interface Mounted<A> {
   readonly api: A;
   /** Merge a partial into the props the machine and the API read, and
@@ -68,26 +68,28 @@ export function liveProps<P extends object, G>(authored: P, derive: (props: P) =
   };
 }
 
-/** The nearest submenu root above an element, null outside any. */
-const submenuOf = (element: Element): Element | null =>
-  element.parentElement?.closest("[data-part='submenu']") ?? null;
+/** On the class of every element `defineElement` makes: a root of its
+ * own, whose parts no component around it takes. */
+export const ROOT: unique symbol = Symbol("monowind root");
 
-/** The root's own elements of a part: those under it and under none of
- * its submenus, which are roots of their own. */
-export function parts(root: Element, name: string): HTMLElement[] {
-  const own = root.closest("[data-part='submenu']");
-  return Array.from(root.querySelectorAll<HTMLElement>(`[data-part="${name}"]`)).filter(
-    (element) => submenuOf(element) === own,
-  );
+/** A root nested under another: a submenu's, one a page nesting
+ * components by script marks `data-part="root"`, or an element's. */
+function isRoot(element: Element): boolean {
+  const part = element.getAttribute("data-part");
+  if (part === "submenu" || part === "root") return true;
+  return ROOT in (customElements.get(element.localName) ?? {});
 }
 
-/** The root's own elements of a part, less those inside a `content`
- * part under the root: a nested disclosure's. */
-export function partsOutside(root: Element, name: string, content: string): HTMLElement[] {
-  return parts(root, name).filter((element) => {
-    const around = element.parentElement?.closest(`[data-part="${content}"]`);
-    return !around || !root.contains(around);
-  });
+/** The root's own elements of a part: those it is the nearest root
+ * above, none nested in it (`isRoot`) standing between. */
+export function parts(root: Element, name: string): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(`[data-part="${name}"]`)).filter(
+    (element) => {
+      let above = element.parentElement;
+      while (above !== root && above !== null && !isRoot(above)) above = above.parentElement;
+      return above === root;
+    },
+  );
 }
 
 /** The root's one element of a part, if marked. */
@@ -127,6 +129,84 @@ export function titledParts<A extends TitledApi>(root: Element): (api: A, spread
   };
 }
 
+/** What a part held before a mount first wrote it — its attributes,
+ * its inline style's properties, whether it had a style at all — and
+ * the props the mount last spread on it. */
+interface Original {
+  attributes: Map<string, string | null>;
+  styles: Map<string, [value: string, priority: string]>;
+  styled: boolean;
+  last: Record<string, unknown>;
+}
+
+/** What the reader chose, which outlives the mount as they left it: the
+ * values Zag's spread assigns to a control, and the markers a mount
+ * again reads off an item — a list's selection, an accordion's open
+ * items (specs/ui.md). */
+const ASSIGNED = new Set(["value", "checked", "selected"]);
+const MARKERS = new Set(["data-selected", "data-state"]);
+
+/** A style key as the CSS property Zag's spread sets. */
+const cssName = (key: string): string =>
+  key.startsWith("--") ? key : key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+
+/** The attribute Zag's spread leaves for a prop's value, null for none. */
+const writtenOf = (name: string, value: unknown): string | null => {
+  if (value == null) return null;
+  if (typeof value === "boolean" && !name.startsWith("aria-")) return value ? "" : null;
+  return String(value);
+};
+
+/** What the spread of `props` is about to write on `element`, as the
+ * markup holds it, the first time a mount writes it; Zag writes no
+ * null value. */
+function remember(originals: Map<Element, Original>, element: Element, props: object): void {
+  let original = originals.get(element);
+  if (!original) {
+    original = {
+      attributes: new Map(),
+      styles: new Map(),
+      styled: element.hasAttribute("style"),
+      last: {},
+    };
+    originals.set(element, original);
+  }
+  const item = element.getAttribute("data-part") === "item";
+  for (const [key, value] of Object.entries(props)) {
+    if (value == null || key.startsWith("on") || ASSIGNED.has(key)) continue;
+    if (key === "style" && typeof value === "object") {
+      const { style } = element as HTMLElement;
+      for (const [property, written] of Object.entries(value)) {
+        const name = cssName(property);
+        if (written == null || original.styles.has(name)) continue;
+        original.styles.set(name, [style.getPropertyValue(name), style.getPropertyPriority(name)]);
+      }
+    } else if (!(item && MARKERS.has(key)) && !original.attributes.has(key)) {
+      original.attributes.set(key, element.getAttribute(key));
+    }
+  }
+  original.last = props as Record<string, unknown>;
+}
+
+/** The parts as the markup held them before the mount, but for an
+ * attribute the page changed since the mount's last spread, which is
+ * the page's; the inline styles the mount wrote are its own. */
+function restore(originals: Map<Element, Original>): void {
+  for (const [element, { attributes, styles, styled, last }] of originals) {
+    for (const [name, value] of attributes) {
+      if (element.getAttribute(name) !== writtenOf(name, last[name])) continue;
+      if (value === null) element.removeAttribute(name);
+      else element.setAttribute(name, value);
+    }
+    const { style } = element as HTMLElement;
+    for (const [name, [value, priority]] of styles) {
+      if (value === "") style.removeProperty(name);
+      else style.setProperty(name, value, priority);
+    }
+    if (!styled && style?.length === 0) element.removeAttribute("style");
+  }
+}
+
 /** A machine whose changes a mount follows. */
 interface Followed {
   subscribe(listener: () => void): () => void;
@@ -157,8 +237,11 @@ export function mount<T extends MachineSchema, A>(
   let current = connect(machine.service);
   let stopped = false;
   let unwire: (() => void)[] = [];
+  const originals = new Map<Element, Original>();
   const spread: Spread = (element, props) => {
-    if (element) unwire.push(spreadProps(element, props as Record<string, unknown>));
+    if (!element) return;
+    remember(originals, element, props);
+    unwire.push(spreadProps(element, props as Record<string, unknown>));
   };
   const render = (): void => {
     if (stopped) return;
@@ -190,6 +273,7 @@ export function mount<T extends MachineSchema, A>(
       for (const unspread of unwire) unspread();
       machine.stop();
       cleanup?.();
+      restore(originals);
     },
   };
 }

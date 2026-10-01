@@ -95,11 +95,11 @@ describe("the mount", () => {
     root.remove();
   });
 
-  it("leaves an accordion inside an item's content that one's own items", async () => {
+  it("leaves an accordion nested in an item, under a root of its own, its own items", async () => {
     const root = markup(
       item("a", 'data-state="open"').replace(
         "<p>a body</p>",
-        `<div data-test="inner">${item("x")}${item("y")}</div>`,
+        `<div data-part="root" data-test="inner">${item("x")}${item("y")}</div>`,
       ),
     );
     const inner = root.querySelector<HTMLElement>('[data-test="inner"]')!;
@@ -124,7 +124,7 @@ describe("the mount", () => {
   it("finds an item's own trigger past a nested accordion in its content, wherever it sits", async () => {
     const root = markup(`
       <div data-part="item" data-value="a">
-        <div data-part="item-content"><div data-test="inner">${item("x")}</div></div>
+        <div data-part="item-content"><div data-part="root" data-test="inner">${item("x")}</div></div>
         <button data-part="item-trigger" data-test="own">a</button>
       </div>`);
     const inner = root.querySelector<HTMLElement>('[data-test="inner"]')!;

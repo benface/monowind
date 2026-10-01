@@ -193,7 +193,6 @@ export const MonoCombobox = defineElement({
 export const MonoDialog = defineElement({
   properties: [...PROPERTIES, "initialFocusEl", "finalFocusEl", "persistentElements"],
   mount: (root, props) => dialog(root, props as unknown as DialogProps),
-  anchored: true,
   attributes: {
     ...DIRECTION,
     ...TRIGGERS,

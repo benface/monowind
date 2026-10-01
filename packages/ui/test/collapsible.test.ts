@@ -63,12 +63,12 @@ describe("the mount", () => {
     root.remove();
   });
 
-  it("leaves a collapsible inside its content that one's own parts", async () => {
+  it("leaves a collapsible nested in it, under a root of its own, its own parts", async () => {
     const root = document.createElement("div");
     root.innerHTML = `
       <button data-part="trigger">Outer</button>
       <div data-part="content">
-        <div data-test="inner">
+        <div data-part="root" data-test="inner">
           <button data-part="trigger">Inner <span data-part="indicator">+</span></button>
           <div data-part="content"><p>Inner text</p></div>
         </div>

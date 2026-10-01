@@ -1,4 +1,4 @@
-import { isPlain, type Mounted } from "../vanilla.ts";
+import { isPlain, ROOT, type Mounted } from "../vanilla.ts";
 
 /**
  * The base every `<mono-*>` element is (specs/ui.md "Component
@@ -25,7 +25,7 @@ const POSITIONING: Record<string, Kind> = {
  * bubbles from inputs, so a menu's is `itemselect`. */
 const NAMED: Record<string, string> = { onSelect: "itemselect" };
 
-const eventNameOf = (callback: string): string =>
+export const eventNameOf = (callback: string): string =>
   NAMED[callback] ?? callback.slice(2).toLowerCase();
 
 const camel = (attribute: string): string =>
@@ -99,10 +99,48 @@ export type Definition<A> = Declared &
  * own mount's. */
 export interface ElementClass<A> {
   new (): MonoElement & { readonly api: A | undefined };
+  readonly [ROOT]: true;
   readonly prototype: MonoElement;
   readonly definition: Definition<unknown>;
   readonly table: Readonly<Record<string, Kind>>;
   readonly observedAttributes: string[];
+}
+
+/** An attribute's value by its kind, undefined where it has none. */
+type ValueOf = (name: string, kind: Kind) => unknown;
+
+/** One attribute as the prop it carries. Absent, it says nothing at
+ * the mount; after it (`cleared`), it is undefined, so the prop it
+ * carried goes and the machine takes its default. */
+export function propOf(
+  own: typeof MonoElement,
+  name: string,
+  valueOf: ValueOf,
+  cleared = false,
+): Record<string, unknown> {
+  const kind = own.table[name];
+  if (!kind) return {};
+  if (!(name in POSITIONING)) {
+    const value = valueOf(name, kind);
+    if (value === undefined && !cleared) return {};
+    return { [own.definition.aliases?.[name] ?? camel(name)]: value };
+  }
+  // The positioning four are one prop, the two offsets under `offset`,
+  // each key present where `cleared`, as a partial merges into the last.
+  const positioning: Record<string, unknown> = cleared
+    ? { placement: undefined, gutter: undefined, offset: undefined }
+    : {};
+  const offset: Record<string, unknown> = {};
+  for (const [attribute, attributeKind] of Object.entries(POSITIONING)) {
+    if (!(attribute in own.table)) continue;
+    const value = valueOf(attribute, attributeKind);
+    if (value === undefined) continue;
+    if (attribute === "offset-main-axis") offset["mainAxis"] = value;
+    else if (attribute === "offset-cross-axis") offset["crossAxis"] = value;
+    else positioning[camel(attribute)] = value;
+  }
+  if (Object.keys(offset).length > 0) positioning["offset"] = offset;
+  return { positioning };
 }
 
 let generated = 0;
@@ -143,6 +181,7 @@ const HTMLElementBase = (
 ) as typeof HTMLElement;
 
 export class MonoElement extends HTMLElementBase {
+  static readonly [ROOT] = true;
   static readonly definition: Definition<unknown>;
   static readonly table: Readonly<Record<string, Kind>>;
   static get observedAttributes(): string[] {
@@ -227,7 +266,9 @@ export class MonoElement extends HTMLElementBase {
       this.#setOpen(value !== null && value !== "false");
       return;
     }
-    this.#mounted.updateProps(this.#propsOf(name, true));
+    this.#mounted.updateProps(
+      propOf(this.constructor as typeof MonoElement, name, this.#valueOf, true),
+    );
   }
 
   /** Stop the mount and take its handlers off the parts. */
@@ -289,15 +330,15 @@ export class MonoElement extends HTMLElementBase {
     if (this.isConnected && this.#hasParts()) this.#mount();
   };
 
-  #hasParts(): boolean {
-    return this.querySelector("[data-part]") !== null;
+  /** The parts this element's mount takes: none of a nested element's. */
+  #ownParts(): Element[] {
+    return Array.from(this.querySelectorAll("[data-part]")).filter(
+      (part) => MonoElement.#mountAbove(part) === this,
+    );
   }
 
-  /** Whether the parts are the ones the mount was given. */
-  #keepsParts(): boolean {
-    const parts = this.querySelectorAll("[data-part]");
-    if (parts.length !== this.#parts.length) return false;
-    return this.#parts.every((part, index) => part === parts[index]);
+  #hasParts(): boolean {
+    return this.#ownParts().length > 0;
   }
 
   /** Parts coming or going re-mount, a microtask after, so a framework
@@ -310,8 +351,14 @@ export class MonoElement extends HTMLElementBase {
       this.#scheduled = true;
       queueMicrotask(() => {
         this.#scheduled = false;
-        if (!this.isConnected || this.#keepsParts()) return;
-        if (this.#hasParts()) this.#mount();
+        if (!this.isConnected) return;
+        // The parts the mount was given, by identity, are no change.
+        const parts = this.#ownParts();
+        const kept =
+          parts.length === this.#parts.length &&
+          parts.every((part, index) => part === this.#parts[index]);
+        if (kept) return;
+        if (parts.length > 0) this.#mount();
         else this.#unmount();
       });
     });
@@ -325,12 +372,6 @@ export class MonoElement extends HTMLElementBase {
     return { attribute, selector: value ? `[${attribute}="${value}"]` : `[${attribute}]` };
   }
 
-  /** Whether a part is this element's mount's rather than a nested
-   * element's, whose items carry their own states. */
-  #owns(part: Element): boolean {
-    return MonoElement.#mountAbove(part) === this;
-  }
-
   /** Stop the mount, keeping the reader's selection and clearing the
    * markers it wrote, so a later mount reads only the markers of items
    * the page brings. */
@@ -341,9 +382,7 @@ export class MonoElement extends HTMLElementBase {
     this.#mounted = null;
     const { attribute } = this.#markerOf;
     for (const part of this.#parts) {
-      if (part.getAttribute("data-part") === "item" && this.#owns(part)) {
-        part.removeAttribute(attribute);
-      }
+      if (part.getAttribute("data-part") === "item") part.removeAttribute(attribute);
     }
     this.#parts = [];
   }
@@ -360,12 +399,10 @@ export class MonoElement extends HTMLElementBase {
     const marked =
       later &&
       props["defaultValue"] === undefined &&
-      Array.from(this.querySelectorAll(`[data-part='item']${this.#markerOf.selector}`)).some(
-        (item) => this.#owns(item),
-      );
+      this.#ownParts().some((part) => part.matches(`[data-part='item']${this.#markerOf.selector}`));
     if (later && !marked) props["defaultValue"] = this.#initialValue;
     this.#mounted = mount(this, props);
-    this.#parts = Array.from(this.querySelectorAll("[data-part]"));
+    this.#parts = this.#ownParts();
     const api = this.#mounted.api as Partial<Selecting>;
     if (!Array.isArray(api.value)) return;
     if (!later || marked) this.#initialValue = [...api.value];
@@ -413,7 +450,9 @@ export class MonoElement extends HTMLElementBase {
     // A marker element has no id of its own: the mount above it makes
     // one under its own.
     if (this.id) props["id"] = this.id;
-    for (const name of Object.keys(own.table)) Object.assign(props, this.#propsOf(name));
+    for (const name of Object.keys(own.table)) {
+      Object.assign(props, propOf(own, name, this.#valueOf));
+    }
     if (this.hasAttribute("open")) props["defaultOpen"] = this.getAttribute("open") !== "false";
     for (const callback of own.definition.callbacks) {
       props[callback] = (detail: unknown) => this.#dispatch(callback, detail);
@@ -421,49 +460,14 @@ export class MonoElement extends HTMLElementBase {
     return props;
   }
 
-  /** One attribute as the prop it carries; a positioning one as the
-   * whole of `positioning`, the four being one prop. Absent, it says
-   * nothing at the mount; after it (`cleared`), it is undefined, so the
-   * prop it carried goes and the machine takes its default. */
-  #propsOf(name: string, cleared = false): Record<string, unknown> {
-    const own = this.constructor as typeof MonoElement;
-    const kind = own.table[name];
-    if (!kind) return {};
-    if (name in POSITIONING) return { positioning: this.#positioning(cleared) };
-    const value = this.#valueOf(name, kind);
-    if (value === undefined && !cleared) return {};
-    return { [own.definition.aliases?.[name] ?? camel(name)]: value };
-  }
-
-  /** Where the floating part goes, as the four attributes set it: the
-   * two offsets under `offset`, the rest by their own names — each key
-   * present where `cleared`, since a partial merges into the last. */
-  #positioning(cleared = false): Record<string, unknown> {
-    const own = this.constructor as typeof MonoElement;
-    const positioning: Record<string, unknown> = cleared
-      ? { placement: undefined, gutter: undefined, offset: undefined }
-      : {};
-    const offset: Record<string, unknown> = {};
-    for (const [name, kind] of Object.entries(POSITIONING)) {
-      if (!(name in own.table)) continue;
-      const value = this.#valueOf(name, kind);
-      if (value === undefined) continue;
-      if (name === "offset-main-axis") offset["mainAxis"] = value;
-      else if (name === "offset-cross-axis") offset["crossAxis"] = value;
-      else positioning[camel(name)] = value;
-    }
-    if (Object.keys(offset).length > 0) positioning["offset"] = offset;
-    return positioning;
-  }
-
-  #valueOf(name: string, kind: Kind): unknown {
+  #valueOf: ValueOf = (name, kind) => {
     if (kind === "boolean") {
       return this.hasAttribute(name) ? this.getAttribute(name) !== "false" : undefined;
     }
     const raw = this.getAttribute(name);
     if (raw === null) return undefined;
     return kind === "number" ? Number(raw) : raw;
-  }
+  };
 
   /** A callback as a bubbling event, its argument the `detail`; where
    * the argument carries a `preventDefault`, cancelling calls it.
