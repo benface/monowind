@@ -4,23 +4,14 @@
  * build, and fonts). Extra arguments are forwarded to `playwright test`
  * (e.g. --update-snapshots to regenerate baselines).
  */
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { run } from "./run.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const playwrightVersion = require("playwright/package.json").version;
 const image = `mcr.microsoft.com/playwright:v${playwrightVersion}-noble`;
-
-function run(command, args) {
-  const result = spawnSync(command, args, {
-    cwd: repoRoot,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-}
 
 run("pnpm", ["--filter", "@monowind/storybook", "build"]);
 run("docker", [

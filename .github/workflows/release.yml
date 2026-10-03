@@ -59,7 +59,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       # Unfiltered: a filtered install fails on undeclared cross-package
-      # reaches (declarations guarded by scripts/check-workspace.mjs).
+      # reaches.
       - run: pnpm install --frozen-lockfile
       # No repository is linked to this Netlify site, so this push of
       # the built files is the only deploy path. The CLI must run from
@@ -107,7 +107,7 @@ jobs:
             echo "NETLIFY_AUTH_TOKEN secret not set - skipping deploy"
             exit 0
           fi
-          pnpm --filter @monowind/play build
+          pnpm --filter "@monowind/play..." build
           cd apps/play
           npx -y netlify-cli@27 deploy --prod --no-build --dir "$PWD/dist" --functions "$PWD/netlify/functions"
       # The functions only run on Netlify, so the live short-link round

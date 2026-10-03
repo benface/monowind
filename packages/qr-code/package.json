@@ -61,8 +61,8 @@
     "happy-dom": "^20.14.5",
     "monowind": "workspace:^",
     "typescript": "^7.0.2",
-    "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
   },
   "peerDependencies": {
     "monowind": "workspace:^"

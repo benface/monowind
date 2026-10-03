@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node copy-vendor.mjs && vite --port 5188",
+    "dev": "pnpm --filter \"{.}^...\" build && node copy-vendor.mjs && vite --port 5188",
     "build": "node copy-vendor.mjs && vite build",
     "test": "node copy-vendor.mjs && node smoke.test.mjs"
   },
@@ -13,6 +13,6 @@
     "@starfederation/datastar": "^1.0.0-beta.11",
     "monowind": "workspace:*",
     "playwright": "^1.63.0",
-    "vite": "^8.3.1"
+    "vite": "^8.3.2"
   }
 }

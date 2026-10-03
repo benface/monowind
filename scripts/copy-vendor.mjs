@@ -1,5 +1,4 @@
 import { copyFileSync, mkdirSync } from "node:fs";
-import { buildPackages } from "./build-packages.mjs";
 
 /**
  * Copy the scripts an example serves into its `public/`, which the dev
@@ -8,9 +7,8 @@ import { buildPackages } from "./build-packages.mjs";
  * this mirrors how they are consumed in the real world (URLs, not
  * monorepo paths).
  *
- * `bundles` names the monowind packages to build (`buildPackages`) and
- * take `dist/cdn.js` from, each mapped to the name it is served under.
- * `extras` maps a served name to a URL the CALLER resolved:
+ * `bundles` maps each monowind package whose built `dist/cdn.js` it
+ * serves to the name it is served under; `extras` maps a served name to a URL the CALLER resolved:
  * `import.meta.resolve` in the app, where pnpm linked the dependency,
  * rather than here.
  */
@@ -18,7 +16,6 @@ export function copyVendor(dir, { bundles = {}, extras = {} } = {}) {
   mkdirSync(`${dir}/public`, { recursive: true });
   const into = (name) => new URL(name, `file://${dir}/public/`);
   const folder = (pkg) => (pkg === "monowind" ? "core" : pkg.replace("@monowind/", ""));
-  buildPackages(Object.keys(bundles).map(folder));
   for (const [pkg, served] of Object.entries(bundles)) {
     for (const suffix of ["", ".map"]) {
       copyFileSync(

@@ -4,13 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "cdn": "node ../../scripts/build-packages.mjs core && node copy-cdn.mjs",
-    "dev": "pnpm run cdn && vite --port 5180",
-    "test": "pnpm run cdn && node smoke.test.mjs"
+    "dev": "pnpm --filter \"{.}^...\" build && node copy-cdn.mjs && vite --port 5180",
+    "test": "node copy-cdn.mjs && node smoke.test.mjs"
   },
   "devDependencies": {
     "monowind": "workspace:*",
     "playwright": "^1.63.0",
-    "vite": "^8.3.1"
+    "vite": "^8.3.2"
   }
 }

@@ -38,31 +38,6 @@ const apps = workspaces("apps");
 const packages = workspaces("packages");
 
 /**
- * An app script building `packages/<x>` (`build-packages.mjs <x> …`)
- * needs <x> declared: a filtered CI install lays out the declared
- * workspaces alone.
- */
-for (const { folder: app, manifest } of apps) {
-  const declared = new Set([
-    ...Object.keys(manifest.dependencies ?? {}),
-    ...Object.keys(manifest.devDependencies ?? {}),
-  ]);
-  for (const script of Object.values(manifest.scripts ?? {})) {
-    for (const [, dirs] of String(script).matchAll(/build-packages\.mjs((?: [\w-]+)+)/g)) {
-      for (const dir of dirs.trim().split(" ")) {
-        const name = packages.find((pkg) => pkg.folder === dir)?.manifest.name;
-        if (name === undefined) fail(`apps/${app}: scripts build packages/${dir}, not a package`);
-        else if (!declared.has(name)) {
-          fail(
-            `apps/${app}: scripts build packages/${dir} but "${name}" is not a declared dependency`,
-          );
-        }
-      }
-    }
-  }
-}
-
-/**
  * Every export has a `publishConfig` counterpart inside the package's
  * `files`, so the tarball carries every entry it publishes.
  */
@@ -194,6 +169,6 @@ for (const { folder: pkg, dir, manifest } of built ? packages : []) {
 
 if (failed) process.exit(1);
 console.log(
-  "workspace script dependencies all declared, published exports all built, every TypeScript workspace type-checked, every app on a dev port of its own" +
+  "published exports all built, every TypeScript workspace type-checked, every app on a dev port of its own" +
     (built ? ", built types importing only dependencies, every source map named there" : ""),
 );

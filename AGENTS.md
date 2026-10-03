@@ -107,12 +107,15 @@ full suites once, before handing off:
   `npx vitest run stories/<file>.stories.ts --browser=chromium`; drop
   `--browser` to add Firefox and WebKit once it holds (the whole suite
   is ~50 s).
+- An app's `build` or `test` run alone reads its packages' CDN bundles
+  as last built; `pnpm --filter "<app>..." <script>` builds them first
+  (running the script in them too).
 - Visual goldens only when paint or layout changes, scoped with
   `node scripts/test-visual.mjs --grep "<story-id>"`; the full run
   (a Storybook build, then Docker) once, at the end.
-- `pnpm check` (~10 s) and `pnpm test` (scripts/test.mjs: every
-  package built once, the workspaces' tests and smokes four at a time,
-  the stories last) once, at the end — not after each edit.
+- `pnpm check` (~10 s) and `pnpm test` (scripts/test.mjs: the
+  workspaces' tests and smokes four at a time, each after its packages'
+  builds, the stories last) once, at the end — not after each edit.
 - Benches only when a change touches reads, layout, paint or what
   triggers them: the last commit's bundle against the working tree's.
 - Never run two browser suites (stories, visual, smokes, benches) at
