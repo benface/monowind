@@ -23,6 +23,8 @@ it("follows the attributes that render, every data-* but the engine's marks, and
     "tabindex",
     "popovertarget",
     "max",
+    "srcset",
+    "sizes",
   ]) {
     expect(rendersAttribute(box, name), name).toBe(true);
   }

@@ -1,6 +1,8 @@
 import { isFlowChild } from "./layout.ts";
 import { leafRendererFor } from "./leaf.ts";
-import { markerShows } from "./plain-text.ts";
+import { altText } from "./image.ts";
+import { copyGrids, imageRows, markerShows } from "./plain-text.ts";
+import type { CopyGrids } from "./plain-text.ts";
 import { domLength, inlineBoxesOf } from "./types.ts";
 import type { CharSourceRun, LayoutNode } from "./types.ts";
 import { hardLineSpans, INLINE_PAD, OBJECT_REPLACEMENT, WBR_MARKER } from "./wrap.ts";
@@ -80,13 +82,28 @@ export function charIndexAt(leaf: LayoutNode, container: Node, offset: number): 
   // An element's points lie in its own atomic box; a pseudo-element's
   // box stands at its element's edge.
   const boxes = inlineBoxesOf(leaf);
-  const boxIndex = boxes.findIndex((box) => !box.generated && box.source.contains(container));
-  if (boxIndex >= 0) {
+  const markerOf = (boxIndex: number): number => {
     let marker = -1;
     for (let i = 0; i <= boxIndex; i++) marker = leaf.text.indexOf(OBJECT_REPLACEMENT, marker + 1);
-    if (marker >= 0) return marker;
-  }
-  const runs = leaf.charSource ?? [];
+    return marker;
+  };
+  const inside = boxes.findIndex((box) => !box.generated && box.source.contains(container));
+  const marker = inside >= 0 ? markerOf(inside) : -1;
+  if (marker >= 0) return marker;
+  const index = runIndexAt(leaf.charSource, container, offset);
+  // A point just past an atomic box, or past an inline holding one, is
+  // past its marker, which no run stands for.
+  const before = offset > 0 ? container.childNodes[offset - 1] : undefined;
+  let past = -1;
+  boxes.forEach((box, i) => {
+    if (!box.generated && before?.contains(box.source)) past = i;
+  });
+  return past >= 0 ? Math.max(index, markerOf(past) + 1) : index;
+}
+
+/** The character a point stands before, by the runs of text it lies
+ * in or past. */
+function runIndexAt(runs: CharSourceRun[], container: Node, offset: number): number {
   // Runs are in DOM order: the last one starting at or before the point.
   let low = 0;
   let high = runs.length;
@@ -148,6 +165,15 @@ export interface BoundaryPoints {
   endOffset: number;
 }
 
+/** A Range over the points, in `document`; points in two roots leave
+ * it collapsed at the end. */
+export function rangeOf(document: Document, points: BoundaryPoints): Range {
+  const range = document.createRange();
+  range.setStart(points.startContainer, points.startOffset);
+  range.setEnd(points.endContainer, points.endOffset);
+  return range;
+}
+
 /** The document Selection's first range as seen through `shadowRoot`
  * and the `leafRoots` (`getComposedRanges` on Firefox/WebKit and
  * standards-path Chromium; `ShadowRoot.getSelection()` as the legacy
@@ -191,6 +217,25 @@ export function classifySelection(
   if (grid.contains(start) && grid.contains(end)) return "grid";
   if (withinHost(host, start) && withinHost(host, end)) return "light";
   return "outside";
+}
+
+/** The part of a selection in the host's light DOM: its points within
+ * the host, the host's edges where it runs past them; null where it
+ * misses the host or straddles its grid. */
+export function hostPart(host: Element, points: BoundaryPoints): BoundaryPoints | null {
+  // A point in the grid collapses the range, its root another.
+  const range = rangeOf(host.ownerDocument, points);
+  if (range.collapsed || !range.intersectsNode(host)) return null;
+  const start = withinHost(host, range.startContainer);
+  const end = withinHost(host, range.endContainer);
+  const part = {
+    startContainer: start ? range.startContainer : host,
+    startOffset: start ? range.startOffset : 0,
+    endContainer: end ? range.endContainer : host,
+    endOffset: end ? range.endOffset : host.childNodes.length,
+  };
+  const touches = part.startContainer === part.endContainer && part.startOffset === part.endOffset;
+  return touches ? null : part;
 }
 
 /** `contains` through the shadow boundaries of the host's descendants:
@@ -255,15 +300,16 @@ export function selectedRanges(
     const { leaf, start, end } = inTranscript;
     return end > start ? new Map([[leaf, { start, end }]]) : new Map();
   }
-  const range = root.source.ownerDocument!.createRange();
-  range.setStart(points.startContainer, points.startOffset);
-  range.setEnd(points.endContainer, points.endOffset);
+  const range = rangeOf(root.source.ownerDocument!, points);
   const ranges = new Map<LayoutNode, { start: number; end: number }>();
   const visit = (node: LayoutNode): void => {
     if (node.tableHidden || node.forceHidden || !rangeMeets(node, range)) return;
     if (isTextLeaf(node)) {
       const chars = coveredChars(node, range);
       if (chars.end > chars.start) ranges.set(node, chars);
+    } else if (node.image) {
+      // An atomic box, selected whole (specs/images.md "Paint").
+      ranges.set(node, { start: 0, end: 1 });
     }
     for (const child of node.children) visit(child);
   };
@@ -310,26 +356,130 @@ type TextItem = { text: string } | { breaks: number };
  * text. The browsers' own serializers lose block breaks for the
  * engine's out-of-flow boxes; this restores what they would have
  * produced in flow. */
-export function serializeSelection(root: LayoutNode, points: BoundaryPoints): string {
+export function serializeSelection(
+  root: LayoutNode,
+  points: BoundaryPoints,
+  options: { cells?: boolean } = {},
+): string {
   const inTranscript = transcriptRange(root, points);
   if (inTranscript) return inTranscript.leaf.text.slice(inTranscript.start, inTranscript.end);
-  const range = root.source.ownerDocument!.createRange();
-  range.setStart(points.startContainer, points.startOffset);
-  range.setEnd(points.endContainer, points.endOffset);
+  const range = rangeOf(root.source.ownerDocument!, points);
   const items: TextItem[] = [];
-  collectItems(root, range, items);
+  let grids: CopyGrids | undefined;
+  const cells = options.cells ? () => (grids ??= copyGrids(root)) : null;
+  collectItems(root, { range, markers: new Map(), grids: cells }, items);
   return assemble(items);
+}
+
+/** The page's text a range holds before and after a host, plain: the
+ * text nodes the page shows and selects, white space collapsed unless
+ * preformatted, a block's text on lines of its own, a `<br>` a break —
+ * the host's own left out, the host copying it, and another host's
+ * part as `nested` gives it. */
+export function pageAround(
+  range: Range,
+  host: Element,
+  nested: (other: Element) => string | null = () => null,
+): [string, string] {
+  const sides: [string[], string[]] = [[], []];
+  let lines = sides[0];
+  let line = "";
+  let block: Element | null = null;
+  let preformatted = false;
+  const flush = (): void => {
+    if (preformatted) lines.push(...line.replace(/\n$/, "").split("\n"));
+    else if (line.trim()) lines.push(line.trim());
+    line = "";
+  };
+  const styles = new Map<Element, CSSStyleDeclaration>();
+  const styleOf = (element: Element): CSSStyleDeclaration => {
+    let style = styles.get(element);
+    if (!style) styles.set(element, (style = getComputedStyle(element)));
+    return style;
+  };
+  const showing = new Map<Element, boolean>();
+  const shows = (element: Element): boolean => {
+    let shown = showing.get(element);
+    if (shown === undefined) {
+      shown =
+        element.checkVisibility?.({ visibilityProperty: true }) !== false &&
+        styleOf(element).userSelect !== "none";
+      showing.set(element, shown);
+    }
+    return shown;
+  };
+  const blockOf = (element: Element | null): Element | null => {
+    while (element && styleOf(element).display.startsWith("inline"))
+      element = element.parentElement;
+    return element;
+  };
+  const root = range.commonAncestorContainer;
+  const walker = root.ownerDocument!.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+  );
+  /** The node after the current one's subtree. */
+  const past = (): Node | null => {
+    for (;;) {
+      const next = walker.nextSibling();
+      if (next || !walker.parentNode()) return next;
+    }
+  };
+  let node = walker.nextNode();
+  while (node) {
+    // Out of the range, its subtree with it.
+    if (!range.intersectsNode(node)) {
+      node = past();
+      continue;
+    }
+    const element = node instanceof Element ? node : node.parentElement;
+    const part = node === host ? "" : node instanceof Element ? nested(node) : null;
+    if (part !== null) {
+      // A host's part on lines of its own.
+      flush();
+      block = null;
+      preformatted = false;
+      if (node === host) lines = sides[1];
+      else if (part) lines.push(part);
+      node = past();
+      continue;
+    }
+    const shown = element && shows(element);
+    if (shown && node instanceof Element) {
+      if (node.localName === "br") flush();
+    } else if (shown) {
+      const text = node as Text;
+      const start = text === range.startContainer ? range.startOffset : 0;
+      const end = text === range.endContainer ? range.endOffset : text.data.length;
+      const own = blockOf(element);
+      if (own !== block) {
+        flush();
+        block = own;
+        preformatted = /^(pre|break-spaces)/.test(styleOf(element).whiteSpace);
+      }
+      const data = text.data.slice(start, end);
+      line += preformatted ? data : data.replace(/\s+/g, " ");
+    }
+    node = walker.nextNode();
+  }
+  flush();
+  return [sides[0].join("\n"), sides[1].join("\n")];
 }
 
 /** Each leaf's copied markers, which go before its text. */
 type CopiedMarkers = Map<LayoutNode, string>;
 
-function collectItems(
-  node: LayoutNode,
-  range: Range,
-  items: TextItem[],
-  markers: CopiedMarkers = new Map(),
-): void {
+/** A copy's walk: its range, the markers copied before each leaf's text,
+ * and, where images copy as their cells (grid mode), its grids, rendered
+ * once where an image is copied; null where images copy their alt. */
+interface Copy {
+  range: Range;
+  markers: CopiedMarkers;
+  grids: (() => CopyGrids) | null;
+}
+
+function collectItems(node: LayoutNode, copy: Copy, items: TextItem[]): void {
+  const { range, markers } = copy;
   if (node.tableHidden || node.forceHidden || !rangeMeets(node, range)) return;
   if (node.marker && (node.text || !node.anonymous)) copyMarker(node, node, range, markers);
   // A hidden box gives up its own breaks, its subtree's items kept, as
@@ -337,12 +487,12 @@ function collectItems(
   const breaks = node.style.visible ? requiredBreaks(node) : 0;
   if (breaks) items.push({ breaks });
   if (node.style.tableRole === "row") {
-    collectRow(node, range, items, markers);
+    collectRow(node, copy, items);
   } else if (node.style.display === "table") {
     const rows = tableRows(node);
     for (const child of node.children) {
       if (child.style.tableRole === "row" || isRowGroup(child)) continue;
-      collectItems(child, range, items, markers); // captions
+      collectItems(child, copy, items); // captions
     }
     // A visible row's newline, before the next row the range reaches,
     // like the browsers' own partial-table copies.
@@ -350,20 +500,21 @@ function collectItems(
     for (const row of rows) {
       if (!range.intersectsNode(row.source)) continue;
       if (separated) items.push({ text: "\n" });
-      collectItems(row, range, items, markers);
+      collectItems(row, copy, items);
       separated = row.style.visible;
     }
   } else {
+    if (node.image && node.style.visible) items.push({ text: imageText(node, copy) });
     if (isTextLeaf(node)) {
       const marker = markers.get(node);
       if (marker) items.push({ text: marker });
-      items.push({ text: leafSlice(node, range) });
+      items.push({ text: leafSlice(node, copy) });
     }
     for (const child of node.children) {
       if (child.inlineBox) continue;
       // An inside marker's line of its own, which holds no text.
       if (child.marker && !child.text && child.anonymous) copyMarker(child, node, range, markers);
-      else collectItems(child, range, items, markers);
+      else collectItems(child, copy, items);
     }
   }
   if (breaks) items.push({ breaks });
@@ -400,18 +551,13 @@ function firstTextLeaf(node: LayoutNode): LayoutNode | undefined {
 
 /** A row's cells, a visible one's tab before the next, as innerText
  * puts it after every visible cell but the last. */
-function collectRow(
-  row: LayoutNode,
-  range: Range,
-  items: TextItem[],
-  markers: CopiedMarkers,
-): void {
+function collectRow(row: LayoutNode, copy: Copy, items: TextItem[]): void {
   let separated = false;
   for (const cell of row.children) {
     if (cell.style.tableRole !== "cell" || cell.tableHidden) continue;
-    if (!range.intersectsNode(cell.source)) continue;
+    if (!copy.range.intersectsNode(cell.source)) continue;
     if (separated) items.push({ text: "\t" });
-    collectItems(cell, range, items, markers);
+    collectItems(cell, copy, items);
     separated = cell.style.visible;
   }
 }
@@ -444,15 +590,30 @@ function requiredBreaks(node: LayoutNode): number {
   return node.source.tagName === "P" && !node.generated ? 2 : 1;
 }
 
-interface Point {
+export interface Point {
   node: Node;
   offset: number;
 }
 
+/** A DOM range's two points. */
+export interface PointRange {
+  start: Point;
+  end: Point;
+}
+
+/** The points around a node in its parent, as `Range.selectNode` sets
+ * them; null for a node with none. */
+export function pointsAround(node: Node): PointRange | null {
+  const parent = node.parentNode;
+  if (!parent) return null;
+  const offset = Array.prototype.indexOf.call(parent.childNodes, node);
+  return { start: { node: parent, offset }, end: { node: parent, offset: offset + 1 } };
+}
+
 /** The DOM extent of a leaf's run — its first mapped character or
  * inline box through its last; null for a run with neither. */
-export function leafExtent(leaf: LayoutNode): { start: Point; end: Point } | null {
-  const points: { start: Point; end: Point }[] = [];
+export function leafExtent(leaf: LayoutNode): PointRange | null {
+  const points: PointRange[] = [];
   const runs = leaf.charSource ?? [];
   if (runs.length > 0) {
     const first = runs[0]!;
@@ -470,13 +631,8 @@ export function leafExtent(leaf: LayoutNode): { start: Point; end: Point } | nul
       points.push({ start: { node: source, offset }, end: { node: source, offset } });
       continue;
     }
-    const parent = source.parentNode;
-    if (!parent) continue;
-    const index = Array.prototype.indexOf.call(parent.childNodes, source);
-    points.push({
-      start: { node: parent, offset: index },
-      end: { node: parent, offset: index + 1 },
-    });
+    const around = pointsAround(source);
+    if (around) points.push(around);
   }
   if (points.length === 0) return null;
   const before = (a: Point, b: Point) => comparePoints(a.node, a.offset, b.node, b.offset) < 0;
@@ -527,7 +683,8 @@ export function isTextLeaf(node: LayoutNode): boolean {
  * with inline boxes spliced in for their U+FFFC markers and padding
  * markers dropped. A final newline (a trailing `<br>`, which the wrap
  * layer drops) goes too. */
-function leafSlice(leaf: LayoutNode, range: Range): string {
+function leafSlice(leaf: LayoutNode, copy: Copy): string {
+  const { range } = copy;
   const { text } = leaf;
   const { start, end } = coveredChars(leaf, range);
   // Hidden text is no rendered text (specs/visibility.md).
@@ -543,10 +700,17 @@ function leafSlice(leaf: LayoutNode, range: Range): string {
     const box = boxes[boxIndex++];
     if (!box || !range.intersectsNode(box.source)) return "";
     const items: TextItem[] = [];
-    collectItems(box, range, items);
+    collectItems(box, { ...copy, markers: new Map() }, items);
     return assemble(items);
   });
   return slice.replaceAll(INLINE_PAD, "").replaceAll(WBR_MARKER, "");
+}
+
+/** An image's copy (specs/images.md "The light DOM"): its alt, as
+ * rendered; in grid mode its alt's cells as a copy's grids hold them. */
+function imageText(node: LayoutNode, copy: Copy): string {
+  if (!copy.grids) return altText((node.source as HTMLImageElement).alt);
+  return imageRows(copy.grids(), node).join("\n");
 }
 
 /** Required breaks collapse to the largest of a run and vanish at

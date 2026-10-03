@@ -94,7 +94,7 @@ parsed. Positions in px convert on the spacing scale.
    `background-clip: text` colors whole glyph cells, where CSS clips
    to the glyph shapes, and applies to the box's own text; the clip is
    read once, the first layer's, for every layer.
-3. `url()` images are ignored.
+3. `url()` images are ignored; images.md "Later" holds them.
 4. An editable's native selection (`styles.css`, its `--mw-ground`)
    sits on the plain `background-color` under a gradient, not on the
    gradient's color at its cells.

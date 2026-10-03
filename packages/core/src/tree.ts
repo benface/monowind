@@ -11,7 +11,9 @@ import {
 } from "./layout.ts";
 import { leafRendererFor, renderLeafContent } from "./leaf.ts";
 import type { LeafRegistration } from "./leaf.ts";
-import { pxToCells } from "./metrics.ts";
+import { pxInCells, pxToCells } from "./metrics.ts";
+import { altText, readImageColor, splitPosition } from "./image.ts";
+import type { ObjectFit } from "./image.ts";
 import {
   computedDisplay,
   isTransparentColor,
@@ -19,6 +21,7 @@ import {
   readAnchorNames,
   readAnchorScope,
   markerOf,
+  readAspectRatio,
   readCellStyle,
   readDecoration,
   readElementInsets,
@@ -26,6 +29,7 @@ import {
   readOpacity,
   readOverflow,
   readTextStyle,
+  readVerticalAlign,
   readVisible,
   skipsContents,
   trackingCells,
@@ -281,6 +285,7 @@ function buildElement(root: Element, context: BuildContext): LayoutNode | null {
     style.marker = { ...marker, parts: withQuotes(marker.parts, marker.quotes, root, context) };
   }
   if (style.skipsContents) return buildLeaf(root, style, [], [], context, []);
+  if (root.tagName === "IMG") return buildImageLeaf(root as HTMLImageElement, style, context);
 
   // Registered leaf renderers (specs/leaf-renderers.md) supply their
   // own grid content; children are skipped entirely. The light DOM
@@ -1023,6 +1028,64 @@ function buildToggleLeaf(
   return node;
 }
 
+/** An `<img>` (specs/images.md "Sizing"): a replaced box, its width
+ * its natural width on the spacing scale — or derived through its
+ * ratio from a height set alone, within the height's limits — and its
+ * height from the ratio, as `w-[Npx] aspect-[…]` sizes a box; its
+ * `alt` as text once it fails. */
+function buildImageLeaf(
+  img: HTMLImageElement,
+  style: ReturnType<typeof readCellStyle>,
+  context: BuildContext,
+): LayoutNode {
+  const { naturalWidth: width, naturalHeight: height } = img;
+  const cs = getComputedStyle(img);
+  style.whiteSpace = "pre";
+  style.width ??= { kind: "max-content" };
+  if (img.complete && width === 0) {
+    const text = altText(img.alt);
+    return createNode(img, style, [], text, textCells(text), text ? 1 : 0);
+  }
+  const { aspectRatio } = cs;
+  const loaded = width > 0 && height > 0;
+  // An `auto <ratio>`'s ratio gives way to the natural one.
+  if (loaded && (style.aspectRatio == null || aspectRatio.startsWith("auto"))) {
+    style.aspectRatio = readAspectRatio(`${width} / ${height}`, context.cellMetrics);
+  }
+  const ratio = style.aspectRatio;
+  let intrinsicWidth = loaded ? pxToCells(width, context.rootFontSizePx) : 0;
+  if (ratio !== null) {
+    const { height: set, minHeight: min, maxHeight: max } = style;
+    if (set?.kind === "cells") intrinsicWidth = Math.round(set.value * ratio);
+    if (typeof max === "number") intrinsicWidth = Math.min(intrinsicWidth, Math.round(max * ratio));
+    if (typeof min === "number") intrinsicWidth = Math.max(intrinsicWidth, Math.round(min * ratio));
+  }
+  // A replaced box's baseline is its bottom edge: the line's text on
+  // its last row, where it aligns to the baseline.
+  const align = readVerticalAlign(img, cs);
+  style.verticalAlign = align === "baseline" ? "end" : align;
+  // No content height: the ratio derives the height from the width the
+  // box resolves to.
+  const node = createNode(img, style, [], "", intrinsicWidth, 0);
+  if (loaded) {
+    const fit = cs.objectFit as ObjectFit;
+    node.image = {
+      element: img,
+      natural: { width, height },
+      columns: pxInCells(width, context.rootFontSizePx),
+      fit: ["contain", "cover", "none", "scale-down"].includes(fit) ? fit : "fill",
+      position: splitPosition(cs.objectPosition || "50% 50%"),
+      color: readImageColor({
+        palette: cs.getPropertyValue("--mw-image-palette"),
+        match: cs.getPropertyValue("--mw-image-match"),
+        levels: cs.getPropertyValue("--mw-image-levels"),
+        dither: cs.getPropertyValue("--mw-image-dither"),
+      }),
+    };
+  }
+  return node;
+}
+
 /** True for content that flows WITH the surrounding text (computed
  * `inline` or `contents`). */
 function isRunInline(display: string): boolean {
@@ -1350,7 +1413,8 @@ function collectNodes(
       }
       // An atomic inline box rides the run as ONE unbreakable unit: a
       // U+FFFC marker whose advance layout resolves to the box's width.
-      if (isAtomicInline(display)) {
+      // An inline image is one, as a replaced box is in CSS.
+      if (isAtomicInline(display) || child.tagName === "IMG") {
         pushBox(child, true, ctx, run, opacity);
         continue;
       }

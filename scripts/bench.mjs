@@ -1,5 +1,5 @@
 /**
- * Time to interactive on a page the grid finds hard, in one of eight
+ * Time to interactive on a page the grid finds hard, in one of nine
  * shapes (`SHAPES` below). Reports the median of several runs so a
  * number is comparable across commits; record what it gives in
  * .agents/architecture/performance.md when it moves.
@@ -12,16 +12,17 @@
  *   pnpm bench --shape lists   numbered list items, every tenth holding bullets
  *   pnpm bench --shape labels  paragraphs numbered and marked by pseudo-elements
  *   pnpm bench --shape checkboxes  labeled checkboxes, every tenth with a transition
+ *   pnpm bench --shape images  pictures, every other posterized (--count 12)
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
  *   pnpm bench --bundle <path> an already-built cdn.js, to compare tags
  */
-import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
+import { run } from "./run.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -127,6 +128,22 @@ const SHAPES = {
           }> item ${i}</label>`,
       )}</div>`,
   },
+  // Images (specs/images.md): each sampled to the grid, every other
+  // posterized, on a canvas of its own; interactive once every picture
+  // is drawn, as the images load after the host is ready.
+  images: {
+    label: "images",
+    body: () =>
+      `<div class="flex flex-wrap gap-1">${repeat(
+        (i) =>
+          `<img src="/picture.png" alt="picture ${i}" class="w-24${i % 2 ? " image-posterize-4" : ""}">`,
+      )}</div>`,
+    settled: () => {
+      const host = document.querySelector("mono-wind[data-mw-ready]");
+      const drawn = host?.shadowRoot.querySelectorAll("canvas.picture").length ?? -1;
+      return drawn === host?.querySelectorAll("img").length;
+    },
+  },
 };
 if (!Object.hasOwn(SHAPES, shape)) {
   console.error(`Unknown --shape ${shape}: one of ${Object.keys(SHAPES).join(", ")}`);
@@ -137,13 +154,7 @@ const body = SHAPES[shape].body();
 // The bundle under test: built here so the number always belongs to
 // the working tree, unless `--bundle` names one built elsewhere (an
 // older tag's, to compare against).
-if (!given) {
-  const built = spawnSync("pnpm", ["-C", "packages/core", "build"], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
-  if (built.status !== 0) process.exit(built.status ?? 1);
-}
+if (!given) run("pnpm", ["--filter", "monowind", "build"]);
 const bundle = readFileSync(given ?? resolve(repoRoot, "packages/core/dist/cdn.js"), "utf8");
 
 const page = `<!doctype html><html><head><meta charset="utf-8">
@@ -153,7 +164,12 @@ const page = `<!doctype html><html><head><meta charset="utf-8">
 <mono-wind id="host">${body}</mono-wind>
 </body></html>`;
 
-const server = createServer((_request, response) => {
+const picture = readFileSync(resolve(repoRoot, "apps/storybook/stories/assets/sunset.png"));
+const server = createServer((request, response) => {
+  if (request.url === "/picture.png") {
+    response.writeHead(200, { "content-type": "image/png" });
+    return response.end(picture);
+  }
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   response.end(page);
 });
@@ -173,9 +189,9 @@ for (let run = 0; run < runs; run++) {
   await tab.goto(`http://127.0.0.1:${port}/`);
   // Interactive is the host's own signal: the grid is painted and the
   // engine is listening.
-  await tab.waitForFunction(() => document.querySelector("mono-wind[data-mw-ready]"), null, {
-    timeout: 60000,
-  });
+  const settled =
+    SHAPES[shape].settled ?? (() => document.querySelector("mono-wind[data-mw-ready]"));
+  await tab.waitForFunction(settled, null, { timeout: 60000 });
   const interactive = Date.now() - started;
   const metrics = Object.fromEntries(
     (await client.send("Performance.getMetrics")).metrics.map((m) => [m.name, m.value]),

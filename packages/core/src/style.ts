@@ -9,7 +9,7 @@ import type { ColorSpace, HueMode } from "./color.ts";
 import { DEFAULT_CELL } from "./gradient.ts";
 import { glyphSetFor, glyphSetOf, junctionWeight, weightBand } from "./glyphs.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
-import { pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
+import { pxInCells, pxToCells, roundHalfAwayFromZero } from "./metrics.ts";
 import {
   autoTrack,
   clipsAxis,
@@ -1221,7 +1221,10 @@ const VERTICAL_ALIGN = { top: "start", middle: "center", bottom: "end" } as cons
  * behaves as baseline. Fallbacks are for environments without
  * presentational hints or UA table styles (happy-dom): the `valign`
  * attribute, then the tag's UA `middle`. */
-function readVerticalAlign(el: Element, cs: CSSStyleDeclaration): CellStyle["verticalAlign"] {
+export function readVerticalAlign(
+  el: Element,
+  cs: CSSStyleDeclaration,
+): CellStyle["verticalAlign"] {
   const value =
     cs.verticalAlign ||
     el.getAttribute("valign")?.toLowerCase() ||
@@ -1723,7 +1726,7 @@ function readBoxShadow(
     shadows.push({
       x: offset(x!, metrics?.width),
       y: offset(y!, metrics?.height),
-      blur: blur / (0.25 * rootFontSizePx),
+      blur: pxInCells(blur, rootFontSizePx),
       spread: pxToCells(spread, rootFontSizePx),
       color: tokens.find((token) => !isLength(token) && token !== "inset") ?? "currentcolor",
       inset: tokens.includes("inset"),
@@ -1920,7 +1923,7 @@ function readRadius(value: string, rootFontSizePx: number): number {
   for (const part of parts) {
     const amount = parseFloat(part);
     if (!Number.isFinite(amount) || amount <= 0) return 0;
-    radius = Math.min(radius, part.endsWith("%") ? Infinity : amount / (0.25 * rootFontSizePx));
+    radius = Math.min(radius, part.endsWith("%") ? Infinity : pxInCells(amount, rootFontSizePx));
   }
   return radius;
 }

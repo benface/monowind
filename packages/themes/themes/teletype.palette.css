@@ -291,4 +291,7 @@ mono-wind.theme-teletype,
   --color-taupe-950: #20201c;
   --color-black: #20201c;
   --color-white: #f5f1e6;
+  /* An image's picture reduced to the system palette (specs/images.md). */
+  --mw-image-palette: #20201c #4a473e #7a766a #b0ab9c #dad5c6 #f5f1e6;
+  --mw-image-match: lightness;
 }

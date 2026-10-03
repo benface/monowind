@@ -171,6 +171,10 @@ export interface PaintVisitor {
   /** A list item's marker (specs/lists.md "Paint order"): its item's
    * first inline content, before the text of the node holding it. */
   marker?(node: LayoutNode): void;
+  /** An image's picture (specs/images.md): a replaced element's content,
+   * in its content's turn, after every block's ink (CSS 2.1 Appendix
+   * E). */
+  picture?(node: LayoutNode): void;
   /** A box's scrollbars, over its content. */
   bars?(node: LayoutNode): void;
 }
@@ -297,6 +301,7 @@ function floatsOf(node: LayoutNode, visitor: PaintVisitor): void {
 }
 
 function contentOf(node: LayoutNode, visitor: PaintVisitor): void {
+  if (node.image) visitor.picture?.(node);
   if (node.marker) visitor.marker?.(node);
   if (node.text !== "") visitor.text?.(node, -1);
   for (const child of ordered(node)) {

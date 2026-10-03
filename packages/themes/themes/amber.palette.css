@@ -291,4 +291,7 @@ mono-wind.theme-amber,
   --color-taupe-950: #000000;
   --color-black: #000000;
   --color-white: #ffefb3;
+  /* An image's picture reduced to the system palette (specs/images.md). */
+  --mw-image-palette: #000000 #4a2d00 #7a4a00 #b87400 #ffb000 #ffd24a #ffefb3;
+  --mw-image-match: lightness;
 }

@@ -6,10 +6,14 @@ export function roundHalfAwayFromZero(value: number): number {
   return rounded || 0; // normalize -0 → 0
 }
 
-/** Convert a computed px value to cells using the spacing scale (1 cell = 0.25rem). */
+/** A computed px value in cells on the spacing scale (1 cell = 0.25rem). */
+export function pxInCells(px: number, rootFontSizePx: number): number {
+  return rootFontSizePx > 0 ? px / (0.25 * rootFontSizePx) : 0;
+}
+
+/** Convert a computed px value to whole cells on the spacing scale. */
 export function pxToCells(px: number, rootFontSizePx: number): number {
-  if (rootFontSizePx <= 0) return 0;
-  return roundHalfAwayFromZero(px / (0.25 * rootFontSizePx));
+  return roundHalfAwayFromZero(pxInCells(px, rootFontSizePx));
 }
 
 /** Convert a percentage of an integer container to whole cells, ties away from zero. */

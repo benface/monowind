@@ -74,7 +74,8 @@ import type {
  * Coordinates are parent-relative (root's rect is at 0,0); `rows` is a
  * height the host's own CSS gives it (specs/cell-model.md "Host
  * sizing"). `remembered` carries anchored boxes' last successful
- * placements between layouts (specs/anchor-positioning.md). Last, the
+ * placements between layouts (specs/anchor-positioning.md); `cache`,
+ * the intrinsic widths already taken of the tree. Last, the
  * top-layer `stack` is assigned and every box gets its `paintOrigin`
  * under the synced scroll offsets (paint-origin.ts).
  */
@@ -85,8 +86,8 @@ export function layoutRoot(
   remembered?: Map<Element, Remembered>,
   stack?: TopLayer,
   rows?: number,
+  cache = makeIntrinsicCache(),
 ): { height: number } {
-  const cache = makeIntrinsicCache();
   layoutNode(
     root,
     availableWidth,
@@ -1723,6 +1724,14 @@ export function widthContribution(
   const { width, height, minWidth, maxWidth, aspectRatio } = child.style;
   const min = typeof minWidth === "number" ? minWidth : 0;
   const max = typeof maxWidth === "number" ? maxWidth : undefined;
+  // An image a percentage sizes gives way to its container at
+  // min-content, loaded or not, down to its min width (css-sizing-3
+  // "compressible replaced elements").
+  if (kind === "min" && !child.generated && child.source.localName === "img") {
+    const percent =
+      width?.kind === "percent" || (typeof maxWidth === "object" && "percent" in maxWidth);
+    if (percent) return Math.max(boxChrome(child.style, "x"), min);
+  }
   const outer =
     width === undefined && aspectRatio !== null && height?.kind === "cells"
       ? Math.max(ratioSize(height.value, aspectRatio, "x"), ratioWidthFloor(child, max, cache))

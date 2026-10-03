@@ -41,6 +41,8 @@ const RENDERING = new Set([
   "wrap",
   "href",
   "src",
+  "srcset",
+  "sizes",
   "alt",
   "width",
   "height",

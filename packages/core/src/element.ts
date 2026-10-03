@@ -48,6 +48,7 @@ import {
   charIndexAtCell,
   clipBounds,
   renderPlainText,
+  screenRows,
   scrollbarGeometry,
   thumbSpan,
 } from "./plain-text.ts";
@@ -58,20 +59,33 @@ import {
   isTextLeaf,
   leafExtent,
   leafShadowRoots,
+  hostPart,
+  pageAround,
+  pointsAround,
   positionOf,
+  rangeOf,
   selectedRanges,
   selectionRangeThrough,
   serializeSelection,
   textPositionAt,
   wordAt,
 } from "./selection.ts";
-import type { BoundaryPoints } from "./selection.ts";
+import type { BoundaryPoints, Point, PointRange } from "./selection.ts";
 import { GlyphBoxes, SHADES } from "./glyph-box.ts";
 import shadowCss from "./shadow.css?inline";
 import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
-import { gridOffsetAt, paintedCell, paintGrid, syncLayers } from "./paint.ts";
+import {
+  gridCopy,
+  gridOffsetAt,
+  paintedCell,
+  paintGrid,
+  pictureRow,
+  selectPictures,
+  stopFrames,
+  syncLayers,
+} from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics, sameMetrics } from "./metrics.ts";
-import { edges, layoutRoot } from "./layout.ts";
+import { edges, intrinsicOuterWidth, layoutRoot, makeIntrinsicCache } from "./layout.ts";
 import { forgetWrites, render, renderScroll, setVar, wrotePseudoElements } from "./render.ts";
 import { nameOf, PSEUDOS } from "./generated.ts";
 import { namedAnchors } from "./positioning.ts";
@@ -123,16 +137,8 @@ const SELECTION = "data-mw-selection";
 export const OWN_HIGHLIGHT =
   "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 
-interface Point {
-  node: Node;
-  offset: number;
-}
-
 /** A selectable unit — a word's or paragraph's DOM range. */
-interface SelectionUnit {
-  start: Point;
-  end: Point;
-}
+type SelectionUnit = PointRange;
 
 /** An engine-routed selection gesture: a text-mode drag extends by
  * character, a double- or triple-click by word or paragraph. */
@@ -269,11 +275,6 @@ const DYNAMIC_RELAYOUT_EVENTS = [
  * in px: the rounding of layout units (1/64 px in Chromium and WebKit,
  * 1/60 in Firefox). */
 const SIZE_TOLERANCE = 0.05;
-
-/** How far the width spacer yields under the columns laid out
- * (specs/cell-model.md "Host sizing"), in px: past a layout unit in
- * every engine, within SIZE_TOLERANCE. */
-const SPACER_YIELD = 1 / 32;
 
 /** A checkbox's and a radio's lock variables, by longhand. */
 const OWN_TRANSITION_ENTRIES = Object.entries(OWN_TRANSITION_VARS) as [
@@ -468,10 +469,11 @@ export class MonoWindElement extends HTMLElementBase {
   #layers: HTMLElement;
   #viewport: HTMLElement;
   #spacer: HTMLElement;
-  /** The spacer's size in px, the content's rows and the columns at the
-   * last layout (specs/cell-model.md "Host sizing"). */
+  /** The spacer's height in px, the content's rows at the last layout,
+   * and its width's track, the content's min- and max-content widths
+   * (specs/cell-model.md "Host sizing"). */
   #spacerHeight = 0;
-  #spacerWidth = 0;
+  #spacerTrack = "";
   #probe: HTMLElement;
   /** Resolves colors where the grid's spans inherit them
    * (specs/cell-model.md "Opacity and translucency"): the ink, the
@@ -497,6 +499,9 @@ export class MonoWindElement extends HTMLElementBase {
   #ancestorObserver: MutationObserver | null = null;
   #colorScheme = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
   #onColorSchemeChange = (): void => this.#scheduleLayout();
+  #onImageSettled = (event: Event): void => {
+    if (event.target instanceof HTMLImageElement) this.#scheduleLayout();
+  };
   #mutationObserver: MutationObserver | null = null;
   #layoutPending = false;
   /** The pending layout's frame request, which any layout before it
@@ -546,8 +551,10 @@ export class MonoWindElement extends HTMLElementBase {
   /** A gesture the engine took over releases through it too: armed by
    * its pointerup, spent by the mouseup after (#onMouseUp). */
   #ownsRelease = false;
-  /** Whether the last selectionchange found a range in this host's
-   * light DOM — the next one must repaint even when it left. */
+  /** Whether the last paint drew a light-DOM selection — a
+   * selectionchange must repaint it away even when the change it brings
+   * is the only one the engine hears (Firefox coalesces a selection and
+   * its removal into one event, a paint between them). */
   #paintedSelection = false;
   /** A press's selection gesture under way (#onSelectStart, or a press
    * begun outside dragged in, #onPointerMove), which holds `SELECTION`
@@ -757,6 +764,10 @@ export class MonoWindElement extends HTMLElementBase {
     this.addEventListener("animationiteration", this.#onAnimationStart, { signal });
     this.addEventListener("animationend", this.#onAnimationDone, { signal });
     this.addEventListener("animationcancel", this.#onAnimationDone, { signal });
+    // An image's load or failure sizes and draws it (specs/images.md);
+    // neither bubbles: captured.
+    this.addEventListener("load", this.#onImageSettled, { signal, capture: true });
+    this.addEventListener("error", this.#onImageSettled, { signal, capture: true });
     // A popover's or a dialog's toggle bubbles from neither: captured.
     this.addEventListener("toggle", this.#onToggle, { capture: true, signal });
 
@@ -781,7 +792,8 @@ export class MonoWindElement extends HTMLElementBase {
     // A selection in the light DOM copies as the engine's plain text
     // (specs/semantic-selection.md): the browsers' serializers lose
     // block breaks for the out-of-flow boxes the render uses.
-    this.addEventListener("copy", this.#onCopy, { signal });
+    // On the document: a select-all's copy fires on the page, not here.
+    this.ownerDocument.addEventListener("copy", this.#onCopy, { signal });
     // Multi-click gestures (specs/semantic-selection.md): the click
     // count rides mousedown (PointerEvent.detail is 0).
     this.addEventListener("mousedown", this.#onMouseDown, { signal });
@@ -824,6 +836,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#unsubscribeGlyphRegistry?.();
     this.#unsubscribeGlyphRegistry = null;
     this.#animated.clear();
+    stopFrames(this.#layers);
     this.#releaseKeyScroll();
     for (const timer of this.#settleTimers.values()) clearTimeout(timer);
     this.#settleTimers.clear();
@@ -1465,11 +1478,73 @@ export class MonoWindElement extends HTMLElementBase {
   #onCopy = (event: Event): void => {
     const { clipboardData } = event as ClipboardEvent;
     const layout = this.#lastLayout;
-    const range = this.#elementSelection();
-    if (!clipboardData || !layout || !range) return;
-    clipboardData.setData("text/plain", serializeSelection(layout, range));
+    // Another host's, or the page's own, already written.
+    if (event.defaultPrevented || !clipboardData || !layout) return;
+    const text = this.#copyText(layout);
+    if (text === null) return;
+    clipboardData.setData("text/plain", text);
     event.preventDefault();
   };
+
+  /** What a copy carries where the host writes it
+   * (specs/semantic-selection.md "Copy serialization"): a selection in
+   * its light DOM; a grid selection over a picture, its alt in its
+   * cells, a copy's alone; or a selection reaching into the host, its
+   * part as the host copies it, the page's text around. Null leaves the
+   * copy to the browser. */
+  #copyText(layout: LayoutNode): string | null {
+    const points = selectionRangeThrough(this.#shadow);
+    if (!points) return null;
+    const range = this.#elementSelection(points);
+    const cells = this.getAttribute("select") === "grid";
+    if (range) return serializeSelection(layout, range, { cells });
+    return gridCopy(this.#layers, layout, points) ?? this.#reachingCopy(points);
+  }
+
+  /** A selection reaching into the host — from the page, or holding its
+   * grid's viewport whole, as a grid-mode select-all scopes itself — its
+   * part, and from the page the page's text before and after, plain,
+   * each other host the selection reaches its own part. */
+  #reachingCopy(points: BoundaryPoints): string | null {
+    // The composed points: a select-all's legacy range ends in the host.
+    const range = rangeOf(this.ownerDocument, points);
+    const viewport = this.#viewport;
+    const inShadow =
+      range.isPointInRange(viewport, 0) &&
+      range.isPointInRange(viewport, viewport.childNodes.length);
+    if (inShadow) {
+      return this.#partText({
+        startContainer: this,
+        startOffset: 0,
+        endContainer: this,
+        endOffset: this.childNodes.length,
+      });
+    }
+    const own = this.#partText(points);
+    if (own === null) return null;
+    const [before, after] = pageAround(range, this, (other) =>
+      other instanceof MonoWindElement ? other.#partText(points) : null,
+    );
+    return [before, own, after].filter(Boolean).join("\n");
+  }
+
+  /** The host's part of a selection reaching into it, as it copies it:
+   * its whole grid's rows where grid mode takes it whole, else its light
+   * DOM's copy; null where the selection misses it. */
+  #partText(points: BoundaryPoints): string | null {
+    const layout = this.#lastLayout;
+    const part = layout && hostPart(this, points);
+    if (!part) return null;
+    const grid = this.getAttribute("select") === "grid";
+    const whole =
+      part.startContainer === this &&
+      part.startOffset === 0 &&
+      part.endContainer === this &&
+      part.endOffset === this.childNodes.length;
+    return grid && whole
+      ? screenRows(layout, { alt: true }).join("\n")
+      : serializeSelection(layout, part, { cells: grid });
+  }
 
   /** Engine-routed selection gestures: a text-mode press starts a
    * character drag (specs/wide-characters.md); double- and triple-click
@@ -1542,9 +1617,17 @@ export class MonoWindElement extends HTMLElementBase {
     }
     e.preventDefault();
     this.#focusAs(this.#focusTargetAt(at));
-    if (!character) this.#liftLock(target);
+    // A picture's row is the grid's: the lift ends, the grid selectable
+    // again before the range lands.
+    const inGrid = this.#inGrid(target);
+    if (inGrid) {
+      this.removeAttribute(SEMANTIC_SELECTION);
+      void getComputedStyle(this.#grid).userSelect;
+    } else if (!character) this.#liftLock(target);
+    // Shift extends an element selection, a light unit's alone.
+    const extending = e.shiftKey && !inGrid && this.#elementSelection();
     const anchor: SelectionUnit =
-      e.shiftKey && selection.anchorNode && this.#elementSelection()
+      extending && selection.anchorNode
         ? pointUnit({ node: selection.anchorNode, offset: selection.anchorOffset })
         : character
           ? pointUnit(target.start)
@@ -1725,11 +1808,13 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** The focus move a cancelled mousedown skipped: onto the cell's
    * focus target as the click would have, else — or where the target
-   * declines, inert or disabled — off a focused control, which would
-   * otherwise keep the copy command. */
+   * declines, inert or disabled — off whatever held it, on the page or
+   * in another frame, onto this one: the copy command follows. */
   #focusAs(target: HTMLElement | null): void {
     target?.focus({ preventScroll: true });
-    if (document.activeElement !== target) this.#focusedInside()?.blur();
+    if (document.activeElement === target) return;
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (!document.hasFocus()) window.focus();
   }
 
   /** The focused element, when it is inside the host. */
@@ -1828,6 +1913,9 @@ export class MonoWindElement extends HTMLElementBase {
     if (!metrics || !selection) return;
     const current = this.#unitAt(this.#cellAt(clientX, clientY, metrics), gesture.unit);
     if (!current || (gesture.extent && sameUnit(gesture.extent, current))) return;
+    // A picture's rows extend through the grid alone: no light range
+    // holds a part of an image, nor a grid range the light DOM's text.
+    if (this.#inGrid(current) !== this.#inGrid(gesture.anchor)) return;
     gesture.extent = current;
     this.#selectThrough(selection, gesture.anchor, current);
   }
@@ -1926,6 +2014,14 @@ export class MonoWindElement extends HTMLElementBase {
     if (within && !stack.includes(within)) return null;
     for (let i = stack.length - 1; i >= 0; i--) {
       const node = stack[i]!;
+      // An image is one unit, as browsers select it, but for a grid-mode
+      // word: its row of cells, as `<mono-ascii>`'s is a line of its art
+      // (specs/semantic-selection.md "An image is one unit").
+      if (node.image) {
+        if (isInert(node.source)) return null;
+        const line = unit === "word" && this.getAttribute("select") === "grid";
+        return (line && pictureRow(this.#layers, node, row)) || this.#leafContents(node);
+      }
       // An inert leaf's text is unselectable natively: no unit there.
       if (isTextLeaf(node)) {
         return isInert(node.source) ? null : this.#leafUnit(node, col, row, unit);
@@ -1967,11 +2063,19 @@ export class MonoWindElement extends HTMLElementBase {
     return this.#leafContents(node);
   }
 
+  /** Whether a unit lies in the host's grid, a picture's row. */
+  #inGrid(unit: SelectionUnit): boolean {
+    return unit.start.node.getRootNode() === this.#shadow;
+  }
+
   /** A leaf's whole contents as a unit: its selectionTarget's for a
    * custom leaf, the run's own extent for the root leaf (the host's
-   * child list also holds the metrics probe), the element's otherwise. */
+   * child list also holds the metrics probe), an image itself, the
+   * element's otherwise. */
   #leafContents(node: LayoutNode): SelectionUnit | null {
     if (node === this.#lastLayout || node.anonymous) return leafExtent(node);
+    // An image whole, its alt's text the same once it fails.
+    if (node.source.localName === "img") return pointsAround(node.source);
     const container =
       leafRendererFor(node.source.tagName)?.selectionTarget?.(node.source) ?? node.source;
     return {
@@ -1989,9 +2093,8 @@ export class MonoWindElement extends HTMLElementBase {
     const root = unit.start.node.getRootNode();
     if (!(root instanceof ShadowRoot) || root === this.#grid.getRootNode()) return unit;
     const host = root.host;
-    const parent = host.parentNode;
-    if (!parent) return unit;
-    const index = Array.prototype.indexOf.call(parent.childNodes, host);
+    const around = pointsAround(host);
+    if (!around) return unit;
     const before = host.previousSibling;
     const after = host.nextSibling;
     return {
@@ -2000,8 +2103,8 @@ export class MonoWindElement extends HTMLElementBase {
             node: before,
             offset: before instanceof Text ? before.length : before.childNodes.length,
           }
-        : { node: parent, offset: index },
-      end: isPlainNode(after) ? { node: after, offset: 0 } : { node: parent, offset: index + 1 },
+        : around.start,
+      end: isPlainNode(after) ? { node: after, offset: 0 } : around.end,
     };
   }
 
@@ -2019,40 +2122,59 @@ export class MonoWindElement extends HTMLElementBase {
   /** The document selection when it is a non-collapsed range in this
    * host's light DOM (a custom leaf's shadow selection reads as the
    * light range around its host); null otherwise. */
-  #elementSelection(): BoundaryPoints | null {
-    const layout = this.#lastLayout;
-    const range = selectionRangeThrough(this.#shadow, layout ? leafShadowRoots(layout) : []);
+  #elementSelection(points = selectionRangeThrough(this.#shadow)): BoundaryPoints | null {
+    // Read again through the custom leaves' shadows only for a selection
+    // in the light DOM, which their points' hosts already place it in.
+    if (!points || classifySelection(this, this.#grid, points) !== "light") return null;
+    const roots = this.#lastLayout ? leafShadowRoots(this.#lastLayout) : [];
+    const range = roots.length > 0 ? selectionRangeThrough(this.#shadow, roots) : points;
     if (!range || classifySelection(this, this.#grid, range) !== "light") return null;
     const collapsed =
       range.startContainer === range.endContainer && range.startOffset === range.endOffset;
     return collapsed ? null : range;
   }
 
+  /** The live selection's part in the light DOM, which the grid paints
+   * and a copy reads: an element selection, or the host's part of one
+   * reaching in across its edge (a select-all, a drag in from page text). */
+  #lightSelection(
+    points = selectionRangeThrough(this.#shadow),
+    element = this.#elementSelection(points),
+  ): BoundaryPoints | null {
+    return element ?? (points && hostPart(this, points));
+  }
+
   /** Whether a live selection reaches the host's light DOM, both ends in
    * it or not — a select-all, a drag in from page text, a script's range
    * across the host — which the highlight lock holds for; a grid drag's
    * is the grid's own. */
-  #reachesLight(): boolean {
-    if (this.#elementSelection()) return true;
+  #reachesLight(
+    points = selectionRangeThrough(this.#shadow),
+    element = this.#elementSelection(points),
+  ): boolean {
+    if (element) return true;
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed || !selection.containsNode(this, true)) return false;
-    const range = selectionRangeThrough(this.#shadow);
-    return range !== null && classifySelection(this, this.#grid, range) !== "grid";
+    return points !== null && classifySelection(this, this.#grid, points) !== "grid";
   }
 
   /** The lift ends once the selection left the light DOM or collapsed;
    * the grid repaints its highlight (a frame, through #schedulePaint —
    * an unchanged paint costs a comparison of its rows). */
   #onSelectionChange = (): void => {
-    const selected = this.#elementSelection() !== null;
-    if (this.hasAttribute(SEMANTIC_SELECTION) && !selected) {
+    const points = selectionRangeThrough(this.#shadow);
+    const element = this.#elementSelection(points);
+    if (this.hasAttribute(SEMANTIC_SELECTION) && !element) {
       this.removeAttribute(SEMANTIC_SELECTION);
     }
-    this.toggleAttribute(SELECTION, selected || this.#selectionGesture || this.#reachesLight());
+    const reaches = this.#selectionGesture || this.#reachesLight(points, element);
+    this.toggleAttribute(SELECTION, reaches);
     // A selection elsewhere in the document is none of this host's
     // business unless it just left it.
-    if ((selected || this.#paintedSelection) && this.#lastLayout) this.#schedulePaint();
-    this.#paintedSelection = selected;
+    const painted = this.#paintedSelection || this.#lightSelection(points, element) !== null;
+    if (painted && this.#lastLayout) this.#schedulePaint();
+    // A grid selection over a picture inverts its cells as the drag goes.
+    selectPictures(this.#layers, points);
   };
 
   /** A selection the user starts in the host's light DOM, or from an
@@ -2075,8 +2197,9 @@ export class MonoWindElement extends HTMLElementBase {
   /** Paint the grid from `root`: the glyph boxes for this font, the
    * light-DOM selection as inverted cells (#holdsNativeDrag). */
   #paint(root: LayoutNode, placeLayers = true): boolean {
-    const range = this.#elementSelection();
+    const range = this.#lightSelection();
     const metrics = this.#cellMetrics;
+    this.#paintedSelection = range !== null;
     return paintGrid(root, this.#grid, {
       holdStructural: this.#holdsNativeDrag(),
       glyphs: this.#glyphs,
@@ -2919,7 +3042,29 @@ export class MonoWindElement extends HTMLElementBase {
       );
       this.#readGround();
 
-      // (2) Available cells from the host's CONTENT box — authored padding
+      // (2) Build a tree from the light DOM: the host's own inline
+      // content is the root leaf (specs/host-leaf.md); with a block-level
+      // child the root is a virtual container over its child nodes, the
+      // host's own text as anonymous runs.
+      let virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
+      if (this.#scopeAnchors(virtualRoot)) {
+        virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
+      }
+
+      // (3) The spacer's width, the content's min- and max-content widths
+      // in cells: what a host whose width is its content's is sized by,
+      // as the browser sizes it (specs/cell-model.md "Host sizing").
+      const intrinsic = makeIntrinsicCache();
+      const [min, max] = (["min", "max"] as const).map(
+        (kind) => intrinsicOuterWidth(virtualRoot, kind, intrinsic) * metrics.width,
+      );
+      const track = `minmax(${min}px, ${max}px)`;
+      if (track !== this.#spacerTrack) {
+        this.#spacer.style.gridTemplateColumns = track;
+        this.#spacerTrack = track;
+      }
+
+      // (4) Available cells from the host's CONTENT box — authored padding
       // on the host stays outside the grid (the shadow slot box, which
       // laid-out children position against, already sits inside it) — at
       // its fractional width, counted at the light DOM's own advance: a
@@ -2955,14 +3100,6 @@ export class MonoWindElement extends HTMLElementBase {
       // host's own box, so it costs no layout of its own.
       this.#visibleCells = this.#measureVisibleCells(metrics, this.#grid.getBoundingClientRect());
 
-      // (3) Build a tree from the light DOM: the host's own inline
-      // content is the root leaf (specs/host-leaf.md); with a block-level
-      // child the root is a virtual container over its child nodes, the
-      // host's own text as anonymous runs.
-      let virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
-      if (this.#scopeAnchors(virtualRoot)) {
-        virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
-      }
       // Found while the reads leave the style clean.
       settling = { host: mayTransition(hostStyle), elements: new Set() };
       // A pseudo-element the engine wrote takes its element's locks too.
@@ -2981,7 +3118,7 @@ export class MonoWindElement extends HTMLElementBase {
         }
       }
 
-      // (4) Compute integer layout, and the top-layer stack over it: the
+      // (5) Compute integer layout, and the top-layer stack over it: the
       // root against the rows the host's own height gives it, its content
       // sizing it where that height is the spacer's.
       if (this.#visibleCells) virtualRoot.visibleCells = this.#visibleCells;
@@ -2996,6 +3133,7 @@ export class MonoWindElement extends HTMLElementBase {
         this.#placements,
         this.#topLayer,
         sizedRows,
+        intrinsic,
       );
       this.#scrollNodes = collectScrollContainers(virtualRoot);
       // A stack element the UA centers follows the cells the reader
@@ -3003,7 +3141,7 @@ export class MonoWindElement extends HTMLElementBase {
       this.#centeredTopLayer =
         virtualRoot.topLayer?.some((entry) => !entry.node.style.positionArea) ?? false;
 
-      // (5) Write geometry to light DOM + paint the shadow grid. Do this
+      // (6) Write geometry to light DOM + paint the shadow grid. Do this
       // before clearing the measuring attribute so the browser only
       // paints the final state.
       render(virtualRoot);
@@ -3023,18 +3161,12 @@ export class MonoWindElement extends HTMLElementBase {
       if (this.#grid.style.width !== gridWidth) this.#grid.style.width = gridWidth;
       if (this.#grid.style.height !== gridHeight) this.#grid.style.height = gridHeight;
 
-      // (6) The spacer, the content's rows and the columns laid out, the
-      // host's size where it has none of its own (specs/cell-model.md
-      // "Host sizing").
+      // (7) The spacer's height, the content's rows, the host's where it
+      // has none of its own (specs/cell-model.md "Host sizing").
       const spacerHeight = virtualRoot.naturalContentHeight * metrics.height;
       if (spacerHeight !== this.#spacerHeight) {
         this.#viewport.style.minHeight = `${spacerHeight}px`;
         this.#spacerHeight = spacerHeight;
-      }
-      const spacerWidth = availableCols * metrics.width;
-      if (spacerWidth !== this.#spacerWidth) {
-        this.#spacer.style.gridTemplateColumns = `minmax(${spacerWidth - SPACER_YIELD}px, ${spacerWidth}px)`;
-        this.#spacerWidth = spacerWidth;
       }
       // Cap the width to the columns laid out (specs/cell-model.md "Host
       // sizing"); the companion applies it outside measuring.
@@ -3044,7 +3176,7 @@ export class MonoWindElement extends HTMLElementBase {
         height: sizedRows === undefined ? height * metrics.height : sizedHeight,
       };
 
-      // (7) Reveal the host now that layout is done — kills the FOUC where
+      // (8) Reveal the host now that layout is done — kills the FOUC where
       // the browser paints raw flex/block layout before the engine runs.
       if (!this.hasAttribute("data-mw-ready")) this.setAttribute("data-mw-ready", "");
     } finally {

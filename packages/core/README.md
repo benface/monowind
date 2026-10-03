@@ -53,7 +53,9 @@ character, the way a page does. In both modes the highlight is drawn
 on the grid, cell for cell, as reverse video: each cell's colors swap,
 so colored text selects as a band of its color. A copy of element
 text is plain text laid out by the standard `innerText` rules
-(paragraphs separated by a blank line, table cells by tabs).
+(paragraphs separated by a blank line, table cells by tabs); an image
+copies as its `alt`, or in `select="grid"` as its cells with the `alt`
+in them, so the text beside stays aligned.
 
 Glyph widths follow the terminal convention: CJK, Hangul, and emoji
 take two cells, everything else one, whatever the font draws — a
@@ -200,7 +202,8 @@ center, in CSS's geometry for the box, the stops interpolated as CSS
 does, layers composited over the plain color. Text keeps its own
 color, and `bg-clip-text text-transparent` shows the gradient through
 it. Sizes, positions, and repeats of the background image are ignored,
-as are `url()` images: a gradient always covers the box once.
+as are `url()` images (an `<img>` draws on the grid; see Images): a
+gradient always covers the box once.
 
 ## Opacity
 
@@ -215,6 +218,39 @@ alpha paints nothing.
 Where nothing opaque lies beneath, a translucent color keeps its alpha
 and a faded element its opacity, and the browser composites them over
 whatever is behind the host: a background image, a gradient, the page.
+
+## Images
+
+An `<img>` (a `<picture>`'s too) is a box of whole cells, its picture
+drawn at the grid's resolution: one pixel per column and two per row,
+each the average of the image's pixels it covers. Unsized, it takes
+its natural width on the spacing scale (a 400px-wide image is 100
+columns) and its height from its natural ratio. `w-*`, `h-*`,
+`max-w-full`, and `aspect-*` size it as any box, `object-fit` and
+`object-position` place the picture in it, and where the engine's
+rounding sized the box, the picture covers it rather than stretch. An
+inline image rides its line, its bottom on the baseline; a broken one
+shows its `alt` text.
+
+Under a theme, each pixel takes the nearest of the theme's colors,
+dithered, so a photo on a DOS page looks like a DOS photo; without
+one, an image keeps its colors. Per image (or inherited):
+
+- `image-posterize-<n>` — each channel reduced to n levels (2 or more)
+- `image-dither-ordered` (the default), `image-dither-diffusion`
+  (Floyd–Steinberg), `image-dither-none`
+- `image-palette-none` — the theme's colors off; or set
+  `--mw-image-palette` to colors of your own, and
+  `--mw-image-match: lightness` for a monochrome ramp matched by
+  lightness alone
+
+An animated image (GIF, APNG, WebP, AVIF) plays where the browser
+decodes its frames for the page (`ImageDecoder`), pausing while off
+screen, and shows its first frame under `prefers-reduced-motion`. An
+image from another origin takes its colors like any other where its
+server shares it over CORS (no `crossorigin` needed); one its server
+doesn't share, the page may not read: it draws at the grid's
+resolution in its own colors, an animated one its first frame.
 
 ## Companion packages
 

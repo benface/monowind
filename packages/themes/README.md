@@ -48,7 +48,9 @@ defaults. Everything a theme sets is overridable — utilities beat it.
 steps for the monochromes), scoped to themed hosts: `text-red-500`
 inside `green-phosphor` renders the right brightness of green, and the
 rest of your page keeps stock colors. Arbitrary values (`text-[#f00]`)
-bypass the mapping and stay literal.
+bypass the mapping and stay literal. Images follow too: each theme's
+colors reach every `<img>` on the grid (`--mw-image-palette`), dithered,
+the monochromes by lightness; `image-palette-none` keeps an image's own.
 
 Also set per theme: the host's `color` and `background-color` (the
 engine derives `--mw-fg`/`--mw-bg` from them), the ANSI-16 `--mw-ansi-*`

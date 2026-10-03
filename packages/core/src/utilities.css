@@ -156,6 +156,46 @@
   initial-value: 0;
 }
 
+/* An image's colors (specs/images.md "Color"): a palette, matched by
+ * color or lightness, levels per channel, and the dither of the last
+ * reduction — inherited, so a theme sets them for its whole host, and
+ * registered, so the engine reads each palette color computed. */
+@utility image-palette-none {
+  --mw-image-palette: none;
+}
+@utility image-posterize-* {
+  --mw-image-levels: --value(integer, [integer]);
+}
+@utility image-dither-ordered {
+  --mw-image-dither: ordered;
+}
+@utility image-dither-diffusion {
+  --mw-image-dither: diffusion;
+}
+@utility image-dither-none {
+  --mw-image-dither: none;
+}
+@property --mw-image-palette {
+  syntax: "<color>+ | none";
+  inherits: true;
+  initial-value: none;
+}
+@property --mw-image-match {
+  syntax: "color | lightness";
+  inherits: true;
+  initial-value: color;
+}
+@property --mw-image-levels {
+  syntax: "<integer> | none";
+  inherits: true;
+  initial-value: none;
+}
+@property --mw-image-dither {
+  syntax: "ordered | diffusion | none";
+  inherits: true;
+  initial-value: ordered;
+}
+
 /* Border glyph sets (specs/theming.md): utilities for the inherited
  * `--mw-border-glyphs` selector — which vocabulary border STYLES
  * render through. Arbitrary sets: `[--mw-border-glyphs:myset]`. */

@@ -302,6 +302,32 @@ describe("a layout", () => {
   });
 });
 
+describe("an image (specs/images.md)", () => {
+  it("lays the host out again as it loads, its load captured as it doesn't bubble", async () => {
+    connect('<img style="display: block"><p>end</p>');
+    const img = host.querySelector("img")!;
+    let natural = [0, 0];
+    Object.defineProperties(img, {
+      naturalWidth: { get: () => natural[0] },
+      naturalHeight: { get: () => natural[1] },
+      complete: { get: () => natural[0]! > 0 },
+    });
+    await layOut();
+    const row = () =>
+      (host as MonoWindElement)
+        .toPlainText()
+        .split("\n")
+        .findIndex((line) => line.includes("end"));
+    expect(row()).toBe(0);
+    // 40 px is 10 columns, 80 px of 8 px cells; at 2:1, 40 px tall,
+    // two and a half 16 px rows, rounded to 3.
+    natural = [40, 20];
+    img.dispatchEvent(new Event("load"));
+    await layOut();
+    expect(row()).toBe(3);
+  });
+});
+
 describe("the sampling loop (specs/animations.md)", () => {
   it("reads the animations a query found until a start brings news", async () => {
     connect("<p>faded</p>");

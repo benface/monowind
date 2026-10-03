@@ -106,7 +106,10 @@ glyph in its cell (`font-bold`, `italic`, `underline`,
 `text-shadow-*`, `antialiased`, …), and transforms and filters
 (`rotate-*`, `scale-*`, `translate-*`, `blur-*`, `grayscale`,
 `backdrop-blur-*`, … — the element's cells in a layer of their own,
-which the browser transforms).
+which the browser transforms), and images (`<img>` and `<picture>` on
+whole cells, a pixel per column and two per row, `object-fit` and
+`object-position` placing them, animated ones playing, posterized
+with `image-posterize-*` and dithered).
 
 **Motion** — CSS transitions and animations (`animate-spin`,
 `animate-pulse`, keyframe enters and exits) sampled onto the grid.
@@ -138,7 +141,8 @@ click, a key or a script flips them.
 `@monowind/themes` ships class-scoped themes modeled on real systems —
 `dos`, `dos-blue`, `c64`, `green-phosphor`, `amber`, `teletype`, `bbs`:
 authentic palettes (every Tailwind color token quantized to the
-system's colors), period fonts, and era-correct border characters
+system's colors, and every image reduced to them), period fonts, and
+era-correct border characters
 (`border-double` renders `+=+` on a teletype and downgrades to single
 lines on a phosphor terminal). Try the theme switcher in the
 [playground](https://play.monowind.benface.com); details in
@@ -288,8 +292,9 @@ pnpm check
 # same, but auto-fixes lint, format, and non-canonical class issues
 pnpm check:fix
 
-# tests (unit + golden + story tests + example smoke tests): every
-# package built once, the workspaces' tests four at a time, the stories last
+# tests (unit + golden + story tests + example smoke tests): the
+# workspaces' tests and smokes four at a time, each after its packages'
+# builds, the stories last
 pnpm test
 
 # visual regression tests (screenshots via Docker, one per story)
@@ -301,8 +306,11 @@ pnpm test:visual:update
 # build all packages
 pnpm build
 
-# interactively update dependencies across the workspace
-pnpm check-updates
+# list outdated dependencies across the workspace
+pnpm deps:check
+
+# interactively update them
+pnpm deps:update
 
 # Playground (live HTML editing through <mono-wind>, shareable URLs), port 5181
 pnpm --filter @monowind/play dev

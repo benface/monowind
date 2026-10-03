@@ -291,4 +291,7 @@ mono-wind.theme-green-phosphor,
   --color-taupe-950: #000000;
   --color-black: #000000;
   --color-white: #c4ffd1;
+  /* An image's picture reduced to the system palette (specs/images.md). */
+  --mw-image-palette: #000000 #003b00 #00711d #00a83c #0adb53 #66ff84 #c4ffd1;
+  --mw-image-match: lightness;
 }

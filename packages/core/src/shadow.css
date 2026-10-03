@@ -16,8 +16,7 @@
  * block formatting context, so a flow child's top margin stays where
  * the engine put it (specs/cell-model.md "Inline content"). Out of the
  * host's flow, so the viewport's `min-height` and the spacer alone give
- * it its size ("Host sizing"), except while the engine reads a
- * shrink-to-fit host's width off its content. */
+ * it its size ("Host sizing"). */
 slot {
   display: flow-root;
   position: absolute;
@@ -25,17 +24,11 @@ slot {
   left: 0;
   width: 100%;
 }
-:host([measuring]) slot {
-  position: relative;
-}
-/* A track preferring the columns laid out and yielding a hair under
- * them, so a container sized off the host still shrinks natively
- * (specs/cell-model.md "Host sizing"). */
+/* A track from the content's min- to its max-content width in cells,
+ * which the host's intrinsic sizes are (specs/cell-model.md "Host
+ * sizing"). */
 #spacer {
   display: grid;
-}
-:host([measuring]) #spacer {
-  display: none;
 }
 /* Sized to the ink extent, the host's background carried past the host
  * (specs/cell-model.md "Overflow"); the text fill undoes the host's
@@ -66,6 +59,12 @@ slot {
 }
 .clip {
   overflow: clip;
+}
+/* An image's picture, a pixel per column and two per row, scaled up
+ * unsmoothed (specs/images.md). */
+.picture {
+  position: absolute;
+  image-rendering: pixelated;
 }
 .layer > .grid {
   background: transparent;
@@ -141,6 +140,12 @@ slot {
 :host([select="grid"][data-mw-semantic-selection]) slot {
   user-select: text;
   -webkit-user-select: text;
+}
+/* The grid takes none of it: Chromium paints a range on the host itself
+ * through the flat tree, the grid's own highlight with it. */
+:host([select="grid"][data-mw-semantic-selection]) .grid {
+  user-select: none;
+  -webkit-user-select: none;
 }
 /* The grid's own selection keeps the theme invert; the engine paints
  * the light DOM's on the grid (specs/wide-characters.md). */

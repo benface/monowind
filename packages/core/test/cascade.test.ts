@@ -38,7 +38,8 @@ function declarations(css: string): Declaration[] {
     } else if (char === "}") {
       if (bodyStart !== -1) {
         const layer = layers.filter((name) => name !== undefined).pop();
-        for (const declaration of css.slice(bodyStart, i).split(";")) {
+        // A `;` inside a string (a data URL's) ends no declaration.
+        for (const declaration of css.slice(bodyStart, i).split(/;(?=(?:[^"]*"[^"]*")*[^"]*$)/)) {
           const colon = declaration.indexOf(":");
           if (colon === -1) continue;
           const value = declaration.slice(colon + 1);

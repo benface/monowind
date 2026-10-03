@@ -1,6 +1,6 @@
 import { html } from "lit";
 import { expect, waitFor } from "storybook/test";
-import { readyHost, readyHosts } from "./helpers.ts";
+import { pressAt, readyHost, readyHosts, release, textWith } from "./helpers.ts";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import type { MonoWindElement } from "monowind";
 
@@ -81,21 +81,15 @@ export const SelectionSurvivesRepaints: StoryObj = {
     const host = await readyHost(canvasElement);
     const grid = host.shadowRoot!.getElementById("grid")!;
     const line = canvasElement.querySelector<HTMLElement>('[data-test="line"]')!;
-    const textNodeWith = (needle: string): Text => {
-      const walker = document.createTreeWalker(grid, NodeFilter.SHOW_TEXT);
-      let node = walker.nextNode();
-      while (node && !(node as Text).data.includes(needle)) node = walker.nextNode();
-      return node as Text;
-    };
     const selection = window.getSelection()!;
-    const anchor = textNodeWith("bravo");
+    const anchor = textWith(grid, "bravo");
     const from = anchor.data.indexOf("bravo");
     selection.setBaseAndExtent(anchor, from, anchor, from + 13);
     expect(selection.toString()).toBe("bravo charlie");
 
     // A one-shot repaint (color change, no transition).
     line.classList.add("text-rose-400");
-    await waitFor(() => expect(textNodeWith("bravo").parentElement!.style.color).not.toBe(""));
+    await waitFor(() => expect(textWith(grid, "bravo").parentElement!.style.color).not.toBe(""));
     expect(selection.toString(), "survives a restyle repaint").toBe("bravo charlie");
 
     // A fade: repaints every frame for ~300ms, selection intact
@@ -105,8 +99,28 @@ export const SelectionSurvivesRepaints: StoryObj = {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(selection.toString(), "survives mid-fade").toBe("bravo charlie");
     await waitFor(() =>
-      expect(textNodeWith("bravo").parentElement!.style.color).toBe(getComputedStyle(line).color),
+      expect(textWith(grid, "bravo").parentElement!.style.color).toBe(getComputedStyle(line).color),
     );
     expect(selection.toString(), "survives the whole fade").toBe("bravo charlie");
+  },
+};
+
+/** A text-mode press on the host's text takes the focus off what held
+ * it, a field on the page too, as the press the engine takes over would
+ * have: the copy command follows the selection. */
+export const TextPressTakesFocus: StoryObj = {
+  render: () => html`
+    <input data-test="field" value="elsewhere" />
+    <mono-wind select="text"><p>Hello copy world</p></mono-wind>
+  `,
+  play: async ({ canvasElement }) => {
+    const host = await readyHost(canvasElement);
+    const field = canvasElement.querySelector<HTMLInputElement>('[data-test="field"]')!;
+    field.focus();
+    const paragraph = host.querySelector("p")!;
+    const { left, top, height } = paragraph.getBoundingClientRect();
+    expect(pressAt(paragraph, { x: left + 2, y: top + height / 2 }, 1)).toBe(false);
+    release();
+    expect(document.activeElement).not.toBe(field);
   },
 };

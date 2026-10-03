@@ -23,7 +23,13 @@ bullets — the counter walk over every element and a `::marker` read
 per item, specs/lists.md), `labels` (paragraphs each numbered by a
 counter `::before` and its link marked by an `::after` — the rule
 scan, two pseudo-element reads an item and the walk,
-specs/generated-content.md).
+specs/generated-content.md), `checkboxes` (labeled checkboxes, every
+third checked and every tenth with a transition — the appearance read
+and a glyph leaf each, specs/checkboxes.md), `images` (`--count 12`:
+320×200 pictures at `w-24`, every other `image-posterize-4` — the
+sampling, the reduction and a canvas each, specs/images.md; timed
+until every picture is drawn, as images load after the host is
+ready).
 
 A plain desktop client: 1280×720 at one device pixel per CSS pixel,
 Chromium, no throttling. `--count`, `--runs` and `--rate` (CPU
@@ -1295,3 +1301,28 @@ rounds overlap v0.3.4's copies' on every shape. The checkbox page
 batched read of each control's appearance and transitions under its
 flag, one forced style recalculation a layout, and a glyph leaf each.
 The bundle is 603.3 KB (181.0 KB gzipped), 3.1 KB (0.9 KB) more.
+
+### Images (2026-10-01)
+
+`b7e3dd9`'s bundle against the working tree's: six rounds of five
+loads alternated, one sitting (Chromium 153 headless):
+
+| page                          | b7e3dd9, ms                  | now, ms                      |
+| ----------------------------- | ---------------------------- | ---------------------------- |
+| prose (300), round medians    | 213, 206, 201, 201, 204, 201 | 206, 207, 196, 202, 207, 203 |
+| images (12), every picture in | —                            | 75, 76, 75                   |
+
+A page without an image pays a tag test an element and a check a
+layer: its rounds overlap. The images page (`pnpm bench --shape
+images --count 12`) is the baseline for later work: each picture
+sampled from its halvings, every other posterized, a canvas each. The
+bundle is 614.9 KB (185.2 KB gzipped), 11.6 KB (4.2 KB) more.
+
+### The host's intrinsic widths (2026-10-01)
+
+Each layout takes the root's min- and max-content widths for the
+spacer (specs/cell-model.md "Host sizing"), the cache its layout
+reuses. Against the images tree before it, every page open at once and
+driven in alternation, main-thread CPU a relayout: prose 59.8 ms
+against 60.1 and 59.0 (eight rounds), boxes 30.2 and 30.5 against 30.7
+and 30.4 (sixteen); loads level within their rounds' spread.

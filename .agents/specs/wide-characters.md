@@ -340,10 +340,11 @@ unless named):
 - **A light-DOM selection is painted on the grid, not by the browser.**
   Whenever the document selection has a range in the host's light DOM
   (`select="text"`, a semantic gesture in either mode, a keyboard
-  extension, a select-all reaching in), the engine maps the range to
-  cells — the leaves the range intersects, their character ranges
-  through `charIndexAt`, their cells through the paint's own
-  character-to-cell walk, a renderer leaf whole — and paints those
+  extension, a select-all reaching in, clipped to the host's edges),
+  the engine maps the range to cells — the leaves the range
+  intersects, their character ranges through `charIndexAt`, their
+  cells through the paint's own character-to-cell walk, a renderer
+  leaf whole — and paints those
   cells as REVERSE VIDEO: each cell's own color and background swap,
   the theme's `--mw-fg`/`--mw-bg` standing in where the cell has none.
   Plain text therefore highlights as the theme invert; colored text
@@ -395,6 +396,8 @@ unless named):
   style-only pass (same texts, new paints) coalesced to one frame per
   `selectionchange` burst, patching only the rows whose selected cells
   changed, so a drag on a large grid costs a few row patches per frame.
+- **An image under a selection is reverse video too** (images.md
+  "Paint"), the pictures alone redrawn as a grid drag moves.
 - **Text-mode drags are routed like grid-mode gestures.** A primary
   press on the host in `select="text"` that is not on an interactive
   element is the engine's: it hit-tests the cell, maps it to the
@@ -651,10 +654,13 @@ per change, the DOM patch is per row.
 - metrics.ts: `backgroundGap` (the host's `--mw-bgpad`, the grid's span
   padding) and `gridLetterSpacing` (the cell rounded up to 1/64 px, set
   on the grid).
-- selection.ts: `selectedRanges(root, points)`.
-- element.ts: `#paint` (glyph boxes and the selection's ranges);
-  `#onSelectionChange` repainting a host holding the range or just
-  left by it; the text-mode press (`#startGesture`) and the
+- selection.ts: `selectedRanges(root, points)`, and `hostPart`, a
+  range reaching in clipped to the host's edges.
+- element.ts: `#paint` (glyph boxes and the selection's ranges, the
+  light DOM's part through `#lightSelection`); `#onSelectionChange`
+  repainting a host the selection reaches, or whose last paint drew
+  one, and handing the grid selection to the pictures
+  (`selectPictures`); the text-mode press (`#startGesture`) and the
   `"character"` gesture unit, extended by `#extendGesture`; `#unitAt`,
   the nearest unit over painted cells in `nearestCells` order; the
   grid's `line-height` and `letter-spacing`; the host's `--mw-bgpad`;

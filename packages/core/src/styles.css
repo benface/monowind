@@ -561,6 +561,13 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     float: none !important;
   }
 
+  /* An image's picture is the grid's (specs/images.md): the native one is
+   * a transparent pixel, while the element keeps its box, hit target and
+   * alt, and `drawImage` still reads its source. */
+  mono-wind img:not([data-mw-measuring]) {
+    content: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") !important;
+  }
+
   /* Grid-quantized typography and the wrap model (specs/cell-model.md). Gated
    * on the measuring flag (unlike the font lock above) so the style reader
    * sees the AUTHORED white-space / letter-spacing / line-height — that's how nowrap,

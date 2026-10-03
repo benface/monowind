@@ -79,6 +79,10 @@ function linearToOklab(r: number, g: number, b: number): [number, number, number
   ];
 }
 
+/** OKLab from sRGB components in 0–1. */
+export const srgbOklab = (r: number, g: number, b: number): [number, number, number] =>
+  linearToOklab(srgbToLinear(r), srgbToLinear(g), srgbToLinear(b));
+
 function oklabToLinear(L: number, a: number, b: number): [number, number, number] {
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
   const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
@@ -288,10 +292,7 @@ const fromHwb = (h: number, white: number, black: number, a: number): Rgba => {
 const PROPHOTO_DECODE = power(1.8);
 const PROPHOTO_ENCODE = power(1 / 1.8);
 
-const OKLAB: Space = {
-  to: (r, g, b) => linearToOklab(...toLinear(r, g, b)),
-  from: fromOklab,
-};
+const OKLAB: Space = { to: srgbOklab, from: fromOklab };
 const LAB: Space = { to: toLab, from: fromLab };
 
 /** Each space CSS interpolates in (`SPACES`) and `color()` names. */

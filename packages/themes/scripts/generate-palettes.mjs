@@ -122,6 +122,18 @@ for (const [, name, value] of themeCss.matchAll(/--color-([\w-]+):\s*([^;]+);/g)
 // themed host.
 if (unread.length > 0) throw new Error(`color tokens left unread: ${unread.join(", ")}`);
 
+/** A declaration's values after its name, wrapped as the formatter
+ * wraps them: lines of at most 100 columns, the rest indented 4. */
+function wrapped(name, values) {
+  const lines = [name];
+  for (const value of values) {
+    const line = lines[lines.length - 1];
+    if (line.length + 1 + value.length + 1 > 100) lines.push(`    ${value}`);
+    else lines[lines.length - 1] = `${line} ${value}`;
+  }
+  return lines.join("\n");
+}
+
 /** theme name → generated palette css. */
 export function generatePalettes() {
   const out = new Map();
@@ -142,6 +154,11 @@ export function generatePalettes() {
 mono-wind.theme-${theme},
 .theme-${theme} mono-wind {
 ${lines.join("\n")}
+  /* An image's picture reduced to the system palette (specs/images.md). */
+${wrapped(
+  "  --mw-image-palette:",
+  config.palette.map((hex) => hex.toLowerCase()),
+)};${config.mono ? "\n  --mw-image-match: lightness;" : ""}
 }
 `,
     );

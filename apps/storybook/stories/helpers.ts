@@ -862,3 +862,12 @@ export async function readyGrid(canvasElement: HTMLElement) {
     measure,
   };
 }
+
+/** The first text node of `root` holding `needle`. */
+export function textWith(root: Node, needle: string): Text {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if ((node as Text).data.includes(needle)) return node as Text;
+  }
+  throw new Error(`no text node holds "${needle}"`);
+}

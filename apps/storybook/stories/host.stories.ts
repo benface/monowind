@@ -3,6 +3,7 @@ import { expect, waitFor } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/web-components-vite";
 import { wrapLines } from "monowind";
 import dejaVuSubset from "../../../assets/fonts/DejaVuSansMono-subset.woff2?url";
+import card from "./assets/card.png";
 import {
   cellSize,
   copyText,
@@ -648,6 +649,58 @@ export const OwnWidth: StoryObj = {
     await waitFor(() => {
       expect(box("column").right).toBeLessThanOrEqual(box("shell").right + 0.5);
       expect(rowsOf(hooks("column")).filter((row) => row.trim()).length).toBeGreaterThan(1);
+    });
+  },
+};
+
+/** A host whose width is its content's takes the widths the engine
+ * lays that content out at (specs/cell-model.md "Host sizing"), where
+ * the browser's own run on the page's px: a `w-24` box is 24 columns,
+ * a paragraph's `px-2` two cells a side, an inline box's `w-8` eight
+ * columns in its line, an image's `w-16` sixteen. A flex row's item
+ * takes its content's max-content width, and, its row squeezed,
+ * narrows to its min-content width and no further. */
+export const OwnWidthInCells: StoryObj = {
+  render: () => html`
+    <div class="flex flex-col gap-4">
+      <mono-wind data-test="fit" class="w-fit">
+        <div data-test="box" class="w-24 border">box</div>
+      </mono-wind>
+      <mono-wind data-test="inline" class="w-fit">
+        a <span class="inline-block w-8 border">box</span> b
+      </mono-wind>
+      <div data-test="row" class="flex w-250">
+        <mono-wind data-test="item"><p class="px-2">padded words</p></mono-wind>
+        <div class="flex-1">sibling</div>
+      </div>
+      <div class="flex">
+        <mono-wind data-test="pictured">
+          <img data-test="picture" src=${card} alt="A test card" class="w-16" />
+        </mono-wind>
+      </div>
+    </div>
+  `,
+  play: async ({ canvasElement }) => {
+    const hooks = testHooks(canvasElement);
+    await readyHost(canvasElement);
+    const cell = cellSize(hooks("fit")).width;
+    const columns = (name: string) => hooks(name).getBoundingClientRect().width / cell;
+    await waitFor(() => {
+      expect(columns("fit")).toBeCloseTo(24, 1);
+      expect(columns("box")).toBeCloseTo(24, 1);
+      // "a ", the 8 columns of its inline box, and " b".
+      expect(columns("inline")).toBeCloseTo(12, 1);
+      // "padded words" and two cells a side.
+      expect(columns("item")).toBeCloseTo(16, 1);
+      expect(columns("pictured")).toBeCloseTo(16, 1);
+      expect(columns("picture")).toBeCloseTo(16, 1);
+    });
+    expect(rowsOf(hooks("item"))[0]).toContain("padded words");
+    // Squeezed: "padded", the longest word, and its padding.
+    hooks("row").style.width = `${4 * cell}px`;
+    await waitFor(() => {
+      expect(columns("item")).toBeCloseTo(10, 1);
+      expect(rowsOf(hooks("item")).filter((row) => row.trim()).length).toBe(2);
     });
   },
 };

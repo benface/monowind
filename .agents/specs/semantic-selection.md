@@ -99,7 +99,7 @@ selects a word or a paragraph.
   between them (`…in it.Second paragraph…`), in `select="text"` as
   well — the light elements are absolutely positioned, and those
   serializers derive block breaks from in-flow layout; Firefox emits a
-  blank line. A `copy` listener on the host therefore sets
+  blank line. A `copy` listener on the host's document therefore sets
   `text/plain` itself whenever the selection lies within the host's
   light DOM or a leaf's shadow, following the rules the browser would
   have applied to in-flow boxes — the HTML `innerText` rendered-text
@@ -107,11 +107,16 @@ selects a word or a paragraph.
   breaks), any other block-level box by one, table cells of a row are
   separated by `\t` and rows by `\n`, `<br>` is `\n`, and a leaf's
   text is its layout text (`LayoutNode.text`, inline-box and padding
-  markers dropped). Then `preventDefault()`. A grid selection (inside
-  the shadow `<pre>`) is left to the browser, which already copies it
-  row by row. Custom leaves copy their `text` — the art for
-  `<mono-ascii>` — so a copy never depends on how an engine serializes
-  a shadow host.
+  markers dropped), an image's its alt — in grid mode its content
+  box's cells, the alt in them (images.md "The light DOM").
+  Then `preventDefault()`. A grid selection (inside the shadow
+  `<pre>`) is left to the browser, which already copies it row by row
+  — but one spanning a picture's cells, which the engine copies row by
+  row from the same render, the alt in them. Custom leaves copy their
+  `text` — the art for `<mono-ascii>` — so a copy never depends on how
+  an engine serializes a shadow host. A selection reaching into the
+  host (a select-all) copies the host's part as the engine writes it,
+  the page's text around it.
 - **Click counting comes from `mousedown`.** `event.detail` carries the
   click count on `mousedown`/`click` (PointerEvent's `detail` is 0), so
   the engine listens for `mousedown` on the host (grid mode only, and
@@ -164,6 +169,15 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   element selections, so copy means the same thing
   whichever one made the selection; the grid's own segmentation of the
   row string is never used.
+- **An image is one unit**, as browsers select it (images.md), its
+  whole a leaf's (`#leafContents`, as `<mono-ascii>`'s): a
+  triple-click selects it, a drag counts it a character. A
+  double-click in grid mode selects its row of cells under the pointer
+  as far as its clip shows it, as `<mono-ascii>`'s selects a line of
+  its art — a grid selection, since an `<img>` has no text a range
+  could split, which Shift extends no element selection into — and the
+  image elsewhere. A broken image, its alt drawn as text, is one unit
+  too.
 - **Shift extends an element selection.** A semantic
   `mousedown` with `shiftKey` keeps the current selection's anchor and
   moves its focus to the far boundary (in DOM order) of the hit unit
@@ -171,11 +185,14 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   light-tree edge). No selection, or a grid selection (which cannot
   extend into the light tree): the gesture behaves as without Shift,
   replacing what was there.
-- **A semantic gesture moves focus the way a native click would.** The
-  canceled `mousedown` no longer moves focus, so the engine blurs a
-  focused element inside the host (a text control, a button) before
-  selecting — otherwise the browser's copy command would serve the
-  focused control's empty selection instead of the document's.
+- **An engine-taken press moves focus the way a native click would.**
+  The canceled `mousedown` no longer moves focus, so the engine focuses
+  the press's focus target, else blurs whatever held focus — a control
+  in the host or on the page — and focuses the host's frame, as a
+  press in an iframe does: otherwise the browser's copy command would
+  serve the focused control's empty selection, or another frame's,
+  instead of the document's (a text-mode drag in the playground's
+  preview copied nothing).
 - **Grid drags and semantic selections coexist.** A single click or a
   drag on the grid still makes a grid selection (replacing a semantic
   one, natively); a semantic gesture replaces a grid selection. Which
@@ -247,7 +264,9 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   paragraph range — the leaf as a whole is the smallest selectable
   unit there. Extension and Shift use the same anchor/focus rules as
   paragraphs, at segment boundaries.
-- **Copy serialization.** On `copy` (host listener, both modes): the
+- **Copy serialization.** On `copy` (both modes; the listener is on
+  the document, as a select-all's copy targets the body, and leaves one
+  already written alone): the
   selection's first range; if both boundary points are inside the
   host's light DOM or a leaf's shadow, walk the leaves of the last
   layout in tree order (out-of-flow descendants after their parent's
@@ -265,12 +284,28 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   none at the ends), a list item's shown marker before its first text
   where the range holds that text's first line whole (lists.md
   "Selection, copy and accessibility"), set `text/plain`,
-  `preventDefault()`. No `text/html` is written: a TUI copy is plain
-  text.
+  `preventDefault()`. A range reaching into the host from the page, in
+  its composed points (a select-all's own range ends inside the host),
+  or holding its grid's viewport whole (Chromium's select-all from
+  inside the grid) writes the host's part — this serialization over
+  the range clipped to the host's edges (`hostPart`), or, where grid
+  mode takes the host whole, its whole grid's rows, every layer
+  composited, from a copy's render — and, from the page, the page's
+  rendered text before and after it, plain (`pageAround`: one walk,
+  white space collapsed outside preformatted text, a line per block, a
+  break per `<br>`, text a `display`, a `visibility` or a
+  `user-select: none` leaves out skipped), each other host the range
+  reaches its own part as it copies it. A range that only touches the
+  host is none of its business. No `text/html` is written: a TUI copy
+  is plain text.
 - **Lift, then select.** Both attributes first — the lift and the
   highlight lock (`data-mw-selection`) — one forced style resolution,
   then the range — so the range is only ever set into selectable
-  content, its native highlight locked in the same resolution.
+  content, its native highlight locked in the same resolution. The
+  lift also leaves the grid unselectable: Chromium paints a range on
+  the host itself (an image first in it, selected whole) through the
+  flat tree, the grid's own highlight with it. A grid unit, a picture's
+  row, drops the lift the same way before its range lands.
 - **Gesture state.** `mousedown` (detail ≥ 2) starts it and records the
   anchor unit; `pointermove` extends while the primary button is down;
   the window-level `pointerup`/`pointercancel` the engine already

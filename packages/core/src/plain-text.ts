@@ -48,7 +48,8 @@ import type {
   Rect,
   TextDecoration,
 } from "./types.ts";
-import { clusterWidth, isColorEmoji } from "./width.ts";
+import { altCells } from "./image.ts";
+import { clusterWidth, graphemes, isColorEmoji } from "./width.ts";
 
 /**
  * Render a laid-out tree as plain text: the cells paint.ts draws, minus
@@ -58,9 +59,16 @@ import { clusterWidth, isColorEmoji } from "./width.ts";
  * continuation cells after it (specs/wide-characters.md).
  */
 export function renderPlainText(root: LayoutNode): string {
-  const { store, layers } = renderGrids(root, {});
+  return screenRows(root, {})
+    .map((row) => row.trimEnd())
+    .join("\n");
+}
+
+/** The whole grid's rows, every layer composited over the main grid. */
+export function screenRows(root: LayoutNode, options: RenderOptions): string[] {
+  const { store, layers } = renderGrids(root, options);
   compositeLayers(store, layers);
-  return store.grid.map((row) => row.join("").trimEnd()).join("\n");
+  return store.grid.map((row) => row.join(""));
 }
 
 /** Per-cell paint, each field optional so a span carries only what
@@ -131,6 +139,41 @@ export interface RenderOptions {
   ink?: Rgba | undefined;
   /** A color the parser leaves alone, resolved where the spans inherit it. */
   readColor?: ((value: string) => Rgba | null) | undefined;
+  /** Each image's alt in its cells, a copy's render alone
+   * (specs/images.md "The light DOM"). */
+  alt?: boolean | undefined;
+}
+
+/** The cells a copy reads: the main grid's and each layer's, every
+ * image's alt in its own (specs/images.md "The light DOM"). */
+export interface CopyGrids {
+  cells: string[][];
+  layers: PaintedLayer[];
+}
+
+export function copyGrids(root: LayoutNode): CopyGrids {
+  const { store, layers } = renderGrids(root, { alt: true });
+  return { cells: store.grid, layers };
+}
+
+/** An image's alt cells in a copy's grids, row by row — its content
+ * box, an inline image's row its line's text sits on — as its clip shows
+ * them, in the grid holding them: the main one or its surface's parent's. */
+export function imageRows(grids: CopyGrids, node: LayoutNode): string[] {
+  const host = grids.layers.find((layer) => layer.picture && layer.node === node)?.parent;
+  const cells = host ? host.grid : grids.cells;
+  const { x, y, columns, lines } = altCells(node);
+  const clip = node.paintClip ?? { x0: -Infinity, y0: -Infinity, x1: Infinity, y1: Infinity };
+  const left = Math.max(node.paintOrigin.x + x, clip.x0);
+  const right = Math.min(node.paintOrigin.x + x + columns, clip.x1);
+  const top = Math.max(node.paintOrigin.y + y, clip.y0);
+  const bottom = Math.min(node.paintOrigin.y + y + lines.length, clip.y1);
+  const rows: string[] = [];
+  for (let row = top; row < bottom; row++) {
+    const at = cells[row - (host?.y ?? 0)] ?? [];
+    rows.push(at.slice(left - (host?.x ?? 0), right - (host?.x ?? 0)).join(""));
+  }
+  return rows;
 }
 
 /** Row-major cell segments, as the DOM adapter paints them. */
@@ -160,6 +203,9 @@ export interface PaintedLayer {
   /** The opacity of the groups between the root and the enclosing
    * layer's root, its own inline ancestors' included (specs/cell-model.md). */
   alpha: number;
+  /** An image's surface, of no cells (specs/images.md "Paint"): apart
+   * from the image's own layer where it is a layer root. */
+  picture: boolean;
 }
 
 /** A layer's rows of segments, with the layer they were built from and
@@ -847,6 +893,7 @@ function openLayer(
   box: Rect,
   clip: Clip | null,
   alpha: number,
+  picture = false,
 ): Scope {
   const layer: PaintedLayer = {
     node,
@@ -861,6 +908,7 @@ function openLayer(
     clip: clip && intersect(clip, { x0: 0, y0: 0, x1: walking.width, y1: walking.height }),
     parent: walking.layer,
     alpha,
+    picture,
   };
   walking.layers.push(layer);
   const covers: Covers = new Map();
@@ -875,10 +923,18 @@ function openLayer(
     const { clip: shown } = layer;
     if (shown && (x1 <= shown.x0 || x0 >= shown.x1 || y1 <= shown.y0 || y0 >= shown.y1)) return;
     const width = x1 - x0;
-    const { grid, paints, clear } = recording.lay();
-    Object.assign(layer, { x: x0, y: y0, width, height: y1 - y0, grid, paints });
+    // A picture's surface lays no cells: its box's are the grid's beneath.
+    const store = picture ? null : recording.lay();
+    Object.assign(
+      layer,
+      { x: x0, y: y0, width, height: y1 - y0 },
+      store && {
+        grid: store.grid,
+        paints: store.paints,
+      },
+    );
     addCover(walking.covers, extent, (x, y) => {
-      clear(x - x0, y - y0);
+      store?.clear(x - x0, y - y0);
       layer.holes.add((y - y0) * width + (x - x0));
       coverCells(covers, x, y, 1);
     });
@@ -1073,6 +1129,28 @@ function painter(root: Walk, tree: LayoutNode): PaintVisitor {
     leave() {
       scopes.pop()?.close();
       walking = outers.pop()!;
+    },
+    picture(node) {
+      if (!node.style.visible) return;
+      // Its alt in its cells, for a copy's render alone (RenderOptions).
+      const { x, y } = node.paintOrigin;
+      if (walking.options.alt) {
+        const alt = altCells(node);
+        const put = putOf(node);
+        alt.lines.forEach((line, row) => {
+          let col = x + alt.x;
+          for (const cluster of graphemes(line)) {
+            const cells = clusterWidth(cluster);
+            if (cluster !== " ") put(col, y + alt.y + row, cluster, undefined, cells);
+            col += cells;
+          }
+        });
+      }
+      // A surface of no cells over the box, which the ink painted after
+      // it covers (specs/images.md "Paint"); the image's own opacity is
+      // its group's, in the walk's alpha.
+      const box = { x, y, width: node.localRect.width, height: node.localRect.height };
+      openLayer(walking, node, box, inkClip(node), walking.alpha, true).close();
     },
     box(node) {
       if (!lattices && (node.lattice || node.style.tableRole !== "none")) {

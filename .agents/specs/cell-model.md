@@ -215,18 +215,19 @@ centering land on the grid instead of a fractional edge. A cap rather than
 a width, so a shrinking container still shrinks the host natively; growth
 is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
-the window. A host whose width is its content's (`w-fit`,
-`inline-block`, a float, an absolute box, a flex row's item) takes it
-from a spacer, as its height does: a shadow grid track,
-`minmax(<columns> − 1/32px, <columns>)`, lifted while the engine reads
-so the content measures anew. The columns laid out are its max-content
-width, the host's width where it has none of its own; its min-content
-width yields a thirty-second of a pixel, so a container sized off the
-host (a `flex-1` column the host fills to the pixel, which an aside
-beside it squeezes) still shrinks natively, and its resize lays the
-host out. A thirty-second is past a layout unit in every engine and
-within the resize tolerance, so a flex item held at that floor is laid
-out once.
+the window. The host's intrinsic widths are its content's as the
+engine lays it out, in cells — not the light DOM's, whose `w-24` is
+96 px where the engine's is 24 columns. A spacer stands for them, as
+one stands for its height: a shadow grid track, `minmax(<min-content>,
+<max-content>)`, the root's min- and max-content widths at the cell's
+width, written from each layout's tree before the host's width is
+read. So the browser sizes the host from its content as CSS sizes any
+box: a host whose width is its content's (`w-fit`, `inline-block`, a
+float, an absolute box, a flex row's item) is its fit-content width, a
+flex item narrows to its min-content width and no further, and a
+container sized off the host (a `flex-1` column the host fills, which
+an aside beside it squeezes) shrinks natively, its resize laying the
+host out.
 
 The height is CSS's too. The host keeps `height: auto`; its content
 lies out of its flow (the shadow's slot is positioned, outside the
@@ -1652,14 +1653,14 @@ For "Aspect ratio":
 
 For "Host sizing":
 
-- shadow.css: the slot out of the host's flow but under
-  `:host([measuring])`, the viewport, whose `min-height` is the
-  spacer's height, and `#spacer`, its width's grid track, lifted under
-  `:host([measuring])`.
+- shadow.css: the slot out of the host's flow, the viewport, whose
+  `min-height` is the spacer's height, and `#spacer`, its width's grid
+  track.
 - element.ts: the height read before `measuring` (`sizedHeight`), the
   rows it gives the root where it is not the spacer's (`sizedRows`),
   the spacer written from the root's natural content rows
-  (`#spacerHeight`) and the columns laid out (`#spacerWidth`,
-  `SPACER_YIELD` under them), and `#laidOutSize`, the size the resize
-  observer compares.
-- layout.ts: `layoutRoot`'s `rows`, the root's forced height.
+  (`#spacerHeight`) and, before the host's width is read, from its
+  min- and max-content widths (`#spacerTrack`), and `#laidOutSize`,
+  the size the resize observer compares.
+- layout.ts: `layoutRoot`'s `rows`, the root's forced height, and its
+  `cache`, the intrinsic widths the spacer took (`intrinsicOuterWidth`).

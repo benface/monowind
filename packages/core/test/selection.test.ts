@@ -5,6 +5,8 @@ import {
   classifySelection,
   positionOf,
   selectedRanges,
+  hostPart,
+  pageAround,
   serializeSelection,
   wordAt,
 } from "../src/selection.ts";
@@ -237,5 +239,43 @@ describe("classifySelection through shadows", () => {
     expect(classifySelection(root.source, grid, points(mirror, 0, mirror, 2))).toBe("light");
     expect(classifySelection(root.source, grid, points(gridText, 0, gridText, 2))).toBe("grid");
     expect(classifySelection(root.source, grid, points(gridText, 0, x!, 1))).toBe("outside");
+  });
+});
+
+describe("pageAround", () => {
+  it("is the page's text a range holds before and after a host, a line per block, a break per <br>", () => {
+    document.body.innerHTML =
+      '<div id="page"><p>one <span style="display: inline">two</span><br>three</p><div id="host"><p>inside</p></div><p>after</p></div>';
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById("page")!);
+    expect(pageAround(range, document.getElementById("host")!)).toEqual([
+      "one two\nthree",
+      "after",
+    ]);
+  });
+
+  it("keeps preformatted text's white space, and leaves unselectable text out", () => {
+    document.body.innerHTML =
+      '<div id="page"><div style="white-space: pre">line one\n  line two</div><p><span style="user-select: none">1 </span>code</p><div id="host"></div></div>';
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById("page")!);
+    expect(pageAround(range, document.getElementById("host")!)).toEqual([
+      "line one\n  line two\ncode",
+      "",
+    ]);
+  });
+});
+
+describe("hostPart", () => {
+  it("is none for a range that only touches the host's start", () => {
+    document.body.innerHTML = '<p id="a">x</p><div id="host"><p>y</p></div>';
+    const host = document.getElementById("host")!;
+    const points = {
+      startContainer: document.getElementById("a")!.firstChild!,
+      startOffset: 0,
+      endContainer: host,
+      endOffset: 0,
+    };
+    expect(hostPart(host, points)).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ import type { CellSize } from "./gradient.ts";
 import {
   applyCellPaint,
   applyDecoration,
+  copyGrids,
   glyphKey,
   isBarePaint,
   PAINT_FIELDS,
@@ -17,10 +18,20 @@ import type {
   PaintedLayer,
   RenderOptions,
 } from "./plain-text.ts";
-import { selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
+import { rangeOf, selectionRangeThrough, textOffsetOf, textPositionAt } from "./selection.ts";
+import type { BoundaryPoints, PointRange } from "./selection.ts";
 import { readOpacity } from "./style.ts";
 import { boxKey, decorationKey } from "./types.ts";
-import type { LayoutNode, Backdrop } from "./types.ts";
+import type { LayoutNode, Backdrop, ImageSource } from "./types.ts";
+import {
+  contentCells,
+  pictureFit,
+  pictureGrid,
+  placePicture,
+  reducePicture,
+  samplePicture,
+} from "./image.ts";
+import type { Bitmap, Place } from "./image.ts";
 
 /**
  * Paint the laid-out tree into the shadow's `#grid` (a `<pre>`) and the
@@ -95,7 +106,7 @@ export function paintGrid(
   const { segments, cells, layers } = renderGridRows(root, render);
   if (!paintRows(target, segments, cells, options)) return false;
   const size = { width: cells[0]?.length ?? 0, height: cells.length };
-  return options.layers ? paintLayers(options.layers, layers, options, size) : true;
+  return options.layers ? paintLayers(options.layers, target, layers, options, size) : true;
 }
 
 /** A layer's nodes, kept per root element across paints
@@ -119,6 +130,8 @@ interface LayerNodes {
   inverse: DOMMatrix | null;
   /** The last placement written, to skip an unchanged one. */
   placed: string;
+  /** An image's canvas (specs/images.md). */
+  picture: Picture | null;
 }
 /** A container's layers: by root box (`boxKey`), and in paint order. */
 interface LayerSet {
@@ -126,7 +139,17 @@ interface LayerSet {
   order: LayerNodes[];
   cell: CellSize;
 }
+
 const layerSets = new WeakMap<HTMLElement, LayerSet>();
+
+/** A picture's layer key, apart from its image's own layer's. */
+const pictureKeys = new WeakMap<object, object>();
+function pictureKey(node: LayoutNode): object {
+  const box = boxKey(node);
+  let key = pictureKeys.get(box);
+  if (!key) pictureKeys.set(box, (key = {}));
+  return key;
+}
 
 /** Every layer's box placed again from its root's computed effects,
  * for a transition of one of them (specs/layers.md "Animation is
@@ -216,18 +239,28 @@ function localPoint(nodes: LayerNodes, x: number, y: number): { x: number; y: nu
  * more loses its nodes. */
 function paintLayers(
   container: HTMLElement,
+  main: HTMLElement,
   layers: LayerRows[],
   options: PaintOptions,
   size: { width: number; height: number },
 ): boolean {
   let set = layerSets.get(container);
-  if (!set) layerSets.set(container, (set = { nodes: new Map(), order: [], cell: DEFAULT_CELL }));
+  if (!set) {
+    set = { nodes: new Map(), order: [], cell: DEFAULT_CELL };
+    layerSets.set(container, set);
+  }
   set.cell = options.cell ?? DEFAULT_CELL;
+  // The grid selection as it stands once a picture's grid is painted, a
+  // row rebuilt under it restoring it.
+  const spanOf = spansOf(() => {
+    const root = container.getRootNode();
+    return root instanceof ShadowRoot ? selectionRangeThrough(root) : null;
+  });
   set.order = [];
   const last = new Map<HTMLElement, HTMLElement>();
   let held = false;
   for (const { layer, segments, resampled } of layers) {
-    const source = boxKey(layer.node);
+    const source = layer.picture ? pictureKey(layer.node) : boxKey(layer.node);
     let nodes = set.nodes.get(source);
     if (!nodes) {
       const box = document.createElement("div");
@@ -250,6 +283,7 @@ function paintLayers(
         clip: null,
         inverse: null,
         placed: "",
+        picture: null,
       };
       set.nodes.set(source, nodes);
     }
@@ -291,16 +325,620 @@ function paintLayers(
     last.set(parent, outer);
     if (nodes.backdrop && backdrop) placeBackdrop(nodes.backdrop, backdrop, size, set.cell);
     if (options.placeLayers !== false) placeLayer(nodes, set.cell);
-    if (!paintRows(nodes.grid, segments, layer.grid, options, resampled)) held = true;
+    // A picture's layer has no cells — its box's are the grid's beneath
+    // — so its grid stays empty: a drag over the picture selects the
+    // grid's text beneath.
+    if (!layer.picture && !paintRows(nodes.grid, segments, layer.grid, options, resampled)) {
+      held = true;
+    }
+    if (layer.picture && layer.node.image) {
+      const whole = options.selection?.has(layer.node) ?? false;
+      paintPicture(nodes, layer.node.image, set.cell, nodes.parent?.grid ?? main, whole, spanOf);
+    }
   }
   const painted = new Set(set.order);
   for (const [source, nodes] of set.nodes) {
     if (painted.has(nodes)) continue;
+    nodes.picture?.frames?.stop();
     (nodes.clipNode ?? nodes.box).remove();
     nodes.backdrop?.remove();
     set.nodes.delete(source);
   }
   return !held;
+}
+
+/** An image's sampled pixels, by what they were drawn from: a layout
+ * that changes none of it samples nothing (specs/images.md "Repaint");
+ * null for an image whose pixels its origin keeps from the page. */
+const pictures = new WeakMap<
+  HTMLImageElement,
+  { key: string; pixels: Bitmap | null; place: Place }
+>();
+
+/** Whether the engine can read pixels, found once. */
+let sampling: boolean | undefined;
+
+/** The source at the picture's scale: halved by the engine while at
+ * least four times the place, then read; null where the image is
+ * cross-origin and unshared, or a canvas is refused. */
+function sourcePixels(
+  image: CanvasImageSource,
+  natural: { width: number; height: number },
+  place: Place,
+): Bitmap | null {
+  // An engine without a 2D context (a DOM in Node) samples nothing.
+  sampling ??=
+    typeof OffscreenCanvas !== "undefined" && new OffscreenCanvas(1, 1).getContext("2d") !== null;
+  if (!sampling) return null;
+  let source = image;
+  let { width, height } = natural;
+  let canvas: OffscreenCanvas | null = null;
+  try {
+    while (width >= place.width * 4 && height >= place.height * 4 && width >= 2 && height >= 2) {
+      canvas = new OffscreenCanvas(Math.floor(width / 2), Math.floor(height / 2));
+      canvas.getContext("2d")!.drawImage(source, 0, 0, canvas.width, canvas.height);
+      ({ width, height } = canvas);
+      source = canvas;
+    }
+    if (!canvas) {
+      canvas = new OffscreenCanvas(width, height);
+      canvas.getContext("2d")!.drawImage(image, 0, 0);
+    }
+    return { width, height, data: canvas.getContext("2d")!.getImageData(0, 0, width, height).data };
+  } catch {
+    return null;
+  }
+}
+
+/** A picture's pixels from its source's: sampled to its grid at its
+ * place, reduced. */
+function gridPixels(
+  source: Bitmap,
+  place: Place,
+  columns: number,
+  rows: number,
+  color: ImageSource["color"],
+): Bitmap {
+  const pixels = samplePicture(source, { width: columns, height: rows * 2 }, place);
+  if (color) reducePicture(pixels, color);
+  return pixels;
+}
+
+/** The picture's pixels and its place in them: sampled, reduced. */
+function pictureOf(image: ImageSource, columns: number, rows: number, cell: CellSize) {
+  const { element, natural, fit, position, color } = image;
+  const key = [
+    element.currentSrc,
+    image.columns,
+    columns,
+    rows,
+    cell.width,
+    cell.height,
+    fit,
+    position.x,
+    position.y,
+    JSON.stringify(color),
+  ].join("|");
+  const cached = pictures.get(element);
+  if (cached?.key === key) return cached;
+  const width = image.columns * cell.width;
+  const own = { width, height: (width * natural.height) / natural.width };
+  const box = { width: columns * cell.width, height: rows * cell.height };
+  const place = pictureGrid(
+    placePicture(own, box, pictureFit(fit, natural, box, cell), position),
+    cell,
+  );
+  const source = sourcePixels(element, natural, place);
+  const pixels = source && gridPixels(source, place, columns, rows, color);
+  const picture = { key, pixels, place };
+  pictures.set(element, picture);
+  return picture;
+}
+
+/** An image's canvas: the key of what it last drew, whether that was
+ * a source the page may not read, the last paint's geometry, which each
+ * frame is drawn to, and its frames decoded from its bytes. */
+interface Picture {
+  canvas: HTMLCanvasElement;
+  drawn: string;
+  tainted: boolean;
+  painted: {
+    image: ImageSource;
+    /** What its pixels are a function of, its source aside (`pictureOf`). */
+    key: string;
+    columns: number;
+    rows: number;
+    place: Place;
+    holes: number[];
+    /** The grid holding its cells, and its first cell there. */
+    grid: HTMLElement;
+    col: number;
+    row: number;
+    /** Selected whole, by a selection in the light DOM. */
+    whole: boolean;
+    /** Its cells a selection holds, inverted. */
+    selected: Run[];
+  };
+  frames: Frames | null;
+}
+
+/** An image's picture on its layer's box: a canvas over the content
+ * box, drawn again only when what it shows changes, the cells later
+ * ink covers cleared (specs/images.md "Paint"). */
+function paintPicture(
+  nodes: LayerNodes,
+  image: ImageSource,
+  cell: CellSize,
+  grid: HTMLElement,
+  whole: boolean,
+  spanOf: SpanOf,
+): void {
+  const { layer } = nodes;
+  const content = contentCells(layer.node);
+  const left = layer.box.x - layer.x + content.x;
+  const top = layer.box.y - layer.y + content.y;
+  const { columns, rows } = content;
+  const { element } = image;
+  if (columns <= 0 || rows <= 0 || element.naturalWidth === 0) {
+    nodes.picture?.frames?.stop();
+    nodes.picture?.canvas.remove();
+    nodes.picture = null;
+    return;
+  }
+  // A new source loading: the picture shown stays until it loads.
+  if (!element.complete) return;
+  const holes: number[] = [];
+  for (const hole of layer.holes) {
+    const x = (hole % layer.width) - left;
+    const y = Math.floor(hole / layer.width) - top;
+    if (x >= 0 && x < columns && y >= 0 && y < rows) holes.push(y * columns + x);
+  }
+  const picture = pictureOf(image, columns, rows, cell);
+  const painted = {
+    image,
+    key: picture.key,
+    columns,
+    rows,
+    place: picture.place,
+    holes,
+    grid,
+    col: layer.box.x + content.x - (layer.parent?.x ?? 0),
+    row: layer.box.y + content.y - (layer.parent?.y ?? 0),
+    whole,
+    selected: [] as Run[],
+  };
+  painted.selected = selectedCells(painted, spanOf);
+  if (!nodes.picture) {
+    const canvas = document.createElement("canvas");
+    canvas.className = "picture";
+    canvas.setAttribute("aria-hidden", "true");
+    nodes.box.appendChild(canvas);
+    nodes.picture = { canvas, drawn: "", tainted: false, painted, frames: null };
+  }
+  // The cells it shows selected, which a grid selection may have moved.
+  const shown = nodes.picture.painted.selected.join(",");
+  nodes.picture.painted = painted;
+  const { frames } = nodes.picture;
+  if (frames?.src !== element.currentSrc) {
+    frames?.stop();
+    nodes.picture.frames = new Frames(nodes.picture, element.currentSrc, picture.pixels !== null);
+  }
+  const drawn = [picture.key, left, top, holes.join(",")].join("|");
+  if (nodes.picture.drawn === drawn && painted.selected.join(",") === shown) return;
+  nodes.picture.drawn = drawn;
+  const { canvas } = nodes.picture;
+  canvas.width = columns;
+  canvas.height = rows * 2;
+  Object.assign(canvas.style, {
+    left: `${left * cell.width}px`,
+    top: `${top * cell.height}px`,
+    width: `${columns * cell.width}px`,
+    height: `${rows * cell.height}px`,
+  });
+  redraw(nodes.picture);
+}
+
+/** A picture drawn again from what it shows: its frame, else its
+ * sampled pixels. */
+function redraw(picture: Picture): void {
+  if (picture.frames?.draw()) return;
+  drawPicture(picture, pictures.get(picture.painted.image.element)?.pixels ?? null);
+}
+
+/** A row's selected cells, its columns `from` to `to`. */
+type Run = [row: number, from: number, to: number];
+
+/** A picture's cells a selection holds, a run a row: all of them where a
+ * light-DOM selection reaches the image, else those whose characters a
+ * grid selection spans in the grid holding them. */
+function selectedCells(painted: Picture["painted"], spanOf: SpanOf): Run[] {
+  const { columns, rows, grid, col, row, whole } = painted;
+  if (whole) return Array.from({ length: rows }, (_, y): Run => [y, 0, columns]);
+  const span = spanOf(grid);
+  if (!span) return [];
+  const offset = (x: number, y: number): number => gridOffsetAt(grid, col + x, row + y);
+  const runs: Run[] = [];
+  for (let y = 0; y < rows; y++) {
+    const first = offset(0, y);
+    const last = offset(columns - 1, y);
+    if (last < span.start || first >= span.end) continue;
+    // A row's offsets only rise: its cells in the span are one run.
+    let from = 0;
+    while (offset(from, y) < span.start) from++;
+    let to = from;
+    while (to < columns && offset(to, y) < span.end) to++;
+    if (to > from) runs.push([y, from, to]);
+  }
+  return runs;
+}
+
+/** The grid selection, its pictures' cells under it inverted
+ * (specs/images.md "Paint"): each picture whose cells it changes drawn
+ * again, with no layout or other paint, as a drag moves it. */
+export function selectPictures(container: HTMLElement, points: BoundaryPoints | null): void {
+  const set = layerSets.get(container);
+  if (!set) return;
+  const spanOf = spansOf(() => points);
+  for (const { picture } of set.order) {
+    // Selected whole by the light DOM until the next paint.
+    if (!picture || picture.painted.whole) continue;
+    const selected = selectedCells(picture.painted, spanOf);
+    if (selected.join(",") === picture.painted.selected.join(",")) continue;
+    picture.painted.selected = selected;
+    redraw(picture);
+  }
+}
+
+/** An image's row of cells at main-grid row `row`, clamped to it, as
+ * the points around the text it spans in the grid holding them, as far
+ * as its clip shows them; null for an image with no picture shown. */
+export function pictureRow(
+  container: HTMLElement,
+  node: LayoutNode,
+  row: number,
+): PointRange | null {
+  const nodes = layerSets.get(container)?.nodes.get(pictureKey(node));
+  const painted = nodes?.picture?.painted;
+  if (!painted) return null;
+  const { grid, col, columns, rows } = painted;
+  const { clip, parent } = nodes.layer;
+  // Its first row in main-grid cells, as `row` is.
+  const top = painted.row + (parent?.y ?? 0);
+  const y = painted.row + Math.max(0, Math.min(rows - 1, row - top));
+  // As far as its clip shows it.
+  const from = clip ? Math.max(col, clip.x0 - (parent?.x ?? 0)) : col;
+  const to = clip ? Math.min(col + columns, clip.x1 - (parent?.x ?? 0)) : col + columns;
+  if (to <= from) return null;
+  const start = textPositionAt(grid, gridOffsetAt(grid, from, y));
+  const end = textPositionAt(grid, gridOffsetAt(grid, to, y));
+  if (!start || !end) return null;
+  return { start: { node: start[0], offset: start[1] }, end: { node: end[0], offset: end[1] } };
+}
+
+/** The text a grid selection copies where it spans a picture's cells:
+ * the copy's render between its points, each image's alt in its cells
+ * (specs/images.md "The light DOM"); null for one that spans none, the
+ * browser's own copy. */
+export function gridCopy(
+  container: HTMLElement,
+  root: LayoutNode,
+  points: BoundaryPoints,
+): string | null {
+  const set = layerSets.get(container);
+  const span = set && gridSpan(container, points);
+  if (!span) return null;
+  const spanOf = spansOf(() => points);
+  const spans = set.order.some(
+    ({ picture }) => picture && selectedCells(picture.painted, spanOf).length > 0,
+  );
+  if (!spans) return null;
+  const grids = copyGrids(root);
+  const layer = set.order.find((nodes) => nodes.grid === span.grid)?.layer.node;
+  const cells = layer
+    ? grids.layers.find((painted) => painted.node === layer && !painted.picture)?.grid
+    : grids.cells;
+  if (!cells) return null;
+  const start = gridCellAt(span.grid, span.start);
+  const end = gridCellAt(span.grid, span.end);
+  const rows: string[] = [];
+  for (let row = start.row; row <= end.row; row++) {
+    const from = row === start.row ? start.col : 0;
+    const to = row === end.row ? end.col : undefined;
+    rows.push((cells[row] ?? []).slice(from, to).join(""));
+  }
+  return rows.join("\n");
+}
+
+/** The cell a text offset of a painted grid is at, `gridOffsetAt`'s
+ * inverse: the row, and the cells before the offset in it. */
+function gridCellAt(target: HTMLElement, offset: number): { col: number; row: number } {
+  const painted = lastPaint.get(target);
+  let rest = offset;
+  for (let row = 0; painted && row < painted.rows.length; row++) {
+    const units = painted.rows[row]!.units;
+    if (rest <= units) {
+      const cells = painted.cells[row]!;
+      let col = 0;
+      while (col < cells.length && rest >= cells[col]!.length && rest > 0)
+        rest -= cells[col++]!.length;
+      return { col, row };
+    }
+    rest -= units + 1;
+  }
+  return { col: 0, row: painted?.rows.length ?? 0 };
+}
+
+/** A selection's span in the shadow grid holding both its points; null
+ * for one elsewhere, or across two grids. */
+function gridSpan(
+  container: HTMLElement,
+  points: BoundaryPoints,
+): (Span & { grid: HTMLElement }) | null {
+  const gridOf = (node: Node): HTMLElement | null => {
+    const grid = (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>(
+      ".grid",
+    );
+    return grid?.getRootNode() === container.getRootNode() ? grid : null;
+  };
+  const grid = gridOf(points.startContainer);
+  if (!grid || gridOf(points.endContainer) !== grid) return null;
+  const span = spanIn(grid, points);
+  return span && { grid, ...span };
+}
+
+/** A selection's text offsets in a grid. */
+type Span = { start: number; end: number };
+
+/** A selection's span in each grid, read once a grid. */
+type SpanOf = (grid: HTMLElement) => Span | null;
+
+function spansOf(read: () => BoundaryPoints | null): SpanOf {
+  const spans = new Map<HTMLElement, Span | null>();
+  return (grid) => {
+    let span = spans.get(grid);
+    if (span === undefined) {
+      const selection = read();
+      spans.set(grid, (span = selection && spanIn(grid, selection)));
+    }
+    return span;
+  };
+}
+
+/** A selection's text offsets in a grid: from its start, else the
+ * grid's, to its end, else past the grid's — a select-all's runs across
+ * the viewport's grids; null where it misses the grid. */
+function spanIn(grid: HTMLElement, points: BoundaryPoints): Span | null {
+  const range = rangeOf(grid.ownerDocument, points);
+  if (!range.intersectsNode(grid)) return null;
+  // A point outside the grid is before or past it.
+  return {
+    start: textOffsetOf(grid, range.startContainer, range.startOffset) ?? 0,
+    end: textOffsetOf(grid, range.endContainer, range.endOffset) ?? Infinity,
+  };
+}
+
+/** The picture's pixels on its canvas, the cells later ink covers
+ * cleared; with none, the browser scales the image, unreduced. */
+function drawPicture(picture: Picture, pixels: Bitmap | null): void {
+  if (pixels && picture.tainted) {
+    // A canvas a source the page may not read was drawn on stays
+    // unreadable to the page: readable pixels take a fresh one.
+    const fresh = picture.canvas.cloneNode() as HTMLCanvasElement;
+    picture.canvas.replaceWith(fresh);
+    picture.canvas = fresh;
+    picture.tainted = false;
+  }
+  const context = picture.canvas.getContext("2d");
+  if (!context) return;
+  const { image, columns, place, holes } = picture.painted;
+  if (pixels) {
+    const { data, width, height } = pixels;
+    context.putImageData(new ImageData(data, width, height), 0, 0);
+  } else {
+    context.clearRect(0, 0, picture.canvas.width, picture.canvas.height);
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image.element, place.x, place.y, place.width, place.height);
+    picture.tainted = true;
+  }
+  for (const hole of holes) context.clearRect(hole % columns, Math.floor(hole / columns) * 2, 1, 2);
+  if (picture.painted.selected.length > 0) invertCells(picture, context);
+}
+
+/** A picture's selected cells in reverse video, as selected text is:
+ * white's difference inverts each color, and the picture's own alpha,
+ * restored from a copy, keeps a bare pixel bare — drawing alone, so a
+ * picture the page may not read inverts too. */
+function invertCells(picture: Picture, context: CanvasRenderingContext2D): void {
+  const { canvas } = picture;
+  const { selected } = picture.painted;
+  const copy = new OffscreenCanvas(canvas.width, canvas.height);
+  copy.getContext("2d")!.drawImage(canvas, 0, 0);
+  context.save();
+  context.beginPath();
+  for (const [y, from, to] of selected) context.rect(from, y * 2, to - from, 2);
+  context.clip();
+  context.globalCompositeOperation = "difference";
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.globalCompositeOperation = "destination-in";
+  context.drawImage(copy, 0, 0);
+  context.restore();
+}
+
+/** An image's frames decoded from its bytes where the engine can, and
+ * the server lets the page read them (specs/images.md "Paint"): an
+ * animated image's, each drawn at its own time through a still one's
+ * sampling and colors, its loop count kept, the first alone under
+ * `prefers-reduced-motion`; a still image's where the page may not read
+ * it from its element, a server sharing it over CORS. */
+class Frames {
+  readonly src: string;
+  #picture: Picture;
+  /** Whether the page reads the still picture from its element. */
+  #readable: boolean;
+  #stopped = new AbortController();
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  /** The frame showing at its picture's scale, drawn again on a
+   * repaint: each decoded frame is closed once read, as one at its
+   * natural size may weigh tens of megabytes. */
+  #source: Bitmap | null = null;
+  /** The natural size the frame showing was read from. */
+  #natural = { width: 0, height: 0 };
+  /** The frame showing sampled to its picture as last painted. */
+  #sampled: { source: Bitmap; key: string; pixels: Bitmap | null } | null = null;
+  /** A still read once, and again as its picture grows past it. */
+  #still = false;
+  #rereading = false;
+  /** Whether the picture is on screen, and the loop waiting for it to
+   * be: frames are drawn where they show. */
+  #observer: IntersectionObserver | null = null;
+  #visible = false;
+  #reveal: (() => void) | null = null;
+
+  constructor(picture: Picture, src: string, readable: boolean) {
+    this.src = src;
+    this.#picture = picture;
+    this.#readable = readable;
+    // A source the page may not fetch, or the engine decode, stays still.
+    if (typeof ImageDecoder !== "undefined") this.#run().catch(() => this.stop());
+  }
+
+  /** The frame showing drawn to the picture as last painted; false
+   * before the first. */
+  draw(): boolean {
+    const source = this.#source;
+    if (!source) return false;
+    const { image, key, columns, rows, place } = this.#picture.painted;
+    // Sampled once for its inputs: a move's repaint or a selection's
+    // redraw reuses it.
+    if (this.#sampled?.source !== source || this.#sampled.key !== key) {
+      const pixels = gridPixels(source, place, columns, rows, image.color);
+      this.#sampled = { source, key, pixels };
+    }
+    drawPicture(this.#picture, this.#sampled.pixels);
+    // Read for a smaller place: read again for this one, drawn meanwhile.
+    const coarse =
+      source.width < Math.min(this.#natural.width, place.width) ||
+      source.height < Math.min(this.#natural.height, place.height);
+    if (this.#still && coarse && !this.#rereading) {
+      this.#rereading = true;
+      this.#run()
+        .catch(() => {})
+        .finally(() => (this.#rereading = false));
+    }
+    return true;
+  }
+
+  stop(): void {
+    this.#stopped.abort();
+    clearTimeout(this.#timer);
+    this.#observer?.disconnect();
+    this.#source = null;
+    this.#sampled = null;
+  }
+
+  async #run(): Promise<void> {
+    const { signal } = this.#stopped;
+    const response = await fetch(this.src, { mode: "cors", cache: "force-cache", signal });
+    const type = response.headers.get("content-type")?.split(";")[0] ?? "";
+    if (!response.ok || !response.body || !(await ImageDecoder.isTypeSupported(type))) return;
+    if (signal.aborted) return;
+    // Streamed, so a still image's header alone is read; its bytes kept
+    // for the passes after the first where it animates.
+    const bytes = response.clone();
+    // Firefox reports a decoder's completion rejected by its closing as
+    // unhandled, where the others mark it handled.
+    const open = (data: ReadableStream<Uint8Array> | ArrayBuffer): ImageDecoder => {
+      const opened = new ImageDecoder({ data, type });
+      opened.completed.catch(() => {});
+      return opened;
+    };
+    let decoder: ImageDecoder | null = open(response.body);
+    // Once: WebKit throws closing a closed decoder.
+    const close = (): void => {
+      decoder?.close();
+      decoder = null;
+      signal.removeEventListener("abort", close);
+    };
+    signal.addEventListener("abort", close);
+    await decoder.tracks.ready;
+    const track = decoder.tracks.selectedTrack;
+    // One frame, however many loops: a still.
+    if (!track?.animated || track.frameCount <= 1) {
+      void bytes.body?.cancel();
+      this.#still = true;
+      if (!this.#readable) await this.#show(decoder, 0);
+      return close();
+    }
+    await decoder.completed;
+    const data = await bytes.arrayBuffer();
+    if (signal.aborted) return;
+    const { frameCount } = track;
+    this.#observer = new IntersectionObserver((entries) => {
+      this.#visible = entries.at(-1)!.isIntersecting;
+      if (this.#visible) this.#reveal?.();
+    });
+    this.#observer.observe(this.#picture.painted.image.element);
+    // WebKit counts a loop without end as -1.
+    const loops = track.repetitionCount < 0 ? Infinity : track.repetitionCount;
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    for (let index = 0, shown = -1, passes = 0, duration = 0; passes <= loops;) {
+      if (reduced.matches) index = 0;
+      if (index !== shown) {
+        if (!this.#visible) await new Promise<void>((resolve) => (this.#reveal = resolve));
+        // Firefox breaks a frame decoded again once one of its index
+        // closed: a decoder takes each frame once, in order.
+        if (index < shown) {
+          close();
+          decoder = open(data);
+        }
+        duration = await this.#show(decoder, index);
+        if (signal.aborted) return;
+        shown = index;
+      }
+      const still = reduced.matches;
+      // Browsers hold a frame of 10 ms or less for 100 ms.
+      const delay = duration / 1000;
+      await new Promise<void>((resolve) => {
+        if (still) reduced.addEventListener("change", () => resolve(), { once: true, signal });
+        else this.#timer = setTimeout(resolve, delay > 10 ? delay : 100);
+      });
+      if (still) continue;
+      index = (index + 1) % frameCount;
+      if (index === 0) passes++;
+    }
+    this.#observer.disconnect();
+    close();
+  }
+
+  /** Frame `index` decoded, read at its picture's scale, closed and
+   * drawn; its duration, in µs. */
+  async #show(decoder: ImageDecoder, index: number): Promise<number> {
+    const { image } = await decoder.decode({ frameIndex: index });
+    const { displayWidth: width, displayHeight: height, duration } = image;
+    let source: Bitmap | null;
+    try {
+      source = sourcePixels(image, { width, height }, this.#picture.painted.place);
+    } finally {
+      image.close();
+    }
+    if (!this.#stopped.signal.aborted) {
+      this.#source = source;
+      this.#natural = { width, height };
+      this.draw();
+    }
+    return duration ?? 0;
+  }
+}
+
+/** Every image's frames of a container stopped, its host leaving the
+ * document: the next paint starts each again. */
+export function stopFrames(container: HTMLElement): void {
+  for (const { picture } of layerSets.get(container)?.order ?? []) {
+    if (!picture) continue;
+    picture.frames?.stop();
+    picture.frames = null;
+  }
 }
 
 /** The backdrop box over the grid, in px of the measured cell, with
@@ -329,11 +967,16 @@ function placeBackdrop(
  * box inside it. */
 function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   const { layer } = nodes;
-  const cs = getComputedStyle(layer.node.source, layer.node.generated?.pseudo);
-  const [ox = "0", oy = "0"] = cs.transformOrigin.split(" ");
+  // A picture takes none of its image's effects: a layer root's own
+  // layer carries them, and its opacity is in its alpha.
+  const cs = layer.picture
+    ? null
+    : getComputedStyle(layer.node.source, layer.node.generated?.pseudo);
+  const [ox = "0", oy = "0"] = cs?.transformOrigin.split(" ") ?? [];
   const originX = (parseFloat(ox) || 0) + (layer.box.x - layer.x) * cell.width;
   const originY = (parseFloat(oy) || 0) + (layer.box.y - layer.y) * cell.height;
-  const [tx = 0, ty = 0] = cs.translate
+  const translate = cs?.translate || "none";
+  const [tx = 0, ty = 0] = translate
     .split(" ")
     .map((part, axis) =>
       part.endsWith("%")
@@ -341,13 +984,14 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
           (axis === 0 ? layer.box.width * cell.width : layer.box.height * cell.height)
         : parseFloat(part) || 0,
     );
-  const transform = cs.transform || "none";
-  const rotate = cs.rotate || "none";
-  const scale = cs.scale || "none";
-  const filter = cs.filter || "none";
-  const backdropFilter = layer.node.style.visible ? layer.node.style.layer!.backdropFilter : "none";
-  // The root's live opacity, times its faded ancestors' (specs/layers.md).
-  const opacity = layer.alpha * readOpacity(cs.opacity);
+  const transform = cs?.transform || "none";
+  const rotate = cs?.rotate || "none";
+  const scale = cs?.scale || "none";
+  const filter = cs?.filter || "none";
+  const backdropFilter =
+    (cs && layer.node.style.visible && layer.node.style.layer?.backdropFilter) || "none";
+  // A root's live opacity, times its faded ancestors' (specs/layers.md).
+  const opacity = layer.alpha * (cs ? readOpacity(cs.opacity) : 1);
   const origin = layer.parent ?? { x: 0, y: 0 };
   nodes.left = (layer.x - origin.x) * cell.width;
   nodes.top = (layer.y - origin.y) * cell.height;
@@ -392,7 +1036,7 @@ function placeLayer(nodes: LayerNodes, cell: CellSize): void {
   style.width = `${nodes.width}px`;
   style.height = `${nodes.height}px`;
   style.transformOrigin = `${originX}px ${originY}px`;
-  style.translate = cs.translate === "none" ? "none" : `${tx}px ${ty}px`;
+  style.translate = translate === "none" ? "none" : `${tx}px ${ty}px`;
   style.rotate = rotate;
   style.scale = scale;
   style.transform = transform;

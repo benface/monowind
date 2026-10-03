@@ -2,6 +2,7 @@ import type { GeneratedNode, Pseudo } from "./generated.ts";
 import type { BorderGlyphSet } from "./glyphs.ts";
 import type { ColorSpace, HueMode, Rgba } from "./color.ts";
 import type { TextCase } from "./text-transform.ts";
+import type { ImageColor, ObjectFit } from "./image.ts";
 
 /** The glyph properties: inherited ones that change how a glyph draws,
  * never its advance. The grid's spans take each from their element
@@ -1129,6 +1130,8 @@ export interface LayoutNode {
   /** The pseudo-elements its element's author gives content, which the
    * scroll spacer leaves be. */
   authoredPseudos?: readonly Pseudo[];
+  /** A loaded image's picture inputs (specs/images.md). */
+  image?: ImageSource;
   /** Scroll geometry (specs/scrolling.md), written by layoutNode on
    * containers with a scroll axis: content extent and the derived
    * max offset, both in cells. Absent elsewhere. */
@@ -1464,6 +1467,19 @@ export function createNode(
     naturalContentHeight: 0,
     resolvedPadding: zeroInsets(),
   };
+}
+
+/** What an `<img>`'s picture is drawn from (specs/images.md). */
+export interface ImageSource {
+  element: HTMLImageElement;
+  /** In px. */
+  natural: { width: number; height: number };
+  /** The natural width on the spacing scale, unrounded: the picture's
+   * own size, which `object-fit` scales. */
+  columns: number;
+  fit: ObjectFit;
+  position: { x: string; y: string };
+  color: ImageColor | null;
 }
 
 /** The CSS initial implicit-track size: `minmax(auto, auto)`. */

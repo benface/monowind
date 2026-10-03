@@ -2,6 +2,10 @@
  * Zero-dependency static file server (used inside the Playwright Docker
  * container, where platform-specific binaries from the host's node_modules
  * can't run). Usage: node serve-static.mjs <dir> <port>
+ *
+ * A file asked for with `?shared` is shared with every origin (CORS),
+ * and nothing else is, as the image stories need one picture the page
+ * may read from another origin and one it may not.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
@@ -23,7 +27,8 @@ const contentTypes = {
 };
 
 createServer((request, response) => {
-  const urlPath = decodeURIComponent(new URL(request.url, "http://x").pathname);
+  const url = new URL(request.url, "http://x");
+  const urlPath = decodeURIComponent(url.pathname);
   let filePath = normalize(join(dir, urlPath));
   if (!filePath.startsWith(normalize(dir))) {
     response.writeHead(403).end();
@@ -38,6 +43,7 @@ createServer((request, response) => {
   }
   response.writeHead(200, {
     "content-type": contentTypes[extname(filePath)] ?? "application/octet-stream",
+    ...(url.searchParams.has("shared") ? { "access-control-allow-origin": "*" } : {}),
   });
   createReadStream(filePath).pipe(response);
 }).listen(port, () => {
