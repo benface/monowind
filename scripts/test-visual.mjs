@@ -18,11 +18,9 @@ run("docker", [
   "run",
   "--rm",
   "--init",
-  // Note on CPU architecture: local (Apple Silicon → linux/arm64 image) and
-  // CI (ubuntu-latest → linux/amd64) produce byte-identical screenshots for
-  // our rendering — verified 2026-08 by regenerating baselines under both.
-  // If a future feature ever breaks that (e.g. GPU-rasterized content),
-  // pin `--platform linux/amd64` here to match CI.
+  // The goldens are arm64's (Apple Silicon → the linux/arm64 image), and
+  // CI's visual jobs run on arm64 too: amd64 rasterizes a rotated
+  // picture's edges a few pixels apart (verified 2026-10-06).
   "-v",
   `${repoRoot}:/work`,
   "-w",

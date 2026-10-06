@@ -4,9 +4,11 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, type MachineProps } from "./anchor.ts";
 import { liveProps, mount, part, parts, start, type Mounted } from "./vanilla.ts";
 
-export type Props = Accordion.Props;
-/** An item's props: its value, and whether it is disabled. */
-export type ItemProps = Accordion.ItemProps;
+/** An interface of its own, for the reason menu.ts's `Props` is. */
+export interface Props extends Accordion.Props {}
+/** An item's props: its value, and whether it is disabled; an
+ * interface of its own, as `Props` is. */
+export interface ItemProps extends Accordion.ItemProps {}
 export type Api<T extends PropTypes = PropTypes> = Accordion.Api<T>;
 export type Service = Accordion.Service;
 /** The props as the machine takes them, `props()`'s return. */

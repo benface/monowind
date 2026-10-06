@@ -4,7 +4,8 @@ import type { NormalizeProps, PropTypes } from "@zag-js/types";
 import { asMachineProps, omit, type MachineProps } from "./anchor.ts";
 import { liveProps, mount, part, start, type Mounted } from "./vanilla.ts";
 
-export type Props = Collapsible.Props;
+/** An interface of its own, for the reason menu.ts's `Props` is. */
+export interface Props extends Collapsible.Props {}
 export type Api<T extends PropTypes = PropTypes> = Collapsible.Api<T>;
 export type Service = Collapsible.Service;
 /** The props as the machine takes them, `props()`'s return. */

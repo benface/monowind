@@ -41,10 +41,10 @@ jobs:
 
   visual:
     name: Visual regression (${{ matrix.shard }}/3)
-    # Runs in Docker for identical screenshots; arm64/amd64 proved
-    # byte-identical (see scripts/test-visual.mjs). The host install is
-    # needed — the script builds Storybook before entering Docker.
-    runs-on: ubuntu-latest
+    # Runs in Docker for identical screenshots, on arm64 as the goldens
+    # are made (see scripts/test-visual.mjs). The host install is needed
+    # — the script builds Storybook before entering Docker.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     # A third of the suite each: whole, on one runner, it nears the timeout.
     strategy:
