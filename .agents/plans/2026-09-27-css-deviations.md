@@ -829,7 +829,7 @@ each beside a native copy, their text rows compared; its golden.
    `LayoutNode.baselineRow`, which a relayout left stale, render.ts's
    middle alignment reading it.
 2. flex.ts, a row's lines: the items aligned by `baseline` (or `last
-baseline`) whose cross margins are not auto form a group; each sits
+   baseline`) whose cross margins are not auto form a group; each sits
    where its baseline row meets the group's lowest (a box without a
    line its last row), the line's height growing to hold them; the
    group rides the line's cross-start (a `last baseline` group its

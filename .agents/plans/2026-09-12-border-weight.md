@@ -10,9 +10,9 @@ only sequences them.
 ### 1. Weight bands in the glyph registry
 
 - `glyphs.ts`: `HEAVY_JUNCTIONS` (the 16-mask table: `━ ┃ ┏ ┓ ┗ ┛ ┳ ┻
-┣ ┫ ╋`), and heavy line pairs for dashed (`╍ ╏`) and dotted
+  ┣ ┫ ╋`), and heavy line pairs for dashed (`╍ ╏`) and dotted
   (`┉ ┋`) over the heavy corners and junctions. `GlyphTable.weights?:
-WeightBand[]`, a band `{ width: number; cells?: number } & GlyphRoles`
+  WeightBand[]`, a band `{ width: number; cells?: number } & GlyphRoles`
   (the role fields, `rounded` and `shadow` excluded). The defaults'
   bands: solid, dashed, dotted at `width: 2`, one cell, the heavy
   tables.
@@ -25,7 +25,7 @@ WeightBand[]`, a band `{ width: number; cells?: number } & GlyphRoles`
 - Built-in sets: `single` and `ascii` register `{ width: 2, cells: 2 }`
   for solid, dashed, dotted (two rings of their lines); `cp437` the
   double table at `width: 2` for solid; `blocks` `{ width: 2, cells: 2
-}`; `rounded` `{ width: 2, cells: 2 }` (PETSCII has no heavy);
+  }`; `rounded` `{ width: 2, cells: 2 }` (PETSCII has no heavy);
   `double` gets no band anywhere.
 - `cornerGlyph` takes the weighted table: a band with its own corner
   (heavy) has no arcs, so it stays square; a band without (rings)

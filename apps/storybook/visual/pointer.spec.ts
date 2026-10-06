@@ -612,3 +612,70 @@ test.describe("a drag selecting a text field's value", () => {
     expect(await selectionOf(page, input)).toEqual([3, 6]);
   });
 });
+
+/**
+ * Native regions under a real pointer (specs/native-regions.md
+ * "Interaction", "Paint"): a region gives way under the cells painted
+ * over it, so a click there reaches the grid, and a grid drag sweeps
+ * across a frame of a page, which keeps none of it.
+ */
+test.describe("a native region", () => {
+  test("gives a real click on a menu's cells over it to the grid", async ({ page }) => {
+    await openStory(page, "features-native-regions--menu-over-region");
+    await engineQuiet(page);
+    await page.evaluate(() => {
+      document.addEventListener(
+        "click",
+        (event) => {
+          const target = event.target as HTMLElement;
+          document.body.dataset.clicked = target.dataset.test ?? target.localName;
+        },
+        { capture: true, once: true },
+      );
+    });
+    // The menu's own box, past its items: the region under it but for the clip.
+    const menu = await rectOf(page, "menu");
+    await page.mouse.click(menu.x + 0.98 * menu.width, menu.y + 0.95 * menu.height);
+    expect(await page.evaluate(() => document.body.dataset.clicked)).toBe("mono-wind");
+  });
+
+  test("lets a real grid drag sweep across a frame", async ({ page }) => {
+    await openStory(page, "features-native-regions--grid-drag-across-region");
+    await engineQuiet(page);
+    const above = await rectOf(page, "above");
+    const frame = await rectOf(page, "frame");
+    const below = await rectOf(page, "below");
+    /** The row of the character the selection ends at, and its text. */
+    const endRow = () =>
+      page.evaluate(() => {
+        const host = document.querySelector("mono-wind")!;
+        const [range] = document.getSelection()!.getComposedRanges({
+          shadowRoots: [host.shadowRoot!],
+        });
+        if (!range || !(range.endContainer instanceof Text)) return null;
+        const { endContainer: end, endOffset } = range;
+        const at = Math.max(0, Math.min(endOffset, end.length - 1));
+        const character = document.createRange();
+        character.setStart(end, at);
+        character.setEnd(end, at + 1);
+        const { top, bottom } = character.getBoundingClientRect();
+        return { top, bottom, text: end.data };
+      });
+    await page.mouse.move(above.x + 2, above.y + above.height / 2);
+    await page.mouse.down();
+    const middle = frame.y + frame.height / 2;
+    await page.mouse.move(frame.x + frame.width / 2, middle, { steps: 4 });
+    // The pointer's row, not the frame's edge, where a drag it took stalls.
+    await expect
+      .poll(async () => {
+        const row = await endRow();
+        return !!row && row.top - 1 <= middle && middle <= row.bottom + 1;
+      }, "the end at the pointer's row")
+      .toBe(true);
+    await page.mouse.move(below.x + below.width - 2, below.y + below.height / 2, { steps: 4 });
+    await expect
+      .poll(async () => (await endRow())?.text, "the end in the row below")
+      .toContain("Grid text below them");
+    await page.mouse.up();
+  });
+});

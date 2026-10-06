@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { engineQuiet, openStory } from "./helpers.ts";
+import { engineQuiet, hook, openStory } from "./helpers.ts";
 
 /** A relayout that no key's hold kept back: under the 500 ms a hold
  * lasts, with room for a loaded machine. */
@@ -363,4 +363,21 @@ test("a checkbox's focus inverts its glyphs, whatever its accent", async ({ page
     expect(painted.ground, `${name}'s inverted ground`).not.toBe("");
     expect(painted.ink, `${name}'s inverted ink`).not.toBe(painted.accent);
   }
+});
+
+/**
+ * A real Tab goes into a native region's frame of a page and out
+ * (specs/native-regions.md "Interaction"): its contents take the focus
+ * as a page's own frame's would.
+ */
+test("a real Tab goes into a native region's frame and out", async ({ page, browserName }) => {
+  await openStory(page, "features-native-regions--tab-through-region");
+  await engineQuiet(page);
+  await page.locator(hook("link")).focus();
+  await page.keyboard.press("Tab");
+  // Firefox stops on a frame's document first, as on any page.
+  if (browserName === "firefox") await page.keyboard.press("Tab");
+  await expect(page.frameLocator(hook("frame")).locator("button")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(hook("after"))).toBeFocused();
 });

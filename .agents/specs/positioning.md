@@ -213,8 +213,9 @@ order breaking ties. A stacking context paints, in order:
      order, a collapsed table's lattice (table.md) over its parts'
      fills;
    - its floats, each whole (float.md);
-   - its text and every in-flow leaf's, and its atomic inline boxes,
-     each whole, in tree order, a scroll container's bars
+   - its text and every in-flow leaf's — a native region's contents
+     at its place (native-regions.md "Paint") — and its atomic inline
+     boxes, each whole, in tree order, a scroll container's bars
      (scrolling.md) over its content;
 4. its members at 0, in tree order;
 5. its positive members, lowest first.

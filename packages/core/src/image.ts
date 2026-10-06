@@ -14,24 +14,33 @@ import { wrapLines } from "./wrap.ts";
 /** An alt as rendered text, its white space collapsed. */
 export const altText = (alt: string): string => alt.replace(/\s+/g, " ").trim();
 
-/** An alt's lines in an image's `columns` by `rows` cells
- * (specs/images.md "The light DOM"): wrapped at its words from the top,
- * cut at the last cell. */
-export function altLines(alt: string, columns: number, rows: number): string[] {
-  const text = altText(alt);
+/** A text's lines in `columns` by `rows` cells: each of its own wrapped
+ * at its words from the top, its indent kept, cut at the last cell. */
+export function cellLines(text: string, columns: number, rows: number): string[] {
   const lines =
-    text && columns > 0 ? wrapLines(text, columns, { advances: clusterAdvances(text) }) : [];
+    columns > 0
+      ? text
+          .split("\n")
+          .flatMap((line) =>
+            line.trim()
+              ? wrapLines(line, columns, { advances: clusterAdvances(line), preserve: "hang" })
+              : [""],
+          )
+      : [];
   return Array.from({ length: Math.max(0, rows) }, (_, i) => lines[i] ?? "");
 }
 
-/** An image's content box in its cells, from its border box's corner:
- * where its picture and its alt go. */
-export function contentCells(node: LayoutNode): {
+/** Cells of a box, from its border box's corner. */
+export interface CellArea {
   x: number;
   y: number;
   columns: number;
   rows: number;
-} {
+}
+
+/** A box's content box in its cells: where an image's picture and its
+ * alt go, and a native region's text in a copy. */
+export function contentCells(node: LayoutNode): CellArea {
   const { border } = node.style;
   const padding = node.resolvedPadding;
   const x = border.left + padding.left;
@@ -44,20 +53,15 @@ export function contentCells(node: LayoutNode): {
   };
 }
 
-/** An image's alt in its content box's cells, from its border box's
- * corner: a box's lines from its first row, an inline image's on the row
- * its line's text sits on — what a copy reads there. */
-export function altCells(node: LayoutNode): {
-  x: number;
-  y: number;
-  columns: number;
-  lines: string[];
-} {
-  const { x, y: top, columns, rows } = contentCells(node);
-  const alt = (node.source as HTMLImageElement).alt;
-  if (!node.inlineBox) return { x, y: top, columns, lines: altLines(alt, columns, rows) };
+/** Where an image's alt goes (specs/images.md "The light DOM"): its
+ * content box, an inline image's row its line's text sits on — what a
+ * copy reads there. */
+export function altArea(node: LayoutNode): CellArea {
+  const area = contentCells(node);
+  if (!node.inlineBox) return area;
+  const { y: top, rows } = area;
   const y = Math.max(top, Math.min(top + rows - 1, node.inlineTextRow ?? top + rows - 1));
-  return { x, y, columns, lines: altLines(alt, columns, 1) };
+  return { ...area, y, rows: 1 };
 }
 
 /** RGBA bytes, row by row. */

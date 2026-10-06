@@ -14,8 +14,10 @@ import type { LeafRegistration } from "./leaf.ts";
 import { pxInCells, pxToCells } from "./metrics.ts";
 import { altText, readImageColor, splitPosition } from "./image.ts";
 import type { ObjectFit } from "./image.ts";
+import { insideRegion, REPLACED } from "./native.ts";
 import {
   computedDisplay,
+  isNativeRegion,
   isTransparentColor,
   lineGapRows,
   readAnchorNames,
@@ -97,6 +99,7 @@ import type {
   LayoutNode,
   Marker,
   MarkerStyle,
+  NativeMeasure,
   TextDecoration,
 } from "./types.ts";
 
@@ -106,6 +109,11 @@ import type {
  * the browser-default width instead of our engine-assigned one (which
  * may itself be constrained by max-width / flex parent). */
 export type TextareaWidths = Map<HTMLTextAreaElement, number>;
+
+/** A native region's contents measured as the browser lays them out, by
+ * the host (specs/native-regions.md "Layout"): their content box in px
+ * at a width — `min-content`, `max-content` or a length. */
+export type MeasureContents = (el: Element, width: string) => { width: number; height: number };
 
 /**
  * Build a LayoutNode tree from an element subtree (specs/cell-model.md
@@ -122,8 +130,9 @@ export function buildTree(
   rootFontSizePx: number,
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
+  measureContents?: MeasureContents,
 ): LayoutNode | null {
-  const context = newContext(root, rootFontSizePx, cellMetrics, textareaWidths);
+  const context = newContext(root, rootFontSizePx, cellMetrics, textareaWidths, measureContents);
   const tree = buildNode(root, context);
   if (tree) {
     propagateDecorations(tree, NO_DECORATION);
@@ -140,7 +149,10 @@ interface BuildContext {
   textareaWidths: TextareaWidths | undefined;
   /** Each checkbox's and radio's own `appearance` (readControls). */
   appearances: ReadonlyMap<Element, string> | undefined;
+  measureContents: MeasureContents | undefined;
   items: LayoutNode[];
+  /** The native regions built, the root's (`LayoutNode.regions`). */
+  regions: LayoutNode[];
   /** The elements each pseudo-element may give content. */
   generated: Record<Pseudo, ReadonlySet<Element>>;
   /** What a build reads once: each element's pseudo-elements, their
@@ -162,6 +174,7 @@ function newContext(
   rootFontSizePx: number,
   cellMetrics: CellMetrics | undefined,
   textareaWidths: TextareaWidths | undefined,
+  measureContents?: MeasureContents,
   appearances?: ReadonlyMap<Element, string>,
 ): BuildContext {
   // Held here, as each run's context copies this one.
@@ -171,7 +184,9 @@ function newContext(
     cellMetrics,
     textareaWidths,
     appearances,
+    measureContents,
     items: [],
+    regions: [],
     generated: generatedElements(root),
     pseudoElements: new Map(),
     texts: new Map(),
@@ -277,15 +292,22 @@ function buildNode(root: Element, context: BuildContext): LayoutNode | null {
 
 function buildElement(root: Element, context: BuildContext): LayoutNode | null {
   const { markers } = context;
-  const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics, { markers });
+  const cs = getComputedStyle(root);
+  const native = isNativeRegion(root, cs);
+  const style = readCellStyle(root, context.rootFontSizePx, context.cellMetrics, {
+    markers,
+    native,
+    cs,
+  });
   if (style.display === "none") return null;
   // A marker's quotes come before its item's contents'.
   const { marker } = style;
   if (marker?.quotes !== undefined) {
     style.marker = { ...marker, parts: withQuotes(marker.parts, marker.quotes, root, context) };
   }
+  if (native) return buildNativeLeaf(root, style, cs, context);
   if (style.skipsContents) return buildLeaf(root, style, [], [], context, []);
-  if (root.tagName === "IMG") return buildImageLeaf(root as HTMLImageElement, style, context);
+  if (root.tagName === "IMG") return buildImageLeaf(root as HTMLImageElement, style, cs, context);
 
   // Registered leaf renderers (specs/leaf-renderers.md) supply their
   // own grid content; children are skipped entirely. The light DOM
@@ -294,7 +316,7 @@ function buildElement(root: Element, context: BuildContext): LayoutNode | null {
   const leaf = leafRendererFor(root.tagName);
   if (leaf) return buildRendererLeaf(root, style, leaf);
   if (isToggle(root)) {
-    const { appearance, accentColor } = getComputedStyle(root);
+    const { appearance, accentColor } = cs;
     if ((context.appearances?.get(root) ?? appearance) !== "none") {
       return buildToggleLeaf(root as HTMLInputElement, style, accentColor);
     }
@@ -613,8 +635,16 @@ export function buildRoot(
   cellMetrics?: CellMetrics,
   textareaWidths?: TextareaWidths,
   appearances?: ReadonlyMap<Element, string>,
+  measureContents?: MeasureContents,
 ): LayoutNode {
-  const context = newContext(host, rootFontSizePx, cellMetrics, textareaWidths, appearances);
+  const context = newContext(
+    host,
+    rootFontSizePx,
+    cellMetrics,
+    textareaWidths,
+    measureContents,
+    appearances,
+  );
   const nodes = Array.from(host.childNodes).filter(
     (node) => !(node instanceof Element && node.hasAttribute("data-mw-probe")),
   );
@@ -630,6 +660,7 @@ export function buildRoot(
     : createNode(host, style, buildChildren(host, nodes, context, style));
   propagateDecorations(tree, NO_DECORATION);
   attachMarkers(context);
+  if (context.regions.length > 0) tree.regions = context.regions;
   return tree;
 }
 
@@ -975,7 +1006,9 @@ export function readControls(root: Element): {
   appearances: Map<Element, string>;
   transitions: Map<Element, TransitionLists>;
 } {
-  const toggles = root.querySelectorAll('input[type="checkbox"], input[type="radio"]');
+  const toggles = [...root.querySelectorAll('input[type="checkbox"], input[type="radio"]')].filter(
+    (el) => !insideRegion(el, root),
+  );
   const appearances = new Map<Element, string>();
   const transitions = new Map<Element, TransitionLists>();
   for (const el of toggles) el.setAttribute(CONTROL_READ_FLAG, "");
@@ -1036,37 +1069,20 @@ function buildToggleLeaf(
 function buildImageLeaf(
   img: HTMLImageElement,
   style: ReturnType<typeof readCellStyle>,
+  cs: CSSStyleDeclaration,
   context: BuildContext,
 ): LayoutNode {
   const { naturalWidth: width, naturalHeight: height } = img;
-  const cs = getComputedStyle(img);
   style.whiteSpace = "pre";
   style.width ??= { kind: "max-content" };
   if (img.complete && width === 0) {
     const text = altText(img.alt);
     return createNode(img, style, [], text, textCells(text), text ? 1 : 0);
   }
-  const { aspectRatio } = cs;
   const loaded = width > 0 && height > 0;
-  // An `auto <ratio>`'s ratio gives way to the natural one.
-  if (loaded && (style.aspectRatio == null || aspectRatio.startsWith("auto"))) {
-    style.aspectRatio = readAspectRatio(`${width} / ${height}`, context.cellMetrics);
-  }
-  const ratio = style.aspectRatio;
-  let intrinsicWidth = loaded ? pxToCells(width, context.rootFontSizePx) : 0;
-  if (ratio !== null) {
-    const { height: set, minHeight: min, maxHeight: max } = style;
-    if (set?.kind === "cells") intrinsicWidth = Math.round(set.value * ratio);
-    if (typeof max === "number") intrinsicWidth = Math.min(intrinsicWidth, Math.round(max * ratio));
-    if (typeof min === "number") intrinsicWidth = Math.max(intrinsicWidth, Math.round(min * ratio));
-  }
-  // A replaced box's baseline is its bottom edge: the line's text on
-  // its last row, where it aligns to the baseline.
-  const align = readVerticalAlign(img, cs);
-  style.verticalAlign = align === "baseline" ? "end" : align;
-  // No content height: the ratio derives the height from the width the
-  // box resolves to.
-  const node = createNode(img, style, [], "", intrinsicWidth, 0);
+  const size = sizeReplaced(style, { width, height, ratio: true }, cs, context);
+  style.verticalAlign = replacedAlign(img, cs);
+  const node = createNode(img, style, [], "", size.width, size.height);
   if (loaded) {
     const fit = cs.objectFit as ObjectFit;
     node.image = {
@@ -1084,6 +1100,126 @@ function buildImageLeaf(
     };
   }
   return node;
+}
+
+/** A native region (specs/native-regions.md "Layout"): a leaf of its own
+ * box, its contents the browser's. In a line, a replaced one's baseline
+ * is its bottom edge, as an image's; another's lies in its contents, out
+ * of the grid's reach, so it aligns to the line's top, or its bottom
+ * where `vertical-align` asks. */
+function buildNativeLeaf(
+  el: Element,
+  style: CellStyle,
+  cs: CSSStyleDeclaration,
+  context: BuildContext,
+): LayoutNode {
+  const display = computedDisplay(el, cs);
+  const replaced = REPLACED.has(el.localName);
+  if (display.startsWith("inline")) {
+    if (replaced) style.verticalAlign = replacedAlign(el, cs);
+    else style.verticalAlign = readVerticalAlign(el, cs) === "end" ? "end" : "start";
+  }
+  // A replaced region takes its natural size; one the browser lays out
+  // to know, as flowed contents do, is measured.
+  if (replaced) style.width ??= { kind: "max-content" };
+  // Its contents fill its content box: its marker hangs outside it
+  // (specs/native-regions.md deviation 7).
+  if (style.marker?.inside) style.marker = { ...style.marker, inside: false };
+  const natural = replaced ? naturalSize(el) : null;
+  const size = natural ? sizeReplaced(style, natural, cs, context) : { width: 0, height: 0 };
+  const node = createNode(el, style, [], "", size.width, size.height);
+  const measure = natural ? undefined : measureOf(el, context);
+  node.native = { replaced, inline: display === "inline", ...(measure && { measure }) };
+  context.regions.push(node);
+  return node;
+}
+
+/** A replaced box's line alignment: its baseline is its bottom edge, the
+ * line's text on its last row, where it aligns to the baseline. */
+function replacedAlign(el: Element, cs: CSSStyleDeclaration): CellStyle["verticalAlign"] {
+  const align = readVerticalAlign(el, cs);
+  return align === "baseline" ? "end" : align;
+}
+
+/** A replaced region's natural size (specs/native-regions.md "Layout"):
+ * a video's, before its metadata, and an iframe's, an embed's and an
+ * object's the default object size, with no ratio; null where the
+ * browser's layout gives it, an inline SVG's and a broken image's. */
+function naturalSize(el: Element): NaturalSize | null {
+  switch (el.localName) {
+    case "img": {
+      const { complete, naturalWidth: width, naturalHeight: height } = el as HTMLImageElement;
+      return complete && width === 0 ? null : { width, height, ratio: true };
+    }
+    case "video": {
+      const { videoWidth: width, videoHeight: height } = el as HTMLVideoElement;
+      return width > 0 ? { width, height, ratio: true } : DEFAULT_OBJECT;
+    }
+    case "canvas": {
+      const { width, height } = el as HTMLCanvasElement;
+      return { width, height, ratio: true };
+    }
+    case "svg":
+      return null;
+    default:
+      return DEFAULT_OBJECT;
+  }
+}
+
+/** A replaced element's natural size in px, and whether it has a
+ * natural ratio. */
+interface NaturalSize {
+  width: number;
+  height: number;
+  ratio: boolean;
+}
+
+/** CSS's default object size, which has no ratio. */
+const DEFAULT_OBJECT: NaturalSize = { width: 300, height: 150, ratio: false };
+
+/** A replaced box's intrinsic cells from its natural size (specs/images.md
+ * "Sizing"): its natural width on the spacing scale, its height from the
+ * natural ratio — an `auto <ratio>`'s giving way to it — else its
+ * natural height, on the scale too; a set or limited height deriving the
+ * width through a ratio. */
+function sizeReplaced(
+  style: CellStyle,
+  natural: NaturalSize,
+  cs: CSSStyleDeclaration,
+  context: BuildContext,
+): { width: number; height: number } {
+  const { width, height } = natural;
+  const known = width > 0 && height > 0;
+  if (natural.ratio && known && (style.aspectRatio == null || cs.aspectRatio.startsWith("auto"))) {
+    style.aspectRatio = readAspectRatio(`${width} / ${height}`, context.cellMetrics);
+  }
+  const ratio = style.aspectRatio;
+  let cells = known ? pxToCells(width, context.rootFontSizePx) : 0;
+  if (ratio === null) {
+    return { width: cells, height: known ? pxToCells(height, context.rootFontSizePx) : 0 };
+  }
+  const { height: set, minHeight: min, maxHeight: max } = style;
+  if (set?.kind === "cells") cells = Math.round(set.value * ratio);
+  if (typeof max === "number") cells = Math.min(cells, Math.round(max * ratio));
+  if (typeof min === "number") cells = Math.max(cells, Math.round(min * ratio));
+  // No content height: the ratio derives it from the width the box
+  // resolves to.
+  return { width: cells, height: 0 };
+}
+
+/** A region's contents measured as the browser lays them out, through
+ * the host's measurer, the px rounded up through the measured cell: the
+ * box must hold what the browser draws. */
+function measureOf(el: Element, context: BuildContext): NativeMeasure | undefined {
+  const { measureContents, cellMetrics: cell } = context;
+  if (!measureContents || !cell) return undefined;
+  const cells = (px: number, size: number): number => Math.max(0, Math.ceil(px / size - 1e-3));
+  return (width) => {
+    const at =
+      width === "min" ? "min-content" : width === "max" ? "max-content" : `${width * cell.width}px`;
+    const px = measureContents(el, at);
+    return { width: cells(px.width, cell.width), height: cells(px.height, cell.height) };
+  };
 }
 
 /** True for content that flows WITH the surrounding text (computed
@@ -1109,15 +1245,17 @@ type ChildRole = "none" | "out-of-flow" | "inline" | "block";
  * engine splits by flattening that element into its parent's children,
  * so the block becomes a node of its own and the inline content each
  * side of it an anonymous run. An atomic inline box is its own
- * formatting context and keeps its blocks; an inline element with no
- * element children — nearly all of them — answers before reading a
- * style. */
+ * formatting context and keeps its blocks, as a native region keeps
+ * its contents; an inline element with no element children — nearly
+ * all of them — answers before reading a style. */
 function hidesBlock(el: Element, context: BuildContext): boolean {
   const blockPseudo = pseudoElementsOf(el, context).shown.some(
     (node) => node !== null && childRole(node) === "block",
   );
   if (el.children.length === 0 && !blockPseudo) return false;
-  if (!isRunInline(computedDisplay(el, getComputedStyle(el)))) return false;
+  const cs = getComputedStyle(el);
+  const display = computedDisplay(el, cs);
+  if (!isRunInline(display) || isNativeRegion(el, cs, display)) return false;
   if (blockPseudo) return true;
   for (const child of el.children) {
     const role = childRole(child);
@@ -1413,8 +1551,13 @@ function collectNodes(
       }
       // An atomic inline box rides the run as ONE unbreakable unit: a
       // U+FFFC marker whose advance layout resolves to the box's width.
-      // An inline image is one, as a replaced box is in CSS.
-      if (isAtomicInline(display) || child.tagName === "IMG") {
+      // An inline image is one, as a replaced box is in CSS, and so is
+      // a native region, whose contents the grid's lines can't break.
+      if (
+        isAtomicInline(display) ||
+        child.tagName === "IMG" ||
+        isNativeRegion(child, cs, display)
+      ) {
         pushBox(child, true, ctx, run, opacity);
         continue;
       }

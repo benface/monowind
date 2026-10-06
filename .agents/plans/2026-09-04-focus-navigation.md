@@ -9,7 +9,7 @@ the host-as-a-leaf work (`2026-09-04-host-leaf.md`).
 ### 1. `focus.ts` — the pure part
 
 - `nextFocus(direction, current: Rect, candidates: { rect: Rect; element:
-Element }[]): Element | null` per the spec's rule: beyond-the-edge
+  Element }[]): Element | null` per the spec's rule: beyond-the-edge
   filter, cross-axis overlap first, then primary distance, cross-axis gap,
   document order (candidates arrive in tree order).
 - `focusableRects(root: LayoutNode): { rect; element }[]` — a full
@@ -44,8 +44,8 @@ Element }[]): Element | null` per the spec's rule: beyond-the-edge
   is not native. Find its rect and the candidates from the last layout
   (a focused element with no layout node → return), pick with
   `nextFocus`; on a hit: `preventDefault()`, `target.focus({
-preventScroll: true })`, `target.scrollIntoView({ block: "nearest",
-inline: "nearest" })`.
+  preventScroll: true })`, `target.scrollIntoView({ block: "nearest",
+  inline: "nearest" })`.
 - Reuse `#openSelectPicker` for the select rule.
 
 ### 3. Story, docs, release

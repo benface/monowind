@@ -72,7 +72,7 @@ session's scratchpad), in Chromium, Firefox and WebKit:
 - `collapsible.ts`: `props`, `machine` (Zag's), `propNames`,
   `connect`, `api` (the content's
   style without `--height` and `--width`), and `collapsible(root,
-props)` — `trigger`, `content`, `indicator` under the root.
+  props)` — `trigger`, `content`, `indicator` under the root.
 - `accordion.ts`: `props`, `machine`, `propNames`, `connect`, `api`
   (Zag's as it is), and `accordion(root, props)` — per `item` its `data-value` and
   `data-disabled`, its `item-trigger`, `item-content` and

@@ -75,7 +75,7 @@ engines), which "The light DOM" answers:
 - Its `list-style-type` and `list-style-position`, and its
   `::marker`'s computed `content`, `color` and glyph properties
   (`font-weight`, `font-style`, … — `getComputedStyle(el,
-"::marker")`); a `color` the item's own is read as the item's, which
+  "::marker")`); a `color` the item's own is read as the item's, which
   a transition's frames resample. All three
   engines honor a marker's `color`, `font-weight`, `font-size`,
   `line-height` and `content` (strings, `var()`, `counter()`, `none`)
@@ -495,7 +495,7 @@ marked where it was. The methods, for re-running:
     computed and as specified;
   - text: `content` strings, counters, images (`image-set()`
     included), quotes and `none`, a string type, `list-style-type:
-none` under a string `content`; a name an object's prototype holds;
+    none` under a string `content`; a name an object's prototype holds;
   - outside placement: `9. ` and `10. ` ending at the border edge; item
     padding and margin; indent and alignment leaving it; a float's band
     moving it; a multi-column, a flex and a grid list's items; a leading

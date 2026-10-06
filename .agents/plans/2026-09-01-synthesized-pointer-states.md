@@ -72,7 +72,7 @@ collisions).
    and `pointerover` won't fire — in grid mode the hit target is always
    the grid `<pre>`).
 2. **Companion variant**: `@custom-variant hover
-(&:is(:hover, [data-mw-hover]));` in styles.css. Only a Tailwind
+   (&:is(:hover, [data-mw-hover]));` in styles.css. Only a Tailwind
    build sees the at-rule (browsers skip it); raw `:hover` selectors in
    hand-written CSS keep native behavior — documented deviation.
 3. **`pointerleave`** clears the chain; disconnect clears state.
@@ -128,7 +128,7 @@ definition is a default, not a lock. Policy:
   form LOSES the wrapper; the block form keeps it and is therefore the
   canonical definition (verified output wraps in the media query):
   `@custom-variant hover { @media (hover: hover) {
-&:is(:hover, [data-mw-hover]) { @slot } } }`. The consumer override
+  &:is(:hover, [data-mw-hover]) { @slot } } }`. The consumer override
   snippet in the docs must use the block form too.
 - `group-hover:` / `group-active:` / `peer-hover:` / `peer-active:`
   MUST work — requirement, not nice-to-have. The attribute model

@@ -216,18 +216,19 @@ a width, so a shrinking container still shrinks the host natively; growth
 is caught by observing the host's parent (a growing container), its
 siblings (a flex or grid slot that grows because a sibling shrank), and
 the window. The host's intrinsic widths are its content's as the
-engine lays it out, in cells — not the light DOM's, whose `w-24` is
-96 px where the engine's is 24 columns. A spacer stands for them, as
-one stands for its height: a shadow grid track, `minmax(<min-content>,
-<max-content>)`, the root's min- and max-content widths at the cell's
-width, written from each layout's tree before the host's width is
-read. So the browser sizes the host from its content as CSS sizes any
-box: a host whose width is its content's (`w-fit`, `inline-block`, a
-float, an absolute box, a flex row's item) is its fit-content width, a
-flex item narrows to its min-content width and no further, and a
-container sized off the host (a `flex-1` column the host fills, which
-an aside beside it squeezes) shrinks natively, its resize laying the
-host out.
+engine lays it out, in cells (a native region's as the browser lays
+out its contents, `native-regions.md` "Layout") — not the light DOM's,
+whose `w-24` is 96 px where the engine's is 24 columns. A spacer stands
+for them, as one stands for its height: a shadow grid track,
+`minmax(<min-content>, <max-content>)`, the root's min- and max-content
+widths at the cell's width, written from each layout's tree before the
+host's width is read. So the browser sizes the host from its content as
+CSS sizes any box: a host whose width is its content's (`w-fit`,
+`inline-block`, a float, an absolute box, a flex row's item) is its
+fit-content width, a flex item narrows to its min-content width and no
+further, and a container sized off the host (a `flex-1` column the host
+fills, which an aside beside it squeezes) shrinks natively, its resize
+laying the host out.
 
 The height is CSS's too. The host keeps `height: auto`; its content
 lies out of its flow (the shadow's slot is positioned, outside the
@@ -252,8 +253,10 @@ is deviation 21. A host in no box (inside `display: none`)
 measures no cell and keeps its last layout, writing nothing, until
 its resize as it shows lays it out. The host's own inline content is the root
 leaf (specs/host-leaf.md), laid out inside the same content box. A
-host inside another host is unsupported: it warns once and keeps its
-engine off, and the outer host lays it out as plain content.
+host inside another host, in no native region of it
+(specs/native-regions.md "Nesting"), is unsupported: it warns once
+and keeps its engine off, and the outer host lays it out as plain
+content.
 
 ## Engine variables
 
@@ -310,10 +313,11 @@ as the layout starts, before its own writes queue theirs).
   row — specs/wide-characters.md — but not to a cell wider than the
   glyph, so tracking shows gaps in horizontal rules). On inner
   elements `font-family`/`font-size` are **locked** (neutralized by the
-  companion stylesheet); multi-size text is out of scope for the
-  foreseeable future. An authored inner font size (Tailwind size
-  utility or inline style — the lock hides it from computed style)
-  triggers a one-time console warning.
+  companion stylesheet), but in a native region's contents, which no
+  lock reaches (`native-regions.md` "The locks"); multi-size text is
+  out of scope for the foreseeable future. An authored inner font size
+  (Tailwind size utility or inline style — the lock hides it from
+  computed style) triggers a one-time console warning.
   - **Cell width** = one glyph advance **plus the root's
     letter-spacing**, rounded up to a whole number of 1/64 px — the
     layout unit Chromium and WebKit snap box widths to, so a row of
@@ -1045,8 +1049,10 @@ not on release.
 Any API surprise degrades to the old behavior (selection collapses),
 never an error. While a drag that began on the grid is in flight the
 host carries `data-mw-dragging`, under which interactive light elements
-drop their pointer events too, so the native sweep passes through their
-cells instead of stalling at their edge until the pointer is past them.
+drop their pointer events too, a native region's contents with them
+(`native-regions.md` "Interaction"), so the native sweep passes
+through their cells instead of stalling at their edge until the
+pointer is past them.
 **Deviations**: a selection reaching OUTSIDE the grid
 (e.g. select-all across the page) is not restored across structural
 rebuilds; restore assumes a forwards selection where the engine
@@ -1239,7 +1245,7 @@ of grid selection over that element.
 - **max-content**: the unwrapped intrinsic width (same measure used for
   shrink-to-fit sizing).
 - **fit-content**: CSS shrink-to-fit — `min(max-content, max(min-content,
-available))`. Its contributions to a parent's intrinsic width are auto's
+  available))`. Its contributions to a parent's intrinsic width are auto's
   — its min-content width at min-content, its max-content width at
   max-content (css-sizing-3) — so a `w-fit` label keeps its shrink-wrapped
   parent (a flex item, a float, a popover) one line wide.

@@ -26,13 +26,13 @@ parser's fixtures.
 
 - `types.ts`: `Gradient` — `kind: "linear" | "radial" | "conic"`,
   `repeating`, `space: "oklab" | "srgb"`, `stops: { color: Color;
-position: number | null }[]` (positions as fractions of the line,
+  position: number | null }[]` (positions as fractions of the line,
   px converted on the spacing scale to cells then to px of the box),
   `hints` between stops, and per kind: linear `angle` (deg, `to
-<side-or-corner>` converted by the box at paint), radial `shape`,
+  <side-or-corner>` converted by the box at paint), radial `shape`,
   `size` (the four keywords, or explicit lengths), `at`; conic `from`,
   `at` (positions as fractions or px). `CellStyle.backgroundImage:
-Gradient[]`, default `[]`, first declared first.
+  Gradient[]`, default `[]`, first declared first.
 - `color.ts` (new, small): parse a computed color — `rgb()`/`rgba()`,
   `hsl()`, `oklab()`, `oklch()`, `color(srgb …)`, `transparent` — to
   `{ r, g, b, a }` in gamma-encoded sRGB with alpha; convert to and
@@ -53,7 +53,7 @@ Gradient[]`, default `[]`, first declared first.
 
 - `gradient.ts` (new): `gradientColorAt(gradient, cx, cy, box)` in px
   — linear: CSS's gradient line for the angle (length `|w·sin θ| +
-|h·cos θ|`, corners resolve `to <corner>` by the box's aspect as CSS
+  |h·cos θ|`, corners resolve `to <corner>` by the box's aspect as CSS
   does), the point projected to `t`; radial: the ellipse for the shape
   and size keyword at `at`, `t` the point's radius in the ellipse's
   metric; conic: the angle from `from` around `at`, `t` in turns;

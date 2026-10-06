@@ -13,7 +13,7 @@ and accessibility semantics fully intact.
 
 ```html
 <mono-wind>
-  <div class="flex justify-between items-center min-h-5 px-1 border border-red-600">
+  <div class="flex min-h-5 items-center justify-between border border-red-600 px-1">
     <div>This will be on the left</div>
     <button>This will be on the right</button>
   </div>
@@ -111,6 +111,15 @@ highlight). The tree builder leaves their leaf empty so the grid
 doesn't double-render; the light-DOM color exemption in the companion
 stylesheet keeps the native text visible on top of the grid's borders
 and background.
+
+A native region (`mw-native`, specs/native-regions.md) is the other:
+a box the grid sizes and frames in cells, whose contents the browser
+draws and runs — an iframe, a video, a widget, native text. No lock
+reaches inside it (twin selectors keyed on the host's region marks),
+the engine never lays its subtree out, measuring it natively where its
+size is auto, and clips it with a `clip-path` wherever later ink
+covers its cells, so it keeps the paint order. A `<mono-wind>` in a
+region is a host of its own.
 
 The `select` attribute on `<mono-wind>` switches drag-selection target:
 `select="grid"` (the default, reflected onto the attribute so the

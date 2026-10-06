@@ -1,5 +1,5 @@
 /**
- * Time to interactive on a page the grid finds hard, in one of nine
+ * Time to interactive on a page the grid finds hard, in one of ten
  * shapes (`SHAPES` below). Reports the median of several runs so a
  * number is comparable across commits; record what it gives in
  * .agents/architecture/performance.md when it moves.
@@ -13,6 +13,7 @@
  *   pnpm bench --shape labels  paragraphs numbered and marked by pseudo-elements
  *   pnpm bench --shape checkboxes  labeled checkboxes, every tenth with a transition
  *   pnpm bench --shape images  pictures, every other posterized (--count 12)
+ *   pnpm bench --shape native  panels of native text, every other sized by its contents
  *   pnpm bench --count 600     a heavier page
  *   pnpm bench --rate 4        a quarter of the CPU, as a slow client
  *   pnpm bench --runs 7        more samples
@@ -143,6 +144,17 @@ const SHAPES = {
       const drawn = host?.shadowRoot.querySelectorAll("canvas.picture").length ?? -1;
       return drawn === host?.querySelectorAll("img").length;
     },
+  },
+  // Native regions (specs/native-regions.md): panels of native text,
+  // every other sized by its contents, which the browser measures.
+  native: {
+    label: "native regions",
+    body: () =>
+      `<div class="flex flex-wrap gap-1">${repeat(
+        (i) =>
+          `<div class="w-30${i % 2 ? "" : " h-6"} border p-1 font-serif mw-native">` +
+          `<p>Native text ${i}, in the browser's own face.</p></div>`,
+      )}</div>`,
   },
 };
 if (!Object.hasOwn(SHAPES, shape)) {

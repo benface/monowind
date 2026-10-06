@@ -13,6 +13,7 @@ import {
   readyHost,
   readyHosts,
   release,
+  select,
   testHooks,
   textWith,
 } from "./helpers.ts";
@@ -239,7 +240,8 @@ export const ImageAttributes: StoryObj = {
 /**
  * A picture read from its bytes (another origin's, shared) whose box
  * grows past what it was read for is read again: as fine as one read at
- * that size from the start.
+ * that size from the start, though its first read already holds as many
+ * pixels as the new box.
  */
 export const ImageGrown: StoryObj = {
   name: "Image Grown",
@@ -248,8 +250,8 @@ export const ImageGrown: StoryObj = {
     const shared = otherOrigin(sunset, true);
     return html`
       <mono-wind>
-        <img data-test="grown" src=${shared} alt="Grown" class="w-8" />
-        <img data-test="sized" src=${shared} alt="Sized" class="w-40" />
+        <img data-test="grown" src=${shared} alt="Grown" class="w-16" />
+        <img data-test="sized" src=${shared} alt="Sized" class="w-30" />
       </mono-wind>
     `;
   },
@@ -262,7 +264,7 @@ export const ImageGrown: StoryObj = {
     };
     await waitFor(() => expect(read("grown")).not.toBeNull());
     await waitFor(() => expect(read("sized")).not.toBeNull());
-    by("grown").className = "w-40";
+    by("grown").className = "w-30";
     await waitFor(() => expect(read("grown")).toEqual(read("sized")));
   },
 };
@@ -278,15 +280,6 @@ async function cardOf(canvasElement: HTMLElement) {
   const selected = () => waitFor(() => expect(inverted(before, at()), at().join()).toBe(true));
   const restored = () => waitFor(() => expect(at()).toEqual(before));
   return { host, by, at, before, selected, restored };
-}
-
-/** A selection from the start of `from` to the end of `to`, in `root`. */
-function select(root: Node, from: string, to: string): void {
-  const start = textWith(root, from);
-  const end = textWith(root, to);
-  document
-    .getSelection()!
-    .setBaseAndExtent(start, start.data.indexOf(from), end, end.data.indexOf(to) + to.length);
 }
 
 /** The text point at a cell of a grid of one character a cell. */

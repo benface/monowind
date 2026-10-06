@@ -316,7 +316,7 @@ padding, same as flex/grid.
   carry the grid's text cursor so the spanner shows no arrow.
 
 1. **Decorated element children are atomic** (implicit `break-inside:
-avoid`): a child with a border, padding, background, explicit
+   avoid`): a child with a border, padding, background, explicit
    sizing, or non-text content never splits across columns, and one
    such child (or a spanner) makes ALL the container's children
    atomic. Chrome-less text-leaf children fragment at line granularity

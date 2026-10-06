@@ -15,7 +15,7 @@ the property — paints. The host reads as visible while the engine
 reads, its hiding before its first layout off and an ancestor's
 `hidden` held back, so the read is the author's within the host; the
 host's own visibility stays the grid's, natively (deviation 3). A
-nested host, which never lays out, is never hidden.
+nested host (`data-mw-nested`), which never lays out, is never hidden.
 
 ## Locked decisions
 
@@ -121,7 +121,7 @@ nested host, which never lays out, is never hidden.
   kept, and a golden (`Visibility`); a fade-out paired with `invisible`
   (`VisibilityFade`); a host hidden by an ancestor showing at once
   (`HiddenAncestor`); `hidden="until-found"` and `content-visibility:
-hidden` drawing nothing until the attribute goes
+  hidden` drawing nothing until the attribute goes
   (`SkippedContents`). `interactive.stories.ts`: `Details` (a
   golden) and `DetailsToggled`, each summary pressed and pressed back.
 

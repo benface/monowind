@@ -13,7 +13,7 @@ browser:
 
 ```html
 <mono-wind>
-  <div class="flex justify-between items-center min-h-5 px-1 border border-red-600">
+  <div class="flex min-h-5 items-center justify-between border border-red-600 px-1">
     <div>This will be on the left</div>
     <button>This will be on the right</button>
   </div>

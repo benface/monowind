@@ -174,8 +174,9 @@ export const Content: StoryObj = {
   },
 };
 
-/** A host inside another is unsupported: it warns once, its engine
- * stays off, and the outer host lays it out as plain content. */
+/** A host inside another, in no native region of it, is unsupported:
+ * it warns once, its engine stays off, and the outer host lays it out
+ * as plain content (specs/native-regions.md "Nesting"). */
 export const Nested: StoryObj = {
   render: () => html`<mono-wind data-test="outer"><p>Outer text.</p></mono-wind>`,
   play: async ({ canvasElement }) => {
@@ -194,9 +195,10 @@ export const Nested: StoryObj = {
       const button = canvasElement.querySelector('[data-test="inner-button"]')!;
       expect(button).toHaveAttribute("data-mw-interactive");
       expect(getComputedStyle(button).pointerEvents).toBe("auto");
-      expect(warnings.some((w) => w.includes("inside another <mono-wind> is unsupported"))).toBe(
+      expect(warnings.some((w) => w.includes("in no mw-native region of it, is unsupported"))).toBe(
         true,
       );
+      expect(inner).toHaveAttribute("data-mw-nested");
       expect(gridOf(inner).textContent).toBe("");
       expect(inner.hasAttribute("data-mw-ready")).toBe(false);
       // Its own pointer-events reach its content, as a plain wrapper's do.

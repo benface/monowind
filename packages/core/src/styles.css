@@ -12,7 +12,20 @@
  * included, and any unlayered author `!important`; only an inline
  * `style` marked important (element-attached) and a running transition
  * still beat them. The plain engine rules stay unlayered, ahead of every
- * layer's plain declarations. */
+ * layer's plain declarations.
+ *
+ * A native region's contents (`data-mw-native`, specs/native-regions.md
+ * "The locks") are the browser's. A rule they could match comes as twin
+ * selectors: one for a host holding no region (`data-mw-no-regions`),
+ * one for a host holding some (`data-mw-regions`) whose subject skips,
+ * in a `:where()`, the contents — and the region itself, for a lock on
+ * what a box holds. The host's mark is a plain attribute in the lock
+ * layer, which the style engines reject fast
+ * (architecture/performance.md), a `:where()` elsewhere, where authors'
+ * rules meet ours on specificity. A rule whose subject is an engine
+ * flag takes one selector. A subject in `:is()` is filed under none of
+ * Chromium's buckets, tried on every element: a list of selectors takes
+ * its place, each filed under its own tag or attribute. */
 
 /* Gap-decoration utilities + engine mirrors (specs/gap-decorations.md)
  * and the synthesized pointer-state variants — Tailwind source, split
@@ -72,7 +85,14 @@
    * would break the grid. Padding, margin, border-width, and box-sizing are
    * handled by the engine-owned rules below. In `base` so utilities
    * (text-*, bg-*, …) can restyle controls. */
-  mono-wind :is(button, input, select, textarea) {
+  mono-wind:where([data-mw-no-regions]) button,
+  mono-wind:where([data-mw-no-regions]) input,
+  mono-wind:where([data-mw-no-regions]) select,
+  mono-wind:where([data-mw-no-regions]) textarea,
+  mono-wind:where([data-mw-regions]) button:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) input:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) select:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) textarea:where(:not([data-mw-native], [data-mw-native] *)) {
     border-radius: 0;
     color: inherit;
     background: transparent;
@@ -82,7 +102,15 @@
   }
   /* A checkbox's or a radio's appearance is the author's to read: the
    * grid draws the widget's glyphs (specs/checkboxes.md). */
-  mono-wind :is(button, input:not([type="checkbox"], [type="radio"]), select, textarea) {
+  mono-wind:where([data-mw-no-regions]) button,
+  mono-wind:where([data-mw-no-regions]) input:not([type="checkbox"], [type="radio"]),
+  mono-wind:where([data-mw-no-regions]) select,
+  mono-wind:where([data-mw-no-regions]) textarea,
+  mono-wind:where([data-mw-regions]) button:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions])
+    input:not([type="checkbox"], [type="radio"]):where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) select:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) textarea:where(:not([data-mw-native], [data-mw-native] *)) {
     appearance: none;
   }
 
@@ -95,7 +123,8 @@
    * stays untouched: it inherits into native scrollers (textareas,
    * shadow trees), where equal thumb and track colors would hide the
    * thumb. */
-  mono-wind * {
+  mono-wind:where([data-mw-no-regions]) *,
+  mono-wind:where([data-mw-regions]) *:where(:not([data-mw-native], [data-mw-native] *)) {
     --tw-scrollbar-thumb: currentColor;
     --tw-scrollbar-track: currentColor;
   }
@@ -103,7 +132,12 @@
   /* Form controls render their value/caret/selection natively — the
    * fill lock below excludes them via `:not()`, so this visible color
    * and themed caret actually stick. */
-  mono-wind :is(input, textarea, select) {
+  mono-wind:where([data-mw-no-regions]) input,
+  mono-wind:where([data-mw-no-regions]) textarea,
+  mono-wind:where([data-mw-no-regions]) select,
+  mono-wind:where([data-mw-regions]) input:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) textarea:where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) select:where(:not([data-mw-native], [data-mw-native] *)) {
     color: var(--mw-fg);
     caret-color: var(--mw-fg);
   }
@@ -111,7 +145,12 @@
   /* Placeholder at half the element's own color, so it tracks both the
    * theme and the focus-invert. Explicit opacity: Firefox dims its UA
    * placeholder with opacity, which would double with the color mix. */
-  mono-wind :is(input, textarea)::placeholder {
+  mono-wind:where([data-mw-no-regions]) input::placeholder,
+  mono-wind:where([data-mw-no-regions]) textarea::placeholder,
+  mono-wind:where([data-mw-regions])
+    input:where(:not([data-mw-native], [data-mw-native] *))::placeholder,
+  mono-wind:where([data-mw-regions])
+    textarea:where(:not([data-mw-native], [data-mw-native] *))::placeholder {
     color: color-mix(in srgb, currentcolor 50%, transparent);
     opacity: 1;
   }
@@ -121,23 +160,39 @@
    * beats the form-control color above; the pair below beats the
    * focus-invert). currentcolor would self-refer here, so the themed
    * colors are spelled out. */
-  mono-wind select:invalid {
+  mono-wind:where([data-mw-no-regions]) select:invalid,
+  mono-wind:where([data-mw-regions])
+    select:invalid:where(:not([data-mw-native], [data-mw-native] *)) {
     color: color-mix(in srgb, var(--mw-fg) 50%, transparent);
   }
-  mono-wind select:invalid:focus-visible {
+  mono-wind:where([data-mw-no-regions]) select:invalid:focus-visible,
+  mono-wind:where([data-mw-regions])
+    select:invalid:focus-visible:where(:not([data-mw-native], [data-mw-native] *)) {
     color: color-mix(in srgb, var(--mw-bg) 50%, transparent);
   }
 
   /* A disabled checkbox or radio at half strength, as a placeholder;
    * its state, whose transition tells the host of a flip
    * (specs/checkboxes.md). */
-  mono-wind input:is([type="checkbox"], [type="radio"]):disabled {
+  mono-wind:where([data-mw-no-regions]) input:is([type="checkbox"], [type="radio"]):disabled,
+  mono-wind:where([data-mw-regions])
+    input:is([type="checkbox"], [type="radio"]):disabled:where(
+      :not([data-mw-native], [data-mw-native] *)
+    ) {
     color: color-mix(in srgb, var(--mw-fg) 50%, transparent);
   }
-  mono-wind input:is([type="checkbox"], [type="radio"]):checked {
+  mono-wind:where([data-mw-no-regions]) input:is([type="checkbox"], [type="radio"]):checked,
+  mono-wind:where([data-mw-regions])
+    input:is([type="checkbox"], [type="radio"]):checked:where(
+      :not([data-mw-native], [data-mw-native] *)
+    ) {
     --mw-checked: 1;
   }
-  mono-wind input:is([type="checkbox"], [type="radio"]):indeterminate {
+  mono-wind:where([data-mw-no-regions]) input:is([type="checkbox"], [type="radio"]):indeterminate,
+  mono-wind:where([data-mw-regions])
+    input:is([type="checkbox"], [type="radio"]):indeterminate:where(
+      :not([data-mw-native], [data-mw-native] *)
+    ) {
     --mw-checked: 2;
   }
   /* While the engine reads, a checkbox or radio is its last layout's
@@ -152,7 +207,11 @@
    * floor lives in the tree builder (a CSS min-height on the outer
    * box gives no content-area guarantee once border + padding exceed
    * it). */
-  mono-wind :is(input:not([type="checkbox"], [type="radio"]), select) {
+  mono-wind:where([data-mw-no-regions]) input:not([type="checkbox"], [type="radio"]),
+  mono-wind:where([data-mw-no-regions]) select,
+  mono-wind:where([data-mw-regions])
+    input:not([type="checkbox"], [type="radio"]):where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) select:where(:not([data-mw-native], [data-mw-native] *)) {
     white-space: nowrap;
     overflow: hidden;
   }
@@ -163,7 +222,8 @@
    * (not `hidden`) so the caret can't scroll the box either: under
    * `leading-*` the last line's half-leading is a phantom scroll
    * range that would shift every line off its row. */
-  mono-wind textarea {
+  mono-wind:where([data-mw-no-regions]) textarea,
+  mono-wind:where([data-mw-regions]) textarea:where(:not([data-mw-native], [data-mw-native] *)) {
     resize: none;
     overflow: clip;
   }
@@ -171,7 +231,10 @@
   /* A top-layer element is a surface of the host's, as the UA makes
    * it one of the canvas's (specs/top-layer.md): the derived tokens in
    * place of Canvas and CanvasText; `bg-clear` sees through. */
-  mono-wind :is([popover], dialog) {
+  mono-wind:where([data-mw-no-regions]) [popover],
+  mono-wind:where([data-mw-no-regions]) dialog,
+  mono-wind:where([data-mw-regions]) [popover]:where(:not([data-mw-native] *)),
+  mono-wind:where([data-mw-regions]) dialog:where(:not([data-mw-native] *)) {
     color: var(--mw-fg);
     background-color: var(--mw-bg);
   }
@@ -184,10 +247,13 @@
    * lock), and get grid-mirrored by the engine for everyone else. A
    * composite's container (a menu, a listbox, `data-mw-composite`,
    * element.ts) has its items for its focus indication. */
-  mono-wind :focus-visible {
+  mono-wind:where([data-mw-no-regions]) :focus-visible,
+  mono-wind:where([data-mw-regions]) :focus-visible:where(:not([data-mw-native] *)) {
     outline: none;
   }
-  mono-wind :focus-visible:not([data-mw-composite]) {
+  mono-wind:where([data-mw-no-regions]) :focus-visible:not([data-mw-composite]),
+  mono-wind:where([data-mw-regions])
+    :focus-visible:not([data-mw-composite]):where(:not([data-mw-native] *)) {
     background-color: var(--mw-fg);
     color: var(--mw-bg);
     caret-color: var(--mw-bg);
@@ -195,10 +261,58 @@
   /* Grid-mode light elements carry the grid's text cursor: Firefox
    * hit-tests a multicol spanner's anonymous wrapper as its container
    * despite `pointer-events: none`, and would show an arrow there. The
-   * interactives (specs/cell-model.md "Pointer states") keep their own. */
-  mono-wind[select="grid"]
-    :is([data-mw-laid-out], [data-mw-flow], [data-mw-float]):not([data-mw-interactive]) {
+   * interactives (specs/cell-model.md "Pointer states") keep their own,
+   * and a native region its contents'. */
+  mono-wind[select="grid"] [data-mw-laid-out]:not([data-mw-interactive], [data-mw-native]),
+  mono-wind[select="grid"] [data-mw-flow]:not([data-mw-interactive], [data-mw-native]),
+  mono-wind[select="grid"] [data-mw-float]:not([data-mw-interactive], [data-mw-native]) {
     cursor: text;
+  }
+
+  /* A native region's contents start native (specs/native-regions.md):
+   * no lock reaches them, but they inherit from the locked boxes around
+   * them, so the region takes each inherited lock back to CSS's initial
+   * value, the host's font and color still reaching it, and an authored
+   * `pointer-events: none` above it too — the browser's own value where
+   * its sheet sets one. In `base`, so utilities restyle it. */
+  mono-wind [data-mw-native] {
+    -webkit-text-fill-color: currentColor;
+    font-synthesis: initial;
+    white-space: normal;
+    overflow-wrap: normal;
+    letter-spacing: normal;
+    line-height: normal;
+    text-indent: 0;
+    orphans: initial;
+    widows: initial;
+  }
+  mono-wind [data-mw-native]:where(pre, textarea, select) {
+    white-space: revert;
+  }
+  mono-wind [data-mw-native]:where(textarea) {
+    overflow-wrap: revert;
+  }
+  mono-wind[select="grid"] [data-mw-native]:where(:not([data-mw-pointer-none] *)) {
+    pointer-events: auto;
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: auto;
+  }
+  mono-wind[select="grid"]
+    [data-mw-native]:where(a:any-link, button, input, select, textarea, label) {
+    cursor: revert;
+  }
+  mono-wind[select="grid"]
+    [data-mw-native]:where(select, input:is([type="button"], [type="submit"], [type="reset"])) {
+    user-select: revert;
+    -webkit-user-select: revert;
+  }
+  /* Chromium and WebKit hand a parent's `::selection` down (css-pseudo-4
+   * highlight inheritance), the selection lock's transparent: the region
+   * names the system's. */
+  mono-wind [data-mw-native]::selection {
+    color: HighlightText;
+    background-color: Highlight;
   }
 }
 
@@ -218,7 +332,9 @@
  * engine reads it with the locks off, under each element's measuring
  * flag, and marks it `data-mw-pointer-none`, which every opt-in here
  * leaves be. */
-mono-wind[select="grid"] *:not([data-mw-measuring]) {
+mono-wind[select="grid"]:where([data-mw-no-regions]) *:not([data-mw-measuring]),
+mono-wind[select="grid"]:where([data-mw-regions])
+  *:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)) {
   pointer-events: none !important;
 }
 /* A pseudo-element the engine reads takes its element's, whatever its
@@ -236,18 +352,43 @@ mono-wind[select="grid"]:not([data-mw-dragging])
   ) {
   pointer-events: auto !important;
 }
+/* A grid drag sweeps through a native region too, its contents giving
+ * up the pointer as the interactives do (specs/native-regions.md
+ * "Interaction"): flagged on the region under a name of its own, so a
+ * drag restyles regions' contents alone. */
+mono-wind[select="grid"] [data-mw-native-drag],
+mono-wind[select="grid"] [data-mw-native-drag] * {
+  pointer-events: none !important;
+}
 /* A modal dialog blocks the page, the grid included (specs/top-layer.md
  * deviation 7): inside it, grid mode falls back to the light DOM's own
  * pointer events and selection, the highlight showing over the grid as
  * in text mode. Plain descendant selectors, so the style engine's
  * ancestor filter rejects every element outside a dialog at once
  * (architecture/performance.md). */
-mono-wind[select="grid"] dialog:modal:not([data-mw-measuring], [data-mw-pointer-none]),
-mono-wind[select="grid"] dialog:modal :not([data-mw-measuring], [data-mw-pointer-none]) {
+mono-wind[select="grid"]:where([data-mw-no-regions])
+  dialog:modal:not([data-mw-measuring], [data-mw-pointer-none]),
+mono-wind[select="grid"]:where([data-mw-regions])
+  dialog:modal:not([data-mw-measuring], [data-mw-pointer-none]):where(
+    :not([data-mw-native], [data-mw-native] *)
+  ),
+mono-wind[select="grid"]:where([data-mw-no-regions])
+  dialog:modal
+  :not([data-mw-measuring], [data-mw-pointer-none]),
+mono-wind[select="grid"]:where([data-mw-regions])
+  dialog:modal
+  :not([data-mw-measuring], [data-mw-pointer-none]):where(
+    :not([data-mw-native], [data-mw-native] *)
+  ) {
   pointer-events: auto !important;
 }
-mono-wind[select="grid"] dialog:modal,
-mono-wind[select="grid"] dialog:modal * {
+mono-wind[select="grid"]:where([data-mw-no-regions]) dialog:modal,
+mono-wind[select="grid"]:where([data-mw-regions])
+  dialog:modal:where(:not([data-mw-native], [data-mw-native] *)),
+mono-wind[select="grid"]:where([data-mw-no-regions]) dialog:modal *,
+mono-wind[select="grid"]:where([data-mw-regions])
+  dialog:modal
+  *:where(:not([data-mw-native], [data-mw-native] *)) {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -265,14 +406,21 @@ mono-wind[select="grid"] dialog:modal * {
  * the ancestor filter rejects outside an editable
  * (architecture/performance.md). */
 mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))[data-mw-leaf],
-mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
-  :where(:not(input, textarea, [contenteditable]:not([contenteditable="false"]))) {
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])):where([data-mw-no-regions])
+  :where(:not(input, textarea, [contenteditable]:not([contenteditable="false"]))),
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])):where([data-mw-regions])
+  :where(:not(input, textarea, [contenteditable]:not([contenteditable="false"]))):where(
+    :not([data-mw-native], [data-mw-native] *)
+  ) {
   user-select: none;
   -webkit-user-select: none;
 }
-mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])):where([data-mw-no-regions])
   [contenteditable]:not([contenteditable="false"])
-  * {
+  *,
+mono-wind[select="grid"]:where(:not([data-mw-semantic-selection])):where([data-mw-regions])
+  [contenteditable]:not([contenteditable="false"])
+  *:where(:not([data-mw-native], [data-mw-native] *)) {
   user-select: revert-layer;
   -webkit-user-select: revert-layer;
 }
@@ -287,11 +435,21 @@ mono-wind[select="grid"]:where(:not([data-mw-semantic-selection]))
  * first positioned leaf. */
 @media (pointer: coarse) {
   mono-wind[select="grid"] [data-mw-scroll]:not([data-mw-measuring], [data-mw-pointer-none]),
-  mono-wind[select="grid"] [data-mw-scroll] :not([data-mw-measuring], [data-mw-pointer-none]) {
+  mono-wind[select="grid"]:where([data-mw-no-regions])
+    [data-mw-scroll]
+    :not([data-mw-measuring], [data-mw-pointer-none]),
+  mono-wind[select="grid"]:where([data-mw-regions])
+    [data-mw-scroll]
+    :not([data-mw-measuring], [data-mw-pointer-none]):where(
+      :not([data-mw-native], [data-mw-native] *)
+    ) {
     pointer-events: auto !important;
   }
   mono-wind[select="grid"] [data-mw-scroll],
-  mono-wind[select="grid"] [data-mw-scroll] * {
+  mono-wind[select="grid"]:where([data-mw-no-regions]) [data-mw-scroll] *,
+  mono-wind[select="grid"]:where([data-mw-regions])
+    [data-mw-scroll]
+    *:where(:not([data-mw-native], [data-mw-native] *)) {
     user-select: text;
     -webkit-user-select: text;
   }
@@ -350,6 +508,18 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   inherits: false;
 }
 
+/* A native region's measuring width and clip (the
+ * `data-mw-native-measure` and `data-mw-native-clip` rules): declared
+ * so they do not inherit, a write restyling the region alone. */
+@property --mw-measure-w {
+  syntax: "*";
+  inherits: false;
+}
+@property --mw-clip {
+  syntax: "*";
+  inherits: false;
+}
+
 /* A checkbox's or a radio's state, which its lock transitions
  * (specs/checkboxes.md): an integer, so a flip is a change to run. */
 @property --mw-checked {
@@ -378,12 +548,14 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
  * reads, the host is visible instead: `visibility` inherits, and the
  * subtree reads as if the host were shown, the host's own visibility the
  * grid's natively (specs/visibility.md). A nested host never lays out —
- * its content is the outer host's to paint — so the rules skip it. */
+ * its content is the outer host's to paint — so the rules skip it; a
+ * host in another's native region is a host of its own
+ * (specs/native-regions.md "Nesting"). */
 @layer theme {
-  mono-wind:not([data-mw-ready]):not([measuring]):not(mono-wind *) {
+  mono-wind:not([data-mw-ready], [measuring], [data-mw-nested]) {
     visibility: hidden !important;
   }
-  mono-wind[measuring]:not(mono-wind *) {
+  mono-wind[measuring] {
     visibility: visible !important;
   }
 }
@@ -403,10 +575,14 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
 @media (forced-colors: none) {
   @layer theme {
     mono-wind:where([data-mw-selection]):not([measuring])[data-mw-leaf]::selection,
-    mono-wind:where([data-mw-selection])
+    mono-wind:where([data-mw-selection])[data-mw-no-regions]
       :where(:not(input, textarea, select, [contenteditable]:not([contenteditable="false"]))):not(
         [data-mw-measuring]
-      )::selection {
+      )::selection,
+    mono-wind:where([data-mw-selection])[data-mw-regions]
+      :where(:not(input, textarea, select, [contenteditable]:not([contenteditable="false"]))):not(
+        [data-mw-measuring]
+      ):where(:not([data-mw-native], [data-mw-native] *))::selection {
       color: transparent !important;
       text-shadow: none !important;
       background: transparent !important;
@@ -414,9 +590,12 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     /* An editable's subtree takes the swap below, in a plain descendant
      * rule as the user-select lock's, over the lock on specificity (its
      * `:where()`s). */
-    mono-wind
+    mono-wind[data-mw-no-regions]
       [contenteditable]:not([contenteditable="false"])
-      :not([data-mw-measuring])::selection {
+      :not([data-mw-measuring])::selection,
+    mono-wind[data-mw-regions]
+      [contenteditable]:not([contenteditable="false"])
+      :not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *))::selection {
       color: var(--mw-ground, var(--mw-bg, canvas)) !important;
       background: var(--mw-ink, var(--mw-fg, canvastext)) !important;
     }
@@ -427,10 +606,21 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * the grid swaps a selected cell's, from the ink and ground the engine
    * measured and wrote on it (render.ts). One selector per element kind,
    * so each is matched only against its own. */
-  mono-wind input:not([data-mw-measuring])::selection,
-  mono-wind textarea:not([data-mw-measuring])::selection,
-  mono-wind select:not([data-mw-measuring])::selection,
-  mono-wind [contenteditable]:not([contenteditable="false"]):not([data-mw-measuring])::selection {
+  mono-wind:where([data-mw-no-regions]) input:not([data-mw-measuring])::selection,
+  mono-wind:where([data-mw-regions])
+    input:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *))::selection,
+  mono-wind:where([data-mw-no-regions]) textarea:not([data-mw-measuring])::selection,
+  mono-wind:where([data-mw-regions])
+    textarea:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *))::selection,
+  mono-wind:where([data-mw-no-regions]) select:not([data-mw-measuring])::selection,
+  mono-wind:where([data-mw-regions])
+    select:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *))::selection,
+  mono-wind:where([data-mw-no-regions])
+    [contenteditable]:not([contenteditable="false"]):not([data-mw-measuring])::selection,
+  mono-wind:where([data-mw-regions])
+    [contenteditable]:not([contenteditable="false"]):not([data-mw-measuring]):where(
+      :not([data-mw-native], [data-mw-native] *)
+    )::selection {
     color: var(--mw-ground, var(--mw-bg, canvas));
     background: var(--mw-ink, var(--mw-fg, canvastext));
   }
@@ -451,7 +641,8 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   /* Lock the font on descendants so the grid metrics stay consistent —
    * `!important` because user classes (`.text-2xl` etc.) would otherwise beat
    * these element-selector rules on specificity. */
-  mono-wind *,
+  mono-wind[data-mw-no-regions] *,
+  mono-wind[data-mw-regions] *:where(:not([data-mw-native], [data-mw-native] *)),
   mono-wind [data-mw-before]::before,
   mono-wind [data-mw-after]::after {
     font-family: inherit !important;
@@ -493,15 +684,26 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * and its state's 1ms transition, after the author's own, tells the
    * host of a flip; the engine's read of its own styles lifts both
    * (specs/checkboxes.md "The light DOM"). */
-  mono-wind input:is([type="checkbox"], [type="radio"]):not([data-mw-control-read]) {
+  mono-wind[data-mw-no-regions]
+    input:is([type="checkbox"], [type="radio"]):not([data-mw-control-read]),
+  mono-wind[data-mw-regions]
+    input:is([type="checkbox"], [type="radio"]):not([data-mw-control-read]):where(
+      :not([data-mw-native], [data-mw-native] *)
+    ) {
     appearance: none !important;
   }
-  mono-wind
+  mono-wind[data-mw-no-regions]
     input:is([type="checkbox"], [type="radio"]):not(
       [data-mw-measuring],
       [data-mw-settling],
       [data-mw-control-read]
-    ) {
+    ),
+  mono-wind[data-mw-regions]
+    input:is([type="checkbox"], [type="radio"]):not(
+      [data-mw-measuring],
+      [data-mw-settling],
+      [data-mw-control-read]
+    ):where(:not([data-mw-native], [data-mw-native] *)) {
     transition-property: var(--mw-tp, --mw-checked), --mw-checked !important;
     transition-duration: var(--mw-td, 0s), 1ms !important;
     transition-timing-function: var(--mw-tf, linear), linear !important;
@@ -525,8 +727,10 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * (specs/top-layer.md): on them, and them alone, the mask keeps
    * display and overlay alive across the passes — no lock toggles either
    * there, while the grid-template read assist below toggles display. */
-  mono-wind :is([popover], dialog)[data-mw-measuring],
-  mono-wind :is([popover], dialog)[data-mw-settling] {
+  mono-wind [popover][data-mw-measuring],
+  mono-wind dialog[data-mw-measuring],
+  mono-wind [popover][data-mw-settling],
+  mono-wind dialog[data-mw-settling] {
     transition-property:
       color, border-color, opacity, transform, translate, rotate, scale, filter, display, overlay !important;
   }
@@ -564,7 +768,9 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   /* An image's picture is the grid's (specs/images.md): the native one is
    * a transparent pixel, while the element keeps its box, hit target and
    * alt, and `drawImage` still reads its source. */
-  mono-wind img:not([data-mw-measuring]) {
+  mono-wind[data-mw-no-regions] img:not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    img:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)) {
     content: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") !important;
   }
 
@@ -580,7 +786,9 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * the parent's grid-exact value. line-height is inherited from the
    * laid-out ancestor (which sets the row multiple below) — `leading-*` on
    * inline elements is ignored by design. */
-  mono-wind :not([data-mw-measuring]) {
+  mono-wind[data-mw-no-regions] :not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    :not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)) {
     /* Baseline-shift lock (cell-model): gated like the rest, so the style
      * reader sees the authored/UA vertical-align (table cells read it). */
     vertical-align: baseline !important;
@@ -588,6 +796,16 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     overflow-wrap: anywhere !important;
     letter-spacing: calc(var(--mw-rls, 0px) + var(--mw-ls) * var(--mw-cw, 1px)) !important;
     line-height: inherit !important;
+    text-shadow: none !important;
+    /* Native markers take no line space, the grid drawing its own: an
+     * inside one's cells are its line's indent (--mw-ti, specs/lists.md
+     * "The light DOM"). An image, which no font size shrinks, goes. */
+    list-style-position: outside !important;
+    list-style-image: none !important;
+  }
+  /* What the grid paints of a box, a native region's included. */
+  mono-wind[data-mw-no-regions] :not([data-mw-measuring]),
+  mono-wind[data-mw-regions] :not([data-mw-measuring]):where(:not([data-mw-native] *)) {
     /* Backgrounds paint in the grid too, so the light DOM's own bg goes
      * transparent — otherwise it would cover the grid (light DOM sits
      * ON TOP of the grid in the shadow tree so native selection
@@ -598,7 +816,6 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     /* Gradients paint in the grid as a color per cell (specs/gradients.md),
      * read during [measuring] like the color. */
     background-image: none !important;
-    text-shadow: none !important;
     /* Shadows paint in the grid as shades (specs/box-shadow.md), read
      * during [measuring] like backgrounds. */
     box-shadow: none !important;
@@ -623,15 +840,10 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
      * padding it reserved in the run; everything else gets 0, so raw
      * off-grid padding never renders. Laid-out elements and atomic inline
      * boxes override this with their own engine-owned padding rule
-     * (higher specificity). Vertical inline padding never moves layout,
+     * (below). Vertical inline padding never moves layout,
      * per CSS, and passes through untouched. */
     padding-left: calc(var(--mw-ipl) * var(--mw-cw, 1px)) !important;
     padding-right: calc(var(--mw-ipr) * var(--mw-cw, 1px)) !important;
-    /* Native markers take no line space, the grid drawing its own: an
-     * inside one's cells are its line's indent (--mw-ti, specs/lists.md
-     * "The light DOM"). An image, which no font size shrinks, goes. */
-    list-style-position: outside !important;
-    list-style-image: none !important;
   }
 
   /* A `::before` or `::after` the engine reads, its kind in its
@@ -726,14 +938,18 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * height, its zero-size box's baseline otherwise stretching the line
    * in Firefox and WebKit (specs/lists.md "The light DOM"); its type and
    * text stay for assistive technology. */
-  mono-wind *::marker {
+  mono-wind[data-mw-no-regions] *::marker,
+  mono-wind[data-mw-regions] *:where(:not([data-mw-native] *))::marker {
     font-size: 0 !important;
     line-height: 0 !important;
   }
 
   /* A marker or pseudo-element whose `content` holds an image draws none
-   * (render.ts), gated so the engine reads the authored value. */
+   * (render.ts), and a native region's own marker, which the grid draws
+   * as a box's (its `list-style-image` left to its items), gated so the
+   * engine reads the authored value. */
   mono-wind [data-mw-marker-image]:not([data-mw-measuring])::marker,
+  mono-wind [data-mw-native]:not([data-mw-measuring])::marker,
   mono-wind [data-mw-before="image"]:not([data-mw-measuring])::before,
   mono-wind [data-mw-after="image"]:not([data-mw-measuring])::after {
     content: none !important;
@@ -741,8 +957,12 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
 
   /* A top-layer element's backdrop is a box of the grid's beneath its
    * own (specs/top-layer.md), read during [measuring] like backgrounds. */
-  mono-wind [popover]:not([data-mw-measuring])::backdrop,
-  mono-wind dialog:not([data-mw-measuring])::backdrop {
+  mono-wind[data-mw-no-regions] [popover]:not([data-mw-measuring])::backdrop,
+  mono-wind[data-mw-regions]
+    [popover]:not([data-mw-measuring]):where(:not([data-mw-native] *))::backdrop,
+  mono-wind[data-mw-no-regions] dialog:not([data-mw-measuring])::backdrop,
+  mono-wind[data-mw-regions]
+    dialog:not([data-mw-measuring]):where(:not([data-mw-native] *))::backdrop {
     background: transparent !important;
     backdrop-filter: none !important;
   }
@@ -761,7 +981,11 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * rule that shapes a leaf's native text carries this host variant —
    * render.ts writes the host's flags. */
   mono-wind:not([measuring])[data-mw-leaf],
-  mono-wind :not(input):not(textarea):not(select):not([data-mw-measuring]) {
+  mono-wind[data-mw-no-regions] :not(input):not(textarea):not(select):not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    :not(input):not(textarea):not(select):not([data-mw-measuring]):where(
+      :not([data-mw-native], [data-mw-native] *)
+    ) {
     -webkit-text-fill-color: transparent !important;
     text-decoration-color: transparent !important;
   }
@@ -770,15 +994,21 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * exclusion above: text-fill-color inherits and has no UA default on
    * controls (unlike `color`), so without this reset an input under any
    * locked ancestor would inherit transparent ink. */
-  mono-wind input:not([data-mw-measuring]),
-  mono-wind textarea:not([data-mw-measuring]),
-  mono-wind select:not([data-mw-measuring]) {
+  mono-wind[data-mw-no-regions] input:not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    input:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind[data-mw-no-regions] textarea:not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    textarea:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)),
+  mono-wind[data-mw-no-regions] select:not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    select:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)) {
     -webkit-text-fill-color: currentColor !important;
   }
 
   /* Author-requested `white-space: nowrap` (or `pre`) — the engine sized this
    * box for unwrapped hard lines, so the browser must not wrap either. Wins
-   * over the lock above on specificity. */
+   * over the lock above. */
   mono-wind:not([measuring])[data-mw-nowrap],
   mono-wind [data-mw-nowrap]:not([data-mw-measuring]) {
     white-space: nowrap !important;
@@ -791,9 +1021,14 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * above would collapse text inside nested spans). Later than the nowrap
    * rule, so it wins on the leaf itself at equal specificity. */
   mono-wind:not([measuring])[data-mw-pre],
-  mono-wind[data-mw-pre] :not([data-mw-measuring]),
+  mono-wind[data-mw-pre][data-mw-no-regions] :not([data-mw-measuring]),
+  mono-wind[data-mw-pre][data-mw-regions]
+    :not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)),
   mono-wind [data-mw-pre]:not([data-mw-measuring]),
-  mono-wind [data-mw-pre] *:not([data-mw-measuring]) {
+  mono-wind[data-mw-no-regions] [data-mw-pre] *:not([data-mw-measuring]),
+  mono-wind[data-mw-regions]
+    [data-mw-pre]
+    *:not([data-mw-measuring]):where(:not([data-mw-native], [data-mw-native] *)) {
     white-space: var(--mw-ws) !important;
   }
 
@@ -844,15 +1079,18 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
      * grid-area: per CSS §10.1 an ABSOLUTE child of a grid container with
      * placement properties uses its grid area as containing block — our
      * left/top would resolve against that area and double-offset the
-     * element (the engine already placed it). The template and content/item
-     * alignment resets make a laid-out container's own grid/flex inert for
-     * the one box the browser still lays out: the anonymous item holding a
-     * leaf's or a text grid's direct text (a template or an implicit
-     * track's size would trap it in a track; the
-     * browser's place-* offsets are FRACTIONAL, off the cell grid — the
-     * engine applies the quantized offsets through its owned padding
-     * instead, specs/cell-model.md). */
+     * element (the engine already placed it). */
     grid-area: auto !important;
+  }
+  /* The template and content/item alignment resets make a laid-out
+   * container's own grid/flex inert for the one box the browser still
+   * lays out: the anonymous item holding a leaf's or a text grid's
+   * direct text (a template or an implicit track's size would trap it in
+   * a track; the browser's place-* offsets are FRACTIONAL, off the cell
+   * grid — the engine applies the quantized offsets through its owned
+   * padding instead, specs/cell-model.md). A native region keeps its
+   * own. */
+  mono-wind [data-mw-laid-out]:not([data-mw-measuring], [data-mw-native]) {
     grid-template-columns: none !important;
     grid-template-rows: none !important;
     grid-auto-columns: auto !important;
@@ -903,11 +1141,6 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     min-height: 0 !important;
     max-width: none !important;
     max-height: none !important;
-    /* Gap rules are engine-painted glyphs (specs/gap-decorations.md);
-     * css-gaps browsers must not also paint their native (fractional)
-     * rules — e.g. between an emptied grid's explicit tracks. */
-    column-rule-style: none !important;
-    row-rule-style: none !important;
     /* Authored z-index applies only where CSS says (positioned, flex/grid
      * items) — absolutization would otherwise activate it everywhere. The
      * engine writes --mw-z in exactly those cases; elsewhere the reset
@@ -924,7 +1157,19 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     padding-bottom: calc((var(--mw-pb, 0) + var(--mw-bb, 0)) * var(--mw-ch, 1px)) !important;
     padding-left: calc((var(--mw-pl, 0) + var(--mw-bl, 0)) * var(--mw-cw, 1px)) !important;
     margin: 0 !important;
+  }
+  /* An engine-sized box's lines on its rows, and its gap rules the grid's
+   * glyphs (specs/gap-decorations.md): css-gaps browsers must not also
+   * paint their native (fractional) rules — e.g. between an emptied
+   * grid's explicit tracks. A native region keeps its own. */
+  mono-wind [data-mw-laid-out]:not([data-mw-measuring], [data-mw-native]),
+  mono-wind [data-mw-inline-box]:not([data-mw-measuring], [data-mw-native]),
+  mono-wind [data-mw-multicol-flow-span]:not([data-mw-measuring], [data-mw-native]),
+  mono-wind [data-mw-flow]:not([data-mw-measuring], [data-mw-native]),
+  mono-wind [data-mw-float]:not([data-mw-measuring], [data-mw-native]) {
     line-height: calc(var(--mw-lh, 1) * var(--mw-ch, 1px)) !important;
+    column-rule-style: none !important;
+    row-rule-style: none !important;
   }
 
   /* Atomic inline boxes (`inline-flex`/`inline-block`/`inline-grid` riding a
@@ -973,6 +1218,44 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
     vertical-align: calc(
       var(--mw-va, 0) * var(--mw-ch, 1px) + var(--mw-vb) * var(--mw-base, 0px)
     ) !important;
+  }
+
+  /* A native region's frame (specs/native-regions.md): its border cells
+   * a transparent native border and its padding cells native padding,
+   * so its own scrollbar and overflow clip sit inside the grid's border;
+   * isolated, so its stacking holds clipped or not. An inline one is an
+   * atomic inline box natively too. */
+  mono-wind [data-mw-native]:not([data-mw-measuring]) {
+    border-style: solid !important;
+    border-color: transparent !important;
+    border-width: calc(var(--mw-bt, 0) * var(--mw-ch, 1px))
+      calc(var(--mw-br, 0) * var(--mw-cw, 1px)) calc(var(--mw-bb, 0) * var(--mw-ch, 1px))
+      calc(var(--mw-bl, 0) * var(--mw-cw, 1px)) !important;
+    padding: calc(var(--mw-pt, 0) * var(--mw-ch, 1px)) calc(var(--mw-pr, 0) * var(--mw-cw, 1px))
+      calc(var(--mw-pb, 0) * var(--mw-ch, 1px)) calc(var(--mw-pl, 0) * var(--mw-cw, 1px)) !important;
+    isolation: isolate !important;
+  }
+  mono-wind [data-mw-native="inline"]:not([data-mw-measuring]) {
+    display: inline-block !important;
+  }
+  /* A region's contents measured as the browser lays them out
+   * (specs/native-regions.md "Layout"): its content box alone at the
+   * width the engine asks, its height theirs; out of flow, so its own
+   * display blockifies and an inline one takes the width. */
+  mono-wind [data-mw-native-measure] {
+    position: absolute !important;
+    inset: auto !important;
+    width: var(--mw-measure-w) !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+    aspect-ratio: auto !important;
+    box-sizing: content-box !important;
+    padding: 0 !important;
+    border-width: 0 !important;
+    margin: 0 !important;
   }
 
   /* Multicol TEXT LEAF (specs/multicol.md "Browser agreement"): native
@@ -1043,12 +1326,13 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
   /* text-indent (specs/cell-model.md): native px would resolve to the
    * root font size, not the cell width, so the transparent light-DOM
    * text drifts out from under the grid's paint. Rewrite it in cells so
-   * the two agree — selection ranges land exactly where the glyphs are. */
+   * the two agree — selection ranges land exactly where the glyphs are.
+   * A native region's text is native. */
   mono-wind:not([measuring])[data-mw-leaf],
-  mono-wind [data-mw-laid-out]:not([data-mw-measuring]),
+  mono-wind [data-mw-laid-out]:not([data-mw-measuring], [data-mw-native]),
   mono-wind [data-mw-multicol-flow]:not([data-mw-measuring]),
-  mono-wind [data-mw-flow]:not([data-mw-measuring]),
-  mono-wind [data-mw-float]:not([data-mw-measuring]) {
+  mono-wind [data-mw-flow]:not([data-mw-measuring], [data-mw-native]),
+  mono-wind [data-mw-float]:not([data-mw-measuring], [data-mw-native]) {
     text-indent: calc(var(--mw-ti, 0) * var(--mw-cw, 1px)) !important;
   }
 
@@ -1159,6 +1443,13 @@ mono-wind [data-mw-scroll="before"]:not([data-mw-measuring])::before {
    * <col>/<colgroup> boxes: fully hidden, subtree included. */
   mono-wind [data-mw-table-hidden]:not([data-mw-measuring]) {
     display: none !important;
+  }
+
+  /* A native region clipped where the grid's later ink covers it
+   * (specs/native-regions.md "Paint"): the browser draws its contents
+   * over every cell. Before force-hidden, which hides it whole. */
+  mono-wind [data-mw-native-clip]:not([data-mw-measuring]) {
+    clip-path: var(--mw-clip) !important;
   }
 
   /* An anchored box `position-visibility` hides (specs/anchor-positioning.md),

@@ -77,7 +77,7 @@ CSS's anonymous block boxes, and drops the dropped-text machinery.
 
 - `Test / Host`: the mixed host lays out its text (the dropped-text
   assertions inverted); a visible `Features / Typography / Anonymous
-Runs` story with text before, between, and after a block, a link in
+  Runs` story with text before, between, and after a block, a link in
   a run — once plain in the container's color, once under
   `leading-loose` with every run and the block wrapping — asserting
   the grid text, the run's paint, the browser's line boxes over the

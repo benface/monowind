@@ -129,7 +129,7 @@ the specs are the source.
    product opacity would take fewer lines, and it is what chunk 8's
    −30 to −45 assumed. But it draws a group's glyph over the group's
    own fill before fading: `disabled:opacity-50` on a `bg-blue-600
-text-white` button over a white page puts its label at three
+   text-white` button over a white page puts its label at three
    quarters white on half blue. CSS puts it at white on half blue, and
    today's span opacity does too. So the per-paint model would regress
    the most common opacity idiom. An opacity root therefore paints into
@@ -184,7 +184,7 @@ text-white` button over a white page puts its label at three
    look.
 7. **Color emoji fade by alpha.** Their glyph ignores the color's hue
    but, in the engines we know of, not its alpha; the `color:
-transparent` tinting idiom relies on that. Step 0 probes all three
+   transparent` tinting idiom relies on that. Step 0 probes all three
    engines. Where one ignores the alpha, emoji there paint whole, as
    today's faded inline path already paints them. **Amended
    2026-09-25:** a group's fade reaches an emoji in WebKit too, on its
@@ -245,7 +245,7 @@ transparent` tinting idiom relies on that. Step 0 probes all three
   replaces `mergePaint` and every `alphaPaint`.
 
 - **Groups.** `walk` opens a group where `style.opacity ×
-(inlineOpacity ?? 1) < 1` and the node is not a layer root. A
+  (inlineOpacity ?? 1) < 1` and the node is not a layer root. A
   top-layer element uses its own opacity alone. The group's recorder
   becomes `walking.put`, so hoisted (fixed) descendants stay inside
   it. Its puts cover closed layers as they are recorded (the replay
@@ -256,7 +256,7 @@ transparent` tinting idiom relies on that. Step 0 probes all three
   groups' opacities since the enclosing layer. A layer opened under
   them records it (`PaintedLayer.alpha`), and `placeLayer`
   (paint.ts:327-396) writes `opacity = alpha × the root's live computed
-opacity`, added to its `placed` key.
+  opacity`, added to its `placed` key.
 - **Cost per cell.**
   - Nothing blends (the bench pages, most pages): one cache lookup per
     color per put, on top of today's merge; no numbers are written.

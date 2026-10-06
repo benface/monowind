@@ -586,7 +586,14 @@ function layoutTextLeaf(
       });
     }
   } else {
-    contentHeight = node.intrinsicHeight;
+    // A region's contents, measured where the height is theirs: not
+    // definite, or a ratio's they floor (specs/native-regions.md).
+    const measure = node.native?.measure;
+    const measured =
+      measure &&
+      (definiteInnerHeight === undefined ||
+        (style.aspectRatio !== null && style.height === undefined && style.minHeight === "auto"));
+    contentHeight = measured ? measure(innerWidth).height : node.intrinsicHeight;
   }
   // Out-of-flow children of a leaf sit where their run puts them; a
   // flex leaf's own, as its sole flex item.
@@ -1669,6 +1676,8 @@ function intrinsicInnerWidth(node: LayoutNode, kind: "min" | "max", cache: Intri
   const style = node.style;
   const inFlow = node.children.filter(isInFlowBox);
   if (inFlow.length === 0) {
+    const measure = node.native?.measure;
+    if (measure) return measure(kind).width;
     const widest =
       kind === "max" || !node.text || !softWraps(style.whiteSpace)
         ? node.intrinsicWidth
@@ -1724,10 +1733,14 @@ export function widthContribution(
   const { width, height, minWidth, maxWidth, aspectRatio } = child.style;
   const min = typeof minWidth === "number" ? minWidth : 0;
   const max = typeof maxWidth === "number" ? maxWidth : undefined;
-  // An image a percentage sizes gives way to its container at
-  // min-content, loaded or not, down to its min width (css-sizing-3
-  // "compressible replaced elements").
-  if (kind === "min" && !child.generated && child.source.localName === "img") {
+  // An image or a replaced region a percentage sizes gives way to its
+  // container at min-content, loaded or not, down to its min width
+  // (css-sizing-3 "compressible replaced elements").
+  if (
+    kind === "min" &&
+    !child.generated &&
+    (child.native?.replaced || child.source.localName === "img")
+  ) {
     const percent =
       width?.kind === "percent" || (typeof maxWidth === "object" && "percent" in maxWidth);
     if (percent) return Math.max(boxChrome(child.style, "x"), min);

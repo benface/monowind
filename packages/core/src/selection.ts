@@ -1,8 +1,10 @@
 import { isFlowChild } from "./layout.ts";
 import { leafRendererFor } from "./leaf.ts";
-import { altText } from "./image.ts";
-import { copyGrids, imageRows, markerShows } from "./plain-text.ts";
+import { copyGrids, markerShows, textRows } from "./plain-text.ts";
 import type { CopyGrids } from "./plain-text.ts";
+import { regionOf, surfaceText } from "./native.ts";
+import { renderedLines } from "./rendered-text.ts";
+import type { HostPart } from "./rendered-text.ts";
 import { domLength, inlineBoxesOf } from "./types.ts";
 import type { CharSourceRun, LayoutNode } from "./types.ts";
 import { hardLineSpans, INLINE_PAD, OBJECT_REPLACEMENT, WBR_MARKER } from "./wrap.ts";
@@ -204,19 +206,22 @@ export function selectionRangeThrough(
 }
 
 /** Where a selection lives relative to a host: in its shadow `grid`,
- * in its light DOM (both points, the host's own child list included),
- * or anywhere else — including straddling the two. */
-type SelectionKind = "grid" | "light" | "outside";
+ * in one of its native regions (the browser's own, specs/native-regions.md
+ * "Interaction"), in its light DOM (both points, the host's own child
+ * list included), or anywhere else — including straddling the two. */
+type SelectionKind = "grid" | "native" | "light" | "outside";
 
 export function classifySelection(
   host: Element,
   grid: Element,
   range: BoundaryPoints,
 ): SelectionKind {
-  const { startContainer: start, endContainer: end } = range;
-  if (grid.contains(start) && grid.contains(end)) return "grid";
-  if (withinHost(host, start) && withinHost(host, end)) return "light";
-  return "outside";
+  if (grid.contains(range.startContainer) && grid.contains(range.endContainer)) return "grid";
+  const start = lightNode(host, range.startContainer);
+  const end = lightNode(host, range.endContainer);
+  if (!start || !end) return "outside";
+  const region = regionOf(start, host);
+  return region && regionOf(end, host) === region ? "native" : "light";
 }
 
 /** The part of a selection in the host's light DOM: its points within
@@ -226,8 +231,8 @@ export function hostPart(host: Element, points: BoundaryPoints): BoundaryPoints 
   // A point in the grid collapses the range, its root another.
   const range = rangeOf(host.ownerDocument, points);
   if (range.collapsed || !range.intersectsNode(host)) return null;
-  const start = withinHost(host, range.startContainer);
-  const end = withinHost(host, range.endContainer);
+  const start = lightNode(host, range.startContainer) !== null;
+  const end = lightNode(host, range.endContainer) !== null;
   const part = {
     startContainer: start ? range.startContainer : host,
     startOffset: start ? range.startOffset : 0,
@@ -238,16 +243,17 @@ export function hostPart(host: Element, points: BoundaryPoints): BoundaryPoints 
   return touches ? null : part;
 }
 
-/** `contains` through the shadow boundaries of the host's descendants:
- * a node inside a custom leaf's shadow is within the host that holds
- * the leaf; a node in the host's own shadow (the grid) is not. */
-function withinHost(host: Element, node: Node): boolean {
+/** The node of the host's light DOM holding a node, through the shadow
+ * boundaries of the host's descendants: a custom leaf's or a nested
+ * host's for a node in its shadow; null for one outside the host, or in
+ * its own shadow (the grid). */
+function lightNode(host: Element, node: Node): Node | null {
   for (let current: Node | null = node; current;) {
-    if (host.contains(current)) return true;
+    if (host.contains(current)) return current;
     const root = current.getRootNode();
     current = root instanceof ShadowRoot && root.host !== host ? root.host : null;
   }
-  return false;
+  return null;
 }
 
 /** The shadow roots of the custom leaves with transcripts under
@@ -359,7 +365,7 @@ type TextItem = { text: string } | { breaks: number };
 export function serializeSelection(
   root: LayoutNode,
   points: BoundaryPoints,
-  options: { cells?: boolean } = {},
+  options: { cells?: boolean; nested?: HostPart } = {},
 ): string {
   const inTranscript = transcriptRange(root, points);
   if (inTranscript) return inTranscript.leaf.text.slice(inTranscript.start, inTranscript.end);
@@ -367,103 +373,26 @@ export function serializeSelection(
   const items: TextItem[] = [];
   let grids: CopyGrids | undefined;
   const cells = options.cells ? () => (grids ??= copyGrids(root)) : null;
-  collectItems(root, { range, markers: new Map(), grids: cells }, items);
+  const { nested = () => null } = options;
+  collectItems(root, { range, markers: new Map(), grids: cells, nested }, items);
   return assemble(items);
 }
 
-/** The page's text a range holds before and after a host, plain: the
- * text nodes the page shows and selects, white space collapsed unless
- * preformatted, a block's text on lines of its own, a `<br>` a break —
- * the host's own left out, the host copying it, and another host's
- * part as `nested` gives it. */
+/** The page's text a range holds before and after a host, plain
+ * (`renderedLines`), the host's own left out, the host copying it, and
+ * another host's part as `nested` gives it. */
 export function pageAround(
   range: Range,
   host: Element,
-  nested: (other: Element) => string | null = () => null,
+  nested: HostPart = () => null,
 ): [string, string] {
-  const sides: [string[], string[]] = [[], []];
-  let lines = sides[0];
-  let line = "";
-  let block: Element | null = null;
-  let preformatted = false;
-  const flush = (): void => {
-    if (preformatted) lines.push(...line.replace(/\n$/, "").split("\n"));
-    else if (line.trim()) lines.push(line.trim());
-    line = "";
-  };
-  const styles = new Map<Element, CSSStyleDeclaration>();
-  const styleOf = (element: Element): CSSStyleDeclaration => {
-    let style = styles.get(element);
-    if (!style) styles.set(element, (style = getComputedStyle(element)));
-    return style;
-  };
-  const showing = new Map<Element, boolean>();
-  const shows = (element: Element): boolean => {
-    let shown = showing.get(element);
-    if (shown === undefined) {
-      shown =
-        element.checkVisibility?.({ visibilityProperty: true }) !== false &&
-        styleOf(element).userSelect !== "none";
-      showing.set(element, shown);
-    }
-    return shown;
-  };
-  const blockOf = (element: Element | null): Element | null => {
-    while (element && styleOf(element).display.startsWith("inline"))
-      element = element.parentElement;
-    return element;
-  };
-  const root = range.commonAncestorContainer;
-  const walker = root.ownerDocument!.createTreeWalker(
-    root,
-    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
-  );
-  /** The node after the current one's subtree. */
-  const past = (): Node | null => {
-    for (;;) {
-      const next = walker.nextSibling();
-      if (next || !walker.parentNode()) return next;
-    }
-  };
-  let node = walker.nextNode();
-  while (node) {
-    // Out of the range, its subtree with it.
-    if (!range.intersectsNode(node)) {
-      node = past();
-      continue;
-    }
-    const element = node instanceof Element ? node : node.parentElement;
-    const part = node === host ? "" : node instanceof Element ? nested(node) : null;
-    if (part !== null) {
-      // A host's part on lines of its own.
-      flush();
-      block = null;
-      preformatted = false;
-      if (node === host) lines = sides[1];
-      else if (part) lines.push(part);
-      node = past();
-      continue;
-    }
-    const shown = element && shows(element);
-    if (shown && node instanceof Element) {
-      if (node.localName === "br") flush();
-    } else if (shown) {
-      const text = node as Text;
-      const start = text === range.startContainer ? range.startOffset : 0;
-      const end = text === range.endContainer ? range.endOffset : text.data.length;
-      const own = blockOf(element);
-      if (own !== block) {
-        flush();
-        block = own;
-        preformatted = /^(pre|break-spaces)/.test(styleOf(element).whiteSpace);
-      }
-      const data = text.data.slice(start, end);
-      line += preformatted ? data : data.replace(/\s+/g, " ");
-    }
-    node = walker.nextNode();
-  }
-  flush();
-  return [sides[0].join("\n"), sides[1].join("\n")];
+  const before = range.cloneRange();
+  before.setEndBefore(host);
+  const after = range.cloneRange();
+  after.setStartAfter(host);
+  const text = (side: Range): string =>
+    renderedLines(side, side.commonAncestorContainer, nested).join("\n");
+  return [text(before), text(after)];
 }
 
 /** Each leaf's copied markers, which go before its text. */
@@ -476,6 +405,7 @@ interface Copy {
   range: Range;
   markers: CopiedMarkers;
   grids: (() => CopyGrids) | null;
+  nested: HostPart;
 }
 
 function collectItems(node: LayoutNode, copy: Copy, items: TextItem[]): void {
@@ -504,7 +434,10 @@ function collectItems(node: LayoutNode, copy: Copy, items: TextItem[]): void {
       separated = row.style.visible;
     }
   } else {
-    if (node.image && node.style.visible) items.push({ text: imageText(node, copy) });
+    // A hidden flowed region's visible contents still copy (`regionText`).
+    if (node.style.visible ? node.native || node.image : node.native && !node.native.replaced) {
+      items.push({ text: surfaceCopy(node, copy) });
+    }
     if (isTextLeaf(node)) {
       const marker = markers.get(node);
       if (marker) items.push({ text: marker });
@@ -706,11 +639,12 @@ function leafSlice(leaf: LayoutNode, copy: Copy): string {
   return slice.replaceAll(INLINE_PAD, "").replaceAll(WBR_MARKER, "");
 }
 
-/** An image's copy (specs/images.md "The light DOM"): its alt, as
- * rendered; in grid mode its alt's cells as a copy's grids hold them. */
-function imageText(node: LayoutNode, copy: Copy): string {
-  if (!copy.grids) return altText((node.source as HTMLImageElement).alt);
-  return imageRows(copy.grids(), node).join("\n");
+/** An image's or a region's copy (specs/images.md "The light DOM",
+ * specs/native-regions.md "Interaction"): its alt or its text, as
+ * rendered; in grid mode its cells as a copy's grids hold them. */
+function surfaceCopy(node: LayoutNode, copy: Copy): string {
+  if (copy.grids) return textRows(copy.grids(), node).join("\n");
+  return surfaceText(node, copy.range, copy.nested);
 }
 
 /** Required breaks collapse to the largest of a run and vanish at

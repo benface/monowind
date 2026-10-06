@@ -49,7 +49,7 @@ The elements also serve any framework as plain markup.
   (`bottom span-left` becomes `top span-right`). `updateProps` DEEP
   MERGES a partial, so `{ positioning: { placement } }` alone keeps
   the grid's `applyStyles: false`, `flip: false` and `listeners:
-false` — the mount may hand it a partial and need not re-run
+  false` — the mount may hand it a partial and need not re-run
   `props()`. `api.setOpen` works after an update, one tick later:
   Zag defers its sends, so a caller reads `open` after a microtask.
   `mergeMachineProps` is NOT public — `@zag-js/vanilla` exports
@@ -140,7 +140,7 @@ false` — the mount may hand it a partial and need not re-run
     there is nothing to clone and `asChild` cannot work as it does
     elsewhere. The equivalent is a `child` snippet the part renders
     with its props: `{#snippet child(props)}<button {...props}
-…>{/snippet}`. The author spreads and chains, so the merge is
+    …>{/snippet}`. The author spreads and chains, so the merge is
     explicit and theirs — no surprise, but no automatic precedence
     either, and the docs have to say so.
 

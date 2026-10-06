@@ -134,7 +134,7 @@ of its reach, as in CSS.
   and leaves the other `span-all`. The box is laid out with the area
   as its containing block, as in CSS: its insets offset it from the
   area's edges, an `anchor()` measured from them (`position-area:
-bottom` with `top: 2` two rows under the anchor, as in Chromium and
+  bottom` with `top: 2` two rows under the anchor, as in Chromium and
   WebKit; Firefox leaves it on the anchor's edge), a fallback's own area
   keeping the box's insets too; `auto` insets are the area's
   edges, its size shrinks to fit the area as an absolute box's does

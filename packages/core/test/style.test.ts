@@ -267,10 +267,7 @@ describe("grid typography", () => {
   });
 
   it("shares glyph sets read alike, forgetting them past a bound", () => {
-    const shadowed = (shadow: string) =>
-      readGlyph({
-        getPropertyValue: (property: string) => (property === "text-shadow" ? shadow : ""),
-      } as CSSStyleDeclaration);
+    const shadowed = (shadow: string) => readGlyph({ textShadow: shadow } as CSSStyleDeclaration);
     const first = shadowed("red 0px 0px 2px");
     expect(shadowed("red 0px 0px 2px")).toBe(first);
     // An animation's values are endless.

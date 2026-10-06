@@ -156,6 +156,17 @@
   initial-value: 0;
 }
 
+/* A native region (specs/native-regions.md): a box the grid sizes and
+ * frames, its contents the browser's. */
+@utility mw-native {
+  --mw-native: 1;
+}
+@property --mw-native {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
 /* An image's colors (specs/images.md "Color"): a palette, matched by
  * color or lightness, levels per channel, and the dither of the last
  * reduction — inherited, so a theme sets them for its whole host, and

@@ -252,6 +252,43 @@ server shares it over CORS (no `crossorigin` needed); one its server
 doesn't share, the page may not read: it draws at the grid's
 resolution in its own colors, an animated one its first frame.
 
+## Native regions
+
+`mw-native` on any element makes it a native region: a box the grid
+sizes and frames in cells — its border in glyphs, its fill, its place
+in the paint order — whose contents the browser draws and runs as on
+any page. An iframe, a video, a map, a chart on a canvas, a code
+editor, or plain text in your own fonts:
+
+```html
+<mono-wind>
+  <iframe class="aspect-video w-full border mw-native" src="…"></iframe>
+  <div class="w-80 border p-1 font-serif mw-native">Native text.</div>
+</mono-wind>
+```
+
+- **Sizing.** An `img`, `video` or `canvas` takes its natural size,
+  as in Images above (a video 300×150 px until its metadata loads); an
+  `iframe`, `embed` or `object` is 300×150 px on the spacing scale (75
+  by 38 cells) until sized. Flowed contents, and an inline `svg`, are
+  measured as the browser lays them out wherever their size counts —
+  left auto, or a percentage when the host sizes itself to its content
+  — rounded up to whole cells, and measured again as they change. Size
+  a heavy region (a widget whose contents change often) yourself, its
+  width and height both lengths, and `min-w-0` on a flex item, whose
+  automatic minimum asks its contents: then it is never measured, and
+  changes inside it never lay the host out.
+- **What stays native.** Inside a region, nothing of the grid's
+  applies: fonts, colors, backgrounds, borders, form controls, the
+  pointer, selection and copy, focus and scrolling are the browser's.
+  Its contents start from CSS's defaults, the host's font and color
+  aside.
+- **The paint order holds.** A menu, a dialog or a sticky header
+  painted over a region hides it there, as it would any box.
+- **Nesting.** A `<mono-wind>` inside a region is a host of its own;
+  `mw-native` on a `<mono-wind>` itself is ignored, so wrap the host in
+  a region.
+
 ## Companion packages
 
 The core is self-contained; these are optional:

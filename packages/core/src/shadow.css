@@ -70,8 +70,10 @@ slot {
   background: transparent;
 }
 /* A background reaches the row's edges where the font leaves a gap
- * (specs/cell-model.md), outranking the box rule's padding. */
-:host([data-mw-bgpad]) .grid span:not([data-box]) {
+ * (specs/cell-model.md). Flagged in the shadow, whose ancestors
+ * Chromium's filter holds, so every span is rejected at once where no
+ * gap is. */
+#viewport[data-mw-bgpad] .grid span:not([data-box]) {
   padding-block: var(--mw-bgpad, 0px);
 }
 .grid span[data-box] {

@@ -539,7 +539,7 @@ unless named):
   drag, for a keyboard extension, and over a focused control; a
   textarea with CJK sized by cluster widths; the selection stories
   asserting the painted cells; auto-scroll (`Test /
-Selection / Autoscroll`, a text-mode host): a press in a scroll
+  Selection / Autoscroll`, a text-mode host): a press in a scroll
   container and one synthetic move past its bottom edge scroll it and
   extend the selection to a paragraph that was below its fold, a move
   past its top edge scrolls it back, a move inside scrolls nothing, and

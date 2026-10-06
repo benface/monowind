@@ -109,7 +109,7 @@ truth.
   `teeUp/teeDown/teeLeft/teeRight`, `cross`) — `registerBorderGlyphs`
   in core's glyphs.ts; junction bitmasks map to roles (stub masks read
   as lines). A table's `rounded` lists corner BANDS, `{ radius, tl?,
-tr?, bl?, br? }` in cells: a corner draws the registration nearest
+  tr?, bl?, br? }` in cells: a corner draws the registration nearest
   its `border-radius` (`cell-model.md` "Borders: glyph mapping"), the
   plain corner counting at 0 — a set registering `rounded` (even
   empty) or a plain corner for a style replaces the defaults' arcs

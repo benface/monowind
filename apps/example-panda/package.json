@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@pandacss/dev": "^2.1.0",
+    "@pandacss/dev": "^2.1.1",
     "monowind": "workspace:*",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",

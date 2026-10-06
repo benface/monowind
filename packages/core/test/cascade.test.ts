@@ -76,6 +76,207 @@ it("styles.css keeps every lock in the theme layer", () => {
   expect(new Set(outside.map((d) => d.property))).toEqual(new Set(["pointer-events"]));
 });
 
+/** A selector with its parentheses' contents dropped. */
+const outer = (selector: string): string => {
+  let previous;
+  do [previous, selector] = [selector, selector.replace(/\([^()]*\)/g, "")];
+  while (selector !== previous);
+  return selector;
+};
+
+/** The twins' host conditions and their subjects' exclusions (styles.css,
+ * the header): a box's own lock reaches a native region, one on what a
+ * box holds skips it too, and neither reaches its contents. Outside the
+ * lock layer, the conditions keep the plain selector's specificity. */
+const NO_REGION = "[data-mw-no-regions]";
+const REGIONS = "[data-mw-regions]";
+const SKIPS = {
+  contents: ":where(:not([data-mw-native] *))",
+  region: ":where(:not([data-mw-native], [data-mw-native] *))",
+};
+
+/** A selector's subject, its `:not()`s dropped. */
+const subjectOf = (part: string): string => {
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < part.length; i++) {
+    if (part[i] === "(") depth++;
+    else if (part[i] === ")") depth--;
+    else if (depth === 0 && /[\s>+~]/.test(part[i]!)) start = i + 1;
+  }
+  let subject = part.slice(start);
+  let previous;
+  do [previous, subject] = [subject, subject.replace(/:not\([^()]*(?:\([^()]*\)[^()]*)*\)/g, "")];
+  while (subject !== previous);
+  return subject;
+};
+
+/** The region's own rules: its reset, and a grid drag's sweep through
+ * it, the one to reach its contents. */
+const isRegions = (part: string): boolean =>
+  /^mono-wind(?:\[[^\]]*\])* (?:\[data-mw-native\](?::where\(.+\))?(?:::selection)?|\[data-mw-native-drag\](?: \*)?)$/.test(
+    part,
+  );
+const isReset = (selector: string): boolean =>
+  selectorList(selector)
+    .map(spelled)
+    .every((part) => isRegions(part) && !part.includes("[data-mw-native-drag]"));
+
+/** A selector part in one spelling, whatever the formatter's. */
+const spelled = (part: string): string =>
+  part.replace(/\s+/g, " ").replace(/\( /g, "(").replace(/ \)/g, ")");
+
+/** What the grid draws for a region's own box, whose lock reaches the
+ * region and skips its contents alone (specs/native-regions.md "The
+ * locks"): a box's fill, border, shadow and outline, its marker and
+ * backdrop — but a control's own look, which a region that is one keeps. */
+const BOX_PAINT = new Set([
+  "background-color",
+  "background-image",
+  "box-shadow",
+  "border-width",
+  "outline",
+]);
+const drawsBox = (part: string, properties: string[]): boolean => {
+  if (/::(marker|backdrop)$/.test(part)) return true;
+  if (part.includes("::")) return false;
+  const control = /^(button|input|textarea|select)\b/.test(subjectOf(part));
+  return !control && properties.some((property) => BOX_PAINT.has(property));
+};
+
+/** Each rule's selector, its layer and its properties. */
+const rules = new Map<string, { layer: string | undefined; properties: string[] }>();
+for (const d of all) {
+  const rule = rules.get(d.selector) ?? { layer: d.layer, properties: [] };
+  rule.properties.push(d.property);
+  rules.set(d.selector, rule);
+}
+
+it("styles.css keeps every rule from a native region's contents", () => {
+  for (const [selector, { layer, properties }] of rules) {
+    if (selector.startsWith("@property")) continue;
+    const parts = selectorList(selector).map(spelled);
+    for (const part of parts) {
+      // The host's own, or the region's.
+      if (/^mono-wind\S*$/.test(outer(part)) || isRegions(part)) continue;
+      const mark = [NO_REGION, REGIONS].find((each) => part.includes(each));
+      if (!mark) {
+        // Keyed on an engine flag no region's contents carry.
+        expect(subjectOf(part), part).toMatch(/\[data-mw-[\w-]+/);
+        continue;
+      }
+      expect(part.includes(`:where(${mark})`), part).toBe(layer !== "theme");
+      // Its twin in the same rule, the region's half skipping, at its
+      // subject, the contents — and the region, unless the lock is on
+      // what the grid draws for the region's box.
+      const skip = drawsBox(part, properties) ? SKIPS.contents : SKIPS.region;
+      const twinOf = (first: string): string =>
+        first.replace(NO_REGION, REGIONS).replace(/(::[\w-]+)?$/, (pseudo) => skip + pseudo);
+      const pair =
+        mark === NO_REGION
+          ? parts.includes(twinOf(part))
+          : parts.some((other) => other.includes(NO_REGION) && twinOf(other) === part);
+      expect(pair, part).toBe(true);
+    }
+  }
+});
+
+/** The flags whose locks reach a region harmlessly: those a region never
+ * carries, keeping its own overflow, columns and white-space, and an
+ * interactive's, setting the pointer the region's own rules set. */
+const REGION_SAFE = /^\[data-mw-(scroll|multicol|multicol-flow|interactive|nowrap|pre)\]/;
+
+it("styles.css keeps every lock from setting what a native region's contents inherit", () => {
+  for (const [selector, { properties }] of rules) {
+    const inherited = properties.filter(
+      (property) => INHERITED.has(property) && !KEPT.has(property),
+    );
+    if (inherited.length === 0) continue;
+    for (const part of selectorList(selector).map(spelled)) {
+      if (part.includes("::") || part.includes(NO_REGION) || isRegions(part)) continue;
+      if (/^mono-wind\S*$/.test(outer(part)) || REGION_SAFE.test(subjectOf(part))) continue;
+      // A twin's region half, or a lock keyed on a flag the region carries.
+      expect(part, inherited.join()).toMatch(
+        part.includes(REGIONS) ? SKIPS.region : /:not\([^)]*\[data-mw-native\][,)]/,
+      );
+    }
+  }
+});
+
+it("styles.css keeps each subject out of `:is()`, which Chromium tries on every element", () => {
+  // A selector list instead: each part bucketed by its tag or attribute,
+  // tried on those elements alone (architecture/performance.md).
+  for (const selector of rules.keys()) {
+    for (const part of selectorList(selector).map(spelled)) {
+      // A `:where()` of `:not()`s alone keys on nothing anyway.
+      expect(subjectOf(part), part).not.toMatch(/^\*?(:is\(|:where\((?!:not\()[^()]*,)/);
+    }
+  }
+});
+
+it("styles.css restyles no host's whole subtree as a grid drag starts or ends", () => {
+  // A subject keyed on no tag, attribute, class or id: the style engines
+  // restyle every element under the host as its flag flips
+  // (architecture/performance.md).
+  // Style engines key invalidation by the attribute, whatever element
+  // carries it: any compound before the subject counts.
+  for (const selector of rules.keys()) {
+    for (const part of selectorList(selector).map(spelled)) {
+      const ancestors = part.slice(0, part.length - subjectOf(part).length);
+      if (ancestors.includes("[data-mw-dragging]")) {
+        expect(subjectOf(part), part).toMatch(/^[\w[.#]/);
+      }
+    }
+  }
+});
+
+/** CSS's inherited properties ("Inherited: yes"), with `user-select`,
+ * whose `auto` takes a parent's `none`. */
+const INHERITED = new Set(
+  (
+    "accent-color border-collapse border-spacing caption-side caret-color color color-scheme " +
+    "cursor direction empty-cells font font-family font-feature-settings font-kerning " +
+    "font-optical-sizing font-palette font-size font-size-adjust font-stretch font-style " +
+    "font-synthesis font-variant font-variation-settings font-weight hyphenate-character hyphens " +
+    "image-rendering letter-spacing line-break line-height list-style list-style-image " +
+    "list-style-position list-style-type orphans overflow-wrap paint-order pointer-events " +
+    "print-color-adjust quotes scrollbar-color tab-size text-align text-align-last " +
+    "text-decoration-skip-ink text-emphasis text-indent text-justify text-orientation " +
+    "text-rendering text-shadow text-transform text-underline-offset text-underline-position " +
+    "text-wrap text-wrap-mode text-wrap-style visibility white-space white-space-collapse widows " +
+    "word-break word-spacing writing-mode -webkit-text-fill-color -webkit-text-stroke " +
+    "user-select -webkit-user-select"
+  ).split(" "),
+);
+
+/** What a region's contents take from the host, as decided: its font
+ * and color; and a box's visibility, the engine's to read
+ * (specs/visibility.md). */
+const KEPT = new Set(["font", "font-family", "font-size", "color", "caret-color", "visibility"]);
+
+/** The locks whose value is CSS's initial one, which a region keeps. */
+const INITIAL: Record<string, string> = {
+  "text-shadow": "none",
+  "list-style-position": "outside",
+  "list-style-image": "none",
+};
+
+it("styles.css takes each inherited lock back on a native region (specs/native-regions.md)", () => {
+  const reset = new Set(
+    all.flatMap((d) => (isReset(d.selector) && !d.selector.includes("::") ? d.property : [])),
+  );
+  for (const d of all) {
+    const own = selectorList(d.selector).map(spelled).every(isRegions);
+    if (own || d.selector.includes("::") || !INHERITED.has(d.property)) continue;
+    const value = d.value.replace("!important", "").trim();
+    if (KEPT.has(d.property) || value === "inherit" || INITIAL[d.property] === value) continue;
+    expect(reset.has(d.property), `${d.property} (${d.selector})`).toBe(true);
+  }
+  // Chromium and WebKit hand a parent's highlight down.
+  const highlight = all.filter((d) => d.selector.endsWith("[data-mw-native]::selection"));
+  expect(highlight.map((d) => d.value.trim())).toEqual(["HighlightText", "Highlight"]);
+});
+
 /** The flags of a box a mixed container's flow places (render.ts). */
 const FLOW = [
   "data-mw-flow",
@@ -262,8 +463,9 @@ it("styles.css exempts from the selection lock the elements element.ts does", ()
   const lock = all.find(
     (d) => d.selector.includes("[data-mw-selection]") && d.property === "background",
   )!;
+  // The lock's own exemptions, past its twins' host conditions.
   const opening = ":where(:not(";
-  const start = lock.selector.indexOf(opening) + opening.length;
+  const start = lock.selector.indexOf(`${opening}input`) + opening.length;
   let end = start;
   for (let depth = 1; depth > 0; end++) {
     if (lock.selector[end] === "(") depth++;

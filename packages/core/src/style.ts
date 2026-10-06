@@ -73,6 +73,7 @@ import type {
   AnchorSizes,
   AreaSide,
   PositionArea,
+  GlyphProperty,
   GlyphValues,
   TextDecoration,
 } from "./types.ts";
@@ -92,9 +93,13 @@ export function readCellStyle(
   el: Element,
   rootFontSizePx: number,
   metrics?: CellMetrics,
-  { generated, markers }: BuildReads = {},
+  {
+    generated,
+    markers,
+    native = false,
+    cs = generated?.cs ?? getComputedStyle(el),
+  }: BuildReads = {},
 ): CellStyle {
-  const cs = generated?.cs ?? getComputedStyle(el);
   const fontSizePx = parseFloat(cs.fontSize) || rootFontSizePx;
   // The element whose own attributes, animations and top-layer state
   // the read takes: its pseudo-element's box has none (specs/generated-content.md).
@@ -103,7 +108,7 @@ export function readCellStyle(
   const csm = own && supportsTypedOM(own) ? own.computedStyleMap() : null;
   const classAttr = authoredClasses(el, pseudo);
   const inlineStyle = pseudo ? declaredLengths(el, pseudo, cs) : (el as HTMLElement).style;
-  warnAuthoredFontSize(el, classAttr, inlineStyle);
+  if (!native) warnAuthoredFontSize(el, classAttr, inlineStyle);
   // The glyph set decides a border's or rule's cells (its weight band),
   // so it is resolved before they are read.
   // A glyph the themed font has not got counts as unregistered, so the
@@ -124,19 +129,22 @@ export function readCellStyle(
   // (specs/multicol.md). Computed values are specified values (probed
   // — no used-value trap).
   const columnCount =
-    count && count !== "auto" ? Math.max(1, Math.floor(Number(count) || 1)) : null;
-  const columnWidthPx = widthValue && widthValue !== "auto" ? parseFloat(widthValue) : NaN;
+    !native && count && count !== "auto" ? Math.max(1, Math.floor(Number(count) || 1)) : null;
+  const columnWidthPx =
+    !native && widthValue && widthValue !== "auto" ? parseFloat(widthValue) : NaN;
   const columnWidth = Number.isFinite(columnWidthPx)
     ? Math.max(1, pxToCells(columnWidthPx, rootFontSizePx))
     : null;
+  // A region lays out as a block leaf, its own display the browser's.
+  const boxDisplay = native && rawDisplay !== "none" ? "block" : rawDisplay;
   const display: Display =
-    rawDisplay === "flex" || rawDisplay === "inline-flex"
+    boxDisplay === "flex" || boxDisplay === "inline-flex"
       ? "flex"
-      : rawDisplay === "grid" || rawDisplay === "inline-grid"
+      : boxDisplay === "grid" || boxDisplay === "inline-grid"
         ? "grid"
-        : rawDisplay === "table" || rawDisplay === "inline-table"
+        : boxDisplay === "table" || boxDisplay === "inline-table"
           ? "table"
-          : rawDisplay === "none" || isZeroClipped(el, cs, position)
+          : boxDisplay === "none" || isZeroClipped(el, cs, position)
             ? "none"
             : columnCount !== null || columnWidth !== null
               ? "multicol"
@@ -234,9 +242,10 @@ export function readCellStyle(
   const justifySelf = readAlignment(el, "justify-self", ALIGN_SELF, cs.justifySelf);
   const effects = readLayer(own, cs);
   // A pseudo-element's box never scrolls: its overflow clips
-  // (specs/generated-content.md deviation 8).
+  // (specs/generated-content.md deviation 8). A region's scrolls as the
+  // browser's.
   const read = readOverflow(cs);
-  const overflow = own ? read : { x: unscrolled(read.x), y: unscrolled(read.y) };
+  const overflow = own && !native ? read : { x: unscrolled(read.x), y: unscrolled(read.y) };
   // Table-internal boxes take none, as in CSS.
   const aspectRatio =
     tableRole === "none" || tableRole === "caption"
@@ -244,7 +253,7 @@ export function readCellStyle(
       : null;
   const style: CellStyle = {
     display,
-    lineClamp: readLineClamp(rawDisplay, cs),
+    lineClamp: native ? null : readLineClamp(rawDisplay, cs),
     tableRole,
     tableLayout,
     borderCollapse,
@@ -339,9 +348,9 @@ export function readCellStyle(
     ...readScrollbars(cs, overflow),
     ...readTextStyle(el, cs, rootFontSizePx),
     // Both readable because the companion stylesheet's typography rewrite
-    // is measuring-gated.
-    lineGap: lineGapRows(cs.lineHeight, fontSizePx),
-    tracking: trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
+    // is measuring-gated; a region's lines are native.
+    lineGap: native ? 0 : lineGapRows(cs.lineHeight, fontSizePx),
+    tracking: native ? 0 : trackingCells(cs.letterSpacing, fontSizePx, metrics?.letterSpacing ?? 0),
     ...readPaintStyle(cs),
     glyph: readGlyph(cs),
     backgroundColor: readAnimatedBackground(own, cs.backgroundColor, cs),
@@ -801,7 +810,7 @@ export function readAnchorScope(el: Element, cs: CSSStyleDeclaration): AnchorSco
  * (`popovertarget`, `commandfor`) named for its target where the
  * author names it not. */
 export function readAnchorNames(el: Element, cs: CSSStyleDeclaration): string[] {
-  const named = cs.getPropertyValue("anchor-name").trim();
+  const named = (cs.anchorName ?? "").trim();
   if (named !== "" && named !== "none") return named.split(",").map((name) => name.trim());
   const target = el.getAttribute("popovertarget") ?? el.getAttribute("commandfor");
   return target ? [IMPLICIT_ANCHOR + target] : [];
@@ -1156,7 +1165,26 @@ const TABLE_DISPLAY_FALLBACK: Record<string, string> = {
  * reads, and the markers read so far, which the counter walk shares. */
 export interface BuildReads {
   generated?: GeneratedNode;
+  /** The element's computed style, where its caller read it already. */
+  cs?: CSSStyleDeclaration;
   markers?: Map<Element, MarkerStyle | null>;
+  /** A native region's box, read as a block leaf's: its contents and
+   * their text are the browser's (specs/native-regions.md "Layout"). */
+  native?: boolean;
+}
+
+/** Whether an element's box is a native region (specs/native-regions.md
+ * "The utility"): a host holds its own grid, and a `display: contents`
+ * element no box. */
+export function isNativeRegion(el: Element, cs: CSSStyleDeclaration, display?: string): boolean {
+  if (cs.getPropertyValue("--mw-native").trim() !== "1") return false;
+  if (el.localName === "mono-wind") {
+    warnOnce(el, "mw-native on a <mono-wind> is ignored: wrap it in a region instead.");
+    return false;
+  }
+  if ((display ?? computedDisplay(el, cs)) !== "contents") return true;
+  warnOnce(el, "mw-native on a `display: contents` element is ignored: it has no box to hold.");
+  return false;
 }
 
 /** A list item's marker, read once where a build keeps `markers`. */
@@ -2112,12 +2140,22 @@ function resamples(effect: (property: string) => string): boolean {
  * an animation's values are endless. */
 const glyphSets = new Map<string, GlyphValues>();
 
+/** Each glyph property with its accessor, which reads faster than
+ * `getPropertyValue` in every engine — Firefox's twice as fast. */
+const GLYPH_ACCESSORS = GLYPH_PROPERTIES.map(
+  (property) =>
+    [
+      property,
+      property.replace(/^-/, "").replace(/-(\w)/g, (_, letter: string) => letter.toUpperCase()),
+    ] as [GlyphProperty, keyof CSSStyleDeclaration],
+);
+
 /** An element's glyph properties, written back as read, in the browser
  * that read them. A fraction form merges its glyphs, so it goes. */
 export function readGlyph(cs: CSSStyleDeclaration): GlyphValues {
   let key = "";
-  for (const property of GLYPH_PROPERTIES) {
-    let value = cs.getPropertyValue(property) || INITIAL_GLYPH[property];
+  for (const [property, accessor] of GLYPH_ACCESSORS) {
+    let value = (cs[accessor] as string | undefined) || INITIAL_GLYPH[property];
     if (value.includes("fractions")) value = withoutFractions(value);
     key += `${value}\n`;
   }

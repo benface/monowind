@@ -48,7 +48,9 @@ import type {
   Rect,
   TextDecoration,
 } from "./types.ts";
-import { altCells } from "./image.ts";
+import { altArea, cellLines, contentCells } from "./image.ts";
+import type { CellArea } from "./image.ts";
+import { surfaceText } from "./native.ts";
 import { clusterWidth, graphemes, isColorEmoji } from "./width.ts";
 
 /**
@@ -139,13 +141,14 @@ export interface RenderOptions {
   ink?: Rgba | undefined;
   /** A color the parser leaves alone, resolved where the spans inherit it. */
   readColor?: ((value: string) => Rgba | null) | undefined;
-  /** Each image's alt in its cells, a copy's render alone
-   * (specs/images.md "The light DOM"). */
+  /** Each image's alt in its cells, and each native region's text, a
+   * copy's render alone (specs/images.md "The light DOM",
+   * specs/native-regions.md "Interaction"). */
   alt?: boolean | undefined;
 }
 
 /** The cells a copy reads: the main grid's and each layer's, every
- * image's alt in its own (specs/images.md "The light DOM"). */
+ * image's alt and region's text in its own (`RenderOptions.alt`). */
 export interface CopyGrids {
   cells: string[][];
   layers: PaintedLayer[];
@@ -156,18 +159,18 @@ export function copyGrids(root: LayoutNode): CopyGrids {
   return { cells: store.grid, layers };
 }
 
-/** An image's alt cells in a copy's grids, row by row — its content
- * box, an inline image's row its line's text sits on — as its clip shows
- * them, in the grid holding them: the main one or its surface's parent's. */
-export function imageRows(grids: CopyGrids, node: LayoutNode): string[] {
-  const host = grids.layers.find((layer) => layer.picture && layer.node === node)?.parent;
+/** An image's alt or a region's text in a copy's grids, row by row
+ * (`textArea`), as its clip shows them, in the grid holding them: the
+ * main one or its surface's parent's. */
+export function textRows(grids: CopyGrids, node: LayoutNode): string[] {
+  const host = grids.layers.find((layer) => layer.surface && layer.node === node)?.parent;
   const cells = host ? host.grid : grids.cells;
-  const { x, y, columns, lines } = altCells(node);
+  const { x, y, columns, rows: height } = textArea(node);
   const clip = node.paintClip ?? { x0: -Infinity, y0: -Infinity, x1: Infinity, y1: Infinity };
   const left = Math.max(node.paintOrigin.x + x, clip.x0);
   const right = Math.min(node.paintOrigin.x + x + columns, clip.x1);
   const top = Math.max(node.paintOrigin.y + y, clip.y0);
-  const bottom = Math.min(node.paintOrigin.y + y + lines.length, clip.y1);
+  const bottom = Math.min(node.paintOrigin.y + y + height, clip.y1);
   const rows: string[] = [];
   for (let row = top; row < bottom; row++) {
     const at = cells[row - (host?.y ?? 0)] ?? [];
@@ -175,6 +178,11 @@ export function imageRows(grids: CopyGrids, node: LayoutNode): string[] {
   }
   return rows;
 }
+
+/** Where a copy's render writes an image's alt or a region's text: a
+ * flowed region's in its content box, a replaced one's as an alt. */
+const textArea = (node: LayoutNode): CellArea =>
+  node.native && !node.native.replaced ? contentCells(node) : altArea(node);
 
 /** Row-major cell segments, as the DOM adapter paints them. */
 export function renderCellSegments(root: LayoutNode, options: RenderOptions = {}): CellSegment[][] {
@@ -203,9 +211,14 @@ export interface PaintedLayer {
   /** The opacity of the groups between the root and the enclosing
    * layer's root, its own inline ancestors' included (specs/cell-model.md). */
   alpha: number;
-  /** An image's surface, of no cells (specs/images.md "Paint"): apart
-   * from the image's own layer where it is a layer root. */
-  picture: boolean;
+  /** A surface of no cells over an image's or a native region's box,
+   * holed where later ink covers it: an image's picture
+   * (specs/images.md "Paint"), apart from the image's own layer where it
+   * is a layer root, or a region's contents (specs/native-regions.md
+   * "Paint"). */
+  surface: "picture" | "region" | null;
+  /** A region's surface a top-layer backdrop covers, whole. */
+  whole: boolean;
 }
 
 /** A layer's rows of segments, with the layer they were built from and
@@ -893,7 +906,7 @@ function openLayer(
   box: Rect,
   clip: Clip | null,
   alpha: number,
-  picture = false,
+  surface: PaintedLayer["surface"] = null,
 ): Scope {
   const layer: PaintedLayer = {
     node,
@@ -908,7 +921,8 @@ function openLayer(
     clip: clip && intersect(clip, { x0: 0, y0: 0, x1: walking.width, y1: walking.height }),
     parent: walking.layer,
     alpha,
-    picture,
+    surface,
+    whole: false,
   };
   walking.layers.push(layer);
   const covers: Covers = new Map();
@@ -923,8 +937,8 @@ function openLayer(
     const { clip: shown } = layer;
     if (shown && (x1 <= shown.x0 || x0 >= shown.x1 || y1 <= shown.y0 || y0 >= shown.y1)) return;
     const width = x1 - x0;
-    // A picture's surface lays no cells: its box's are the grid's beneath.
-    const store = picture ? null : recording.lay();
+    // A surface lays no cells: its box's are the grid's beneath.
+    const store = surface ? null : recording.lay();
     Object.assign(
       layer,
       { x: x0, y: y0, width, height: y1 - y0 },
@@ -1109,8 +1123,38 @@ function painter(root: Walk, tree: LayoutNode): PaintVisitor {
       else later.push([turn, x, y, glyph, paint, cells]);
     });
   };
+  /** A picture's or a region's surface, of no cells, over its box,
+   * which the ink painted after it covers (specs/images.md "Paint",
+   * specs/native-regions.md "Paint"), its own opacity its group's, in
+   * the walk's alpha; its text in its cells for a copy's render alone. */
+  const surface = (node: LayoutNode, kind: "picture" | "region"): void => {
+    // A hidden region's visible contents still draw.
+    if (!node.style.visible && kind === "picture") return;
+    const { x, y } = node.paintOrigin;
+    if (walking.options.alt) {
+      const area = textArea(node);
+      const text = surfaceText(node);
+      const put = putOf(node);
+      cellLines(text, area.columns, area.rows).forEach((line, row) => {
+        let col = x + area.x;
+        for (const cluster of graphemes(line)) {
+          const cells = clusterWidth(cluster);
+          if (cluster !== " ") put(col, y + area.y + row, cluster, undefined, cells);
+          col += cells;
+        }
+      });
+    }
+    const box = { x, y, width: node.localRect.width, height: node.localRect.height };
+    openLayer(walking, node, box, inkClip(node), walking.alpha, kind).close();
+  };
   return {
     enter(node) {
+      // A top-layer backdrop, a box over the whole grid beneath its
+      // element's, hides each region painted before it whole
+      // (specs/native-regions.md deviation 1).
+      if (node.style.backdrop) {
+        for (const layer of walking.layers) if (layer.surface === "region") layer.whole = true;
+      }
       const inline = inlineOpacity(node);
       const opacity = node.style.opacity * inline;
       // A layer root paints into a grid of its own, its opacity on the
@@ -1130,28 +1174,8 @@ function painter(root: Walk, tree: LayoutNode): PaintVisitor {
       scopes.pop()?.close();
       walking = outers.pop()!;
     },
-    picture(node) {
-      if (!node.style.visible) return;
-      // Its alt in its cells, for a copy's render alone (RenderOptions).
-      const { x, y } = node.paintOrigin;
-      if (walking.options.alt) {
-        const alt = altCells(node);
-        const put = putOf(node);
-        alt.lines.forEach((line, row) => {
-          let col = x + alt.x;
-          for (const cluster of graphemes(line)) {
-            const cells = clusterWidth(cluster);
-            if (cluster !== " ") put(col, y + alt.y + row, cluster, undefined, cells);
-            col += cells;
-          }
-        });
-      }
-      // A surface of no cells over the box, which the ink painted after
-      // it covers (specs/images.md "Paint"); the image's own opacity is
-      // its group's, in the walk's alpha.
-      const box = { x, y, width: node.localRect.width, height: node.localRect.height };
-      openLayer(walking, node, box, inkClip(node), walking.alpha, true).close();
-    },
+    picture: (node) => surface(node, "picture"),
+    native: (node) => surface(node, "region"),
     box(node) {
       if (!lattices && (node.lattice || node.style.tableRole !== "none")) {
         resolveLattices(tree, (lattices = new Map()));

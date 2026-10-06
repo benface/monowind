@@ -94,7 +94,9 @@ flat, the pointer mapping taking the rotate about z (Deviations).
   grid it belongs to, so a modal's overlay covers a rotated sticker
   as it covers everything else — the front paint wins a cell
   outright, as always. A covered cell is see-through for the pointer,
-  and the transcript shows the covering ink.
+  and the transcript shows the covering ink. A native region, whose
+  contents the browser draws over every cell, is covered the same way,
+  clipped where later ink lies (`native-regions.md` "Paint").
 - **Animation is sampled** (cell-model.md "Animation"): `transform`,
   `translate`, `rotate`, `scale`, and `filter` are sampled transition
   properties, their computed values copied onto the box every frame

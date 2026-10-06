@@ -100,7 +100,7 @@ carry the widths.
     `data-mw-nowrap` and `data-mw-pre` (render.ts:294, 310), which
     stop the native wrap (styles.css:565-567, 574-579). `wrap="off"`
     presumably arrives the same way, through the UA's `white-space:
-pre`. Meanwhile the rows count the wrap.
+    pre`. Meanwhile the rows count the wrap.
 
 ## What "never scrolls" reaches
 
@@ -353,7 +353,7 @@ there in some engine is reported, not dropped.
 - **Stories, step 2**:
   - `LoadLayouts` gains a third host holding a plain textarea and a
     `field-sizing-content` one, each with a value that wraps: `[1, 1,
-1]`. Red: `[1, 1, 2]`.
+    1]`. Red: `[1, 1, 2]`.
   - `TextareaRows` counts layouts for a `field-sizing-content w-full`
     textarea: one on load, one per insertion, one when its container
     narrows (both textareas rewrapped). Typing grows its rows to the

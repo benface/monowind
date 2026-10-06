@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui-vue",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "@monowind/ui as Vue composables: a menu, a listbox, a select, a combobox, a dialog, a popover, a tooltip, a collapsible, an accordion on the monowind grid",
   "keywords": [
     "accessibility",
@@ -52,7 +52,7 @@
     "@zag-js/vue": "^1.44.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.4",
     "@zag-js/core": "^1.44.0",
     "happy-dom": "^20.14.5",
     "typescript": "^7.0.2",

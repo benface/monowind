@@ -25,12 +25,12 @@ const connect = (content = ""): HTMLElement => {
 /** The layout the host has pending, on a cell of 8 × 16 px, ten cells
  * wide: once the host's observers have seen what changed, the plain-text
  * read runs it in place of its frame. */
-const layOut = async (): Promise<void> => {
-  const probe = host.querySelector<HTMLElement>("[data-mw-probe]")!;
+const layOut = async (target = host): Promise<void> => {
+  const probe = target.querySelector<HTMLElement>(":scope > [data-mw-probe]")!;
   probe.getBoundingClientRect = () => new DOMRect(0, 0, 800, 16);
-  Object.defineProperty(host, "clientWidth", { value: 80, configurable: true });
+  Object.defineProperty(target, "clientWidth", { value: 80, configurable: true });
   await Promise.resolve();
-  (host as MonoWindElement).toPlainText();
+  (target as MonoWindElement).toPlainText();
 };
 
 /** A selection starting at `target`, as the browser announces it. */
@@ -248,6 +248,38 @@ describe("a layout", () => {
     expect(anchor.hasAttribute("data-mw-anchor")).toBe(true);
   });
 
+  it("marks a native region, inline where its display is, and its host; unmarks them after", async () => {
+    connect(
+      '<div data-test="block" style="--mw-native: 1">block</div>' +
+        '<p>a <span data-test="inline" style="--mw-native: 1">inline</span> b</p>',
+    );
+    // None found yet: the locks hold from the first read.
+    expect(host.hasAttribute("data-mw-no-regions")).toBe(true);
+    await layOut();
+    const block = host.querySelector<HTMLElement>('[data-test="block"]')!;
+    const inline = host.querySelector<HTMLElement>('[data-test="inline"]')!;
+    const marks = () => [
+      host.hasAttribute("data-mw-regions"),
+      host.hasAttribute("data-mw-no-regions"),
+      ...[block, inline].map((el) => el.getAttribute("data-mw-native")),
+    ];
+    expect(marks()).toEqual([true, false, "", "inline"]);
+    block.style.removeProperty("--mw-native");
+    await layOut();
+    expect(marks()).toEqual([true, false, null, "inline"]);
+    inline.style.removeProperty("--mw-native");
+    await layOut();
+    expect(marks()).toEqual([false, true, null, null]);
+  });
+
+  it("leaves a native region's overflow its own", async () => {
+    connect(
+      '<div data-test="region" style="--mw-native: 1; height: 32px; overflow: hidden"></div>',
+    );
+    await layOut();
+    expect(host.querySelector('[data-test="region"]')!.hasAttribute("data-mw-clip")).toBe(false);
+  });
+
   it("stops watching a sibling that left", async () => {
     const unobserved: Element[] = [];
     const unobserve = ResizeObserver.prototype.unobserve;
@@ -325,6 +357,491 @@ describe("an image (specs/images.md)", () => {
     img.dispatchEvent(new Event("load"));
     await layOut();
     expect(row()).toBe(3);
+  });
+});
+
+describe("a native region's content (specs/native-regions.md)", () => {
+  const CONTENT =
+    '<p data-test="inner">inner <button>press</button></p>' +
+    '<input data-test="field"><input type="checkbox">';
+
+  /** The engine's flags and variables on an element. */
+  const marks = (el: Element): string[] => [
+    ...el.getAttributeNames().filter((name) => name.startsWith("data-mw-")),
+    ...Array.from({ length: (el as HTMLElement).style.length }, (_, i) =>
+      (el as HTMLElement).style.item(i),
+    ).filter((name) => name.startsWith("--mw-")),
+  ];
+  const marksIn = (region: Element): string[] => [...region.querySelectorAll("*")].flatMap(marks);
+
+  it("keeps none of the engine's marks, a layout's before it was one included", async () => {
+    connect(`<div data-test="region">${CONTENT}</div><p data-test="outside">outside</p>`);
+    await layOut();
+    const region = host.querySelector<HTMLElement>('[data-test="region"]')!;
+    expect(marksIn(region)).toContain("data-mw-flow");
+    region.style.setProperty("--mw-native", "1");
+    await layOut();
+    expect(marksIn(region)).toEqual([]);
+    // Another layout, which walks the light DOM, leaves it be.
+    host.querySelector('[data-test="outside"]')!.textContent = "changed";
+    await layOut();
+    expect(marksIn(region)).toEqual([]);
+  });
+
+  it("is light elements of the host again where the region stops being one", async () => {
+    connect(`<div data-test="region" style="--mw-native: 1">${CONTENT}</div>`);
+    await layOut();
+    const region = host.querySelector<HTMLElement>('[data-test="region"]')!;
+    region.style.removeProperty("--mw-native");
+    await layOut();
+    // Read under the gate, its marks with it, in the same layout.
+    expect(marks(host.querySelector('[data-test="inner"]')!)).toContain("data-mw-flow");
+    expect(marks(host.querySelector("button")!)).toContain("data-mw-interactive");
+    expect(marksIn(region)).not.toContain("data-mw-measuring");
+  });
+
+  it("lays nothing out as it changes or takes input, but for a press, a change or its edge crossed", async () => {
+    connect(
+      `<div data-test="region" style="--mw-native: 1; width: 40px; height: 32px">${CONTENT}</div>` +
+        '<input data-test="outside">',
+    );
+    await layOut();
+    const frames = vi.spyOn(window, "requestAnimationFrame");
+    const field = host.querySelector('[data-test="field"]')!;
+    const inner = host.querySelector('[data-test="inner"]')!;
+    inner.textContent = "changed";
+    inner.setAttribute("title", "changed");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    field.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: inner }));
+    await Promise.resolve();
+    expect(frames).not.toHaveBeenCalled();
+    const outside = host.querySelector('[data-test="outside"]')!;
+    for (const event of [
+      new Event("change", { bubbles: true }),
+      new PointerEvent("pointerdown", { bubbles: true }),
+      new FocusEvent("focusin", { bubbles: true, relatedTarget: outside }),
+      new PointerEvent("pointerover", { bubbles: true, relatedTarget: outside }),
+    ]) {
+      frames.mockClear();
+      field.dispatchEvent(event);
+      expect(frames, event.type).toHaveBeenCalled();
+      await layOut();
+    }
+    frames.mockClear();
+    outside.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(frames).toHaveBeenCalled();
+  });
+
+  it("takes no white-space of the grid's, its contents' own as measured", async () => {
+    connect(
+      '<div style="white-space: pre"><div data-test="region" style="--mw-native: 1; width: 40px; height: 32px">text</div></div>',
+    );
+    await layOut();
+    const region = host.querySelector('[data-test="region"]')!;
+    expect(marks(region).filter((mark) => /nowrap|pre|--mw-ws/.test(mark))).toEqual([]);
+  });
+
+  it("releases what an element moved into it carries", async () => {
+    connect(
+      '<p data-test="moved">moved</p><div data-test="region" style="--mw-native: 1; width: 40px; height: 32px"></div>',
+    );
+    await layOut();
+    const moved = host.querySelector('[data-test="moved"]')!;
+    expect(marks(moved)).not.toEqual([]);
+    host.querySelector('[data-test="region"]')!.append(moved);
+    await layOut();
+    expect(marks(moved)).toEqual([]);
+  });
+
+  it("is left marked where it moves to another host", async () => {
+    connect('<div data-test="region" style="--mw-native: 1; width: 40px; height: 32px">text</div>');
+    const other = document.createElement("mono-wind");
+    document.body.append(other);
+    try {
+      await layOut();
+      await layOut(other);
+      const region = host.querySelector('[data-test="region"]')!;
+      other.append(region);
+      // The host it moved to lays out first.
+      await layOut(other);
+      await layOut();
+      expect(region.hasAttribute("data-mw-native")).toBe(true);
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("releases what a former region held where a new one around it holds it", async () => {
+    connect(
+      `<div data-test="outer"><div data-test="region" style="--mw-native: 1">${CONTENT}</div></div>`,
+    );
+    await layOut();
+    const outer = host.querySelector<HTMLElement>('[data-test="outer"]')!;
+    host.querySelector<HTMLElement>('[data-test="region"]')!.style.removeProperty("--mw-native");
+    outer.style.setProperty("--mw-native", "1");
+    await layOut();
+    expect(marksIn(outer)).toEqual([]);
+  });
+
+  it("keeps none of the engine's variables a page restyled it under", async () => {
+    connect(`<div data-test="region">${CONTENT}</div>`);
+    await layOut();
+    const region = host.querySelector<HTMLElement>('[data-test="region"]')!;
+    host.querySelector<HTMLElement>('[data-test="inner"]')!.style.color = "red";
+    region.style.setProperty("--mw-native", "1");
+    await layOut();
+    expect(marksIn(region)).toEqual([]);
+  });
+
+  it("lays nothing out as a region that is a field takes input, but for its change", async () => {
+    connect(
+      '<textarea data-test="region" style="--mw-native: 1; width: 40px; height: 32px"></textarea>',
+    );
+    await layOut();
+    await layOut();
+    const frames = vi.spyOn(window, "requestAnimationFrame");
+    const region = host.querySelector('[data-test="region"]')!;
+    region.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(frames).not.toHaveBeenCalled();
+    region.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(frames).toHaveBeenCalled();
+  });
+
+  it("leaves the scrolls inside it to the host running there", async () => {
+    connect(
+      '<div style="--mw-native: 1; width: 40px; height: 32px"><div data-test="scroller"></div></div>',
+    );
+    await layOut();
+    const scroller = host.querySelector('[data-test="scroller"]')!;
+    // As a host running in the region marks its own.
+    scroller.setAttribute("data-mw-scroll", "");
+    const frames = vi.spyOn(window, "requestAnimationFrame");
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(frames).not.toHaveBeenCalled();
+  });
+
+  it("is measured afresh where the cell changes", async () => {
+    connect(
+      '<p>a <span data-test="region" style="--mw-native: 1">text</span> b</p><p data-test="outside">x</p>',
+    );
+    await layOut();
+    const region = host.querySelector('[data-test="region"]')!;
+    const measured: string[] = [];
+    new MutationObserver((records) => {
+      for (const { oldValue } of records) if (oldValue === null) measured.push("measured");
+    }).observe(region, { attributeFilter: ["data-mw-native-measure"], attributeOldValue: true });
+    const relayOut = async (cell: DOMRect): Promise<void> => {
+      host.querySelector<HTMLElement>(":scope > [data-mw-probe]")!.getBoundingClientRect = () =>
+        cell;
+      host.querySelector('[data-test="outside"]')!.textContent += "x";
+      await Promise.resolve();
+      (host as MonoWindElement).toPlainText();
+      await Promise.resolve();
+    };
+    await relayOut(new DOMRect(0, 0, 800, 16));
+    expect(measured, "the same cell").toEqual([]);
+    await relayOut(new DOMRect(0, 0, 1000, 20));
+    expect(measured.length, "a new cell").toBeGreaterThan(0);
+  });
+
+  it("is measured afresh where it moves", async () => {
+    connect(
+      '<div data-test="region" style="--mw-native: 1">text</div><div data-test="other"></div>',
+    );
+    await layOut();
+    const region = host.querySelector('[data-test="region"]')!;
+    let measures = 0;
+    new MutationObserver((records) => (measures += records.length)).observe(region, {
+      attributeFilter: ["data-mw-native-measure"],
+    });
+    host.querySelector('[data-test="other"]')!.append(region);
+    await layOut();
+    await Promise.resolve();
+    expect(measures).toBeGreaterThan(0);
+  });
+
+  it("is measured afresh where a layout in the same dispatch takes its change", async () => {
+    connect(
+      '<div data-test="region" style="--mw-native: 1">a</div><select data-test="select"></select>',
+    );
+    await layOut();
+    const region = host.querySelector('[data-test="region"]')!;
+    let measures = 0;
+    new MutationObserver((records) => (measures += records.length)).observe(region, {
+      attributeFilter: ["data-mw-native-measure"],
+    });
+    // A page's change, then a select's focus, which lays out at once.
+    region.firstChild!.textContent = "a longer text";
+    host
+      .querySelector('[data-test="select"]')!
+      .dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    await Promise.resolve();
+    expect(measures).toBeGreaterThan(0);
+  });
+
+  it("measures its regions again together where something changed them", async () => {
+    connect(
+      '<div data-test="a" style="--mw-native: 1"><p>a</p></div><div data-test="b" style="--mw-native: 1"><p>b</p></div>',
+    );
+    await layOut();
+    const toggles: string[] = [];
+    const { setAttribute, removeAttribute } = Element.prototype;
+    vi.spyOn(Element.prototype, "setAttribute").mockImplementation(function (
+      this: Element,
+      name,
+      value,
+    ) {
+      if (name === "data-mw-native-measure") toggles.push(`${this.getAttribute("data-test")}+`);
+      setAttribute.call(this, name, value);
+    });
+    vi.spyOn(Element.prototype, "removeAttribute").mockImplementation(function (
+      this: Element,
+      name,
+    ) {
+      if (name === "data-mw-native-measure") toggles.push(`${this.getAttribute("data-test")}-`);
+      removeAttribute.call(this, name);
+    });
+    window.dispatchEvent(new Event("resize"));
+    await layOut();
+    // Each width a round, both regions in it.
+    expect(toggles.join(" ")).toMatch(/^(a\+ b\+ a- b- ?)+$/);
+  });
+
+  it("lays out as it changes where it sizes the region, not where its author does", async () => {
+    connect(
+      `<div style="--mw-native: 1"><p data-test="auto">auto</p></div>` +
+        `<div style="--mw-native: 1; width: 40px; height: 32px"><p data-test="sized">sized</p></div>`,
+    );
+    await layOut();
+    const frames = vi.spyOn(window, "requestAnimationFrame");
+    host.querySelector('[data-test="sized"]')!.textContent = "changed";
+    await Promise.resolve();
+    expect(frames).not.toHaveBeenCalled();
+    host.querySelector('[data-test="auto"]')!.textContent = "changed";
+    await Promise.resolve();
+    expect(frames).toHaveBeenCalled();
+  });
+});
+
+describe('a host inside another (specs/native-regions.md "Nesting")', () => {
+  const REGION = '<div data-test="region" style="--mw-native: 1; width: 80px; height: 64px">';
+  const INNER = '<mono-wind data-test="inner"><p data-test="text">inner text</p></mono-wind>';
+  const inner = () => host.querySelector<HTMLElement>('[data-test="inner"]')!;
+  const unsupported = (warn: { mock: { calls: unknown[][] } }) =>
+    warn.mock.calls.filter(([message]) => String(message).includes("is unsupported")).length;
+  /** The hosts laid out from here on, by their test hooks. */
+  const layoutsOf = (hosts: Element[]): Set<string> => {
+    const laidOut = new Set<string>();
+    const layouts = new MutationObserver((records) => {
+      for (const { target } of records) {
+        laidOut.add((target as Element).getAttribute("data-test") ?? "outer");
+      }
+    });
+    for (const each of hosts) layouts.observe(each, { attributeFilter: ["measuring"] });
+    return laidOut;
+  };
+
+  it("runs in one of the outer host's regions, as the outer host's marks stand", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`${REGION}${INNER}</div>`);
+    // Nested until the outer host's first layout marks its region.
+    expect(inner().hasAttribute("data-mw-nested")).toBe(true);
+    await layOut();
+    expect(inner().hasAttribute("data-mw-nested")).toBe(false);
+    await layOut(inner());
+    expect((inner() as MonoWindElement).toPlainText()).toContain("inner text");
+    expect(inner().hasAttribute("data-mw-ready")).toBe(true);
+    expect((host as MonoWindElement).toPlainText()).not.toContain("inner text");
+    expect(unsupported(warn)).toBe(0);
+  });
+
+  it("stays off in no region, warned of once the outer host lays out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`<div>${INNER}</div>`);
+    expect(inner().hasAttribute("data-mw-nested")).toBe(true);
+    expect(unsupported(warn)).toBe(0);
+    await layOut();
+    expect(unsupported(warn)).toBe(1);
+    expect((host as MonoWindElement).toPlainText()).toContain("inner text");
+    host.querySelector('[data-test="text"]')!.textContent = "changed";
+    await layOut();
+    expect(unsupported(warn)).toBe(1);
+    expect(inner().hasAttribute("data-mw-ready")).toBe(false);
+  });
+
+  it("turns off where its region stops being one, what it wrote taken back, and on again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`${REGION}${INNER}</div>`);
+    await layOut();
+    await layOut(inner());
+    const region = host.querySelector<HTMLElement>('[data-test="region"]')!;
+    inner().setAttribute("focus", "arrows");
+    region.style.removeProperty("--mw-native");
+    await layOut();
+    const grid = inner().shadowRoot!.getElementById("grid")!;
+    expect(inner().hasAttribute("data-mw-nested")).toBe(true);
+    expect(
+      inner()
+        .getAttributeNames()
+        .filter((name) => name.startsWith("data-mw-")),
+    ).toEqual(["data-mw-nested"]);
+    expect(inner().style.getPropertyValue("--mw-cw")).toBe("");
+    // The keywords it reflected taken back too, its author's kept.
+    expect(["select", "focus"].map((name) => inner().getAttribute(name))).toEqual([null, "arrows"]);
+    expect(inner().querySelector("[data-mw-probe]")).toBeNull();
+    expect(grid.textContent).toBe("");
+    // Its contents the outer host's now.
+    expect((host as MonoWindElement).toPlainText()).toContain("inner text");
+    region.style.setProperty("--mw-native", "1");
+    await layOut();
+    expect(inner().hasAttribute("data-mw-nested")).toBe(false);
+    await layOut(inner());
+    expect((inner() as MonoWindElement).toPlainText()).toContain("inner text");
+    expect(grid.textContent).toContain("inner text");
+    expect(["select", "focus"].map((name) => inner().getAttribute(name))).toEqual([
+      "grid",
+      "arrows",
+    ]);
+  });
+
+  it("turns off where it moves out of the region, what it wrote taken back", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`${REGION}${INNER}</div><div data-test="plain"></div>`);
+    await layOut();
+    await layOut(inner());
+    host.querySelector('[data-test="plain"]')!.append(inner());
+    expect(
+      inner()
+        .getAttributeNames()
+        .filter((name) => name.startsWith("data-mw-")),
+    ).toEqual(["data-mw-nested"]);
+    expect(inner().querySelector("[data-mw-probe]")).toBeNull();
+    expect(inner().shadowRoot!.getElementById("grid")!.textContent).toBe("");
+  });
+
+  it("turns off where it moves out of the region, its children just replaced", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`${REGION}${INNER}</div><div data-test="plain"></div>`);
+    await layOut();
+    await layOut(inner());
+    // Its probe out until its next layout.
+    inner().replaceChildren(Object.assign(document.createElement("p"), { textContent: "new" }));
+    host.querySelector('[data-test="plain"]')!.append(inner());
+    expect(
+      inner()
+        .getAttributeNames()
+        .filter((name) => name.startsWith("data-mw-")),
+    ).toEqual(["data-mw-nested"]);
+    expect(inner().shadowRoot!.getElementById("grid")!.textContent).toBe("");
+  });
+
+  it("checks a keyword its author set while it was off, as it starts", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`<div data-test="region" style="width: 80px; height: 64px">${INNER}</div>`);
+    await layOut();
+    inner().setAttribute("select", "bogus");
+    host.querySelector<HTMLElement>('[data-test="region"]')!.style.setProperty("--mw-native", "1");
+    await layOut();
+    expect(inner().hasAttribute("data-mw-nested")).toBe(false);
+    expect(inner().getAttribute("select")).toBe("grid");
+    expect(warn.mock.calls.some(([message]) => String(message).includes('select="bogus"'))).toBe(
+      true,
+    );
+  });
+
+  it("starts a host in a region of a host turning off, the outer host's region now", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(
+      `${REGION}<mono-wind data-test="inner">` +
+        '<div data-test="inner-region" style="--mw-native: 1; width: 40px; height: 32px">' +
+        '<mono-wind data-test="deepest"><p>deep</p></mono-wind></div>' +
+        "</mono-wind></div>",
+    );
+    const deepest = () => host.querySelector<HTMLElement>('[data-test="deepest"]')!;
+    await layOut();
+    await layOut(inner());
+    await layOut(deepest());
+    host.querySelector<HTMLElement>('[data-test="region"]')!.style.removeProperty("--mw-native");
+    await layOut();
+    expect(inner().hasAttribute("data-mw-nested")).toBe(true);
+    expect(host.querySelector('[data-test="inner-region"]')!.hasAttribute("data-mw-native")).toBe(
+      true,
+    );
+    expect(deepest().hasAttribute("data-mw-nested")).toBe(false);
+    expect(deepest().querySelector("[data-mw-probe]"), "running").not.toBeNull();
+    expect(unsupported(warn), "the inner host's warning alone").toBe(1);
+  });
+
+  it("hands its regions to the outer host as it turns off", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(
+      `${REGION}<mono-wind data-test="inner">` +
+        '<div data-test="inner-region" style="--mw-native: 1; width: 40px; height: 32px"><p>inner text</p></div>' +
+        "</mono-wind></div>",
+    );
+    await layOut();
+    await layOut(inner());
+    const innerRegion = host.querySelector('[data-test="inner-region"]')!;
+    expect(innerRegion.hasAttribute("data-mw-native")).toBe(true);
+    host.querySelector<HTMLElement>('[data-test="region"]')!.style.removeProperty("--mw-native");
+    await layOut();
+    expect(inner().hasAttribute("data-mw-nested")).toBe(true);
+    expect(innerRegion.hasAttribute("data-mw-native"), "the outer host's region now").toBe(true);
+  });
+
+  it("takes no mw-native of its own, warned of, and stays off as plain content", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(
+      '<mono-wind data-test="inner" style="--mw-native: 1; width: 80px; height: 64px"><p>inner text</p></mono-wind>',
+    );
+    await layOut();
+    expect(inner().hasAttribute("data-mw-native")).toBe(false);
+    expect(inner().hasAttribute("data-mw-nested")).toBe(true);
+    expect((host as MonoWindElement).toPlainText()).toContain("inner text");
+    expect(warn.mock.calls.some(([message]) => String(message).includes("wrap it"))).toBe(true);
+  });
+
+  it("stops sampling its animations as it turns off", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    connect(`${REGION}${INNER}</div>`);
+    await layOut();
+    const text = host.querySelector('[data-test="text"]')!;
+    const fade = {
+      animationName: "fade",
+      playState: "running",
+      effect: { target: text, pseudoElement: null, getKeyframes: () => [{ opacity: "0.5" }] },
+    } as unknown as Animation;
+    inner().getAnimations = () => [fade];
+    await layOut(inner());
+    host.querySelector<HTMLElement>('[data-test="region"]')!.style.removeProperty("--mw-native");
+    await layOut();
+    const frames = vi.spyOn(window, "requestAnimationFrame");
+    await new Promise((done) => setTimeout(done, 120));
+    expect(frames.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it("is left its own writes and records by the outer host", async () => {
+    connect(`<div style="--mw-native: 1">${INNER}</div><p data-test="outside">outside</p>`);
+    await layOut();
+    await layOut(inner());
+    const text = host.querySelector('[data-test="text"]')!;
+    const written = text.getAttributeNames().filter((name) => name.startsWith("data-mw-"));
+    expect(written).not.toEqual([]);
+    host.querySelector('[data-test="outside"]')!.textContent = "changed";
+    await layOut();
+    expect(text.getAttributeNames().filter((name) => name.startsWith("data-mw-"))).toEqual(written);
+    // A change inside it lays out the inner host alone, though the
+    // outer one measures the region.
+    const laidOut = layoutsOf([host, inner()]);
+    text.textContent = "changed";
+    await Promise.resolve();
+    for (const each of [host, inner()]) (each as MonoWindElement).toPlainText();
+    // Nor does the inner host's layout, its marks on itself included.
+    await Promise.resolve();
+    (host as MonoWindElement).toPlainText();
+    await Promise.resolve();
+    expect([...laidOut]).toEqual(["inner"]);
   });
 });
 

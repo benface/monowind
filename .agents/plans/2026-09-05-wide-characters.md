@@ -80,7 +80,7 @@ the touch-selection fix already on the tree.
   only the rows whose segments changed; `cellOffset(target, col, row)`
   from the kept cell strings replaces `#gridOffsetAt`.
 - `glyph-box.ts` (DOM): `glyphBox(cluster, font, cellWidth,
-cellHeight)` → `{ scale } | null`, canvas-measured, cached per font
+  cellHeight)` → `{ scale } | null`, canvas-measured, cached per font
   string; no canvas (tests) → never boxed. Tolerance 0.01 cell; scale
   = cells × cw ÷ advance, capped by the ink height and width.
 - element.ts pins `#grid`'s line-height to the measured cell height.

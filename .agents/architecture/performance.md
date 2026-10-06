@@ -1326,3 +1326,101 @@ reuses. Against the images tree before it, every page open at once and
 driven in alternation, main-thread CPU a relayout: prose 59.8 ms
 against 60.1 and 59.0 (eight rounds), boxes 30.2 and 30.5 against 30.7
 and 30.4 (sixteen); loads level within their rounds' spread.
+
+### Native regions (2026-10-03)
+
+The locks that could reach a region's contents come as twin selectors
+keyed on the host's region marks (specs/native-regions.md "The
+locks"). Scoping them instead — `@scope (mono-wind) to
+([data-mw-native])` — was measured first (2026-10-02): every scoped
+rule made style matching dearer on every page, regions or none, prose
+55 → 81 ms of style and 195 → 225 ms to load in Chromium, WebKit about
+twice that in a micro-probe. The twins cost a page with no region one
+attribute test a lock.
+
+`754e3ad`'s bundle against the working tree's: rounds of five loads
+alternated, one sitting (Chromium 153 headless), round medians (the
+native page, new, in two):
+
+| page (300)                 | 754e3ad, ms   | now, ms       |
+| -------------------------- | ------------- | ------------- |
+| boxes                      | 181, 185, 182 | 181, 184, 186 |
+| prose                      | 192, 193, 191 | 200, 201, 198 |
+| positioned                 | 172, 170, 172 | 177, 173, 174 |
+| native, every one measured | —             | 470, 463      |
+
+The browser's layout is level on each. Prose's 7 ms are its style
+recalc, 52.9 and 53.3 ms at `754e3ad` and 56.5 and 55.8 now in two more
+rounds — the
+twins' attribute tests, as measured when they were chosen — and the
+larger bundle: 642.5 KB (194.6 KB gzipped), 18.6 KB (3.5 KB) more.
+The native page (`pnpm bench --shape native`) is the baseline for
+later work: 300 regions, each measured natively — the sized half for
+its automatic minimum width as a flex item, the rest for their width
+and height — 450 forced layouts on the first, 178 ms of the browser's
+layout.
+
+Retaken after the review's fixes and cuts (2026-10-04), alternated
+rounds in one sitting: loads level on boxes (`754e3ad` 185, 182, 184
+ms; now 190, 183, 181) and positioned (168, 180, 176; now 175, 174,
+175); prose +2.4% (192, 194, 197; now 197, 195, 205), its style recalc
++2.2 ms, layout level. A prose relayout (a text change, the layout it
+asks for): 36.6 ms against 35.8 at `754e3ad`, its style recalc 11.5
+against 10.9 ms; a build of the same tree without the twins' region
+halves recalcs in 11.0 — the twins are the cost, as measured when
+they were chosen.
+
+### A performance pass (2026-10-04)
+
+Chromium's selector stats (the `disabled-by-default-blink.debug`
+trace) and a profile of relayouts, against `754e3ad`:
+
+- A subject in `:is()` — `:is(button, input, select, textarea)` — is
+  tried on every element, bucketed by nothing: five control rules, and
+  their region halves, cost as much as universal ones on a page with no
+  control. Split into selector lists, each tried on its own tag's or
+  attribute's elements (a cascade test keeps `:is()` out of subjects).
+  This took back prose's style regression.
+- The shadow's background-gap rule keyed on `:host([data-mw-bgpad])`,
+  which the ancestor filter cannot see: tried on every grid span at
+  every restyle, matching none on most fonts. Keyed on `#viewport`, in
+  the shadow, it is rejected at once.
+- The per-element glyph properties and `anchor-name` read through
+  accessors instead of `getPropertyValue`: 25% faster in Chromium,
+  twice in Firefox, per read.
+- The native regions collected as the tree builds
+  (`LayoutNode.regions`), not walked for every layout.
+- A cleared measure keeps its width: a resize, a font, a stylesheet or a
+  cell change measures every region again together as the next layout
+  reads, one forced layout a round instead of one a region — a relayout
+  of the native page after a resize, 105 ms down to 43.
+- Kept: the twins' region halves, fast-rejected by the ancestor filter
+  yet tried on every element; merging rules whose control subjects are
+  narrow into one skipping selector cost a control-heavy page 3% of a
+  restyle in Chromium.
+
+The result, five rounds alternated (Chromium 153), on its own pages at
+1280×720 — a text change forced to lay out, the median of 25, style
+counted over the change's frames: a relayout of 300 paragraphs, each
+with a bold, an italic and a link, 49.0 ms against 50.0 at `754e3ad`
+(style 28.8 against 29.5), 300 bordered boxes 72.6
+against 72.9, a page of 150 fields 98.9 against 98.6; loads level on
+boxes and prose, positioned within 1%; Firefox and WebKit relayouts
+level.
+
+Found in the final review (2026-10-06): a region's drag flag takes
+its own name (`data-mw-native-drag`). Blink keys a rule's invalidation
+by its attribute, wherever it flips, so the region rule's
+`[data-mw-dragging] *` restyled the host's whole subtree as the host's
+own flag flipped at each grid drag's start and end; a cascade test
+keeps the host's flag out of such rules.
+
+Retaken then, against `754e3ad` (Chromium 153, alternated rounds,
+medians): loads level on boxes (185, 190 and 188 ms against 189, 195
+and 184) and positioned (187, 184 and 185 against 181, 189 and 187),
+prose 2% behind (200, 204 and 203 against 196, 199 and 202) with its
+style recalc and layout level; the native page 415 to 424 ms to
+interactive, against 463 and 470 before the reviews. Relayouts level
+or faster: prose 54.0 ms against 54.5, boxes 80.2 against 79.6, the
+fields 104.2 against 106.4, each one's style recalc level or below.
+The bundle is 645.6 KB, 21.6 KB more.

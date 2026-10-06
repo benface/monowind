@@ -871,3 +871,12 @@ export function textWith(root: Node, needle: string): Text {
   }
   throw new Error(`no text node holds "${needle}"`);
 }
+
+/** A selection from the start of `from` to the end of `to`, in `root`. */
+export function select(root: Node, from: string, to: string): void {
+  const start = textWith(root, from);
+  const end = textWith(root, to);
+  document
+    .getSelection()!
+    .setBaseAndExtent(start, start.data.indexOf(from), end, end.data.indexOf(to) + to.length);
+}

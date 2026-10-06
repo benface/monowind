@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  altLines,
+  altText,
+  cellLines,
   pictureGrid,
   placePicture,
   readImageColor,
@@ -320,26 +321,39 @@ describe("the color", () => {
 
 describe("the alt in the image's cells", () => {
   it("wraps at words from the top, a line a row", () => {
-    expect(altLines("A sunset over the hills", 10, 3)).toEqual(["A sunset", "over the", "hills"]);
+    expect(cellLines(altText("A sunset over the hills"), 10, 3)).toEqual([
+      "A sunset",
+      "over the",
+      "hills",
+    ]);
   });
 
   it("cuts at the image's last cell", () => {
-    expect(altLines("one two three four", 7, 2)).toEqual(["one two", "three"]);
+    expect(cellLines(altText("one two three four"), 7, 2)).toEqual(["one two", "three"]);
   });
 
   it("breaks a word longer than the image", () => {
-    expect(altLines("unbreakable", 4, 2)).toEqual(["unbr", "eaka"]);
+    expect(cellLines(altText("unbreakable"), 4, 2)).toEqual(["unbr", "eaka"]);
   });
 
   it("is blank where there is none", () => {
-    expect(altLines("", 3, 2)).toEqual(["", ""]);
+    expect(cellLines(altText(""), 3, 2)).toEqual(["", ""]);
+  });
+
+  it("keeps a text's blank lines and indents, as a preformatted one holds them", () => {
+    expect(cellLines("a\n   \n\nb", 5, 5)).toEqual(["a", "", "", "b", ""]);
+    expect(cellLines("def f():\n    return 1", 12, 2)).toEqual(["def f():", "    return 1"]);
   });
 
   it("collapses its white space, as rendered text", () => {
-    expect(altLines("a\n\nb   c", 5, 2)).toEqual(["a b c", ""]);
+    expect(cellLines(altText("a\n\nb   c"), 5, 2)).toEqual(["a b c", ""]);
   });
 
   it("wraps by cells, a wide character two", () => {
-    expect(altLines("日本語", 4, 2)).toEqual(["日本", "語"]);
+    expect(cellLines(altText("日本語"), 4, 2)).toEqual(["日本", "語"]);
+  });
+
+  it("keeps a text's own lines, each wrapped, a blank one a row", () => {
+    expect(cellLines("one two\n\nthree", 5, 5)).toEqual(["one", "two", "", "three", ""]);
   });
 });

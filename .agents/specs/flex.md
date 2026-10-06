@@ -151,7 +151,7 @@ for `align-self` and `justify-self`).
    (css-flexbox §9.4 step 8): each sits where its first text row meets
    the group's deepest (a box drawing no line by its last row), its
    margins counted, and the group rides the line's cross-start. `last
-baseline` lines up last text rows at the line's end the same way.
+   baseline` lines up last text rows at the line's end the same way.
    Under `wrap-reverse` the cross axis runs backwards: `flex-start` and
    `flex-end` swap, and a baseline group's ends with them, `start` and
    `end` (the `place-*` utilities) keeping the writing mode's, and an item

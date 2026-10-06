@@ -33,7 +33,8 @@ truth.
   it as it places it — before the anchors inside it are read: a
   scroller inside a popover, a menu, or a select's content is a
   container like any other, and the grid and the boxes anchored in it
-  follow its scroll.
+  follow its scroll. A native region is none of the engine's: its own
+  overflow scrolls natively (`native-regions.md` "Interaction").
 - **The browser owns scroll physics; the engine mirrors on the grid.**
   Authored `overflow(-x|-y): auto | scroll` stays LIVE on the light
   element (not locked to `clip` as `clip`/`hidden` are), and so does a
@@ -113,7 +114,7 @@ truth.
   cannot consume goes to the next scrollable ancestor.
 - **TUI scrollbars, engine-drawn.** Native scrollbars are hidden by
   an engine-owned rule on scroll containers (`scrollbar-width: none
-!important` plus the `::-webkit-scrollbar { display: none }`
+  !important` plus the `::-webkit-scrollbar { display: none }`
   fallback). Bars come in two forms, matching CSS's own semantics
   (settled during implementation — CSS COERCES the untouched axis of
   any scroll container to `auto`, so reserving for `auto` would eat
@@ -195,7 +196,7 @@ truth.
   makes an overlay-style bar. Read hardening,
   settled during implementation: environments with forced overlay
   scrollbars (headless Firefox among them) compute `scrollbar-width:
-none` on EVERY element — a one-time pristine-probe detects that and
+  none` on EVERY element — a one-time pristine-probe detects that and
   the engine then ignores the property (bars stay on). Where reads
   are trustworthy, the authored value is cached from the first clean
   layout, because Firefox never re-resolves the computed value once
@@ -371,7 +372,7 @@ none` on EVERY element — a one-time pristine-probe detects that and
   (`scroll-snap-align` on descendants), and the scrolled content has
   no per-row elements to carry them (text rows are not boxes at all).
   The engine's `scrollend` snap (`scrollTo` with `behavior:
-"instant"` to the cell multiple) is exact and simpler.
+  "instant"` to the cell multiple) is exact and simpler.
 - **`position: sticky`**: built on this machinery — `sticky.md`: a
   sticky box's shift is computed from the cell-quantized offset at every
   paint and written to the light DOM in the same frame.

@@ -39,13 +39,15 @@ arrow-key focus as an opt-in on top of Tab.
   `a[href]`, `button`, form controls, `summary`, `contenteditable`, and
   authored `tabindex` alike, and is `-1` for everything else — minus
   `disabled` and `inert` ones, hidden ones (no cells, or `visibility:
-hidden`, visibility.md), and the focused
+  hidden`, visibility.md), and the focused
   element itself. Same set Tab visits; the engine invents no
-  focusability. A box's rect is its painted border box; an inline
-  element has one rect per line it covers — the span of its characters'
-  cells there, padding cells included — so a wrapped link is reachable
-  from each of its lines, and the focused element's own extent is the
-  union of its rects.
+  focusability. A native region's contents are none: the layout does
+  not know them, and the arrows inside one are the contents' own
+  (`native-regions.md` "Interaction"). A box's rect is its painted
+  border box; an inline element has one rect per line it covers — the
+  span of its characters' cells there, padding cells included — so a
+  wrapped link is reachable from each of its lines, and the focused
+  element's own extent is the union of its rects.
 - **Scrolled-away candidates count.** Rects are painted cells with
   every ancestor's scroll offset applied, as hit-testing does, and a
   candidate scrolled out of its container's box keeps those shifted
@@ -75,8 +77,8 @@ hidden`, visibility.md), and the focused
   is the surprise here. Any modifier (Shift, Alt, Ctrl, Meta) makes an
   arrow native — Shift+Arrow is selection.
 - **The target is revealed.** Focus moves with `focus({ preventScroll:
-true })` followed by `scrollIntoView({ block: "nearest", inline:
-"nearest" })`, so a scroll container (native scrolling, mirrored on
+  true })` followed by `scrollIntoView({ block: "nearest", inline:
+  "nearest" })`, so a scroll container (native scrolling, mirrored on
   the grid — specs/scrolling.md) and the page bring the element into
   view the way a terminal keeps its cursor on screen, clear of the
   container's border, at once whatever its `scroll-behavior`

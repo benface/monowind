@@ -31,7 +31,7 @@ tree/serialization work testable in Node and ship value on their own
   `inlineIndex` in lockstep — the two new arrays go through the same
   push/pop, or the map is wrong by exactly the dropped characters.
 - Stored compactly on the node: `LayoutNode.charSource?: { index:
-number; node: Text; offset: number; length: number }[]` — one run per
+  number; node: Text; offset: number; length: number }[]` — one run per
   maximal stretch where character `index + k` maps to `offset + k` in
   the same node (a collapsed run or a marker ends a stretch), built
   from the per-character arrays at the end of the leaf build. Per-
@@ -111,8 +111,8 @@ number; node: Text; offset: number; length: number }[]` — one run per
 ### 3. Lock lift + gesture plumbing
 
 - Shadow template (element.ts): after the `:host([select="grid"])
-slot` rule add `:host([select="grid"][data-mw-semantic-selection])
-slot { user-select: text; -webkit-user-select: text; }` (higher
+  slot` rule add `:host([select="grid"][data-mw-semantic-selection])
+  slot { user-select: text; -webkit-user-select: text; }` (higher
   specificity, no `!important`).
 - `document` `selectionchange` listener (added on connect, removed on
   disconnect; returns at once unless the host carries
@@ -127,7 +127,7 @@ slot { user-select: text; -webkit-user-select: text; }` (higher
   `#onPointerDown`, before its touch early-return — the mouse/pen guard
   for `mousedown`.
 - Leaf hook: `LeafRegistration.selectionTarget?: (el: Element) => Node
-| null` (leaf.ts, additive); `@monowind/ascii` returns its `#mirror`.
+  | null` (leaf.ts, additive); `@monowind/ascii` returns its `#mirror`.
   `leaf-renderers.md` gains the bullet; the README's leaf section
   mentions it.
 
@@ -151,12 +151,12 @@ slot { user-select: text; -webkit-user-select: text; }` (higher
   `hitStack(this.#lastLayout, col, row)`: innermost entry with `text`
   and no in-flow children. None → `removeAllRanges()`, done.
 - Range for a leaf: `selectNodeContents(selectionTarget?.(source) ??
-source)`. Apply: set the host attribute, read one computed style to
+  source)`. Apply: set the host attribute, read one computed style to
   flush, then `setBaseAndExtent`. Shift with an existing `"light"` /
   `"leaf-shadow"` selection: keep its anchor, focus at the far
   boundary; anything else behaves as without Shift.
 - Gesture state `#semanticGesture: { unit: "word" | "paragraph";
-anchor: { start: Point; end: Point } } | null`, set on `mousedown`,
+  anchor: { start: Point; end: Point } } | null`, set on `mousedown`,
   cleared at the top of `#onPointerUp` (before its thumb-drag and
   press early-returns). `#onPointerMove`, after the touch guard and
   before its existing work: when set and the primary button is down,
@@ -186,7 +186,7 @@ anchor: { start: Point; end: Point } } | null`, set on `mousedown`,
   containing `index`. Ends mapped through `positionOf`; an end
   with no position → the leaf's paragraph range instead.
 - `mousedown` with `detail === 2` runs the phase-4 gesture with `unit:
-"word"`; extension derives the word under the pointer's cell each
+  "word"`; extension derives the word under the pointer's cell each
   move (no character → leave the selection).
 - Tests: `selection.test.ts` — `wordAt` on plain words, punctuation
   runs, blanks, a word adjacent to a marker, a word spanning an inline
@@ -198,7 +198,7 @@ anchor: { start: Point; end: Point } } | null`, set on `mousedown`,
 ### 6. Stories, docs, release
 
 - `apps/storybook/stories/selection.stories.ts` (already `Test /
-Selection`, hidden): a `Semantic` story with the spec's fixture (flex
+  Selection`, hidden): a `Semantic` story with the spec's fixture (flex
   row: a column of two `<p>`s beside a third; a `<mono-ascii>`; a
   trailing `<p>`) and the spec's play sequence. Gestures are synthetic
   `mousedown`s dispatched on `#grid` inside the shadow with

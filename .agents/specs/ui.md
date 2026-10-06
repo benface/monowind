@@ -232,7 +232,7 @@ the engine places and layers the parts, Zag runs them.
   `position-area` mapped from Zag's placement (`bottom-start` is
   `bottom span-right`, `bottom-end` `bottom span-left`, `right-start`
   `right span-bottom`, and so on), and `position-try-fallbacks:
-flip-block, flip-inline, flip-block flip-inline`; the gutter
+  flip-block, flip-inline, flip-block flip-inline`; the gutter
   (`offset.mainAxis` over it, as Zag reads them) and the shift along
   the anchor (`offset.crossAxis`) are margins in cells on the anchor's
   side and the aligned edge's, which the engine mirrors with a flip
@@ -422,7 +422,7 @@ to, and additively.
 - **Framework components over the functions**: each of
   `@monowind/ui-react`, `-vue`, `-svelte` exports from its one entry,
   beside its functions and tree-shaken like them (`sideEffects:
-false`), the menu, dialog, popover and tooltip with Ark UI's
+  false`), the menu, dialog, popover and tooltip with Ark UI's
   anatomy — `Root`, `Trigger`, `Positioner`, `Content`, and per
   component `Item`, `ItemGroup`, `ItemGroupLabel`, `Separator`,
   `TriggerItem`; `Title`, `Description`, `CloseTrigger`; the popover's

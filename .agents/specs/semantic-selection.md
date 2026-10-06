@@ -108,15 +108,18 @@ selects a word or a paragraph.
   separated by `\t` and rows by `\n`, `<br>` is `\n`, and a leaf's
   text is its layout text (`LayoutNode.text`, inline-box and padding
   markers dropped), an image's its alt — in grid mode its content
-  box's cells, the alt in them (images.md "The light DOM").
+  box's cells, the alt in them (images.md "The light DOM") — and a
+  native region's the text it holds as the page renders it, in grid
+  mode in its cells too (`native-regions.md` "Interaction").
   Then `preventDefault()`. A grid selection (inside the shadow
   `<pre>`) is left to the browser, which already copies it row by row
-  — but one spanning a picture's cells, which the engine copies row by
-  row from the same render, the alt in them. Custom leaves copy their
-  `text` — the art for `<mono-ascii>` — so a copy never depends on how
-  an engine serializes a shadow host. A selection reaching into the
-  host (a select-all) copies the host's part as the engine writes it,
-  the page's text around it.
+  — but one spanning a picture's or a native region's cells, which the
+  engine copies row by row from the same render, the alt or the text in
+  them. A selection inside one native region is the browser's. Custom
+  leaves copy their `text` — the art for `<mono-ascii>` — so a copy
+  never depends on how an engine serializes a shadow host. A selection
+  reaching into the host (a select-all) copies the host's part as the
+  engine writes it, the page's text around it.
 - **Click counting comes from `mousedown`.** `event.detail` carries the
   click count on `mousedown`/`click` (PointerEvent's `detail` is 0), so
   the engine listens for `mousedown` on the host (grid mode only, and
@@ -138,7 +141,7 @@ selects a word or a paragraph.
   Mouse and pen only: a `mousedown` counts only when the most recent
   primary `pointerdown` was mouse or pen. _Verified_ (Chromium,
   WebKit): a tap runs `pointerdown(touch) → pointerup(touch) →
-mousedown(detail 1, no pointerType) → mouseup → click`, so the
+  mousedown(detail 1, no pointerType) → mouseup → click`, so the
   compatibility `mousedown` is recognized by the touch `pointerdown`
   before it; a touch otherwise never reaches the pointer handlers
   (specs/scrolling.md "Touch panning"), and long-press selection stays
@@ -264,40 +267,38 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   paragraph range — the leaf as a whole is the smallest selectable
   unit there. Extension and Shift use the same anchor/focus rules as
   paragraphs, at segment boundaries.
-- **Copy serialization.** On `copy` (both modes; the listener is on
-  the document, as a select-all's copy targets the body, and leaves one
-  already written alone): the
-  selection's first range; if both boundary points are inside the
-  host's light DOM or a leaf's shadow, walk the leaves of the last
-  layout in tree order (out-of-flow descendants after their parent's
-  text; table cells are leaves like any other), take each one the
-  range intersects — fully (`node.text`, minus the final `\n` a
+- **Copy serialization.** On `copy` (both modes; the listener is on the
+  document, as a select-all's copy targets the body, and leaves one
+  already written alone): the selection's first range; if both boundary
+  points are inside the host's light DOM or a leaf's shadow, walk the
+  leaves of the last layout in tree order (out-of-flow descendants after
+  their parent's text; table cells are leaves like any other), take each
+  one the range intersects — fully (`node.text`, minus the final `\n` a
   trailing `<br>` leaves, which the wrap layer drops too) or partially
   (the slice between the mapped boundary offsets; a point inside an
   inline box's subtree maps to the box's marker in the parent, and the
   marker is replaced by the box's own serialization; a custom leaf is
-  all-or-nothing) — and assemble them with the `innerText` required
-  line breaks (2 for a `<p>`, 1 for any other block-level box, per
+  all-or-nothing) — and assemble them with the `innerText` required line
+  breaks (2 for a `<p>`, 1 for any other block-level box, per
   `style.display` and the source tag, none for an anonymous run or a
-  hidden box, visibility.md; `\t` after each visible cell of a table
-  row but the last; runs of required breaks collapse to the maximum,
-  none at the ends), a list item's shown marker before its first text
-  where the range holds that text's first line whole (lists.md
-  "Selection, copy and accessibility"), set `text/plain`,
-  `preventDefault()`. A range reaching into the host from the page, in
-  its composed points (a select-all's own range ends inside the host),
-  or holding its grid's viewport whole (Chromium's select-all from
-  inside the grid) writes the host's part — this serialization over
-  the range clipped to the host's edges (`hostPart`), or, where grid
-  mode takes the host whole, its whole grid's rows, every layer
-  composited, from a copy's render — and, from the page, the page's
-  rendered text before and after it, plain (`pageAround`: one walk,
-  white space collapsed outside preformatted text, a line per block, a
-  break per `<br>`, text a `display`, a `visibility` or a
-  `user-select: none` leaves out skipped), each other host the range
-  reaches its own part as it copies it. A range that only touches the
-  host is none of its business. No `text/html` is written: a TUI copy
-  is plain text.
+  hidden box, visibility.md; `\t` after each visible cell of a table row
+  but the last; runs of required breaks collapse to the maximum, none at
+  the ends), a list item's shown marker before its first text where the
+  range holds that text's first line whole (lists.md "Selection, copy
+  and accessibility"), set `text/plain`, `preventDefault()`. A range
+  reaching into the host from the page, in its composed points (a
+  select-all's own range ends inside the host), or holding its grid's
+  viewport whole (Chromium's select-all from inside the grid) writes the
+  host's part — this serialization over the range clipped to the host's
+  edges (`hostPart`), or, where grid mode takes the host whole, its
+  whole grid's rows, every layer composited, from a copy's render — and,
+  from the page, the page's rendered text before and after it, plain
+  (`pageAround` over `renderedLines`: one walk a side, white space
+  collapsed outside preformatted text, a line per block, a break per
+  `<br>`, text a `display`, a `visibility` or a `user-select: none`
+  leaves out skipped), each other host the range reaches its own part as
+  it copies it. A range that only touches the host is none of its
+  business. No `text/html` is written: a TUI copy is plain text.
 - **Lift, then select.** Both attributes first — the lift and the
   highlight lock (`data-mw-selection`) — one forced style resolution,
   then the range — so the range is only ever set into selectable
@@ -345,6 +346,11 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   element's text is the unit, not the visible cells (unlike a grid
   drag, which copies what shows). The highlight shows only the visible
   part, clipped natively with the element.
+- **Grid mode selects what an author made unselectable.** Its text is
+  the shadow grid's, selectable whole, which an authored
+  `user-select: none` on the light DOM never reaches; a native region's
+  contents follow the grid's (native-regions.md). Text mode, the light
+  DOM's own selection, honors it.
 
 ## Verified after implementation
 
@@ -393,7 +399,7 @@ mousedown(detail 1, no pointerType) → mouseup → click`, so the
   the release, and a plain click inside it still collapses it, in both
   modes and all three engines.
 - Copy: a synthetic `ClipboardEvent("copy", { clipboardData: new
-DataTransfer() })` dispatched on the host after each selection above
+  DataTransfer() })` dispatched on the host after each selection above
   asserts `getData("text/plain")`: two `<p>`s separated by a blank
   line; a word alone; the art for the banner; and, for an extension
   across the banner, paragraph, blank line, art, blank line, paragraph.

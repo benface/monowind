@@ -36,7 +36,7 @@ anticipates (core-architecture.md D4).
   font, normalized (lowercase, no extension) — for HTML/CDN authors;
   the `font` PROPERTY accepts a font object directly
   (`el.font = slant` with `import slant from
-"@monowind/ascii/fonts/slant"`) — typo-proof, tree-shakeable, no
+  "@monowind/ascii/fonts/slant"`) — typo-proof, tree-shakeable, no
   registry, and what framework wrappers bind to. Property wins over
   attribute. Missing/unknown font warns and falls back to the plain
   text — same content-never-disappears principle.

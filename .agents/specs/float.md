@@ -101,7 +101,7 @@ it as an anonymous run.
 - **A float's size is shrink-to-fit**, exactly the rule absolute boxes
   already use (`positioning.md` "Absolute layout"): explicit
   width/min/max first, else `min(max-content, max(min-content,
-available))` against the container's content width. Height is content
+  available))` against the container's content width. Height is content
   height unless explicit. Margins apply and never collapse — with
   anything, in either direction, per CSS.
 

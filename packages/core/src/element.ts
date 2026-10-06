@@ -71,10 +71,12 @@ import {
   wordAt,
 } from "./selection.ts";
 import type { BoundaryPoints, Point, PointRange } from "./selection.ts";
+import type { HostPart } from "./rendered-text.ts";
 import { GlyphBoxes, SHADES } from "./glyph-box.ts";
 import shadowCss from "./shadow.css?inline";
 import { hardLineSpans, INLINE_PAD } from "./wrap.ts";
 import {
+  clearPaint,
   gridCopy,
   gridOffsetAt,
   paintedCell,
@@ -86,12 +88,33 @@ import {
 } from "./paint.ts";
 import { getRootFontSizePx, measureCellMetrics, sameMetrics } from "./metrics.ts";
 import { edges, intrinsicOuterWidth, layoutRoot, makeIntrinsicCache } from "./layout.ts";
-import { forgetWrites, render, renderScroll, setVar, wrotePseudoElements } from "./render.ts";
+import {
+  forgetWrites,
+  release,
+  releaseContents,
+  render,
+  renderScroll,
+  setVar,
+  wrotePseudoElements,
+} from "./render.ts";
 import { nameOf, PSEUDOS } from "./generated.ts";
 import { namedAnchors } from "./positioning.ts";
+import {
+  clip,
+  clipRegions,
+  insideRegion,
+  lightElements,
+  NATIVE_DRAG,
+  NATIVE_MARK,
+  NESTED_MARK,
+  NO_REGIONS_MARK,
+  REGIONS_MARK,
+  regionOf,
+  regionsOf,
+} from "./native.ts";
 import { TopLayer, isTopLayer } from "./top-layer.ts";
 import { buildRoot, readControls } from "./tree.ts";
-import type { TextareaWidths } from "./tree.ts";
+import type { MeasureContents, TextareaWidths } from "./tree.ts";
 import { warnOnce, warnSubject } from "./warn.ts";
 import type { CellMetrics, LayoutNode, Rect } from "./types.ts";
 
@@ -104,6 +127,9 @@ const SHADE_RULES = [...SHADES]
     return `${selector}::before, ${selector}::after { content: "${shade}"; }`;
   })
   .join("");
+
+/** The shadow's `:host {}` rule as a host starts (`#hostSheet`). */
+const HOST_RULE = ":host { --mw-fg: canvastext; --mw-bg: canvas }";
 
 const SHADOW_TEMPLATE = `
 <style>${shadowCss}${SHADE_RULES}</style>
@@ -131,6 +157,11 @@ const SEMANTIC_SELECTION = "data-mw-semantic-selection";
  * selection gesture that may reach it is under way: the companion's
  * transparent `::selection` lock holds under it (styles.css). */
 const SELECTION = "data-mw-selection";
+
+/** Set on the host while a drag that began on the grid is in flight: the
+ * interactives give up the pointer under it, and the native regions'
+ * contents under theirs (`NATIVE_DRAG`, styles.css). */
+const DRAGGING = "data-mw-dragging";
 
 /** The light elements that paint their own selection, which the lock
  * exempts (styles.css), an editable's subtree with it. */
@@ -270,6 +301,11 @@ const DYNAMIC_RELAYOUT_EVENTS = [
   "input",
   "change",
 ] as const;
+
+/** The events in a native region's content that lay its host out
+ * (#scheduleDynamicRelayout): `:active` and `:has()` reach the boxes
+ * around it. */
+const REGION_RELAYOUT_EVENTS = new Set(["pointerdown", "pointerup", "pointercancel", "change"]);
 
 /** How far a resize may report the host from the size a layout wrote,
  * in px: the rounding of layout units (1/64 px in Chromium and WebKit,
@@ -420,7 +456,10 @@ export class MonoWindElement extends HTMLElementBase {
   static #headWatcher: MutationObserver | null = null;
 
   static #onHeadStylesChanged = (): void => {
-    for (const host of MonoWindElement.#headHosts) host.#scheduleLayout();
+    for (const host of MonoWindElement.#headHosts) {
+      host.#forget();
+      host.#scheduleLayout();
+    }
   };
 
   static #watchLoadingLink(node: Node): void {
@@ -460,8 +499,14 @@ export class MonoWindElement extends HTMLElementBase {
    * light-DOM mutation — seeded with the system colors, so a token is
    * valid before the first layout. */
   #hostSheet = new CSSStyleSheet();
-  /** Inside another host: the engine stays off (connectedCallback). */
-  #nested = false;
+  /** The engine on: off before a connection, and in another host's light
+   * DOM in no native region of it (connectedCallback, #settleNested). */
+  #started = false;
+  /** The hosts in its light DOM, a live list (#settleNesting). */
+  #inners = this.getElementsByTagName("mono-wind");
+  /** The keywords the engine reflected, not its author, which a stop
+   * takes back. */
+  #reflected = new Set<string>();
   /** The listeners of the current connection, removed at once on disconnect. */
   #listening: AbortController | null = null;
   #shadow: ShadowRoot;
@@ -499,8 +544,12 @@ export class MonoWindElement extends HTMLElementBase {
   #ancestorObserver: MutationObserver | null = null;
   #colorScheme = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
   #onColorSchemeChange = (): void => this.#scheduleLayout();
-  #onImageSettled = (event: Event): void => {
-    if (event.target instanceof HTMLImageElement) this.#scheduleLayout();
+  #onMediaSized = ({ target }: Event): void => {
+    const sizes =
+      target instanceof HTMLImageElement
+        ? !insideRegion(target, this)
+        : target instanceof HTMLVideoElement && this.#regions.has(target);
+    if (sizes) this.#scheduleLayout();
   };
   #mutationObserver: MutationObserver | null = null;
   #layoutPending = false;
@@ -514,8 +563,9 @@ export class MonoWindElement extends HTMLElementBase {
   /** The content box the last layout sized the host to, null until one
    * does: a resize reporting it is the layout's own (#onResize). */
   #laidOutSize: BoxSize | null = null;
-  /** The size each box around the host last reported (#onResize). */
-  #surroundingSizes = new WeakMap<Element, BoxSize>();
+  /** The size each box around the host, and each measured region's
+   * child, last reported (#onResize). */
+  #observedSizes = new WeakMap<Element, BoxSize>();
   #lastLayout: LayoutNode | null = null;
   #unsubscribeLeafRegistry: (() => void) | null = null;
   #unsubscribeGlyphRegistry: (() => void) | null = null;
@@ -575,6 +625,17 @@ export class MonoWindElement extends HTMLElementBase {
   /** The elements carrying `data-mw-anchor`, which the companion scopes
    * while the engine reads (#scopeAnchors). */
   #anchors = new Set<Element>();
+  /** The native regions of the last build, with their marks' values. */
+  #regions = new Map<Element, string>();
+  /** Each measured region's contents' sizes in px by the width asked
+   * (#measureContents), null where something may have changed them:
+   * measured again, together, as the next layout reads (#remeasure). */
+  #measures = new Map<Element, Map<string, BoxSize | null>>();
+  /** The widths the running layout asked of each region. */
+  #asked = new Map<Element, Set<string>>();
+  /** The measured regions' element children, whose resizes tell of
+   * their contents' (#onResize). */
+  #contents = new Set<Element>();
   /** Each textarea's content width in cells as the last layout gave it
    * (#rewrapsTextareas). */
   #textareaCells = new WeakMap<HTMLTextAreaElement, number>();
@@ -613,22 +674,68 @@ export class MonoWindElement extends HTMLElementBase {
    * scrollers among them included (specs/top-layer.md). */
   #outerClips: Element[] = [];
 
+  /** Whether a record is a host's running in one of this host's
+   * regions, which hears its own. */
+  #ofInnerHost({ target }: MutationRecord): boolean {
+    if (!regionOf(target, this)) return false;
+    const el = target instanceof Element ? target : target.parentElement;
+    return el?.closest("mono-wind") !== this;
+  }
+
+  /** The page's mutation records taken in: what they wrote forgotten,
+   * an element moved into a region released, the measures they may
+   * change made stale; whether any changes what the grid shows. */
+  #takeIn(all: readonly MutationRecord[]): boolean {
+    const records = all.filter((record) => !this.#ofInnerHost(record));
+    forgetWrites(records);
+    this.#releaseArrivals(records);
+    const changes = records.filter((record) => this.#changesRendering(record));
+    this.#forgetMeasures(changes);
+    return changes.length > 0;
+  }
+
+  /** The elements a page moved into a native region, rid of what an
+   * engine wrote on them — but a host running there, which keeps its
+   * own. */
+  #releaseArrivals(records: readonly MutationRecord[]): void {
+    if (!this.hasAttribute(REGIONS_MARK)) return;
+    let released = false;
+    for (const { addedNodes, target } of records) {
+      if (addedNodes.length === 0 || !regionOf(target, this)) continue;
+      for (const node of addedNodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        if (node.localName === "mono-wind" && !node.hasAttribute(NESTED_MARK)) continue;
+        release(node);
+        releaseContents(node);
+        released = true;
+      }
+    }
+    if (released) this.#mutationObserver?.takeRecords();
+  }
+
   /** Whether a record is a change the grid must follow: the tree and
    * the text always, an attribute when it renders (observed.ts); on the
    * host only `class` and `style`, its own attributes being the
-   * engine's or attributeChangedCallback's. */
+   * engine's or attributeChangedCallback's; in a native region's
+   * content, the browser's, only where it sizes the region
+   * (specs/native-regions.md). */
   #changesRendering(record: MutationRecord): boolean {
+    const { target } = record;
+    const region = regionOf(target, this);
+    if (region && (record.type !== "attributes" || target !== region)) {
+      return this.#measures.has(region);
+    }
     if (record.type !== "attributes") return true;
     const name = record.attributeName ?? "";
-    if (record.target === this) return name === "class" || name === "style";
-    return rendersAttribute(record.target as Element, name);
+    if (target === this) return name === "class" || name === "style";
+    return rendersAttribute(target as Element, name);
   }
 
   constructor() {
     super();
     const shadow = (this.#shadow = this.attachShadow({ mode: "open" }));
     shadow.innerHTML = SHADOW_TEMPLATE;
-    this.#hostSheet.replaceSync(":host { --mw-fg: canvastext; --mw-bg: canvas }");
+    this.#hostSheet.replaceSync(HOST_RULE);
     shadow.adoptedStyleSheets = [this.#hostSheet];
     this.#grid = shadow.querySelector<HTMLElement>("#grid")!;
     this.#layers = shadow.querySelector<HTMLElement>("#layers")!;
@@ -676,29 +783,71 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   connectedCallback(): void {
-    // A host inside another is unsupported: it stays plain content of
-    // the outer one, laid out and painted like any element of it.
-    this.#nested = (this.parentElement?.closest("mono-wind") ?? null) !== null;
-    if (this.#nested) {
+    // Inside another host, it runs in a native region of it alone
+    // (specs/native-regions.md "Nesting").
+    const nested = this.#inNoRegion();
+    if (nested && this.#started) this.#stop();
+    this.toggleAttribute(NESTED_MARK, nested);
+    if (!nested) this.#start();
+  }
+
+  /** Whether the host lies in another host's light DOM, in no native
+   * region of it, as the outer host's marks stand. */
+  #inNoRegion(): boolean {
+    return this.parentElement?.closest(`mono-wind, [${NATIVE_MARK}]`)?.localName === "mono-wind";
+  }
+
+  /** The host as the marks of the host around it leave it, after that
+   * one's layout (specs/native-regions.md "Nesting"): running in one of
+   * its regions, else nested — its engine off, and warned of then, the
+   * page's styles applied. */
+  #settleNested(warn: boolean): void {
+    const nested = this.#inNoRegion();
+    if (nested && warn) {
       warnOnce(
         this,
-        "A <mono-wind> inside another <mono-wind> is unsupported; it is laid out as plain content of the outer one.",
+        "A <mono-wind> inside another <mono-wind>, in no mw-native region of it, is unsupported; it is laid out as plain content of the outer one.",
       );
-      return;
     }
-    // attributeChangedCallback only fires on changes; an absent
-    // attribute reflects its default here.
-    for (const [name, [initial]] of Object.entries(HOST_KEYWORDS)) {
-      if (!this.hasAttribute(name)) this.setAttribute(name, initial);
+    if (nested && this.#started) this.#stop();
+    else if (!nested && !this.#started) this.#start();
+    // After the stop, which takes the host's marks back.
+    this.toggleAttribute(NESTED_MARK, nested);
+  }
+
+  /** The hosts this one holds — those it is the nearest running host
+   * of — settled as its marks now stand, warned of where `warn`. */
+  #settleNesting(warn: boolean): void {
+    for (const inner of this.#inners) {
+      const outer = inner.parentElement?.closest(`mono-wind:not([${NESTED_MARK}])`);
+      if (inner instanceof MonoWindElement && outer === this) inner.#settleNested(warn);
     }
+  }
+
+  /** The engine on: the host's keywords reflected, its probe in, its
+   * observers and listeners connected, a layout asked for. */
+  #start(): void {
+    this.#started = true;
+    // attributeChangedCallback fires on changes, none while the engine
+    // was off: each keyword checked as it stands, an absent one
+    // reflecting its default.
+    for (const name of Object.keys(HOST_KEYWORDS)) {
+      this.attributeChangedCallback(name, null, this.getAttribute(name));
+    }
+    // The locks hold from the first read, before a build finds a region.
+    if (!this.hasAttribute(REGIONS_MARK)) this.setAttribute(NO_REGIONS_MARK, "");
     // Before the observers connect, so its insertion isn't observed.
     if (this.#probe.parentNode !== this) this.appendChild(this.#probe);
 
     this.#listening = new AbortController();
     const { signal } = this.#listening;
-    this.#surroundingSizes = new WeakMap();
+    this.#observedSizes = new WeakMap();
     this.#resizeObserver = new ResizeObserver(this.#onResize);
-    this.#ancestorObserver = new MutationObserver(() => this.#scheduleLayout());
+    this.#ancestorObserver = new MutationObserver(() => {
+      // A style around the host restyles its regions' contents too.
+      this.#forget();
+      this.#scheduleLayout();
+    });
     this.#colorScheme?.addEventListener("change", this.#onColorSchemeChange, { signal });
     this.#resizeObserver.observe(this);
     this.#observeSurroundings();
@@ -716,8 +865,7 @@ export class MonoWindElement extends HTMLElementBase {
     // layout are drained before observation resumes, its marks outside
     // one are filtered by name, and its origin lives in the shadow.
     this.#mutationObserver = new MutationObserver((records) => {
-      forgetWrites(records);
-      if (records.some((record) => this.#changesRendering(record))) this.#scheduleLayout();
+      if (this.#takeIn(records)) this.#scheduleLayout();
     });
     this.#mutationObserver.observe(this, {
       childList: true,
@@ -764,10 +912,11 @@ export class MonoWindElement extends HTMLElementBase {
     this.addEventListener("animationiteration", this.#onAnimationStart, { signal });
     this.addEventListener("animationend", this.#onAnimationDone, { signal });
     this.addEventListener("animationcancel", this.#onAnimationDone, { signal });
-    // An image's load or failure sizes and draws it (specs/images.md);
-    // neither bubbles: captured.
-    this.addEventListener("load", this.#onImageSettled, { signal, capture: true });
-    this.addEventListener("error", this.#onImageSettled, { signal, capture: true });
+    // An image's load or failure sizes and draws it (specs/images.md), a
+    // video region's metadata sizes it; none bubbles: captured.
+    for (const type of ["load", "error", "loadedmetadata", "resize"]) {
+      this.addEventListener(type, this.#onMediaSized, { capture: true, signal });
+    }
     // A popover's or a dialog's toggle bubbles from neither: captured.
     this.addEventListener("toggle", this.#onToggle, { capture: true, signal });
 
@@ -821,10 +970,40 @@ export class MonoWindElement extends HTMLElementBase {
     this.#scheduleLayout();
   }
 
+  /** The engine off for a host turning out nested: what it wrote on its
+   * light DOM and on itself taken back, its grid cleared, for the outer
+   * host to lay its contents out as its own. */
+  #stop(): void {
+    this.#started = false;
+    this.disconnectedCallback();
+    cancelAnimationFrame(this.#layoutRequest);
+    this.#layoutPending = false;
+    this.#probe.remove();
+    releaseContents(this);
+    release(this);
+    for (const name of this.#reflected) this.removeAttribute(name);
+    this.#reflected.clear();
+    this.#hostSheet.replaceSync(HOST_RULE);
+    clearPaint(this.#grid, this.#layers);
+    for (const { style } of [this.#grid, this.#layers, this.#spacer, this.#viewport]) {
+      style.cssText = "";
+    }
+    this.#spacerTrack = "";
+    this.#spacerHeight = 0;
+    this.#cellMetrics = null;
+    this.#laidOutSize = null;
+    this.#lastLayout = null;
+    this.#nodes = null;
+    this.#scrollNodes = [];
+    this.#regions = new Map();
+  }
+
   disconnectedCallback(): void {
     this.#listening?.abort();
     this.#pendingArrow?.abort();
     this.#resizeObserver?.disconnect();
+    this.#contents.clear();
+    this.#measures.clear();
     this.#mutationObserver?.disconnect();
     this.#ancestorObserver?.disconnect();
     this.#resizeObserver = null;
@@ -857,9 +1036,8 @@ export class MonoWindElement extends HTMLElementBase {
     this.#selectionGesture = false;
     // The states a release or a selectionchange would end, events the
     // host hears no more.
-    for (const state of [SELECTION, SEMANTIC_SELECTION, "data-mw-dragging"]) {
-      this.removeAttribute(state);
-    }
+    for (const state of [SELECTION, SEMANTIC_SELECTION]) this.removeAttribute(state);
+    this.#drag(false);
     this.#updatePointerStates();
     MonoWindElement.#unwatchHead(this);
   }
@@ -1040,7 +1218,11 @@ export class MonoWindElement extends HTMLElementBase {
   /** The scroll container an event is from, one the engine drives. */
   #scrollTarget(event: Event): HTMLElement | null {
     const target = event.target;
-    return target instanceof HTMLElement && target !== this && target.hasAttribute("data-mw-scroll")
+    // A host running in a region scrolls its own.
+    return target instanceof HTMLElement &&
+      target !== this &&
+      target.hasAttribute("data-mw-scroll") &&
+      !this.#native(target)
       ? target
       : null;
   }
@@ -1108,7 +1290,7 @@ export class MonoWindElement extends HTMLElementBase {
    * programmatic scrollBy never chains natively. preventDefault only
    * for ticks a scroll container owns, so page scrolling survives. */
   #onWheel = (event: Event): void => {
-    if (this.getAttribute("select") !== "grid") return;
+    if (this.getAttribute("select") !== "grid" || this.#native(event.target)) return;
     const layout = this.#lastLayout;
     const metrics = this.#cellMetrics;
     if (!layout || !metrics || this.#scrollNodes.length === 0) return;
@@ -1241,8 +1423,9 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   /** A box around the host relays out on a width change only — a
-   * height change just moves the grid — and its first report counts as
-   * what the last layout saw. */
+   * height change just moves the grid — a measured region's child on
+   * any, its region measured afresh; a first report counts as what the
+   * last layout saw. */
   #onResize = (entries: ResizeObserverEntry[]): void => {
     let relayout = false;
     let moved = false;
@@ -1257,11 +1440,14 @@ export class MonoWindElement extends HTMLElementBase {
       } else if (target === this.#probe) {
         relayout ||= this.#cellChanged();
       } else {
-        const last = this.#surroundingSizes.get(target);
-        this.#surroundingSizes.set(target, size);
-        if (!last) continue;
-        if (size.width !== last.width) relayout = true;
-        else if (size.height !== last.height) moved = true;
+        const last = this.#observedSizes.get(target);
+        this.#observedSizes.set(target, size);
+        if (!last || (size.width === last.width && size.height === last.height)) continue;
+        if (this.#contents.has(target)) {
+          if (target.parentElement) this.#forget([target.parentElement]);
+          relayout = true;
+        } else if (size.width !== last.width) relayout = true;
+        else moved = true;
       }
     }
     if (relayout) this.#scheduleLayout();
@@ -1299,6 +1485,144 @@ export class MonoWindElement extends HTMLElementBase {
     }
     this.#anchors = named;
     return joined && anchored;
+  }
+
+  /** Marks the native regions a build found (`NATIVE_MARK`), which the
+   * companion's locks and the engine's walks skip, and the host as
+   * holding some or none (`REGIONS_MARK`, `NO_REGIONS_MARK`); unmarks
+   * those no longer one. A new region's contents are released of the
+   * engine's writes; a former one's are light elements again, restored. */
+  #markRegions(root: LayoutNode): { released: Set<Element>; restored: Element[] } {
+    const regions = regionsOf(root);
+    const former: Element[] = [];
+    for (const el of this.#regions.keys()) {
+      if (regions.has(el)) continue;
+      // One another running host holds now is that one's to mark.
+      const owner = el.parentElement?.closest(`mono-wind:not([${NESTED_MARK}])`);
+      if (owner && owner !== this) continue;
+      el.removeAttribute(NATIVE_MARK);
+      el.removeAttribute(NATIVE_DRAG);
+      clip(el, null);
+      if (owner) former.push(el);
+    }
+    const released = new Set<Element>();
+    for (const [el, value] of regions) {
+      if (!el.hasAttribute(NATIVE_MARK)) {
+        for (const each of releaseContents(el)) released.add(each);
+        el.toggleAttribute(NATIVE_DRAG, this.hasAttribute(DRAGGING));
+      }
+      if (el.getAttribute(NATIVE_MARK) !== value) el.setAttribute(NATIVE_MARK, value);
+    }
+    this.toggleAttribute(REGIONS_MARK, regions.size > 0);
+    this.toggleAttribute(NO_REGIONS_MARK, regions.size === 0);
+    this.#regions = regions;
+    // A former region's contents but those a region holds now.
+    const restored: Element[] = [];
+    for (const el of former) {
+      for (const each of el.querySelectorAll("*"))
+        if (!insideRegion(each, this)) restored.push(each);
+    }
+    return { released, restored };
+  }
+
+  /** A grid drag begun or ended, the host and its regions flagged. */
+  #drag(on: boolean): void {
+    this.toggleAttribute(DRAGGING, on);
+    for (const region of this.#regions.keys()) region.toggleAttribute(NATIVE_DRAG, on);
+  }
+
+  /** A native region's contents measured as the browser lays them out
+   * (tree.ts `MeasureContents`), in a layout's read, where the measure
+   * rule (styles.css) takes the region out of flow at the width asked. */
+  #measureContents: MeasureContents = (el, width) => {
+    let asked = this.#asked.get(el);
+    if (!asked) this.#asked.set(el, (asked = new Set()));
+    asked.add(width);
+    if (!this.#measures.get(el)?.get(width)) this.#measureAll([[el, width]]);
+    return this.#measures.get(el)!.get(width)!;
+  };
+
+  /** Regions measured at their widths, every one set before any is read:
+   * one forced layout for all. */
+  #measureAll(asks: [Element, string][]): void {
+    for (const [el, width] of asks) {
+      el.setAttribute("data-mw-native-measure", "");
+      (el as HTMLElement).style.setProperty("--mw-measure-w", width);
+    }
+    for (const [el, width] of asks) {
+      const cs = getComputedStyle(el);
+      let sizes = this.#measures.get(el);
+      if (!sizes) this.#measures.set(el, (sizes = new Map()));
+      sizes.set(width, { width: parseFloat(cs.width) || 0, height: parseFloat(cs.height) || 0 });
+    }
+    for (const [el] of asks) {
+      el.removeAttribute("data-mw-native-measure");
+      (el as HTMLElement).style.removeProperty("--mw-measure-w");
+    }
+  }
+
+  /** The measures something changed, taken again as a layout reads: a
+   * round for each width a region was asked at, every region at once. */
+  #remeasure(): void {
+    if (this.#measures.size === 0) return;
+    const stale = [...this.#measures]
+      .filter(([el]) => this.contains(el))
+      .map(([el, sizes]) => [el, [...sizes].filter(([, size]) => !size)] as const);
+    for (let round = 0; ; round++) {
+      const asks = stale.flatMap(([el, widths]): [Element, string][] =>
+        round < widths.length ? [[el, widths[round]![0]]] : [],
+      );
+      if (asks.length === 0) return;
+      this.#measureAll(asks);
+    }
+  }
+
+  /** Measures something may change, each kept stale for #remeasure. */
+  #forget(regions: Iterable<Element> = this.#measures.keys()): void {
+    for (const el of regions) {
+      const sizes = this.#measures.get(el);
+      if (sizes) for (const width of sizes.keys()) sizes.set(width, null);
+    }
+  }
+
+  /** The measures the layout asked for kept, and the children of the
+   * regions they size observed. */
+  #keepMeasures(): void {
+    if (this.#measures.size === 0 && this.#contents.size === 0) return;
+    for (const [el, sizes] of this.#measures) {
+      const asked = this.#asked.get(el);
+      if (!asked) this.#measures.delete(el);
+      else for (const width of sizes.keys()) if (!asked.has(width)) sizes.delete(width);
+    }
+    this.#asked.clear();
+    const observer = this.#resizeObserver;
+    if (!observer) return;
+    const contents = new Set<Element>();
+    for (const region of this.#measures.keys()) {
+      for (const child of region.children) contents.add(child);
+    }
+    for (const el of this.#contents) {
+      if (contents.has(el)) continue;
+      observer.unobserve(el);
+      this.#observedSizes.delete(el);
+    }
+    for (const el of contents) if (!this.#contents.has(el)) observer.observe(el);
+    this.#contents = contents;
+  }
+
+  /** The measures a page's mutations may change made stale: a region's,
+   * where one lands in it, on it or on an element around it, or moves it. */
+  #forgetMeasures(records: readonly MutationRecord[]): void {
+    for (const region of this.#measures.keys()) {
+      const touched = records.some(
+        ({ type, target, addedNodes }) =>
+          region.contains(target) ||
+          (type === "attributes"
+            ? target.contains(region)
+            : Array.prototype.some.call(addedNodes, (node: Node) => node.contains(region))),
+      );
+      if (touched) this.#forget([region]);
+    }
   }
 
   /** Whether the probe measures a cell other than the last layout's. */
@@ -1458,9 +1782,7 @@ export class MonoWindElement extends HTMLElementBase {
     }
     if (held && this.#gesture) this.#extendGesture(this.#gesture, clientX, clientY);
     if (held && this.#gridDrag) this.#extendGridDrag(this.#gridDrag, clientX, clientY);
-    if (held && this.#pressOnGrid && !this.hasAttribute("data-mw-dragging")) {
-      this.setAttribute("data-mw-dragging", "");
-    }
+    if (held && this.#pressOnGrid && !this.hasAttribute(DRAGGING)) this.#drag(true);
     this.#hoverClient = { x: clientX, y: clientY };
     this.#hoverTarget = event.target instanceof Element ? event.target : null;
     // High-frequency path: skip the update while the pointer stays in
@@ -1488,16 +1810,17 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** What a copy carries where the host writes it
    * (specs/semantic-selection.md "Copy serialization"): a selection in
-   * its light DOM; a grid selection over a picture, its alt in its
-   * cells, a copy's alone; or a selection reaching into the host, its
-   * part as the host copies it, the page's text around. Null leaves the
-   * copy to the browser. */
+   * its light DOM; a grid selection over a picture or a native region,
+   * its alt or text in its cells, a copy's alone; or a selection reaching
+   * into the host, its part as the host copies it, the page's text
+   * around. Null leaves the copy to the browser, as for one in a native
+   * region. */
   #copyText(layout: LayoutNode): string | null {
     const points = selectionRangeThrough(this.#shadow);
-    if (!points) return null;
+    if (!points || classifySelection(this, this.#grid, points) === "native") return null;
     const range = this.#elementSelection(points);
     const cells = this.getAttribute("select") === "grid";
-    if (range) return serializeSelection(layout, range, { cells });
+    if (range) return serializeSelection(layout, range, { cells, nested: this.#hostParts(points) });
     return gridCopy(this.#layers, layout, points) ?? this.#reachingCopy(points);
   }
 
@@ -1522,9 +1845,7 @@ export class MonoWindElement extends HTMLElementBase {
     }
     const own = this.#partText(points);
     if (own === null) return null;
-    const [before, after] = pageAround(range, this, (other) =>
-      other instanceof MonoWindElement ? other.#partText(points) : null,
-    );
+    const [before, after] = pageAround(range, this, this.#hostParts(points));
     return [before, own, after].filter(Boolean).join("\n");
   }
 
@@ -1543,7 +1864,12 @@ export class MonoWindElement extends HTMLElementBase {
       part.endOffset === this.childNodes.length;
     return grid && whole
       ? screenRows(layout, { alt: true }).join("\n")
-      : serializeSelection(layout, part, { cells: grid });
+      : serializeSelection(layout, part, { cells: grid, nested: this.#hostParts(points) });
+  }
+
+  /** Each other host's part of a selection, as it copies it. */
+  #hostParts(points: BoundaryPoints): HostPart {
+    return (other) => (other instanceof MonoWindElement ? other.#partText(points) : null);
   }
 
   /** Engine-routed selection gestures: a text-mode press starts a
@@ -1713,7 +2039,7 @@ export class MonoWindElement extends HTMLElementBase {
     // A widget that handled the arrow keeps it (specs/focus-navigation.md).
     if (e.defaultPrevented) return;
     const target = e.target;
-    if (!(target instanceof Element) || target === this) return;
+    if (!(target instanceof Element) || target === this || this.#native(target)) return;
     if (arrowIsNative(target, e.key, this.#openSelectPicker())) return;
     // A framework's handlers sit at its root (React, Svelte, Solid), past
     // the host: the move waits for the key to reach the window, the last
@@ -1760,7 +2086,7 @@ export class MonoWindElement extends HTMLElementBase {
     const step = SCROLL_KEYS[e.key];
     const target = e.target;
     if (!step || !e.isTrusted || e.defaultPrevented || !(target instanceof Element)) return;
-    if (controlKeeps(target, e.key)) return;
+    if (controlKeeps(target, e.key) || this.#native(target)) return;
     const [dx, dy] = e.key === " " && e.shiftKey ? [0, -1] : step;
     // The key scrolls the nearest container with room, as the browsers
     // chain it.
@@ -1839,7 +2165,13 @@ export class MonoWindElement extends HTMLElementBase {
   /** A non-interactive light element inside the host: never a legitimate
    * pointer target in grid mode, so an event there is a grid event. */
   #isPhantomTarget(target: EventTarget | null): boolean {
-    return target instanceof Element && this.#owns(target) && !target.matches(INTERACTIVE);
+    return (
+      target instanceof Element &&
+      target !== this &&
+      this.contains(target) &&
+      !target.matches(INTERACTIVE) &&
+      !this.#native(target)
+    );
   }
 
   /** A light element another box paints over at the event's cell
@@ -1946,7 +2278,9 @@ export class MonoWindElement extends HTMLElementBase {
    * engine's; a control's is native. */
   #isTextTarget(target: EventTarget | null): boolean {
     if (target === this) return true;
-    if (!(target instanceof Element) || !this.contains(target)) return false;
+    if (!(target instanceof Element) || !this.contains(target) || this.#native(target)) {
+      return false;
+    }
     const interactive = target.closest(INTERACTIVE);
     return !interactive || interactive === this || !this.contains(interactive);
   }
@@ -2136,18 +2470,20 @@ export class MonoWindElement extends HTMLElementBase {
 
   /** The live selection's part in the light DOM, which the grid paints
    * and a copy reads: an element selection, or the host's part of one
-   * reaching in across its edge (a select-all, a drag in from page text). */
+   * reaching in across its edge (a select-all, a drag in from page text);
+   * none of one in a native region. */
   #lightSelection(
     points = selectionRangeThrough(this.#shadow),
     element = this.#elementSelection(points),
   ): BoundaryPoints | null {
-    return element ?? (points && hostPart(this, points));
+    if (element || !points) return element;
+    return classifySelection(this, this.#grid, points) === "native" ? null : hostPart(this, points);
   }
 
   /** Whether a live selection reaches the host's light DOM, both ends in
    * it or not — a select-all, a drag in from page text, a script's range
    * across the host — which the highlight lock holds for; a grid drag's
-   * is the grid's own. */
+   * is the grid's own, and one in a native region the browser's. */
   #reachesLight(
     points = selectionRangeThrough(this.#shadow),
     element = this.#elementSelection(points),
@@ -2155,7 +2491,8 @@ export class MonoWindElement extends HTMLElementBase {
     if (element) return true;
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed || !selection.containsNode(this, true)) return false;
-    return points !== null && classifySelection(this, this.#grid, points) !== "grid";
+    const kind = points && classifySelection(this, this.#grid, points);
+    return kind === "light" || kind === "outside";
   }
 
   /** The lift ends once the selection left the light DOM or collapsed;
@@ -2200,16 +2537,25 @@ export class MonoWindElement extends HTMLElementBase {
     const range = this.#lightSelection();
     const metrics = this.#cellMetrics;
     this.#paintedSelection = range !== null;
+    const cell = metrics ? { width: metrics.width, height: metrics.height } : undefined;
     return paintGrid(root, this.#grid, {
       holdStructural: this.#holdsNativeDrag(),
       glyphs: this.#glyphs,
       selection: range ? selectedRanges(root, range) : undefined,
-      cell: metrics ? { width: metrics.width, height: metrics.height } : undefined,
+      cell,
       layers: this.#layers,
       placeLayers,
       ground: this.#ground,
       ink: this.#ink,
       readColor: this.#readColor,
+      surfaces:
+        cell && this.#regions.size > 0
+          ? (layers) => {
+              clipRegions(this.#regions.keys(), layers, cell);
+              // The engine's own writes, drained as a layout's.
+              this.#mutationObserver?.takeRecords();
+            }
+          : undefined,
     });
   }
 
@@ -2259,7 +2605,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#pressing = true;
     this.#pressOnGrid = this.#onGrid(e.composedPath());
     this.#updatePointerStates(true);
-    if (selectsFieldText(e.target)) {
+    if (selectsFieldText(e.target) && !this.#native(e.target)) {
       this.#performLayoutSafely();
       this.#fieldPress = { held: false };
     }
@@ -2283,7 +2629,7 @@ export class MonoWindElement extends HTMLElementBase {
     this.#stopAutoscroll();
     this.#gridDrag = null;
     this.#pressOnGrid = false;
-    this.removeAttribute("data-mw-dragging");
+    this.#drag(false);
     if (this.#trackPaging) {
       this.#stopTrackPaging();
       return;
@@ -2318,6 +2664,7 @@ export class MonoWindElement extends HTMLElementBase {
     // stale offsets), and a container's scroll never moves the grid itself.
     const target = event.target;
     if (target instanceof HTMLElement && target.hasAttribute("data-mw-scroll")) return;
+    if (this.#native(target)) return;
     this.#onGridMoved();
   };
 
@@ -2438,6 +2785,18 @@ export class MonoWindElement extends HTMLElementBase {
    * transition's start brings a new one: an end, a pause, a cancel and
    * a removal show in each one's play state. */
   #animations: readonly Animation[] | null = null;
+
+  /** The animations under the host but a native region's content's,
+   * which the browser shows alone. */
+  #hostAnimations(): Animation[] {
+    const animations = this.getAnimations?.({ subtree: true }) ?? [];
+    if (!this.hasAttribute(REGIONS_MARK)) return animations;
+    return animations.filter((animation) => {
+      const target = (animation.effect as KeyframeEffect | null)?.target;
+      return !target || !insideRegion(target, this);
+    });
+  }
+
   /** The light elements the last tick found animating, each with what
    * a frame does for it (specs/animations.md). */
   #animated = new Map<Element, AnimationPath>();
@@ -2466,9 +2825,17 @@ export class MonoWindElement extends HTMLElementBase {
     }
   };
 
-  /** A light element of this host. */
+  /** A light element of this host, a native region's content being the
+   * browser's. */
   #owns(el: Element): boolean {
-    return el !== this && this.contains(el);
+    return el !== this && this.contains(el) && !insideRegion(el, this);
+  }
+
+  /** Whether an event target is a native region of this host or its
+   * content, whose pointer, keys, scrolls and selection are the
+   * browser's (specs/native-regions.md "Interaction"). */
+  #native(target: EventTarget | null): boolean {
+    return target instanceof Node && regionOf(target, this) !== null;
   }
 
   /** The host's top-layer stack (specs/top-layer.md). */
@@ -2653,8 +3020,8 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #onTransitionRun = ({ propertyName, pseudoElement, target: el }: TransitionEvent): void => {
+    if (!(el instanceof Element) || insideRegion(el, this)) return;
     this.#animations = null;
-    if (!(el instanceof Element)) return;
     // A checkbox's or a radio's flip (specs/checkboxes.md "State changes").
     if (propertyName === CONTROL_STATE) {
       this.#scheduleLayout();
@@ -2673,6 +3040,7 @@ export class MonoWindElement extends HTMLElementBase {
    * lands with a layout (specs/top-layer.md); the host's own ending may
    * have moved the grid. */
   #onTransitionDone = ({ propertyName, target }: TransitionEvent): void => {
+    if (target instanceof Node && insideRegion(target, this)) return;
     if (propertyName === "display" || propertyName === "overlay") this.#scheduleLayout();
     else if (target === this) this.#onGridMoved();
   };
@@ -2686,8 +3054,10 @@ export class MonoWindElement extends HTMLElementBase {
       const last = this.#animated;
       this.#animated = new Map();
       let relayout = false;
-      if (this.isConnected) {
-        this.#animations ??= this.getAnimations?.({ subtree: true }) ?? [];
+      // A host turning out nested stops sampling, as one leaving does.
+      const live = this.isConnected && this.#started;
+      if (live) {
+        this.#animations ??= this.#hostAnimations();
         const running = runningUnder(this, this.#animations);
         for (const [el, properties] of running.elements) {
           const path = animationPath(properties, this.#nodeOf(el));
@@ -2697,7 +3067,7 @@ export class MonoWindElement extends HTMLElementBase {
       }
       const paths = new Set(this.#animated.values());
       const sampled = relayout || paths.has("layout") || hasSynthesizedTransitions();
-      if (!this.isConnected || (!sampled && this.#animated.size === 0)) {
+      if (!live || (!sampled && this.#animated.size === 0)) {
         this.#samplingLoopRunning = false;
         // One final settle pass so the grid lands exactly on the
         // transitions' target values and an animation's end state.
@@ -2735,13 +3105,24 @@ export class MonoWindElement extends HTMLElementBase {
     // to the page. Touch has no hover to reflect, and the release
     // relayout picks up the tap's outcome.
     if (isTouchInProgress(event)) return;
+    // A native region's content lays its host out only where the grid's
+    // boxes may change: a press, a change, the region's edge crossed
+    // (specs/native-regions.md "Interaction").
+    const { target, type } = event;
+    const region = target instanceof Node ? regionOf(target, this) : null;
+    if (region) {
+      if (type === "pointerover" || type === "focusin" || type === "focusout") {
+        const related = (event as MouseEvent | FocusEvent).relatedTarget;
+        if (related instanceof Node && regionOf(related, this) === region) return;
+      } else if (!REGION_RELAYOUT_EVENTS.has(type)) return;
+    }
     // Only an activating key changes what the grid shows (`:active`);
     // every other keyboard outcome arrives as its own event — input,
     // change, focus, scroll — and a relayout under a scrolling key
     // cancels the smooth scroll it starts (#onScrollKey). Space on a
     // focused scroll container pages it.
-    if (event.type === "keydown" || event.type === "keyup") {
-      const { key, target } = event as KeyboardEvent;
+    if (type === "keydown" || type === "keyup") {
+      const { key } = event as KeyboardEvent;
       const scrolls = target instanceof Element && target.hasAttribute("data-mw-scroll");
       if (key !== "Enter" && (key !== " " || scrolls)) return;
     }
@@ -2751,8 +3132,8 @@ export class MonoWindElement extends HTMLElementBase {
     // stale under it. So does a field press's, its drag not yet begun
     // (#fieldPress).
     if (
-      (event.type === "focusin" || event.type === "focusout") &&
-      (event.target instanceof HTMLSelectElement || this.#fieldPress)
+      (type === "focusin" || type === "focusout") &&
+      (target instanceof HTMLSelectElement || this.#fieldPress)
     ) {
       this.#performLayoutSafely();
       return;
@@ -2761,6 +3142,8 @@ export class MonoWindElement extends HTMLElementBase {
   };
 
   attributeChangedCallback(name: string, _previous: string | null, next: string | null): void {
+    if (!this.#started) return;
+    this.#reflected.delete(name);
     const [initial, other] = HOST_KEYWORDS[name as keyof typeof HOST_KEYWORDS];
     if (next !== initial && next !== other) {
       if (next !== null) {
@@ -2770,6 +3153,7 @@ export class MonoWindElement extends HTMLElementBase {
         );
       }
       this.setAttribute(name, initial);
+      this.#reflected.add(name);
       return;
     }
     // focus is keyboard-only: no layout depends on it.
@@ -2795,6 +3179,8 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #onWindowResize = (): void => {
+    // Viewport lengths in a region's contents resize them.
+    this.#forget();
     this.#scheduleLayout();
   };
 
@@ -2810,7 +3196,12 @@ export class MonoWindElement extends HTMLElementBase {
     requestAnimationFrame(() => {
       const generation = this.#glyphs.generation;
       this.#glyphs.invalidate();
-      if (this.#glyphs.generation !== generation || this.#cellChanged()) this.#scheduleLayout();
+      // A region's contents may set in the font that loaded.
+      const measured = this.#measures.size > 0;
+      this.#forget();
+      if (this.#glyphs.generation !== generation || this.#cellChanged() || measured) {
+        this.#scheduleLayout();
+      }
     });
   };
 
@@ -2836,7 +3227,7 @@ export class MonoWindElement extends HTMLElementBase {
   }
 
   #scheduleLayout(): void {
-    if (this.#layoutPending || this.#nested) return;
+    if (this.#layoutPending || !this.#started) return;
     this.#layoutPending = true;
     this.#layoutRequest = requestAnimationFrame((time) => {
       this.#layoutPending = false;
@@ -2909,13 +3300,12 @@ export class MonoWindElement extends HTMLElementBase {
     }
     // The page's mutations still queued, which this pass's drain would
     // take for its own: what they wrote is the page's (render.ts).
-    forgetWrites(this.#mutationObserver?.takeRecords() ?? []);
+    this.#takeIn(this.#mutationObserver?.takeRecords() ?? []);
     // A queued frame can outlive the host's removal (story/app teardown,
     // SPA navigation): computed styles on a detached tree read as empty
     // strings, which would misclassify every element and misfire author
-    // warnings. Reconnection schedules a fresh layout. A nested host
-    // drops the frame an attribute queued before it connected.
-    if (!this.isConnected || this.#nested) return;
+    // warnings. Reconnection schedules a fresh layout.
+    if (!this.isConnected || !this.#started) return;
     // A host in no box (inside `display: none`) lays nothing out: its
     // resize lays it out once it shows.
     if (this.checkVisibility?.() === false) {
@@ -2929,7 +3319,9 @@ export class MonoWindElement extends HTMLElementBase {
     // the engine's width rule off it: the tree wraps its value at that
     // width.
     const textareaWidths: TextareaWidths = new Map();
-    const textareas = this.querySelectorAll<HTMLTextAreaElement>("textarea");
+    const textareas = [...this.querySelectorAll("textarea")].filter(
+      (el) => !insideRegion(el, this),
+    );
     // Each checkbox's and radio's own appearance and transitions
     // (tree.ts readControls), the transitions into its lock.
     const { appearances, transitions } = readControls(this);
@@ -2959,7 +3351,7 @@ export class MonoWindElement extends HTMLElementBase {
     // (specs/animations.md): the fades it holds, the layers its reads
     // keep, and the sampling it starts. The mask keeps every animation
     // the reads take, so the answer before it serves under it.
-    const animations = this.getAnimations?.({ subtree: true }) ?? [];
+    const animations = this.#hostAnimations();
     this.#animations = animations;
     const running = runningUnder(this, animations);
     // The write phase is bracketed by the `measuring` attribute and each
@@ -2989,11 +3381,12 @@ export class MonoWindElement extends HTMLElementBase {
       // (styles.css "Typography locks and measuring gates"). The
       // interactivity marks go on before the read, which the focus
       // invert's exclusion shapes.
-      gated = this.querySelectorAll("*");
-      for (const el of gated) {
+      const gate = (el: Element): void => {
         el.setAttribute("data-mw-measuring", "");
         markInteractivity(el);
-      }
+      };
+      gated = lightElements(this);
+      for (const el of gated) gate(el);
       // (1) Cell metrics, from the persistent probe each layout; an
       // innerHTML swap detaches it, so re-adopt it (a detached probe
       // measures 0×0).
@@ -3007,16 +3400,18 @@ export class MonoWindElement extends HTMLElementBase {
       }
       const previous = this.#cellMetrics;
       if (previous === null || !sameMetrics(previous, metrics)) {
-        this.style.setProperty("--mw-cw", `${metrics.width}px`);
-        this.style.setProperty("--mw-ch", `${metrics.height}px`);
-        this.style.setProperty("--mw-rls", `${metrics.letterSpacing}px`);
-        this.style.setProperty("--mw-overhang", `${metrics.inkOverhang ?? 0}px`);
+        // A region's contents take the host's font.
+        this.#forget();
+        setVar(this, "--mw-cw", `${metrics.width}px`);
+        setVar(this, "--mw-ch", `${metrics.height}px`);
+        setVar(this, "--mw-rls", `${metrics.letterSpacing}px`);
+        setVar(this, "--mw-overhang", `${metrics.inkOverhang ?? 0}px`);
         // A whole pixel: Chromium snaps an inline box's fractional padding
         // and drags its text a pixel with it.
         const bgpad = Math.ceil((metrics.backgroundGap ?? 0) / 2);
-        this.style.setProperty("--mw-bgpad", `${bgpad}px`);
-        this.toggleAttribute("data-mw-bgpad", bgpad > 0);
-        this.style.setProperty("--mw-base", `${metrics.baseline ?? 0}px`);
+        setVar(this, "--mw-bgpad", `${bgpad}px`);
+        this.#viewport.toggleAttribute("data-mw-bgpad", bgpad > 0);
+        setVar(this, "--mw-base", `${metrics.baseline ?? 0}px`);
         // Rows cannot grow (specs/wide-characters.md): a fallback font's
         // taller line box stays inside the measured cell.
         for (const grid of [this.#grid, this.#layers]) {
@@ -3041,15 +3436,37 @@ export class MonoWindElement extends HTMLElementBase {
         },
       );
       this.#readGround();
+      this.#remeasure();
 
       // (2) Build a tree from the light DOM: the host's own inline
       // content is the root leaf (specs/host-leaf.md); with a block-level
       // child the root is a virtual container over its child nodes, the
       // host's own text as anonymous runs.
-      let virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
-      if (this.#scopeAnchors(virtualRoot)) {
-        virtualRoot = buildRoot(this, getRootFontSizePx(), metrics, textareaWidths, appearances);
+      const build = (): LayoutNode =>
+        buildRoot(
+          this,
+          getRootFontSizePx(),
+          metrics,
+          textareaWidths,
+          appearances,
+          this.#measureContents,
+        );
+      let virtualRoot = build();
+      const { released, restored } = this.#markRegions(virtualRoot);
+      // A former region's contents, read outside the gate, read again
+      // under it: a host turning out nested gives them back first, and
+      // takes back its regions' marks, set again — the hosts in those
+      // settled, and warned of, as the marks end up.
+      if (restored.length > 0) {
+        this.#settleNesting(false);
+        for (const el of restored) gate(el);
+        gated = [...gated, ...restored];
+        virtualRoot = build();
+        for (const el of this.#markRegions(virtualRoot).released) released.add(el);
       }
+      this.#settleNesting(true);
+      if (this.#scopeAnchors(virtualRoot)) virtualRoot = build();
+      if (released.size > 0) gated = [...gated].filter((el) => !released.has(el));
 
       // (3) The spacer's width, the content's min- and max-content widths
       // in cells: what a host whose width is its content's is sized by,
@@ -3220,6 +3637,7 @@ export class MonoWindElement extends HTMLElementBase {
       // The resize signals a capped host needs, outside the mask so the
       // reads are authored values.
       this.#observeSurroundings();
+      this.#keepMeasures();
       // The layout may have moved content under a stationary pointer —
       // re-derive the synthesized pointer states (cheap when nothing
       // changed; a chain change coalesces into the next frame).

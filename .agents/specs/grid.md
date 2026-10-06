@@ -136,7 +136,7 @@ final column widths).
    2026-09-28). An item spanning an fr track grows only the bases of
    the fr tracks with an intrinsic min, weighted by flex factor (CSS
    §11.5.1) — this seeds the automatic minimum that makes bare `1fr
-1fr` columns unequal under long content, and an item spanning
+   1fr` columns unequal under long content, and an item spanning
    several tracks with a flexible one among them (automatic minimum 0)
    grows nothing; its max contribution is step 4's job.
 3. **Clamp** each track: what content alone grew an `auto`-min track's

@@ -30,7 +30,8 @@ page looks like a DOS photo.
 
 An `<img>` is a replaced box, as in CSS: an atomic inline box at its
 line where its `display` is inline, a block one where block, a flex or
-grid item as such.
+grid item as such. A replaced native region sizes as an image does
+(`native-regions.md` "Layout").
 
 - **Its intrinsic size is its natural size, as any px length is
   read**: the natural width on the spacing scale (a cell a quarter
@@ -137,12 +138,12 @@ box's, as its cells' is; a hidden image (`visibility`) draws none.
   round to the nearest pixel, so no pixel is covered in part — at the
   grid's resolution a part-covered pixel is a stray translucent band
   along a contained picture's edge.
-- **A cross-origin image** whose server shares it over CORS is read
-  from its bytes, which the engine fetches itself, so it needs no
+- **A cross-origin image** whose server shares it over CORS is read from
+  its bytes, which the engine fetches itself, so it needs no
   `crossorigin` on the `<img>` (without which the page may not read the
-  element's own pixels), and read again where its box grows past the
-  frame it was read for. One its server doesn't share can be drawn but
-  not read — the engine's fetch fails, which the browser logs as a
+  element's own pixels), and read again where its box asks another scale
+  than the one it was read at. One its server doesn't share can be drawn
+  but not read — the engine's fetch fails, which the browser logs as a
   CORS error: it draws in full color, its palette, levels and dither
   left out, the pixels still the grid's resolution — the look an image
   has on a page with no theme, and on a themed one with
@@ -234,8 +235,9 @@ hidden image copies nothing.
 - `background-image: url()` (`gradients.md` deviation 3) through the
   same pipeline, with `background-size`, `background-position` and
   `background-repeat`.
-- Inline `<svg>`, `<video>` frames and `<canvas>`, which still draw
-  natively over the grid.
+- Inline `<svg>`, `<video>` frames and `<canvas>` as pictures; meanwhile
+  `mw-native` makes one a native region (`native-regions.md`), drawn by
+  the browser in the cells the grid gives it.
 
 ## Testing
 
@@ -252,21 +254,20 @@ hidden image copies nothing.
   `object-contain` in a set box, a caption positioned over an image
   (later ink covering its cells), an image in a scroller (clipped), an
   image in a rotated layer, the same image under the DOS and
-  green-phosphor themes and posterized, a cross-origin image its
-  server shares and one it doesn't (the stories' servers share a file
-  asked for `?shared`), a broken one's `alt`, and one read from its
-  bytes read again as its box grows; a selection's inversion on the
+  green-phosphor themes and posterized, a cross-origin image its server
+  shares and one it doesn't (the stories' servers share a file asked for
+  `?shared`), a broken one's `alt`, and one read from its bytes read
+  again as its box grows past its scale; a selection's inversion on the
   grid and in text, through a paint rebuilding its rows and across the
   viewport's grids; clicks — a row, the image whole, a clipped row, a
   broken image, Shift on a row; copies in both modes, of a grid
   selection and of a selection reaching in from the page across two
-  hosts; a selection the host never hears of painted away; an
-  animated image's frames into a second pass, stopping when it is
-  removed, hidden or its host leaves the document and running again
-  once it is back, and its first frame alone under
-  `prefers-reduced-motion` (the preference stood in for, as no page
-  sets it) — not Node's, which has neither `ImageDecoder` nor a 2D
-  context.
+  hosts; a selection the host never hears of painted away; an animated
+  image's frames into a second pass, stopping when it is removed, hidden
+  or its host leaves the document and running again once it is back, and
+  its first frame alone under `prefers-reduced-motion` (the preference
+  stood in for, as no page sets it) — not Node's, which has neither
+  `ImageDecoder` nor a 2D context.
 - Visual: goldens of each story's image, in the pinned Linux image as
   every golden is.
 
@@ -287,26 +288,26 @@ hidden image copies nothing.
   place (`object-fit`, `object-position`, snapped to the pixel grid),
   the sampling, the color settings and their reduction, its content
   box (`contentCells`), and the alt in its cells (`altText`,
-  `altLines`, `altCells`).
+  `cellLines`, `altArea`).
 - packages/core/src/color.ts: sRGB to OKLab, for the palette match.
 - packages/core/src/stacking.ts: the picture's step in the paint walk.
 - packages/core/src/plain-text.ts: that step opening the image's
-  surface (`PaintedLayer.picture`), a layer of no cells which later ink
+  surface (`PaintedLayer.surface`), a layer of no cells which later ink
   covers, and writing its alt in its cells for a copy's render alone
-  (`copyGrids`, `imageRows` as its clip shows them, `screenRows`).
-- packages/core/src/paint.ts: the picture's canvas over the content
-  box, keyed apart from its image's own layer (`pictureKey`), its cache,
-  its covered cells cleared, a tainted image drawn unreduced (its
-  canvas replaced once readable pixels come), a grid selection over a
-  picture copied from a copy's render (`gridCopy`), and the frames
-  decoded from its bytes (`Frames`) — an animated image's, and a still
-  one's the page may not read from its element, read again as its box
-  grows — stopped with its layer or its host (`stopFrames`), and its
+  (`copyGrids`, `textRows` as its clip shows them, `screenRows`).
+- packages/core/src/paint.ts: the picture's canvas over the content box,
+  keyed apart from its image's own layer (`pictureKey`), its cache, its
+  covered cells cleared, a tainted image drawn unreduced (its canvas
+  replaced once readable pixels come), a grid selection over a picture
+  copied from a copy's render (`gridCopy`), and the frames decoded from
+  its bytes (`Frames`) — an animated image's, and a still one's the page
+  may not read from its element, read again as its box asks another
+  scale — stopped with its layer or its host (`stopFrames`), and its
   selected cells inverted (`invertCells`, a grid selection's in each
   grid through `selectPictures`).
 - packages/core/src/selection.ts: an image a light-DOM range reaches,
   selected whole (`selectedRanges`), its copy, its alt, or in grid mode
-  its alt's cells from a copy's render (`imageText`), and a range
+  its alt's cells from a copy's render (`surfaceText`), and a range
   reaching into the host clipped to it (`hostPart`), the page's text
   around it (`pageAround`).
 - packages/core/src/element.ts: an image's `load` and `error` laying

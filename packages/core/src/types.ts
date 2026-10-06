@@ -974,6 +974,11 @@ export interface InlineElement {
   context: boolean;
 }
 
+/** A native region's contents as the browser lays them out, their
+ * content box in cells rounded up (specs/native-regions.md "Layout"):
+ * at their min- or max-content width, or at so many columns. */
+export type NativeMeasure = (width: "min" | "max" | number) => { width: number; height: number };
+
 export interface LayoutNode {
   source: Element;
   style: CellStyle;
@@ -1132,6 +1137,10 @@ export interface LayoutNode {
   authoredPseudos?: readonly Pseudo[];
   /** A loaded image's picture inputs (specs/images.md). */
   image?: ImageSource;
+  /** A native region's (specs/native-regions.md): a leaf of its own box,
+   * its contents the browser's; inline where its display is; flowed
+   * contents measured as the browser lays them out. */
+  native?: { replaced: boolean; inline: boolean; measure?: NativeMeasure };
   /** Scroll geometry (specs/scrolling.md), written by layoutNode on
    * containers with a scroll axis: content extent and the derived
    * max offset, both in cells. Absent elsewhere. */
@@ -1159,6 +1168,8 @@ export interface LayoutNode {
   /** The root's top-layer stack in paint order, each element with its
    * ancestors from the root down; absent when empty. */
   topLayer?: TopLayerEntry[];
+  /** On the root: the native regions the tree holds. */
+  regions?: LayoutNode[];
   /** On the root: the scroll containers whose scroll moves an anchor
    * under a box it does not move (specs/anchor-positioning.md), so a
    * scroll of one relays out. */

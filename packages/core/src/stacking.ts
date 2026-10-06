@@ -175,6 +175,9 @@ export interface PaintVisitor {
    * in its content's turn, after every block's ink (CSS 2.1 Appendix
    * E). */
   picture?(node: LayoutNode): void;
+  /** A native region's contents (specs/native-regions.md "Paint"), in
+   * the same turn: the browser draws them as one step. */
+  native?(node: LayoutNode): void;
   /** A box's scrollbars, over its content. */
   bars?(node: LayoutNode): void;
 }
@@ -231,6 +234,9 @@ export function paintIndex(root: LayoutNode): PaintIndex {
       spans.get(node)!.end = entries.length;
     },
     box: (node) => add(node, "box"),
+    // A region's contents take its cells in their turn, over the blocks'
+    // ink before them.
+    native: (node) => add(node, "box"),
     text: (leaf, member) => add(leaf, "text", member),
     marker: (node) => add(node, "marker"),
   });
@@ -302,6 +308,7 @@ function floatsOf(node: LayoutNode, visitor: PaintVisitor): void {
 
 function contentOf(node: LayoutNode, visitor: PaintVisitor): void {
   if (node.image) visitor.picture?.(node);
+  if (node.native) visitor.native?.(node);
   if (node.marker) visitor.marker?.(node);
   if (node.text !== "") visitor.text?.(node, -1);
   for (const child of ordered(node)) {

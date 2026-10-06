@@ -24,7 +24,10 @@ for (const story of stories) {
     await page.waitForTimeout(150);
     const drifts = await page.evaluate(() => {
       const found: string[] = [];
-      for (const host of document.querySelectorAll<HTMLElement>("mono-wind:not(mono-wind *)")) {
+      // Each running host, one in a native region included, its own
+      // boxes alone (specs/native-regions.md "Nesting").
+      const RUNNING = "mono-wind:not([data-mw-nested])";
+      for (const host of document.querySelectorAll<HTMLElement>(RUNNING)) {
         const hostStyle = getComputedStyle(host);
         const cellWidth = parseFloat(hostStyle.getPropertyValue("--mw-cw"));
         const cellHeight = parseFloat(hostStyle.getPropertyValue("--mw-ch"));
@@ -33,6 +36,7 @@ for (const story of stories) {
           "[data-mw-inline-box], [data-mw-flow], [data-mw-float]",
         );
         for (const box of boxes) {
+          if (box.closest(RUNNING) !== host) continue;
           const rect = box.getBoundingClientRect();
           if (rect.width === 0 && rect.height === 0) continue;
           const parent = box.parentElement!.closest<HTMLElement>(

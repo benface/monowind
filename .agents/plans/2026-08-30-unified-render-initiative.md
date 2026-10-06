@@ -228,7 +228,7 @@ diff for regressions. The 3-engine story suite pins the ownership loop
   occlusion); `bg-clear` when they want the cutout effect.
 - Encoding: `@utility bg-clear` sets `background-color: transparent`
   (so it cascades over an earlier `bg-red-500` in `bg-red-500
-sm:bg-clear`) and mirrors `--mw-bg-clear: 1` for the engine to read
+  sm:bg-clear`) and mirrors `--mw-bg-clear: 1` for the engine to read
   (bg-color reader treats this as "cutout" and skips the colored-space
   fill in Phase 4's path).
 

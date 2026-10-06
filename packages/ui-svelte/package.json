@@ -1,6 +1,6 @@
 {
   "name": "@monowind/ui-svelte",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "@monowind/ui for Svelte 5: a menu, a listbox, a select, a combobox, a dialog, a popover, a tooltip, a collapsible, an accordion on the monowind grid, as runes",
   "keywords": [
     "accessibility",
@@ -58,7 +58,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.4",
     "happy-dom": "^20.14.5",
     "svelte": "^5.57.1",
     "typescript": "^7.0.2",

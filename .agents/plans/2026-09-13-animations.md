@@ -37,7 +37,7 @@ across the three engines; happy-dom has no `getAnimations`.
 ### 1. The animated set and the loop
 
 - element.ts: an `animationstart` listener; an `#animated: Map<Element,
-Path>` (the target's classification); the start classifies through
+  Path>` (the target's classification); the start classifies through
   `getAnimations()` and starts the loop; each tick re-classifies every
   element (dropping those with nothing running) and ends the loop when
   the set and the transition counters are empty, with the settle

@@ -191,8 +191,8 @@ describe("an image's paint", () => {
       [16, 16],
     );
     const { layers } = renderGridRows(root);
-    const own = layers.find(({ layer }) => layer.node === image && !layer.picture)?.layer;
-    const surface = layers.find(({ layer }) => layer.picture)?.layer;
+    const own = layers.find(({ layer }) => layer.node === image && !layer.surface)?.layer;
+    const surface = layers.find(({ layer }) => layer.surface === "picture")?.layer;
     expect(own).toBeDefined();
     expect(surface?.parent).toBe(own);
     const target = document.createElement("pre");

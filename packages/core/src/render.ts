@@ -2,6 +2,7 @@ import { baselineRow, isFlowChild, isFormattingContextRoot, markerSpread } from 
 import { placePainted } from "./paint-origin.ts";
 import { zIndexApplies } from "./stacking.ts";
 import { PSEUDOS } from "./generated.ts";
+import { insideRegion, NESTED_MARK } from "./native.ts";
 import type { Pseudo } from "./generated.ts";
 import { clipsAxis, isElementBox, isToggle, softWraps } from "./types.ts";
 import type { AreaSide, InlineElement, LayoutNode, PerSide, PositionArea } from "./types.ts";
@@ -90,8 +91,9 @@ function clearUnwritten(
   written: Set<Element>,
   names: readonly string[],
 ): void {
+  // A region's contents are the browser's, a host's in one its own.
   for (const el of root.querySelectorAll<HTMLElement>(selector)) {
-    if (!written.has(el)) clearNames(el, names);
+    if (!written.has(el) && !insideRegion(el, root)) clearNames(el, names);
   }
 }
 
@@ -119,8 +121,9 @@ export function setVar(
   else target.style.setProperty(property, text);
 }
 
-/** Each element's or rule's variables as the engine last wrote them. */
-const written = new WeakMap<object, Map<string, string>>();
+/** Each element's or rule's variables as the engine last wrote them,
+ * null where a page's change may have changed one. */
+const written = new WeakMap<object, Map<string, string | null>>();
 
 /** What the engine wrote forgotten where a page's mutations may have
  * changed it: a `style` written, or an element taken out, whose style
@@ -128,15 +131,50 @@ const written = new WeakMap<object, Map<string, string>>();
 export function forgetWrites(records: Iterable<MutationRecord>): void {
   for (const record of records) {
     if (record.type === "attributes") {
-      if (record.attributeName === "style") written.delete(record.target);
+      if (record.attributeName === "style") forget(record.target);
       continue;
     }
     for (const node of record.removedNodes) {
       if (!(node instanceof Element)) continue;
-      written.delete(node);
-      if (node.firstElementChild) for (const el of node.querySelectorAll("*")) written.delete(el);
+      forget(node);
+      if (node.firstElementChild) for (const el of node.querySelectorAll("*")) forget(el);
     }
   }
+}
+
+/** An element's variables the engine wrote, their names kept for
+ * `release`, their values unknown. */
+function forget(target: object): void {
+  const last = written.get(target);
+  if (last) for (const name of last.keys()) last.set(name, null);
+}
+
+/** An element's contents rid of what the engine wrote on them — a new
+ * native region's, or a host's turning out nested
+ * (specs/native-regions.md "The engine's walks", "Nesting") — a host
+ * running in them left to itself; each element released. */
+export function releaseContents(root: Element): Element[] {
+  const released: Element[] = [];
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (node) =>
+      (node as Element).localName === "mono-wind" && !(node as Element).hasAttribute(NESTED_MARK)
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    release(node as HTMLElement);
+    released.push(node as Element);
+  }
+  return released;
+}
+
+/** What the engine wrote on an element taken back: its `data-mw-*`
+ * attributes and its variables. */
+export function release(el: HTMLElement): void {
+  for (const name of el.getAttributeNames()) {
+    if (name.startsWith("data-mw-")) el.removeAttribute(name);
+  }
+  for (const name of written.get(el)?.keys() ?? []) setVar(el, name, null);
 }
 
 /** A valued attribute, removed when null, written only on change. */
@@ -534,7 +572,10 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   setVar(el, "--mw-ls", tracking);
   setVar(el, "--mw-lh", lineGap + 1);
   setVar(el, "--mw-lhs", node.inlineBox ? inlineLift(node, parent, lineGap) : -lineGap / 2);
-  setFlag(el, "data-mw-nowrap", !softWraps(whiteSpace));
+  // The white-space the locks mirror: a native region's is the reset's,
+  // which its contents were measured under.
+  const locked = node.native ? null : whiteSpace;
+  setFlag(el, "data-mw-nowrap", locked !== null && !softWraps(locked));
   // A multicol TEXT LEAF or paragraph-flow container keeps native
   // columns, driven by the engine's used values so the browser
   // fragments on the same lines (specs/multicol.md "Browser
@@ -548,7 +589,7 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   setFlag(el, "data-mw-multicol-balance", Boolean(multicol?.nativeBalance));
   setVar(el, "--mw-colc", multicol?.columnCount ?? null);
   setVar(el, "--mw-colg", multicol?.gap ?? null);
-  restoreWhiteSpace(el, whiteSpace, inside);
+  restoreWhiteSpace(el, locked, inside);
   // A run's box is its container's natively, where the run lies.
   const run = !top && parent.anonymous ? parent.localRect : undefined;
   setVar(el, "--mw-x", rect.x + (run?.x ?? 0));
@@ -559,8 +600,9 @@ function positionElement(node: LayoutNode, parent: LayoutNode, inside: boolean):
   // (styles.css, specs/checkboxes.md "Sizing").
   if (isToggle(el)) setVar(el, "--mw-tc", rect.width);
   // The clip lock, on a box clipping both axes: a lone clipping axis is
-  // an authored `clip`, and a scroller keeps its `hidden` axis.
-  setFlag(el, "data-mw-clip", clipsAxis(overflow.x) && clipsAxis(overflow.y));
+  // an authored `clip`, and a scroller keeps its `hidden` axis, as a
+  // native region keeps its own overflow.
+  setFlag(el, "data-mw-clip", !node.native && clipsAxis(overflow.x) && clipsAxis(overflow.y));
   const range = node.scrollRange;
   // A scroller's vars, cleared off a box that stops scrolling, none
   // on the rest.

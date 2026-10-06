@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 
 /**
- * A story at rest: every host laid out (a nested one never is), the
- * story's own play function done — a play that clicks, presses, scrolls
- * or relayouts must not be caught mid-way, and a slow machine makes
- * that likely — and its fonts loaded.
+ * A story at rest: every outermost host laid out (a host inside one is
+ * the story's play's to wait for), the story's own play function done
+ * — a play that clicks, presses, scrolls or relayouts must not be
+ * caught mid-way, and a slow machine makes that likely — and its fonts
+ * loaded.
  */
 export async function openStory(page: Page, id: string, globals?: string): Promise<void> {
   await page.goto(`/iframe.html?id=${id}&viewMode=story${globals ? `&globals=${globals}` : ""}`);

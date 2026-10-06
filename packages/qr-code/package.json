@@ -1,6 +1,6 @@
 {
   "name": "@monowind/qr-code",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "QR codes on the monowind grid: the <mono-qr> element",
   "keywords": [
     "monowind",
@@ -57,7 +57,7 @@
     "qr": "^0.7.2"
   },
   "devDependencies": {
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.4",
     "happy-dom": "^20.14.5",
     "monowind": "workspace:^",
     "typescript": "^7.0.2",
